@@ -5,7 +5,8 @@ import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-nati
 import { isNativeEvidenceCommand, executeNativeEvidence, predicateStructureError } from "./evidence-native.ts";
 import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, isNativeAnalysisRetryCommand, executeNativeAnalysisRetry, type NativeWriteResult } from "./product-commands-write.ts";
 import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
-import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
+import { isNativeKovaakScoreCommand, executeNativeKovaakScore, normalizeSteamProfileInput } from "./kovaak-scores-native.ts";
+import { isNativeKovaakLeaderboardCommand, executeNativeKovaakLeaderboard } from "./kovaak-leaderboard-native.ts";
 import { isNativeAffiliateCommand, executeNativeAffiliate } from "./affiliate-native.ts";
 import { isNativeScenarioCommand, executeNativeScenario } from "./scenario-native.ts";
 import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
@@ -35,6 +36,7 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.events.sequence", "profile.aiming.snapshot",
   "product.readiness.get",
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
+  "kovaak_leaderboard.lookup",
   "eloshapes.query", "peripheral_profile.get", "peripheral_profile.update",
   "purchase_links.lookup",
   "scenario.open", "scenario.list",
@@ -215,6 +217,43 @@ function commandParameterError(commandName: ProductCommandName, parameters: Reco
   if (commandName === "kovaak_scores.refresh_connected") {
     return hasExactKeys(parameters, []) ? null : "unsupported fields: kovaak_scores.refresh_connected takes no parameters";
   }
+  if (commandName === "kovaak_leaderboard.lookup") {
+    const unknown = unsupportedKeysError(
+      parameters,
+      ["leaderboard_id", "scenario_name", "profile_ref", "score"],
+      commandName,
+    );
+    if (unknown) return unknown;
+    const hasId = parameters.leaderboard_id !== undefined && parameters.leaderboard_id !== null;
+    const hasName = parameters.scenario_name !== undefined && parameters.scenario_name !== null;
+    if (hasId === hasName) {
+      return 'unsupported fields: kovaak_leaderboard.lookup requires exactly one of "leaderboard_id" or "scenario_name"';
+    }
+    if (hasId) {
+      if (typeof parameters.leaderboard_id !== "number" || !Number.isInteger(parameters.leaderboard_id) || parameters.leaderboard_id <= 0) {
+        return "unsupported fields: leaderboard_id must be a positive integer";
+      }
+    } else {
+      const nameError = requiredStringError(parameters.scenario_name, "scenario_name");
+      if (nameError) return nameError;
+    }
+    const hasProfile = parameters.profile_ref !== undefined && parameters.profile_ref !== null;
+    const hasScore = parameters.score !== undefined && parameters.score !== null;
+    if (hasProfile && hasScore) {
+      return 'unsupported fields: kovaak_leaderboard.lookup accepts only one of "profile_ref" or "score"';
+    }
+    if (hasProfile) {
+      const profileError = requiredStringError(parameters.profile_ref, "profile_ref");
+      if (profileError) return profileError;
+      if (normalizeSteamProfileInput(parameters.profile_ref as string) === null) {
+        return "unsupported fields: profile_ref must be a 17-digit Steam ID or a steamcommunity profile URL";
+      }
+    }
+    if (hasScore && (typeof parameters.score !== "number" || !Number.isFinite(parameters.score) || parameters.score < 0)) {
+      return "unsupported fields: score must be a non-negative number";
+    }
+    return null;
+  }
   if (commandName === "eloshapes.query") {
     return unsupportedKeysError(parameters, ELOSHAPES_FILTER_KEYS, commandName)
       ?? optionalNumberError(parameters.weight_max, "weight_max")
@@ -273,7 +312,9 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
 }
 
 type NativeCommandResult = {
-  status: "succeeded" | "failed";
+  // Native commands use the same three-state convention as everything else;
+  // "unavailable" (upstream/file missing) is a first-class outcome.
+  status: "succeeded" | "failed" | "unavailable";
   result?: unknown;
   result_ref?: string;
   warning_or_error?: { code: string; message: string };
@@ -358,7 +399,7 @@ export function createProductCommandTool(
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接。参数形态要点：analysis.events.* 表命令的 table_ref 形如 analysis:<id>:table:<event_kind>（用 events.list 返回的原值），predicates 是 [{field, operator, value}] 数组，operator 取 eq/lt/lte/gt/gte/between/available/unavailable，filter 至少一个谓词；eloshapes.query 只接受 weight_max、size_category、shape、front_flare、side_curvature、hump_placement、hand_compatibility、brand_search、model_search、limit；purchase_links.lookup 只接受 items（1-6 个 {brand, model, variant?} 或 {q}），返回淘宝/拼多多带佣金购买短链，未命中时对应平台为 null；scenario.list 无参数，返回本机 KovaaK 已安装场景名清单（训练推荐优先从这里选）；scenario.open 只接受 scenario_name（本机已装场景名），发 UI 事件让前端打开 KovaaK——**打开前必须先征得用户同意，绝不能自动开**；training_plan.generate_draft 必须传 plan_payload 对象；intro_context.get / user_profile.get 无参数，user_profile.update 只接受 games、experience、self_assessment、goal、steam_profile_url 的白名单字段。未知参数会被拒绝并列出允许的字段。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
+    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接；查某场景在全体玩家中的排名/百分位：kovaak_leaderboard.lookup 传 leaderboard_id 或 scenario_name 二选一，再可选传 profile_ref（同上格式）定位该玩家的官方名次，或传 score 用给定分数定位，都不传则只返回榜首分、榜内中位分和总人数。参数形态要点：analysis.events.* 表命令的 table_ref 形如 analysis:<id>:table:<event_kind>（用 events.list 返回的原值），predicates 是 [{field, operator, value}] 数组，operator 取 eq/lt/lte/gt/gte/between/available/unavailable，filter 至少一个谓词；eloshapes.query 只接受 weight_max、size_category、shape、front_flare、side_curvature、hump_placement、hand_compatibility、brand_search、model_search、limit；purchase_links.lookup 只接受 items（1-6 个 {brand, model, variant?} 或 {q}），返回淘宝/拼多多带佣金购买短链，未命中时对应平台为 null；scenario.list 无参数，返回本机 KovaaK 已安装场景名清单（训练推荐优先从这里选）；scenario.open 只接受 scenario_name（本机已装场景名），发 UI 事件让前端打开 KovaaK——**打开前必须先征得用户同意，绝不能自动开**；training_plan.generate_draft 必须传 plan_payload 对象；intro_context.get / user_profile.get 无参数，user_profile.update 只接受 games、experience、self_assessment、goal、steam_profile_url 的白名单字段。未知参数会被拒绝并列出允许的字段。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
@@ -459,6 +500,15 @@ export function createProductCommandTool(
         // caller supplies one); refresh_connected reads steam_id from config.
         const nativeResult = await executeNativeKovaakScore(
           params.command_name, params.parameters, ownerId,
+        );
+        return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native KovaaK scenario leaderboard: async HTTP calls to the public
+      // kovaaks.com board endpoints (rank + percentile), skip the HTTP bridge.
+      if (isNativeKovaakLeaderboardCommand(params.command_name)) {
+        const nativeResult = await executeNativeKovaakLeaderboard(
+          params.command_name, params.parameters,
         );
         return nativeToToolResult(params.command_name, nativeResult);
       }

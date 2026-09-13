@@ -123,8 +123,36 @@ type NormalizedDifficulty = {
     scenario_name: string;
     score: number;
     scenario_rank: number;
+    rank_maxes: number[];
   }>;
 };
+
+/**
+ * Per-scenario promotion thresholds (`rank_maxes`, 9 numbers: the score
+ * required to reach rank 1..9).
+ *
+ * Unit note (2026-09-14, verified against the live payload): the raw
+ * benchmark `score` field is ×100 of what kovaaks.com displays, which is why
+ * normalizeScore divides it by 100. `rank_maxes` is NOT on that ×100 scale —
+ * it is already at the same scale as the displayed score (and therefore the
+ * same scale as normalizeScore's output). Evidence: for "Smoothsphere
+ * Viscose" the rank-9 (Seal) player has raw score 1622700 → normalized
+ * 16227.0, while rank_maxes[8] = 14400; across the 30 played scenarios in
+ * both difficulties the raw score sits at 70-183× rank_maxes[-1], never
+ * ~1×. Dividing rank_maxes by 100 here would understate every threshold by
+ * 100×, so they are passed through unchanged.
+ */
+function normalizeRankMaxes(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const out: number[] = [];
+  for (const item of value) {
+    if (typeof item === "boolean" || typeof item !== "number" || !Number.isFinite(item) || item < 0) {
+      return [];
+    }
+    out.push(item);
+  }
+  return out;
+}
 
 function normalizeDifficulty(
   payload: unknown,
@@ -172,6 +200,7 @@ function normalizeDifficulty(
       scenario_name: scenario.scenario_name,
       score: normalizeScore(raw.score),
       scenario_rank: normalizeRank(raw.scenario_rank, "scenario rank"),
+      rank_maxes: normalizeRankMaxes(raw.rank_maxes),
     });
   }
 
@@ -220,6 +249,8 @@ function buildScoreSummary(
         score: scenario.score,
         item_rank: scenario.scenario_rank,
         item_rank_name: catalog.rank_names[scenario.scenario_rank],
+        // 升到各档（rank 1..9）所需的分数线，与 score 同一显示口径。
+        rank_maxes: scenario.rank_maxes,
         completed: scenario.score > 0,
       });
     }
@@ -264,7 +295,8 @@ async function fetchAndNormalize(
 const STEAM_ID_RE = /^\d{17}$/;
 const STEAM_PROFILE_URL_RE = /^https:\/\/steamcommunity\.com\/profiles\/(\d{17})\/?$/;
 
-function normalizeSteamProfileInput(value: string): string | null {
+/** Accept an exact 17-digit Steam ID or a canonical steamcommunity profile URL. */
+export function normalizeSteamProfileInput(value: string): string | null {
   if (STEAM_ID_RE.test(value)) return value;
   const match = STEAM_PROFILE_URL_RE.exec(value);
   return match ? match[1] : null;
