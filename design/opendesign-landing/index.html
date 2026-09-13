@@ -1350,6 +1350,33 @@
   }
   .ac-hero-mock-v6 .acm-player__video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
 
+  /* ── 工作态折叠行（真值 05-work-row-expanded / 24）────────────── */
+  .ac-hero-mock-v6 .acm-work { margin: 0 0 10px; }
+  .ac-hero-mock-v6 .acm-work__head {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 0; border: 0; background: transparent; cursor: pointer;
+    font: 500 13px/1.4 var(--acm-ui); color: var(--acm-muted);
+  }
+  .ac-hero-mock-v6 .acm-work__head:hover { color: var(--acm-on-surface); }
+  .ac-hero-mock-v6 .acm-work__chevron { transition: transform .2s var(--acm-ease); }
+  .ac-hero-mock-v6 .acm-work__head[aria-expanded="true"] > .acm-work__chevron { transform: rotate(90deg); }
+  .ac-hero-mock-v6 .acm-work__body {
+    display: grid; grid-template-rows: 0fr;
+    transition: grid-template-rows .2s var(--acm-ease);
+  }
+  .ac-hero-mock-v6 .acm-work.open .acm-work__body { grid-template-rows: 1fr; }
+  .ac-hero-mock-v6 .acm-work__inner { overflow: hidden; min-height: 0; }
+  .ac-hero-mock-v6 .acm-work__item {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 6px; padding: 0 2px;
+    font: 400 12px/1.5 var(--acm-ui); color: var(--acm-muted);
+  }
+  .ac-hero-mock-v6 .acm-work__item .acm-work__chevron { margin-left: auto; opacity: .55; }
+  .ac-hero-mock-v6 .acm-work__ic { color: var(--acm-muted); font-size: 11px; }
+  .ac-hero-mock-v6 .acm-work__ic--think { color: var(--acm-primary); opacity: .8; }
+  .ac-hero-mock-v6 .acm-work__label { color: var(--acm-on-surface); opacity: .88; }
+  .ac-hero-mock-v6 .acm-work__meta { opacity: .7; }
+
   /* ── 滚动条规格（对齐真 app ui/theme.css:617-643）：6px、透明轨道、thumb r3、随主题 ── */
   .ac-hero-mock-v6 .acm-rail__list::-webkit-scrollbar,
   .ac-hero-mock-v6 .acm-messages::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -1545,7 +1572,23 @@
                 <article class="acm-bubble">帮我看看我的弱点在哪？我最近练静态点击总是慢半拍</article>
               </div>
 
-              <!-- Coach 回复（正文含橙色 @时间码 可点元素） -->
+              <!-- 工作态折叠行（0913 点点：已工作 + 思考/工具交错条目，可展开） -->
+            <div class="acm-work" id="acmWork">
+              <button class="acm-work__head" type="button" aria-expanded="false">
+                <svg class="acm-work__chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span>已工作 0:38</span>
+              </button>
+              <div class="acm-work__body">
+                <div class="acm-work__inner">
+                  <div class="acm-work__item"><span class="acm-work__ic acm-work__ic--think">✦</span><span class="acm-work__label">思考过程</span><span class="acm-work__meta">· 持续了 12 秒</span><svg class="acm-work__chevron" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div class="acm-work__item"><span class="acm-work__ic">❋</span><span class="acm-work__label">浏览文件</span><svg class="acm-work__chevron" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div class="acm-work__item"><span class="acm-work__ic acm-work__ic--think">✦</span><span class="acm-work__label">思考过程</span><span class="acm-work__meta">· 持续了 1 秒</span><svg class="acm-work__chevron" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div class="acm-work__item"><span class="acm-work__ic">❋</span><span class="acm-work__label">浏览文件</span><svg class="acm-work__chevron" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div class="acm-work__item"><span class="acm-work__ic acm-work__ic--think">✦</span><span class="acm-work__label">思考过程</span><span class="acm-work__meta">· 持续了 20 秒</span><svg class="acm-work__chevron" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                </div>
+              </div>
+            </div>
+            <!-- Coach 回复（正文含橙色 @时间码 可点元素） -->
               <div class="acm-entry">
                 <article class="acm-rich">
                   <p>看完了，弱点其实很明显，就藏在你说"慢半拍"这句里。最新这一局是 1wall 6targets small，一共 123 次甩枪，平均一次移动 470 毫秒，其中只有头 157 毫秒在加速冲到最快，剩下 308 毫秒——整整三分之二的时间——全在减速收力。而且最快那一下出现在移动路程的 1/3 处，也就是说你甩出去一小截就慢下来了，后面全程是慢慢蹭到目标上的。更要紧的是这次最快速度掉到了 32557，是你这个场景四次记录里最低的（之前三次分别是 46486、41036、43174），大约慢了两成五。所以你感觉的慢半拍不是反应慢，是动作形态变了：发力那一下没以前有劲，收尾又拖得长。</p>
@@ -2159,6 +2202,16 @@
         hvPill.textContent = n > 0 ? '让 Coach 分析（' + n + '）' : '让 Coach 分析';
       };
       hvChecks.forEach(c => c.addEventListener('change', syncHv));
+    }
+
+    // ─── hero mock：工作态折叠行展开/收起 ──────────────────────────────
+    const acmWork = document.getElementById('acmWork');
+    if (acmWork) {
+      const head = acmWork.querySelector('.acm-work__head');
+      head.addEventListener('click', () => {
+        const open = acmWork.classList.toggle('open');
+        head.setAttribute('aria-expanded', String(open));
+      });
     }
   </script>
 
