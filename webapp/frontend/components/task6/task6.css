@@ -189,6 +189,28 @@
 .task6-training-kv dd {
   margin: 0;
   color: var(--on-surface);
+  /* 两行截断：全文走 title 悬浮；面板只做速览不做说明书。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 多条目计划的一行式清单（非当前项）：名字 + 状态，不再展开正文。 */
+.task6-training-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.task6-training-item-row + .task6-training-item-row {
+  border-top: 1px solid color-mix(in srgb, var(--surface-container-high) 70%, transparent);
+}
+
+.task6-training-item-row strong {
+  color: var(--on-surface);
 }
 
 .task6-training-reveal {
@@ -215,6 +237,14 @@
 .task6-training-reveal-inner {
   min-height: 0;
   overflow: hidden;
+  /* 展开体定高：内容超出就地滚动，浮层永不超出窗口底部
+     （1.0.0 内测反馈：详情长内容把浮层顶出视口）。 */
+  max-height: min(52vh, 430px);
+}
+
+/* 展开态才允许滚动；收起动画期间保持 hidden 防内容露出。 */
+.task6-training-reveal[data-state="open"] .task6-training-reveal-inner {
+  overflow-y: auto;
 }
 
 .task6-training-details {

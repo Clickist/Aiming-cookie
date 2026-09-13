@@ -2,6 +2,7 @@
 
 import { Fragment, type ReactNode } from "react";
 
+import { isDesktopRuntime, openExternalUrl } from "@/lib/desktop";
 import {
   parseRichText,
   parseTimeSegments,
@@ -56,13 +57,22 @@ function renderSegments(
       );
     } else if (segment.link) {
       // 受控命名链接（白名单域，解析层已把关）：主色下划线，新标签打开。
+      const linkHref = segment.link;
       out.push(
         <a
           className="task7-link"
           key={`${keyPrefix}-${segIndex}`}
-          href={segment.link}
+          href={linkHref}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={(event) => {
+            // 桌面 WebView2 里 target=_blank 导航被拦（点了没反应，1.0.0
+            // 内测实测）：拦截后经 opener 插件唤默认浏览器。
+            if (isDesktopRuntime()) {
+              event.preventDefault();
+              void openExternalUrl(linkHref);
+            }
+          }}
         >
           {pieces}
         </a>,

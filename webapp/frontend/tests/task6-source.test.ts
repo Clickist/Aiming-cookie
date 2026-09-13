@@ -279,7 +279,7 @@ test("Coach reads current training locally and turns shortcut intents into draft
   assert.match(coach, /sessionStorage\.getItem/);
   assert.match(coach, /setDraft/);
   assert.match(coach, /slice\(0, 3\)/);
-  assert.match(coach, /disabled={capability !== "ready" \|\| !item\.display_name}/);
+  assert.match(coach, /disabled={capability !== "ready" \|\| !summaryItem\.display_name}/);
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
 });
 
@@ -359,7 +359,9 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.match(coach, /kind === "scenario"/);
   assert.match(coach, /正在理解问题和分析上下文/);
   assert.match(coach, /读取已附加分析/);
-  assert.match(coach, /尚未绑定可启动的 KovaaK 场景/);
+  // 1.0.0 内测拍板：不可一键开始时保持安静，「项目暂不可用/尚未绑定」是噪音。
+  assert.doesNotMatch(coach, /尚未绑定可启动的 KovaaK 场景/);
+  assert.doesNotMatch(coach, /项目暂不可用/);
   assert.match(desktop, /scenario_open/);
   assert.match(desktop, /当前网页预览不能启动 KovaaK/);
   assert.doesNotMatch(coach, /steam:\/\//);

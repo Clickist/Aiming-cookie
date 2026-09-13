@@ -21,6 +21,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-opener = "2"
 sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
