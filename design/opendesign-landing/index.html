@@ -67,7 +67,7 @@
       --gap-lg: 32px;
       --gap-xl: 56px;
       --gap-2xl: 96px;
-      --container: 1200px;
+      --container: 1120px;
       --gutter: 32px;
 
       --radius: 10px;
@@ -115,6 +115,8 @@
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap-lg); }
     .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: var(--gap-xl); align-items: start; }
     .grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: var(--gap-xl); align-items: start; }
+    /* 单列化后防 grid 最小内容撑破（历史 mock 顶栏排布有固定件） */
+    .grid-1-2 > * { min-width: 0; }
     @media (max-width: 920px) {
       .grid-2, .grid-3, .grid-2-1, .grid-1-2 { grid-template-columns: 1fr; }
     }
@@ -288,8 +290,23 @@
       color: var(--muted);
       text-align: center;
     }
-    /* hero 里的产品窗口比正文容器更宽，突出「这是一整个应用窗口」 */
-    .app-mock-wrap { max-width: 1200px; }
+    /* hero 产品窗口与正文容器统一宽（0914 点点：整页向中间集中；避免当年 1120/1280 落差复发） */
+    .app-mock-wrap { max-width: var(--container); }
+    /* 手机（≤640px）：交互 mock 换成静态截图，跟随页面主题 */
+    .ac-hero-shot { display: none; }
+    @media (max-width: 640px) {
+      .ac-hero-mock-v6 { display: none; }
+      .ac-hero-shot {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 14px;
+        box-shadow: 0 24px 64px color-mix(in oklch, #24211d 14%, transparent);
+      }
+      html.dark .ac-hero-shot { box-shadow: 0 24px 64px rgba(0, 0, 0, .55); }
+      html.dark .ac-hero-shot--light { display: none; }
+      html:not(.dark) .ac-hero-shot--dark { display: none; }
+    }
     /* 右 · 历史主区（对齐 HistoryClient/task4） */
     .am-seeklink { padding: 0; border: 0; background: transparent; color: var(--primary); font: inherit; line-height: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; transition: color 150ms var(--ease-out, ease); }
     .am-seeklink:hover { color: var(--fg); }
@@ -326,10 +343,6 @@
     ]
   }
   </script>
-  <style>
-    /* 窄视窗下 hero mock 进一步缩放（内部为 1280 定宽绘制） */
-    @media (max-width: 1180px) { .ac-hero-mock-v6 { zoom: 0.62; } }
-  </style>
   <style>
     /* 「引擎级真值遥测」悬浮名词解释 */
     .truth-tip { position: relative; border-bottom: 1px dashed currentColor; cursor: help; outline: none; }
@@ -649,6 +662,14 @@
       flex: none;
       color: var(--ac-hv-error);
     }
+    /* 窄屏收紧：筛选框弹性缩窄、刷新只留图标、返回键不悬挂在内容列外 */
+    @media (max-width: 640px) {
+      .ac-hv-back { margin-left: 0; }
+      .ac-hv-filter { width: auto; flex: 1 1 auto; min-width: 0; }
+      .ac-hv-refresh { padding: 0 6px; }
+      .ac-hv-refresh-text { display: none; }
+      .ac-hv-coach-pill { padding: 0 12px; }
+    }
     </style>
 </head>
 <body>
@@ -686,6 +707,9 @@
         </div>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
+        <!-- 手机（≤640px）：产品窗口等比缩到过小失去意义，改用静态截图（跟随主题） -->
+        <img class="ac-hero-shot ac-hero-shot--light" src="hero-shot-light.png" loading="lazy" decoding="async" alt="Aiming Cookie 产品界面截图：左侧会话列表，主区是打开的视频讲解面板与回看节点，右侧是 Coach 对话与提问框">
+        <img class="ac-hero-shot ac-hero-shot--dark" src="hero-shot-dark.png" loading="lazy" decoding="async" alt="Aiming Cookie 产品界面截图（深色模式）：左侧会话列表，主区是打开的视频讲解面板与回看节点，右侧是 Coach 对话与提问框">
 <style>
   /* ══════════════════════════════════════════════════════════════════
      Aiming Cookie · hero 应用窗口 mock（v6 壳层 + 视频面板打开态）
@@ -1349,6 +1373,8 @@
     color: var(--acm-on-primary);
   }
   .ac-hero-mock-v6 .acm-player__video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+  /* 全屏播放时完整显示画面（脱离 mock 的 cover 裁切） */
+  .ac-hero-mock-v6 .acm-player__video:fullscreen { object-fit: contain; }
 
   /* ── 工作态折叠行（真值 05-work-row-expanded / 24）────────────── */
   .ac-hero-mock-v6 .acm-work { margin: 0 0 10px; }
@@ -2126,6 +2152,29 @@
           const t = Number(link.getAttribute('data-t'));
           if (Number.isFinite(t)) { video.currentTime = t; setProgress(); }
         });
+      });
+      // ── 移动端适配：1280 定宽整窗按容器宽等比缩放（桌面容器封顶仍 0.88） ──
+      const wrap = mock.parentElement;
+      const fitMock = () => {
+        const cs = getComputedStyle(wrap);
+        const avail = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        if (avail > 0) mock.style.zoom = String(Math.min(0.88, avail / 1280));
+      };
+      fitMock();
+      window.addEventListener('resize', fitMock);
+      // 兜底：容器尺寸真实变化就重算（不依赖 resize 事件派发，覆盖内嵌 webview 等）
+      if (window.ResizeObserver) new ResizeObserver(fitMock).observe(wrap);
+      // 点视频舞台切换播放/暂停（触屏上播放键太小）
+      const stage = mock.querySelector('.acm-player__stage');
+      if (stage) stage.addEventListener('click', togglePlay);
+      // ⛶ 全屏：桌面走 requestFullscreen，iOS 视频走 webkitEnterFullscreen
+      const btnFull = mock.querySelector('.acm-pbar-btn[aria-label="全屏"]');
+      if (btnFull) btnFull.addEventListener('click', () => {
+        try {
+          if (document.fullscreenElement) { void document.exitFullscreen(); }
+          else if (video.requestFullscreen) { void video.requestFullscreen(); }
+          else if (video.webkitEnterFullscreen) { video.webkitEnterFullscreen(); }
+        } catch (e) {}
       });
       setProgress();
     })();
