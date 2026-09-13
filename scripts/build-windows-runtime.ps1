@@ -47,7 +47,6 @@ $commonArgs = @(
     "--specpath", $pySpec,
     "--paths", $RepoRoot,
     "--add-data", "$(Join-Path $RepoRoot 'knowledge');knowledge",
-    "--add-data", "$(Join-Path $RepoRoot 'kovaak_tracker\coach\providers.json');kovaak_tracker\coach",
     "--add-data", "$(Join-Path $RepoRoot 'telemetry_capture');telemetry_capture",
     "--collect-submodules", "webapp.backend",
     "--collect-submodules", "kovaak_tracker",

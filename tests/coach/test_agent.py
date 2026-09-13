@@ -1,61 +1,20 @@
-"""Tests for the coach agent loop (mocked ToolUseBackend — no real LLM calls)."""
+"""Tests for the retained coach diagnosis tool surface (agent_tools).
+
+The Provider tool-use agent loop was removed (2026-09-13); what remains is the
+deterministic diagnosis payload and knowledge-registry fetch/enumeration path.
+"""
 from __future__ import annotations
 
 import json
 from dataclasses import replace
 from typing import Any
 
-from kovaak_tracker.coach.agent import (
-    run_agent_loop,
-    narrate_diagnosis,
-    narrate_progress,
-    narrate_plan,
-    DIAGNOSIS_SYSTEM_PROMPT,
-    DEFAULT_MAX_TURNS,
-)
-from kovaak_tracker.advice import Prescription
 from kovaak_tracker.coach import agent_tools
 from kovaak_tracker.coach.agent_tools import build_diagnosis_tools, diagnosis_payload
 from kovaak_tracker.coach.diagnosis import (
     CoachDiagnosis, DiagnosisIssue, ProfileMatch, RootCause,
 )
-from kovaak_tracker.coach.planning import PlanAdjustment, TrainingPlan
-from kovaak_tracker.coach.providers import ToolUseResponse
-
-
-# ---------------------------------------------------------------------------
-# Mock backend: scripted sequence of ToolUseResponse.
-# ---------------------------------------------------------------------------
-
-
-class _ScriptedBackend:
-    """Returns canned ToolUseResponse in order; raises if exhausted."""
-
-    def __init__(self, script: list[ToolUseResponse]) -> None:
-        self.script = list(script)
-        self.calls: list[dict[str, Any]] = []
-
-    def messages_create(self, *, system, messages, tools, max_tokens=2048):
-        self.calls.append({
-            "system": system, "messages": messages,
-            "tools": tools, "max_tokens": max_tokens,
-        })
-        if not self.script:
-            raise AssertionError("script exhausted — backend called too many times")
-        return self.script.pop(0)
-
-
-def _tool_call_resp(calls: list[dict[str, Any]], text: str = "") -> ToolUseResponse:
-    return ToolUseResponse(
-        content_text=text,
-        tool_calls=[{"id": c["id"], "name": c["name"], "arguments": c.get("arguments", {})}
-                    for c in calls],
-        stop_reason="tool_calls",
-    )
-
-
-def _end_resp(text: str, stop: str = "end_turn") -> ToolUseResponse:
-    return ToolUseResponse(content_text=text, tool_calls=[], stop_reason=stop)
+from kovaak_tracker.advice import Prescription
 
 
 def _diag() -> CoachDiagnosis:
@@ -165,52 +124,6 @@ def _assert_explanation_contract(payload: dict[str, Any]) -> None:
         assert forbidden not in serialized
 
 
-# ---------------------------------------------------------------------------
-# Test 1: 1 tool call → result fed back → end_turn with narration
-# ---------------------------------------------------------------------------
-
-
-def test_one_tool_call_then_end():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "t1", "name": "coach_get_meta"}]),
-        _end_resp("讲解：你的减速段抖动需要修。"),
-    ])
-    out = run_agent_loop(
-        backend, DIAGNOSIS_SYSTEM_PROMPT,
-        json.dumps({"profile": {}}, ensure_ascii=False), tools,
-        max_turns=4,
-    )
-    assert out["narration"] == "讲解：你的减速段抖动需要修。"
-    assert out["stop_reason"] == "end_turn"
-    assert len(out["trace"]) == 1
-    assert out["trace"][0]["tool"] == "coach_get_meta"
-    # 第二次调用收到的 messages 应含 tool_result block
-    second_messages = backend.calls[1]["messages"]
-    last_user = second_messages[-1]
-    assert last_user["role"] == "user"
-    tool_results = [b for b in last_user["content"] if b.get("type") == "tool_result"]
-    assert len(tool_results) == 1
-    assert tool_results[0]["tool_use_id"] == "t1"
-    # assistant 中间帧带 tool_use block（id 对应）
-    asst = second_messages[-2]
-    assert asst["role"] == "assistant"
-    asst_tool_uses = [b for b in asst["content"] if b.get("type") == "tool_use"]
-    assert len(asst_tool_uses) == 1
-    assert asst_tool_uses[0]["id"] == "t1"
-
-
-def test_narrate_diagnosis_payload_preserves_safe_explanation_contract():
-    backend = _ScriptedBackend([_end_resp("讲解完成。")])
-
-    out = narrate_diagnosis(_contract_diag(), backend, max_turns=1)
-
-    assert out == "讲解完成。"
-    payload = json.loads(backend.calls[0]["messages"][0]["content"])
-    _assert_explanation_contract(payload)
-
-
 def test_get_diagnosis_tool_preserves_safe_explanation_contract():
     tools = build_diagnosis_tools(_contract_diag())
 
@@ -271,26 +184,6 @@ def test_python_sink_filters_sensitive_explanation_fields_and_fails_closed():
         assert forbidden not in serialized
 
 
-def test_narrate_diagnosis_end_to_end_mock():
-    diag = _diag()
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "a", "name": "coach_fetch_knowledge",
-                          "arguments": {"signal": "sparc low"}}]),
-        _end_resp("你属于减速抖动型，建议练 pasu。"),
-    ])
-    out = narrate_diagnosis(diag, backend, max_turns=4)
-    assert out == "你属于减速抖动型，建议练 pasu。"
-    # fetch_knowledge 实际命中 knowledge.py 的真实数据
-    tool_result_content = backend.calls[1]["messages"][-1]["content"][0]["content"]
-    parsed = json.loads(tool_result_content)
-    assert parsed["signal"] == "sparc low"
-    assert parsed["registry_version"] == "2026-09-12.v12"
-    assert 1 <= len(parsed["entries"]) <= 3
-    assert parsed["community"] in parsed["cues"]
-    assert all(entry["entry_ref"].startswith("knowledge:") for entry in parsed["entries"])
-    assert all(entry["coaching_record"]["matched_retest"] for entry in parsed["entries"])
-
-
 def test_registry_payload_omits_forbidden_prescription_sections_for_low_capability_entry():
     from kovaak_tracker.coach.knowledge_registry import load_registry
 
@@ -309,193 +202,6 @@ def test_registry_payload_omits_forbidden_prescription_sections_for_low_capabili
     assert "matched_retest" not in record
     assert "near_transfer_retest" not in record
     assert "stop_adjust_rule" not in record
-
-
-# ---------------------------------------------------------------------------
-# Test 2: agent keeps calling tools → max_turns exceeded → degrades to None
-# ---------------------------------------------------------------------------
-
-
-def test_max_turns_exhaustion():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    # 后端永远要 tool，永远不 end_turn
-    script = [
-        _tool_call_resp([{"id": f"t{i}", "name": "coach_get_meta"}])
-        for i in range(DEFAULT_MAX_TURNS + 5)
-    ]
-    backend = _ScriptedBackend(script)
-    out = run_agent_loop(
-        backend, DIAGNOSIS_SYSTEM_PROMPT,
-        json.dumps({}), tools, max_turns=3,
-    )
-    assert out["narration"] is None
-    assert out["stop_reason"] == "max_turns_exceeded"
-    assert "did not converge" in out["error"]
-    # 只应被调 max_turns=3 次（不是 DEFAULT）
-    assert len(backend.calls) == 3
-
-
-def test_max_turns_hard_cap():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": f"t{i}", "name": "coach_get_meta"}])
-        for i in range(1000)
-    ])
-    out = run_agent_loop(
-        backend, "sys", "{}", tools, max_turns=10_000,  # 应被 cap 到 12
-    )
-    assert out["stop_reason"] == "max_turns_exceeded"
-    assert len(out["trace"]) == 12  # MAX_TURNS_HARD_CAP
-
-
-# ---------------------------------------------------------------------------
-# Test 3: unknown tool key → valid_keys 反馈给 LLM
-# ---------------------------------------------------------------------------
-
-
-def test_unknown_signal_returns_valid_keys():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "x", "name": "coach_fetch_knowledge",
-                          "arguments": {"signal": "nope nope"}}]),
-        _end_resp("ok 降级讲解。"),
-    ])
-    out = run_agent_loop(backend, "sys", "{}", tools, max_turns=4)
-    # tool 失败但 loop 继续——最终 narration 来自第二轮
-    assert out["narration"] == "ok 降级讲解。"
-    fed_back = backend.calls[1]["messages"][-1]["content"][0]["content"]
-    parsed = json.loads(fed_back)
-    assert parsed["error"] == "unknown signal"
-    assert "sparc low" in parsed["valid_signals"]
-
-
-def test_unknown_topic_returns_valid_topics():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "y", "name": "coach_fetch_kinematics",
-                          "arguments": {"topic": "made_up_topic"}}]),
-        _end_resp("讲解略过该理论。"),
-    ])
-    out = run_agent_loop(backend, "sys", "{}", tools, max_turns=4)
-    assert out["narration"] == "讲解略过该理论。"
-    fed_back = json.loads(backend.calls[1]["messages"][-1]["content"][0]["content"])
-    assert fed_back["error"] == "unknown topic"
-    assert fed_back["tool"] == "coach_fetch_kinematics"
-    assert "sparc" in fed_back["valid_topics"]  # 真实 KB 里的 key
-
-
-def test_unknown_tool_name_returns_valid_tools():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "z", "name": "coach_does_not_exist", "arguments": {}}]),
-        _end_resp("讲解。"),
-    ])
-    out = run_agent_loop(backend, "sys", "{}", tools, max_turns=4)
-    fed_back = json.loads(backend.calls[1]["messages"][-1]["content"][0]["content"])
-    assert fed_back["error"] == "unknown tool"
-    assert "coach_get_diagnosis" in fed_back["valid_tools"]
-
-
-# ---------------------------------------------------------------------------
-# Test 4: exception in backend → graceful None
-# ---------------------------------------------------------------------------
-
-
-class _BoomBackend:
-    def messages_create(self, *, system, messages, tools, max_tokens=2048):
-        raise RuntimeError("network down")
-
-
-def test_backend_exception_degrades_to_none():
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    out = run_agent_loop(_BoomBackend(), "sys", "{}", tools, max_turns=4)
-    assert out["narration"] is None
-    assert out["stop_reason"] == "exception"
-    assert "network down" in out["error"]
-
-
-# ---------------------------------------------------------------------------
-# Test 5: narrate_progress / narrate_plan with mock backend
-# ---------------------------------------------------------------------------
-
-
-def test_narrate_progress_mock():
-    trend = {"sparc": [("t1", -7.0), ("t2", -5.0)]}
-    comparison = [{"metric": "sparc", "current": -5.0, "baseline": -7.0,
-                   "verdict": "better"}]
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "p1", "name": "coach_get_trend"}]),
-        _end_resp("你的 SPARC 进步了，下阶段练 pasu。"),
-    ])
-    out = narrate_progress(trend, comparison, backend, max_turns=4)
-    assert out == "你的 SPARC 进步了，下阶段练 pasu。"
-
-
-def test_narrate_plan_mock():
-    plan = TrainingPlan(
-        focus_metrics=["sparc"],
-        adjustments=[PlanAdjustment(
-            kind="interleave", target_metric="sparc", scenarios=[],
-            reason="交错更好", evidence="§4.2",
-        )],
-        schedule_note="每周复测",
-        evidence_anchors=["§4.2"],
-        notes=[],
-    )
-    backend = _ScriptedBackend([
-        _tool_call_resp([{"id": "pl1", "name": "coach_get_plan"}]),
-        _end_resp("下阶段交错 pasu 和 multiclick。"),
-    ])
-    out = narrate_plan(plan, backend, max_turns=4)
-    assert out == "下阶段交错 pasu 和 multiclick。"
-
-
-# ---------------------------------------------------------------------------
-# Test 6: max_turns / max_tokens 丢弃半截 preamble(spec §8 regression)
-# ---------------------------------------------------------------------------
-
-
-def test_max_turns_exhaustion_with_partial_text():
-    """max_turns 耗尽时,即使模型产了半截 preamble("让我查一下..."),
-    narration 也应为 None——半截文本不能当成功讲解。
-
-    回归:修复前 last_text 被当 narration 返回,report.py 不触发降级,
-    用户看到前导词当最终讲解(违反 spec §8)。
-    """
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    script = [
-        _tool_call_resp(
-            [{"id": f"t{i}", "name": "coach_get_meta"}],
-            text=f"让我查一下第 {i+1} 个数据",
-        )
-        for i in range(DEFAULT_MAX_TURNS + 5)
-    ]
-    backend = _ScriptedBackend(script)
-    out = run_agent_loop(
-        backend, DIAGNOSIS_SYSTEM_PROMPT,
-        json.dumps({}), tools, max_turns=3,
-    )
-    assert out["narration"] is None
-    assert out["stop_reason"] == "max_turns_exceeded"
-
-
-def test_max_tokens_truncation_discards_narration():
-    """max_tokens 截断的文本可能不完整,narration 应为 None 触发降级。"""
-    diag = _diag()
-    tools = build_diagnosis_tools(diag)
-    backend = _ScriptedBackend([
-        _end_resp("这是一段被截断的半", stop="max_tokens"),
-    ])
-    out = run_agent_loop(backend, "sys", "{}", tools, max_turns=4)
-    assert out["narration"] is None
-    assert out["stop_reason"] == "max_tokens"
 
 
 def test_alias_mapped_pipeline_signals_resolve_through_fetch_knowledge():
@@ -532,3 +238,37 @@ def test_alias_mapped_pipeline_signals_resolve_through_fetch_knowledge():
         entry["entry_ref"] == "knowledge:research.speed-precision.fitts@1"
         for entry in throughput["entries"]
     )
+
+
+def test_signal_enumeration_excludes_prescription_entries(monkeypatch):
+    """Audit P2: signals advertised by list_signals / fetch_knowledge must match
+    what query_registry can actually return. prescription.* entries are never
+    returned, so their signals must not be advertised as known/valid either."""
+    from kovaak_tracker.coach.agent_tools import make_fetch_knowledge, make_list_signals
+
+    data = {
+        "signal_aliases": {},
+        "entries": [
+            {"entry_id": "research.normal", "status": "active",
+             "signals": ["shared signal"]},
+            {"entry_id": "prescription.p999.audit", "status": "active",
+             "signals": ["prescription only signal"]},
+            {"entry_id": "research.retired", "status": "retired",
+             "signals": ["retired signal"]},
+        ],
+    }
+    monkeypatch.setattr(agent_tools, "load_registry", lambda: data)
+    # The error path is reached before query_registry returns entries; stub it so
+    # the synthetic registry need not satisfy the full schema validation.
+    monkeypatch.setattr(agent_tools, "query_registry", lambda *args, **kwargs: [])
+
+    known = make_list_signals(_diag())()["knowledge_known_signals"]
+    assert "shared signal" in known
+    assert "prescription only signal" not in known
+    assert "retired signal" not in known
+
+    result = make_fetch_knowledge()("garbage")
+    assert result["error"] == "unknown signal"
+    assert "shared signal" in result["valid_signals"]
+    assert "prescription only signal" not in result["valid_signals"]
+    assert "retired signal" not in result["valid_signals"]

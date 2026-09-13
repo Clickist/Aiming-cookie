@@ -1,9 +1,8 @@
-"""AI aim coach: single-shot coaching output (diagnosis -> viz -> narration).
+"""AI aim coach: single-shot coaching output (diagnosis -> viz).
 
 ``build_report`` 采用惰性导入——它依赖 numpy/plotly 等重库（经 visualization）；
-纯逻辑子模块（advice / diagnosis / knowledge）不应因此被拖累，须能
-在不安装重依赖时独立导入与测试。这与 providers.py 把 anthropic/openai 放进
-``__init__`` 惰性导入是同一模式。
+纯逻辑子模块（advice / diagnosis / knowledge_registry）不应因此被拖累，须能
+在不安装重依赖时独立导入与测试。
 
 要拿 build_report：``from kovaak_tracker.coach import build_report``（首次访问触发
 import）或直接 ``from kovaak_tracker.coach.report import build_report``。

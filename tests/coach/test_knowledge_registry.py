@@ -318,17 +318,6 @@ def test_verification_entries_define_retest_and_insufficient_evidence_behavior()
     assert "证据不足" in text
 
 
-def test_legacy_python_knowledge_modules_are_registry_backed():
-    from kovaak_tracker.coach.agent_kb import BY_TOPIC, KB
-
-    loaded = registry.load_registry(registry_version="2026-07-14.v1")
-    active = [entry for entry in loaded["entries"] if entry["status"] == "active"]
-    assert len(KB) == len(active)
-    assert all(chunk["entry_ref"].startswith("knowledge:") for chunk in KB)
-    assert "sparc" in BY_TOPIC
-    assert BY_TOPIC["sparc"][0]["source_ref"]
-
-
 def test_legacy_signal_fetch_returns_versioned_registry_entries():
     from kovaak_tracker.coach.agent_tools import make_fetch_knowledge
 
@@ -344,16 +333,6 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
         len(item["section_refs"]) == len(item["claim_refs"])
         for item in result["entries"]
     )
-
-
-def test_legacy_source_specific_fetch_is_registry_backed_and_bounded():
-    from kovaak_tracker.coach.agent_tools import make_fetch_kinematics
-
-    result = make_fetch_kinematics()("sparc")
-    assert result["topic"] == "sparc"
-    assert result["entry_ref"].startswith("knowledge:")
-    assert result["entry_version"] == 1
-    assert result["limitations"]
 
 
 def test_v4_is_active_while_v1_historical_registry_resolves_exactly():

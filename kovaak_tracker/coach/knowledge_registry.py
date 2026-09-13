@@ -57,6 +57,9 @@ MAX_REGISTRY_BYTES = 1024 * 1024
 MAX_ENTRIES = 512
 # Corpus prescription entry namespace; see query_registry for why it is skipped.
 _PRESCRIPTION_ENTRY_PREFIX = "prescription."
+# Public alias: tool-side signal enumeration must apply the same exclusion so the
+# keys it advertises match what query_registry can actually return.
+PRESCRIPTION_ENTRY_PREFIX = _PRESCRIPTION_ENTRY_PREFIX
 MAX_TEXT_LENGTH = 4_000
 MAX_LIST_LENGTH = 64
 MAX_DEPTH = 8
@@ -967,5 +970,5 @@ __all__ = [
     "REGISTRY_PATH_V11", "REGISTRY_PATH_V12", "REGISTRY_SCHEMA_VERSION",
     "REGISTRY_SCHEMA_VERSION_V1", "REGISTRY_SCHEMA_VERSION_V2", "REGISTRY_SCHEMA_VERSION_V3",
     "MAX_RESULTS", "claim_ref", "entry_ref", "load_registry", "query_registry",
-    "resolve_entry", "validate_registry",
+    "resolve_entry", "validate_registry", "PRESCRIPTION_ENTRY_PREFIX",
 ]
