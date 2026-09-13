@@ -130,7 +130,7 @@ npm.cmd --prefix webapp\frontend run tauri -- dev --no-watch --config $smokeConf
 
 该命令会把 Tauri app data、Raw Input 和 managed media 根目录隔离到 smoke identifier 下；结束后先正常关闭桌面窗口，确认 Python sidecar 与随机 loopback 端口同时退出。
 
-Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程；当前状态与阻塞以 `PROGRESS.md` 为准。
+Desktop 的打包与自动更新链路已经 v0.1.10–v1.0.1 七个版本实测走通（installer + updater 三件套 + 落地页切换）；代码签名（Authenticode）尚未启用，内测期可接受；流程细节与当前状态以 `PROGRESS.md` 为准。
 
 ### 真实 Tauri E2E
 

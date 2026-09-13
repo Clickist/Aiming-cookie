@@ -61,7 +61,7 @@
 | 1 | 公平指标 | decel_frac / SPARC / linearity / throughput / reverse_ratio / path_efficiency 等（学术锚点：Balasubramanian 2012 / Fitts / Novak 2002） |
 | 2 | 三层候选诊断 | 观察 → 候选机制/替代解释 → 处方（规则引擎 `advice.py` / `advice_tracking.py`）；不把未测因果升级为事实 |
 | 3 | AI 教练对话 | 可调用应用能力的常驻 Coach；能查询整局完整动作级 processed data、寻找规律与反例并形成最终教学解释，而不是确定性报告的转述层 |
-| 4 | 长期进步追踪 | 趋势 + ④ 渐进式训练计划（`progress.py` / `planning.py`） |
+| 4 | 长期进步追踪 | 趋势 + ④ 渐进式训练计划（现由 coach-runtime 的 teaching/plan 产品命令承载） |
 | 5 | 可配置 LLM Coach | 当前产品不设付费墙；用户在 Settings 中选择并连接可用 LLM provider（自带 Key，或可选开通官方托管套餐），Coach 与确定性诊断属于同一产品闭环 |
 | 6 | 常驻教练降学习成本 | provider 可用时 coach agent 可随时进入并调用当前用户拥有的产品能力；用户少记「该点哪个菜单」，多靠对话完成回访、分析与计划 |
 | 7 | 输入原生而非视频依赖 | Raw Input + KovaaK Performance / Stats 直接生成输入运动学；MP4 主要用于直观回放、问题定位和视觉证据，不是基础运动学的主事实源 |
