@@ -121,3 +121,24 @@ test("Coach discussion bar mounts only topic refs, never deep-read refs", async 
   assert.doesNotMatch(barChunk, /deep_read/i);
   assert.doesNotMatch(barChunk, /defaultAnalysisRef/);
 });
+
+test("Coach terminal settle guards on the session key, not effect-cleanup cancelled", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  // 回归（v1.0.1）：终态 setRun 会让 SSE effect cleanup 把闭包 cancelled 置真，
+  // 若两条终态路径在 refresh await 之后以 cancelled 判活，settleSucceeded 永不
+  // 执行——落库回复与流式残影同屏双份、归档不写盘。守卫必须以会话键是否变化
+  // 为准：正常收敛键不变照常 settle，用户真切走会话（键变化）才放弃。
+  const guards =
+    panel.match(
+      /await Promise\.all\(\[refresh\(\), refreshCurrentTraining\(\)\]\);[\s\S]*?if \(activeSessionKeyRef\.current !== settleKey\) return;[\s\S]*?if \(next\.status === "succeeded"\) settleSucceeded\(next\);/g,
+    ) ?? [];
+  assert.equal(guards.length, 2, "finalize 与轮询两条终态路径都以会话键守卫 settle");
+  // 回归本体：await 之后、settle 之前不得再出现 cancelled 早退。
+  assert.doesNotMatch(
+    panel,
+    /if \(cancelled\) return;\s*\n\s*if \(next\.status === "succeeded"\) settleSucceeded\(next\);/,
+  );
+  // settleKey 在各自 fetchRun 之前捕获（首条 draft→session 落地场景捕获即新键）。
+  const captures = panel.match(/const settleKey = activeSessionKeyRef\.current;/g) ?? [];
+  assert.equal(captures.length, 2, "两条终态路径各在 await 前捕获一次 settleKey");
+});

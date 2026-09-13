@@ -1285,6 +1285,11 @@ export function CoachPanel({
       error instanceof Error && error.name === "ApiError_404";
 
     const finalizeRun = async () => {
+      // 收敛目标会话键：await 期间不能再用 cancelled 判活——终态 setRun 会让
+      // 本 effect cleanup（liveRunRef 变 null）把 cancelled 置真，若据此跳过
+      // settle，成功回合的归档/残影清除/落库接管就全部失效（回复双份回归）。
+      // 只有会话键真正变化（用户切走）才需要放弃写入，避免污染新会话。
+      const settleKey = activeSessionKeyRef.current;
       try {
         const next = await fetchRun();
         if (cancelled) return;
@@ -1295,9 +1300,10 @@ export function CoachPanel({
           window.dispatchEvent(new CustomEvent(COACH_SESSION_UPDATED_EVENT));
         }
         await Promise.all([refresh(), refreshCurrentTraining()]);
-        // 刷新期间用户可能已切走会话（effect cleanup 置 cancelled=true）：
-        // 此时 settleSucceeded 会用新会话键归档并清掉新会话的活跃流，必须复查。
-        if (cancelled) return;
+        // 刷新期间用户可能已切走会话：此时 settleSucceeded 会用新会话键归档并
+        // 清掉新会话的活跃流，必须复查。但 cleanup 因终态 setRun 触发的
+        // cancelled=true 不代表切会话，故以会话键是否变化为准。
+        if (activeSessionKeyRef.current !== settleKey) return;
         if (next.status === "succeeded") settleSucceeded(next);
       } catch (error) {
         if (cancelled) return;
@@ -1321,6 +1327,9 @@ export function CoachPanel({
       clearPollTimer();
       const delay = Math.min(POLL_BASE_INTERVAL_MS * 2 ** pollFailures, POLL_MAX_INTERVAL_MS);
       pollTimer = setTimeout(async () => {
+        // 同 finalizeRun：await 期间用会话键而非 cancelled 判活（终态 setRun
+        // 触发的 cleanup 会置 cancelled=true，但那不是切会话）。
+        const settleKey = activeSessionKeyRef.current;
         try {
           const next = await fetchRun();
           if (cancelled) return;
@@ -1331,8 +1340,9 @@ export function CoachPanel({
           } else {
             window.dispatchEvent(new CustomEvent(COACH_SESSION_UPDATED_EVENT));
             await Promise.all([refresh(), refreshCurrentTraining()]);
-            // 同 finalizeRun：await 后复查 cancelled，避免切会话后把归档写到新会话键。
-            if (cancelled) return;
+            // 同 finalizeRun：以会话键是否变化判断是否切会话，避免切会话后把
+            // 归档写到新会话键；cleanup 触发的 cancelled 不阻止本会话 settle。
+            if (activeSessionKeyRef.current !== settleKey) return;
             if (next.status === "succeeded") settleSucceeded(next);
           }
         } catch (error) {
