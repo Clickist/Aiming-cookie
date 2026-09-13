@@ -22,7 +22,9 @@ import {
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
 import { handleProviderProfileRequest } from "./provider-profiles.ts";
-import { readSessionStats } from "./session-repo.ts";
+import { readSessionStats, readSessionMessages } from "./session-repo.ts";
+import { ensureIntroSession, readIntroSessionFlag } from "./intro-session.ts";
+import { INTRO_KICKOFF_PROMPT } from "./intro-kickoff.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
@@ -39,6 +41,7 @@ import {
   stopAgentRun,
   retryAgentRun,
   decideConfirmation,
+  hasActiveAgentRunForSession,
   resumeWaitingRuns,
   subscribeAgentRun,
 } from "./agent-runs.ts";
@@ -47,6 +50,27 @@ export const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 export const DEFAULT_SIDECAR_PORT = 8765;
 
 const defaultAuthOperations = new ProviderAuthOperationManager();
+
+// 开场分析首条消息的自动开讲：最贴近现有「分析完成自动开讲」的机制——
+// 由 sidecar 合成一条内部 kickoff 指令创建一次 Agent run（该指令在 UI 读取
+// 时被过滤，用户不会看到假 user 消息）。并发/重复 POST 由 in-flight 守卫 +
+// agent-runs 的活跃 run 检查双重去重；会话已有消息则视为开讲已完成。
+let introKickoffInFlight: Promise<string | null> | null = null;
+
+function ensureIntroKickoffRun(ownerId: string, sessionId: number): Promise<string | null> {
+  if (introKickoffInFlight) return introKickoffInFlight;
+  introKickoffInFlight = (async () => {
+    if (hasActiveAgentRunForSession(sessionId)) return null;
+    const messages = await readSessionMessages(sessionId);
+    if (messages.length > 0) return null;
+    const run = createAgentRun(ownerId, INTRO_KICKOFF_PROMPT, { sessionId });
+    return run.run_ref;
+  })().finally(() => {
+    // 守卫只覆盖单次创建调用；完成后清空让后续（如 sidecar 重启后）可恢复。
+    introKickoffInFlight = null;
+  });
+  return introKickoffInFlight;
+}
 
 function readRequestBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -674,6 +698,34 @@ export async function handleSidecarRequest(
     } catch (error) {
       writeCoachDataError(res, error);
     }
+    return;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Intro Session routes (one-time 开场分析)
+  // ---------------------------------------------------------------------------
+
+  // 幂等创建：首次调用建会话并持久化 flag，随后自动发出首条 Coach 消息；
+  // 之后每次调用都返回同一个 session_id，不再新建、不再重发首条。
+  if (req.method === "POST" && url.pathname === "/coach/intro-session") {
+    try {
+      const ownerId = ownerIdFromRequest(req);
+      const ensured = await ensureIntroSession();
+      const runRef = await ensureIntroKickoffRun(ownerId, ensured.session_id);
+      writeJson(res, 200, {
+        session_id: ensured.session_id,
+        created: ensured.created,
+        run_ref: runRef,
+      });
+    } catch (error) {
+      writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/coach/intro-session") {
+    const flag = readIntroSessionFlag();
+    writeJson(res, 200, { created: flag.created, session_id: flag.session_id });
     return;
   }
 

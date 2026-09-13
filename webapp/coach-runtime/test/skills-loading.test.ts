@@ -33,7 +33,7 @@ test("Coach skills load from the bundled skills directory on Windows paths", asy
   for (const expected of [
     "teaching", "kovaak-data-reference", "peripheral-reference",
     "ergonomics-check", "sensitivity-fitting", "recovery-descale",
-    "plan-builder", "self-review",
+    "plan-builder", "self-review", "intro-session",
   ]) {
     assert.ok(
       names.includes(expected),
