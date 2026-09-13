@@ -1132,9 +1132,11 @@ export async function createCoachSession(
 // ── 开场分析（Intro Session，PRD §6.1.1）────────────────────────────────
 //
 // sidecar 契约（coach-runtime 并行实现中，尚未进入后端 OpenAPI，故此处手写
-// 局部类型）：GET /coach/intro-session → 首启创建状态；POST 幂等创建/取回会话，
-// 同时由 sidecar 发出首条开场消息（kickoff run）。前端只触发与呈现，标题与
-// 内容全部由 sidecar 决定。契约稳定后并入 types.ts。
+// 局部类型）：GET /coach/intro-session → 首启创建状态 + has_messages（会话是否已
+// 有可见消息，used 于 Provider 恢复后补跑开场分析的空白自愈）；POST 幂等创建/取回
+// 会话，Provider 可用且会话空白时由 sidecar 发出首条开场消息（kickoff run），并回
+// provider_ready/run_ref。前端只触发与呈现，标题由 sidecar 定，前端不传。
+// 契约稳定后并入 types.ts。
 // 类型定义在 lib/intro-session.ts（触发逻辑与 api 客户端共用同一来源）。
 
 /** 查询首启「开场分析」是否已创建；只读，供挂载时的触发守卫判断。 */

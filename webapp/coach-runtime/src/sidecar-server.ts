@@ -22,6 +22,7 @@ import {
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
 import { handleProviderProfileRequest } from "./provider-profiles.ts";
+import { loadProfile } from "./provider-store.ts";
 import { readSessionStats, readSessionMessages } from "./session-repo.ts";
 import { ensureIntroSession, readIntroSessionFlag } from "./intro-session.ts";
 import { INTRO_KICKOFF_PROMPT } from "./intro-kickoff.ts";
@@ -55,16 +56,35 @@ const defaultAuthOperations = new ProviderAuthOperationManager();
 // 由 sidecar 合成一条内部 kickoff 指令创建一次 Agent run（该指令在 UI 读取
 // 时被过滤，用户不会看到假 user 消息）。并发/重复 POST 由 in-flight 守卫 +
 // agent-runs 的活跃 run 检查双重去重；会话已有消息则视为开讲已完成。
-let introKickoffInFlight: Promise<string | null> | null = null;
+//
+// 发 kickoff 前必须先确认「当前档凭据此刻真的解析得出来」：runAgentTurn 只检查
+// 档存在，凭据缺失时会静默挂起为 provider_waiting，等应用重启后内存 run 丢失，
+// 一次性 flag 已置位就会让开场分析永远空白。凭据判定复用 provider-profile 的
+// 状态投影（getProviderProfileStatus → Models.getAuth），与设置页「可用」同语义。
+let introKickoffInFlight: Promise<{ runRef: string | null; providerReady: boolean }> | null = null;
 
-function ensureIntroKickoffRun(ownerId: string, sessionId: number): Promise<string | null> {
+async function isActiveProviderReady(): Promise<boolean> {
+  const profile = loadProfile();
+  if (!profile) return false;
+  const status = await getProviderProfileStatus(profile);
+  return status.status === "ready";
+}
+
+function ensureIntroKickoffRun(
+  ownerId: string,
+  sessionId: number,
+): Promise<{ runRef: string | null; providerReady: boolean }> {
   if (introKickoffInFlight) return introKickoffInFlight;
   introKickoffInFlight = (async () => {
-    if (hasActiveAgentRunForSession(sessionId)) return null;
+    // 凭据此刻不可用：不创建 run（否则只会挂起 provider_waiting 后随重启丢失），
+    // 交由前端在下次挂载复查时凭 provider_ready=false 重试（自愈）。
+    const providerReady = await isActiveProviderReady();
+    if (!providerReady) return { runRef: null, providerReady: false };
+    if (hasActiveAgentRunForSession(sessionId)) return { runRef: null, providerReady };
     const messages = await readSessionMessages(sessionId);
-    if (messages.length > 0) return null;
+    if (messages.length > 0) return { runRef: null, providerReady };
     const run = createAgentRun(ownerId, INTRO_KICKOFF_PROMPT, { sessionId });
-    return run.run_ref;
+    return { runRef: run.run_ref, providerReady };
   })().finally(() => {
     // 守卫只覆盖单次创建调用；完成后清空让后续（如 sidecar 重启后）可恢复。
     introKickoffInFlight = null;
@@ -707,15 +727,18 @@ export async function handleSidecarRequest(
 
   // 幂等创建：首次调用建会话并持久化 flag，随后自动发出首条 Coach 消息；
   // 之后每次调用都返回同一个 session_id，不再新建、不再重发首条。
+  // 当前档凭据不可用时只建会话、不建 kickoff run（run_ref=null、
+  // provider_ready=false），前端下次挂载复查时再 POST 补发。
   if (req.method === "POST" && url.pathname === "/coach/intro-session") {
     try {
       const ownerId = ownerIdFromRequest(req);
       const ensured = await ensureIntroSession();
-      const runRef = await ensureIntroKickoffRun(ownerId, ensured.session_id);
+      const kickoff = await ensureIntroKickoffRun(ownerId, ensured.session_id);
       writeJson(res, 200, {
         session_id: ensured.session_id,
         created: ensured.created,
-        run_ref: runRef,
+        run_ref: kickoff.runRef,
+        provider_ready: kickoff.providerReady,
       });
     } catch (error) {
       writeCoachDataError(res, error);
@@ -725,7 +748,17 @@ export async function handleSidecarRequest(
 
   if (req.method === "GET" && url.pathname === "/coach/intro-session") {
     const flag = readIntroSessionFlag();
-    writeJson(res, 200, { created: flag.created, session_id: flag.session_id });
+    // has_messages=false → 开场分析尚未开讲（含 flag 已置但被凭据闸门拦下的
+    // 受害现场），前端据此在 Provider 恢复后补发一次幂等 POST（自愈）。
+    // 判空口径与 kickoff 守卫一致：readSessionMessages 已过滤内部 kickoff 指令。
+    const hasMessages = flag.created && flag.session_id !== null
+      ? (await readSessionMessages(flag.session_id)).length > 0
+      : false;
+    writeJson(res, 200, {
+      created: flag.created,
+      session_id: flag.session_id,
+      has_messages: hasMessages,
+    });
     return;
   }
 
