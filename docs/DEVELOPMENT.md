@@ -132,6 +132,14 @@ npm.cmd --prefix webapp\frontend run tauri -- dev --no-watch --config $smokeConf
 
 Desktop 的打包与自动更新链路已经 v0.1.10–v1.0.1 七个版本实测走通（installer + updater 三件套 + 落地页切换）；代码签名（Authenticode）尚未启用，内测期可接受；流程细节与当前状态以 `PROGRESS.md` 为准。
 
+#### 打包环境分歧三条铁律（2026-09-13 实战沉淀）
+
+开发模式全绿 ≠ 打包版可用。sidecar/前端在打包后的运行环境与仓库差异已实锤过三类故障，改动时按此自检：
+
+1. **bun 打包后 `import.meta` 相对路径失效**：sidecar 编译成单 exe 后，代码位于虚拟文件系统，`import.meta.url` 推出的"仓库根"不存在。凡是 native 命令要读磁盘数据文件（`knowledge/`、`artifacts/` 等），必须经 `AIMING_COOKIE_RESOURCE_ROOT` 环境变量解析（`lib.rs` spawn 时注入；惯例见 `knowledge-registry.ts`、`kovaak-scores-native.ts`、`eloshapes-native.ts`），仓库相对路径只作开发兜底。新增数据文件时必须同步加进 `scripts/build-windows-runtime.ps1` 的拷贝清单，否则打包版读不到。
+2. **tauri 增量打包可能不重嵌前端资产**：只改前端时，build 指纹可能不触发，exe 里烧的是上一轮 `out/`。重打包前先删 `webapp/frontend/src-tauri/target/release/build/aiming-cookie-desktop-*` 强制重嵌。改 Python 后端（`webapp/backend/**`）则必须先跑 `scripts/build-windows-runtime.ps1` 重建 runtime 并镜像到 `src-tauri/target/release/runtime/`，再打 exe。
+3. **排查"代码没生效"先验包再疑码**：Turbopack chunk 名不是内容哈希（同名不同内容），WebView2 又与已装版共享数据目录缓存。在活页面里 `fetch` 它自己加载的 chunk 对字节数/搜标记串，能一锤定音是旧包、旧缓存还是真 bug。
+
 ### 真实 Tauri E2E
 
 真实 Tauri E2E 由 `scripts\run-tauri-e2e.ps1` 统一启动。该脚本会：
