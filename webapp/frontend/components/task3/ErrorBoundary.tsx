@@ -2,6 +2,7 @@
 
 import { Component, type ReactNode } from "react";
 
+import { logFrontendError } from "@/lib/frontend-log";
 import { Button, ErrorState } from "@/ui/primitives";
 
 type ErrorBoundaryProps = {
@@ -26,8 +27,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error): void {
-    // 保留错误与栈，方便用户截图报障。
+    // 保留错误与栈，方便用户截图报障；同时写入前端错误通道供诊断包收。
     console.error(error);
+    logFrontendError("error-boundary", error.stack || `${error.name}: ${error.message}`);
   }
 
   private readonly retry = () => {
