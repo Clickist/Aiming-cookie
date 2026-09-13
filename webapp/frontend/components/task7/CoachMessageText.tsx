@@ -115,6 +115,12 @@ function renderNode(node: RichNode, ctx: TimeLinkCtx, key: string, tail?: ReactN
         </Tag>
       );
     }
+    case "blockquote":
+      return (
+        <blockquote className="task7-rich-quote" key={key}>
+          {node.children.map((child, index) => renderNode(child, ctx, `${key}-q${index}`))}
+        </blockquote>
+      );
     case "table": {
       // 表格流中不挂尾：光标插进表结构会破坏滚动容器语义。
       const numericAttr = (column: number): { "data-num"?: "true" } =>
