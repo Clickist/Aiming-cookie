@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { executeNativeKovaakLeaderboard } from "../src/kovaak-leaderboard-native.ts";
+import {
+  executeNativeKovaakLeaderboard,
+  searchScenarios,
+} from "../src/kovaak-leaderboard-native.ts";
 
 // ── Fixtures ───────────────────────────────────────────────────────────
 
@@ -39,6 +42,35 @@ function popularPayload(): Record<string, unknown> {
         scenarioName: "Smoothsphere Viscose",
         scenario: { aimType: "Tracking" },
       },
+    ],
+  };
+}
+
+/** `/scenario/popular` rows with the counts/topScore metadata search exposes. */
+function catalogPayload(): Record<string, unknown> {
+  return {
+    page: 0,
+    max: 10,
+    total: 1202,
+    data: [
+      {
+        rank: 1,
+        leaderboardId: 2,
+        scenarioName: "1wall 6targets small",
+        scenario: { aimType: null, description: "Precision on tiny targets" },
+        counts: { plays: 72_963_049, entries: 1_280_269 },
+        topScore: { score: 1960 },
+      },
+      {
+        rank: 2,
+        leaderboardId: 10420,
+        scenarioName: "1wall6targets TE",
+        scenario: { aimType: "Clicking" },
+        counts: { plays: 23_442_000, entries: 823_578 },
+        topScore: { score: 289 },
+      },
+      // A row missing leaderboardId must be dropped, not surfaced as a scenario.
+      { rank: 3, scenarioName: "broken row", scenario: {} },
     ],
   };
 }
@@ -93,7 +125,9 @@ function stubFetch(handlers: RouteHandlers): string[] {
       return json(handlers.details?.() ?? { scenarioName: "Smoothsphere Viscose Easier", aimType: "Tracking" });
     }
     if (url.pathname.endsWith("/scenario/popular")) {
-      return json(handlers.popular?.() ?? popularPayload());
+      const out = handlers.popular?.() ?? popularPayload();
+      if (out instanceof Response) return out;
+      return json(out);
     }
     if (url.pathname.endsWith("/leaderboard/global/search/account-names")) {
       return json(handlers.accountNames?.() ?? []);
@@ -427,4 +461,89 @@ test("every upstream leaderboard request carries a browser User-Agent", async ()
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// ── scenario.search (searchScenarios) ──────────────────────────────────
+
+test("scenario.search returns the official catalog with play counts and top score", async () => {
+  await withStubbedFetch({ popular: () => catalogPayload() }, async (calls) => {
+    const scenarios = await searchScenarios("1wall", 10);
+    assert.deepEqual(scenarios, [
+      {
+        scenario_name: "1wall 6targets small",
+        leaderboard_id: 2,
+        aim_type: null,
+        plays: 72_963_049,
+        entries: 1_280_269,
+        top_score: 1960,
+      },
+      {
+        scenario_name: "1wall6targets TE",
+        leaderboard_id: 10420,
+        aim_type: "Clicking",
+        plays: 23_442_000,
+        entries: 823_578,
+        top_score: 289,
+      },
+    ]);
+    const popularCall = calls.find((call) => call.includes("/scenario/popular"));
+    assert.ok(popularCall, "scenario/popular must be called for the official search");
+    // The fuzzy term and the caller's limit are forwarded verbatim.
+    assert.ok(popularCall.includes("scenarioNameSearch=1wall"));
+    assert.ok(popularCall.includes("max=10"));
+  });
+});
+
+test("scenario.search returns an empty list when nothing matches", async () => {
+  await withStubbedFetch(
+    { popular: () => ({ page: 0, max: 10, total: 0, data: [] }) },
+    async () => {
+      const scenarios = await searchScenarios("no such scenario", 10);
+      assert.deepEqual(scenarios, []);
+    },
+  );
+});
+
+test("scenario.search rejects malformed rows instead of surfacing them", async () => {
+  await withStubbedFetch(
+    {
+      popular: () => ({
+        page: 0,
+        max: 10,
+        total: 3,
+        data: [
+          { leaderboardId: 7, scenarioName: "ok", counts: { plays: -1, entries: "x" }, topScore: { score: "y" } },
+          { leaderboardId: 0, scenarioName: "bad id", scenario: {} },
+          { leaderboardId: 8, scenarioName: "", scenario: {} },
+        ],
+      }),
+    },
+    async () => {
+      const scenarios = await searchScenarios("q", 10);
+      assert.equal(scenarios.length, 1);
+      assert.equal(scenarios[0].leaderboard_id, 7);
+      // Non-numeric metadata degrades to null rather than a bogus value.
+      assert.equal(scenarios[0].plays, null);
+      assert.equal(scenarios[0].entries, null);
+      assert.equal(scenarios[0].top_score, null);
+    },
+  );
+});
+
+test("scenario.search surfaces a transport failure as a thrown error", async () => {
+  await withStubbedFetch(
+    { popular: () => new Response("upstream down", { status: 503 }) },
+    async () => {
+      await assert.rejects(searchScenarios("1wall", 10), /HTTP 503/);
+    },
+  );
+});
+
+test("scenario.search surfaces a 200 error envelope as a thrown error", async () => {
+  await withStubbedFetch(
+    { popular: () => new Response(JSON.stringify({ error: "boom" }), { status: 200 }) },
+    async () => {
+      await assert.rejects(searchScenarios("1wall", 10), /upstream error: boom/);
+    },
+  );
 });

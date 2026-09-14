@@ -9,8 +9,17 @@
  *                Coach only emits a coach_ui_event; the frontend performs the
  *                actual open so install/availability messaging stays in one
  *                place.
+ * scenario.search — fuzzy search of the official KovaaKs scenario library
+ *                (name → leaderboardId / playcount), backed by
+ *                kovaak-leaderboard-native's searchScenarios. Lets the Coach
+ *                recommend official scenarios that are not installed locally.
  */
 import { getPythonBackendConfig } from "./python-backend.ts";
+import {
+  SCENARIO_SEARCH_DEFAULT_LIMIT,
+  SCENARIO_SEARCH_MAX_LIMIT,
+  searchScenarios,
+} from "./kovaak-leaderboard-native.ts";
 
 type AnyDict = Record<string, any>;
 
@@ -23,9 +32,10 @@ export type NativeScenarioResult = {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_SCENARIO_NAME_CHARS = 200;
+const MAX_SCENARIO_QUERY_CHARS = 200;
 
 export function isNativeScenarioCommand(commandName: string): boolean {
-  return commandName === "scenario.open" || commandName === "scenario.list";
+  return commandName === "scenario.open" || commandName === "scenario.list" || commandName === "scenario.search";
 }
 
 async function listLocalScenarios(): Promise<NativeScenarioResult> {
@@ -100,6 +110,68 @@ function openScenario(params: AnyDict): NativeScenarioResult {
   return { status: "succeeded", result_ref: `scenario:${trimmed}`, result: event };
 }
 
+async function searchOfficialScenarios(params: AnyDict): Promise<NativeScenarioResult> {
+  const unknown = Object.keys(params).filter((key) => key !== "query" && key !== "limit");
+  if (unknown.length) {
+    return {
+      status: "failed",
+      warning_or_error: {
+        code: "invalid_parameters",
+        message: `scenario.search does not accept ${unknown.map((key) => `"${key}"`).join(", ")}; allowed fields: query, limit`,
+      },
+    };
+  }
+  const query = params.query;
+  if (typeof query !== "string" || query.trim().length === 0) {
+    return {
+      status: "failed",
+      warning_or_error: { code: "invalid_parameters", message: "scenario.search requires a non-empty query" },
+    };
+  }
+  const trimmed = query.trim();
+  if (trimmed.length > MAX_SCENARIO_QUERY_CHARS) {
+    return {
+      status: "failed",
+      warning_or_error: { code: "invalid_parameters", message: "query is too long" },
+    };
+  }
+  const limitParam = params.limit;
+  let limit = SCENARIO_SEARCH_DEFAULT_LIMIT;
+  if (limitParam !== undefined && limitParam !== null) {
+    if (typeof limitParam !== "number" || !Number.isInteger(limitParam) || limitParam <= 0) {
+      return {
+        status: "failed",
+        warning_or_error: { code: "invalid_parameters", message: "limit must be a positive integer" },
+      };
+    }
+    limit = Math.min(limitParam, SCENARIO_SEARCH_MAX_LIMIT);
+  }
+
+  let scenarios;
+  try {
+    scenarios = await searchScenarios(trimmed, limit);
+  } catch (error) {
+    return {
+      status: "unavailable",
+      warning_or_error: {
+        code: "scenario_search_unavailable",
+        message: `官方场景库暂时不可用（${String(error).slice(0, 80)}）`,
+      },
+    };
+  }
+  return {
+    status: "succeeded",
+    result_ref: "kovaak_scenarios:official",
+    result: {
+      schema_version: "kovaak_scenario_search.v1",
+      query: trimmed,
+      limit,
+      count: scenarios.length,
+      scenarios,
+    },
+  };
+}
+
 export async function executeNativeScenario(
   commandName: string,
   params: AnyDict,
@@ -109,6 +181,9 @@ export async function executeNativeScenario(
   }
   if (commandName === "scenario.open") {
     return openScenario(params);
+  }
+  if (commandName === "scenario.search") {
+    return searchOfficialScenarios(params);
   }
   return {
     status: "failed",

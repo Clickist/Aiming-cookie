@@ -345,6 +345,42 @@ test("KovaaK leaderboard lookup is registered and validated as a product command
   }
 });
 
+test("scenario.search is registered and validated as a product command", async () => {
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("scenario.search"));
+
+  const tool = createProductCommandTool(null);
+  // Reaching the native command (not a param rejection) proves the dispatch
+  // branch is wired; with the upstream stubbed to fail it reports unavailable.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("upstream down", { status: 503 })) as typeof fetch;
+  try {
+    const result = await tool.execute("scenario-search", {
+      command_name: "scenario.search",
+      parameters: { query: "1wall" },
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    assert.equal(parsed.audit_ref, "native");
+    assert.equal(parsed.status, "unavailable");
+    assert.equal((parsed.warning_or_error as { code: string }).code, "scenario_search_unavailable");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  for (const parameters of [
+    {},
+    { q: "1wall" },
+    { query: "" },
+    { query: "1wall", limit: 0 },
+    { query: "1wall", extra: true },
+  ]) {
+    await assert.rejects(
+      tool.execute("scenario-search-rejected", { command_name: "scenario.search", parameters }),
+      /unsupported fields/,
+      JSON.stringify(parameters),
+    );
+  }
+});
+
 test("guided teaching facts are registered as native write commands", async () => {
   writePlanFixture("plan:1", { status: "active" });
 

@@ -5,6 +5,11 @@
  * stand" with the official global rank and a percentile, instead of only the
  * player's own Viscose S2 stage (which kovaak_scores.* covers).
  *
+ * This module also exports `searchScenarios` (backing the `scenario.search`
+ * product command): a fuzzy search of the official scenario library through
+ * the same /scenario/popular endpoint, so the Coach can recommend scenarios
+ * that are not installed locally.
+ *
  * The public kovaaks.com/webapp-backend endpoints (no login) are:
  *   GET /scenario/details?leaderboardId=   → scenario name + aim type
  *   GET /scenario/popular?...scenarioNameSearch= → name → leaderboardId
@@ -124,42 +129,102 @@ async function fetchScenarioDetails(
   return { scenarioName, aimType };
 }
 
-type ResolvedScenario = { leaderboardId: number; scenarioName: string; aimType: string | null };
+type ScenarioCatalogEntry = {
+  leaderboardId: number;
+  scenarioName: string;
+  aimType: string | null;
+  plays: number | null;
+  entries: number | null;
+  topScore: number | null;
+};
+
+function normalizeScenarioEntry(value: unknown): ScenarioCatalogEntry | null {
+  if (typeof value !== "object" || value === null) return null;
+  const entry = value as AnyDict;
+  const leaderboardId = entry.leaderboardId;
+  const name = entry.scenarioName;
+  if (typeof leaderboardId !== "number" || !Number.isInteger(leaderboardId) || leaderboardId <= 0) {
+    return null;
+  }
+  if (typeof name !== "string" || !name) return null;
+  const scenario = typeof entry.scenario === "object" && entry.scenario !== null ? (entry.scenario as AnyDict) : {};
+  const aimType = typeof scenario.aimType === "string" && scenario.aimType ? scenario.aimType : null;
+  const counts = typeof entry.counts === "object" && entry.counts !== null ? (entry.counts as AnyDict) : {};
+  const topScore = typeof entry.topScore === "object" && entry.topScore !== null ? (entry.topScore as AnyDict) : {};
+  const plays =
+    typeof counts.plays === "number" && Number.isFinite(counts.plays) && counts.plays >= 0 ? counts.plays : null;
+  const entries =
+    typeof counts.entries === "number" && Number.isFinite(counts.entries) && counts.entries >= 0
+      ? counts.entries
+      : null;
+  const top =
+    typeof topScore.score === "number" && Number.isFinite(topScore.score) ? topScore.score : null;
+  return { leaderboardId, scenarioName: name, aimType, plays, entries, topScore: top };
+}
 
 /**
  * scenario/popular is the same lookup kovaaks.com itself uses for the "find a
- * scenario" box. Prefer an exact (case-insensitive) name match, then the first
- * result that carries a leaderboardId: a scenario name has several board
- * variants (e.g. "Smoothsphere Viscose" vs "... Easier"), so "first" is only a
- * fallback.
+ * scenario" box. The response carries the scenario name, its leaderboardId,
+ * aim type, play/entry counts and top score.
  */
-async function resolveScenarioByName(scenarioName: string): Promise<ResolvedScenario | null> {
+async function fetchScenarioCatalog(scenarioNameSearch: string, max: number): Promise<ScenarioCatalogEntry[]> {
   const url = new URL(`${BACKEND_BASE}/scenario/popular`);
   url.searchParams.set("page", "0");
-  url.searchParams.set("max", "20");
-  url.searchParams.set("scenarioNameSearch", scenarioName);
+  url.searchParams.set("max", String(max));
+  url.searchParams.set("scenarioNameSearch", scenarioNameSearch);
   const payload = (await requestJson(url.toString())) as AnyDict;
   const data = Array.isArray(payload.data) ? payload.data : [];
-  const candidates = data
-    .map((item): ResolvedScenario | null => {
-      if (typeof item !== "object" || item === null) return null;
-      const entry = item as AnyDict;
-      const leaderboardId = entry.leaderboardId;
-      const name = entry.scenarioName;
-      if (typeof leaderboardId !== "number" || !Number.isInteger(leaderboardId) || leaderboardId <= 0) {
-        return null;
-      }
-      if (typeof name !== "string" || !name) return null;
-      const scenario = typeof entry.scenario === "object" && entry.scenario !== null ? entry.scenario : {};
-      const aimType =
-        typeof (scenario as AnyDict).aimType === "string" && (scenario as AnyDict).aimType
-          ? ((scenario as AnyDict).aimType as string)
-          : null;
-      return { leaderboardId, scenarioName: name, aimType };
-    })
-    .filter((item): item is ResolvedScenario => item !== null);
+  return data
+    .map(normalizeScenarioEntry)
+    .filter((item): item is ScenarioCatalogEntry => item !== null);
+}
+
+type ResolvedScenario = { leaderboardId: number; scenarioName: string; aimType: string | null };
+
+/**
+ * Single-name resolution for kovaak_leaderboard.lookup. Prefer an exact
+ * (case-insensitive) name match, then the first result that carries a
+ * leaderboardId: a scenario name has several board variants (e.g.
+ * "Smoothsphere Viscose" vs "... Easier"), so "first" is only a fallback.
+ */
+async function resolveScenarioByName(scenarioName: string): Promise<ResolvedScenario | null> {
+  const candidates = await fetchScenarioCatalog(scenarioName, 20);
   const wanted = scenarioName.trim().toLowerCase();
-  return candidates.find((item) => item.scenarioName.trim().toLowerCase() === wanted) ?? candidates[0] ?? null;
+  const match =
+    candidates.find((item) => item.scenarioName.trim().toLowerCase() === wanted) ?? candidates[0] ?? null;
+  if (!match) return null;
+  return { leaderboardId: match.leaderboardId, scenarioName: match.scenarioName, aimType: match.aimType };
+}
+
+/** Product-facing projection of the official scenario library search. */
+export type NativeScenarioSearchEntry = {
+  scenario_name: string;
+  leaderboard_id: number;
+  aim_type: string | null;
+  plays: number | null;
+  entries: number | null;
+  top_score: number | null;
+};
+
+export const SCENARIO_SEARCH_DEFAULT_LIMIT = 10;
+export const SCENARIO_SEARCH_MAX_LIMIT = 20;
+
+/**
+ * scenario.search backing call: fuzzy search of the official KovaaKs scenario
+ * library through the same /scenario/popular endpoint (scenarioNameSearch is a
+ * substring match). Throws on transport/upstream failure so the command layer
+ * can surface a readable `unavailable` instead of silently returning nothing.
+ */
+export async function searchScenarios(query: string, limit: number): Promise<NativeScenarioSearchEntry[]> {
+  const entries = await fetchScenarioCatalog(query, limit);
+  return entries.map((entry) => ({
+    scenario_name: entry.scenarioName,
+    leaderboard_id: entry.leaderboardId,
+    aim_type: entry.aimType,
+    plays: entry.plays,
+    entries: entry.entries,
+    top_score: entry.topScore,
+  }));
 }
 
 // ── Steam display name (for the profile_ref lookup path) ───────────────
