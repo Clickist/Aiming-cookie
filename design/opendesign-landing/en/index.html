@@ -342,6 +342,20 @@
         "operatingSystem": "Windows",
         "description": "Kinematics-based KovaaK's aim analysis + an AI coach: reads first-party data and engine-level ground-truth telemetry, diagnoses aiming weaknesses with fair kinematic metrics, and turns them into targeted coaching.",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://aimingcookie.com/en/#faq",
+        "mainEntity": [
+          { "@type": "Question", "name": "Is Aiming Cookie an aimbot?", "acceptedAnswer": { "@type": "Answer", "text": "No. It doesn't read game memory, doesn't inject, and never aims for you — it works outside the game: recording mouse raw input, screen capture, KovaaK's own stats and engine telemetry, then analyzing after you're done training. If you searched for 'AI aim assist', rest assured: this is a different thing entirely." } },
+          { "@type": "Question", "name": "Is Aiming Cookie free?", "acceptedAnswer": { "@type": "Answer", "text": "The product is free. The AI coach requires you to bring your own LLM provider (official APIs like DeepSeek, or a relay) — model costs are between you and that provider." } },
+          { "@type": "Question", "name": "Do I need to own KovaaK's?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Aiming Cookie is the analysis and coaching layer for KovaaK's (FPSAimTrainer on Steam); the training itself still happens in KovaaK's." } },
+          { "@type": "Question", "name": "Does my data get uploaded?", "acceptedAnswer": { "@type": "Answer", "text": "Training data — mouse input, screen recordings, analysis results — stays on your own PC. Data only leaves in two cases: you actively chat with the AI coach (sending the content you select), or you actively upload logs to report a problem." } },
+          { "@type": "Question", "name": "How is this better than reviewing my demos?", "acceptedAnswer": { "@type": "Answer", "text": "Demo review is guessing from pixels. Aiming Cookie computes: true angular error per shot (measured median 0.2–0.5° on kill clicks), deceleration share, path smoothness — off-screen targets included. None of that is visible in footage." } },
+          { "@type": "Question", "name": "Which training types are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Static / dynamic clicking, continuous tracking, target switching — the mainstream KovaaK's scenario categories." } },
+          { "@type": "Question", "name": "What can the AI coach help with?", "acceptedAnswer": { "@type": "Answer", "text": "Explaining weaknesses, building training plans, reading re-tests, gear talk (based on Gearclickist's experience, only when you ask), and it can even open the KovaaK's scenario you need to train." } },
+          { "@type": "Question", "name": "What are the system requirements?", "acceptedAnswer": { "@type": "Answer", "text": "Windows 10/11 64-bit with KovaaK's installed. Analysis runs on engine telemetry instead of vision models, so it doesn't eat your GPU." } }
+        ]
       }
     ]
   }
@@ -376,6 +390,25 @@
       transition: color .15s ease, border-color .15s ease;
     }
     .lang-switch:hover { color: var(--fg); border-color: var(--fg); }
+
+    /* FAQ */
+    .faq-list { max-width: 760px; }
+    .faq-item { border-bottom: 1px solid var(--border); }
+    .faq-item summary {
+      cursor: pointer; list-style: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 16px 0;
+      font-weight: 600; font-size: 16px;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+'; flex: none;
+      font-family: var(--font-mono); font-size: 18px; color: var(--muted);
+      transition: transform .15s ease;
+    }
+    .faq-item[open] summary::after { transform: rotate(45deg); }
+    .faq-item summary:hover { color: var(--accent); }
+    .faq-item p { margin: 0 0 16px; color: var(--muted); font-size: 15px; line-height: 1.75; max-width: 66ch; }
     html.dark .icon-moon { display: none; }
     html:not(.dark) .icon-sun { display: none; }
   </style>
@@ -715,7 +748,7 @@
         <h1>Run a drill. Ask your AI coach.</h1>
         <p class="lead">Aiming Cookie reads first-party data while you train — mouse Raw Input, your screen recording, KovaaK's Stats, plus <span class="truth-tip" tabindex="0">engine-level ground-truth telemetry<span class="truth-tip__pop" role="tooltip">Internal ground truth read straight from the game engine — target positions, crosshair angles — no pixel recognition involved. It lets the Coach compute the true angular error of your crosshair shot by shot (measured median 0.2–0.5° on kill clicks) and attribute every miss to a specific motion.</span></span> — diagnoses your aiming with physics and kinematics informed by community experience, and an AI coach explains what to change, then tracks you over time.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.0_x64-setup.exe" download>Download for Windows</a>
+          <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.1_x64-setup.exe" download>Download for Windows</a>
         </div>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
@@ -2090,6 +2123,50 @@
         </div>
       </div>
     </section>
+
+    <!-- FAQ -->
+    <section class="section" data-od-id="faq" id="faq">
+      <div class="container stack" style="gap: 32px;">
+        <div style="max-width: 720px;">
+          <h2>Frequently asked questions</h2>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>Is Aiming Cookie an aimbot?</summary>
+            <p>No. It doesn't read game memory, doesn't inject, and never aims for you — it works outside the game: recording mouse raw input, screen capture, KovaaK's own stats and engine telemetry, then analyzing after you're done training. If you searched for "AI aim assist", rest assured: this is a different thing entirely.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Is Aiming Cookie free?</summary>
+            <p>The product is free. The AI coach requires you to bring your own LLM provider (official APIs like DeepSeek, or a relay) — model costs are between you and that provider.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Do I need to own KovaaK's?</summary>
+            <p>Yes. Aiming Cookie is the analysis and coaching layer for KovaaK's (FPSAimTrainer on Steam); the training itself still happens in KovaaK's.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Does my data get uploaded?</summary>
+            <p>Training data — mouse input, screen recordings, analysis results — stays on your own PC. Data only leaves in two cases: you actively chat with the AI coach (sending the content you select), or you actively upload logs to report a problem.</p>
+          </details>
+          <details class="faq-item">
+            <summary>How is this better than reviewing my demos?</summary>
+            <p>Demo review is guessing from pixels. Aiming Cookie computes: true angular error per shot (measured median 0.2–0.5° on kill clicks), deceleration share, path smoothness — off-screen targets included. None of that is visible in footage.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Which training types are supported?</summary>
+            <p>Static / dynamic clicking, continuous tracking, target switching — the mainstream KovaaK's scenario categories.</p>
+          </details>
+          <details class="faq-item">
+            <summary>What can the AI coach help with?</summary>
+            <p>Explaining weaknesses, building training plans, reading re-tests, gear talk (based on Gearclickist's experience, only when you ask), and it can even open the KovaaK's scenario you need to train.</p>
+          </details>
+          <details class="faq-item">
+            <summary>What are the system requirements?</summary>
+            <p>Windows 10/11 64-bit with KovaaK's installed. Analysis runs on engine telemetry instead of vision models, so it doesn't eat your GPU.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <div class="container meta-notice" data-od-id="notice">
