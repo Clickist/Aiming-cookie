@@ -342,6 +342,20 @@
         "operatingSystem": "Windows",
         "description": "免费的 AI 瞄准教练：读取 KovaaK's 一手原始数据与引擎级真值遥测，用公平运动学指标诊断瞄准短板，并像专属私教一样给出针对性训练建议。",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://aimingcookie.com/#faq",
+        "mainEntity": [
+          { "@type": "Question", "name": "Aiming Cookie 是自瞄外挂吗？", "acceptedAnswer": { "@type": "Answer", "text": "不是。它不读游戏内存、不注入、更不会替你瞄准——它在游戏外面工作：记录鼠标原始输入、录屏、KovaaK's 自带统计和引擎遥测，只在训练结束后做分析。搜「AI 瞄准辅助」搜到这里的人请放心，这和自瞄是两码事。" } },
+          { "@type": "Question", "name": "Aiming Cookie 免费吗？", "acceptedAnswer": { "@type": "Answer", "text": "产品免费。AI 教练需要你自备一个 LLM provider（DeepSeek 等官方 API 或中转站均可），模型调用费用是你与所选服务商之间的事。" } },
+          { "@type": "Question", "name": "需要先买 KovaaK's 吗？", "acceptedAnswer": { "@type": "Answer", "text": "需要。Aiming Cookie 是 KovaaK's（Steam 上的 FPSAimTrainer）的分析和教练层，训练本身还是在 KovaaK's 里打。" } },
+          { "@type": "Question", "name": "我的数据会上传吗？", "acceptedAnswer": { "@type": "Answer", "text": "训练数据——鼠标输入、录屏、分析结果——只保存在你自己的电脑上。只有两种情况会发数据出去：你主动和 AI 教练对话（发送你选中的内容）、你主动一键上传日志报障。" } },
+          { "@type": "Question", "name": "和看录像复盘比，强在哪？", "acceptedAnswer": { "@type": "Answer", "text": "看录像是凭画面猜。Aiming Cookie 直接算：每一发的真实角误差（击杀点击实测中位 0.2–0.5°）、减速占比、轨迹平滑度，连屏幕外的目标都算在内——这些从画面上看不出来。" } },
+          { "@type": "Question", "name": "支持哪些训练类型？", "acceptedAnswer": { "@type": "Answer", "text": "static / dynamic clicking、continuous tracking、target switching，覆盖 KovaaK's 的主流场景分类。" } },
+          { "@type": "Question", "name": "AI 教练能帮我做什么？", "acceptedAnswer": { "@type": "Answer", "text": "讲弱点、定训练计划、解读复测、聊外设（基于外设点击者的经验，只在你问时说），还能直接帮你把要练的 KovaaK's 场景打开。" } },
+          { "@type": "Question", "name": "对电脑有什么要求？", "acceptedAnswer": { "@type": "Answer", "text": "Windows 10/11 64 位，装好 KovaaK's 即可。分析走引擎遥测而不是画面识别，不吃显卡。" } }
+        ]
       }
     ]
   }
@@ -376,6 +390,25 @@
       transition: color .15s ease, border-color .15s ease;
     }
     .lang-switch:hover { color: var(--fg); border-color: var(--fg); }
+
+    /* FAQ */
+    .faq-list { max-width: 760px; }
+    .faq-item { border-bottom: 1px solid var(--border); }
+    .faq-item summary {
+      cursor: pointer; list-style: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 16px 0;
+      font-weight: 600; font-size: 16px;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+'; flex: none;
+      font-family: var(--font-mono); font-size: 18px; color: var(--muted);
+      transition: transform .15s ease;
+    }
+    .faq-item[open] summary::after { transform: rotate(45deg); }
+    .faq-item summary:hover { color: var(--accent); }
+    .faq-item p { margin: 0 0 16px; color: var(--muted); font-size: 15px; line-height: 1.75; max-width: 66ch; }
     html.dark .icon-moon { display: none; }
     html:not(.dark) .icon-sun { display: none; }
   </style>
@@ -715,7 +748,7 @@
         <h1 class="single-line-heading">练一局，向AI教练提问</h1>
         <p class="lead">Aiming Cookie 在你训练时读取一手数据——鼠标 Raw Input、录屏、KovaaK Stats，以及<span class="truth-tip" tabindex="0">引擎级真值遥测<span class="truth-tip__pop" role="tooltip">直接从游戏引擎读取目标位置、准星视角等内部真值数据，不需要识别画面。有了它，Coach 能逐发计算准星到目标的真实角误差（击杀点击实测中位 0.2–0.5°），把每一发的问题归因到具体动作。</span></span>——用物理与运动学指标结合社区经验诊断你的瞄准，再由 AI 瞄准教练为您讲解，并持续训练。</p>
         <div class="hero-cta">
-          <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.0_x64-setup.exe" download>下载 Windows 版</a>
+          <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.1_x64-setup.exe" download>下载 Windows 版</a>
         </div>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
@@ -2090,6 +2123,50 @@
         </div>
       </div>
     </section>
+
+    <!-- 块 7 · FAQ -->
+    <section class="section" data-od-id="faq" id="faq">
+      <div class="container stack" style="gap: 32px;">
+        <div style="max-width: 720px;">
+          <h2>常见问题</h2>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>Aiming Cookie 是自瞄外挂吗？</summary>
+            <p>不是。它不读游戏内存、不注入、更不会替你瞄准——它在游戏外面工作：记录鼠标原始输入、录屏、KovaaK's 自带统计和引擎遥测，只在训练结束后做分析。搜“AI 瞄准辅助”搜到这里的人请放心，这和自瞄是两码事。</p>
+          </details>
+          <details class="faq-item">
+            <summary>Aiming Cookie 免费吗？</summary>
+            <p>产品免费。AI 教练需要你自备一个 LLM provider（DeepSeek 等官方 API 或中转站均可），模型调用费用是你与所选服务商之间的事。</p>
+          </details>
+          <details class="faq-item">
+            <summary>需要先买 KovaaK's 吗？</summary>
+            <p>需要。Aiming Cookie 是 KovaaK's（Steam 上的 FPSAimTrainer）的分析和教练层，训练本身还是在 KovaaK's 里打。</p>
+          </details>
+          <details class="faq-item">
+            <summary>我的数据会上传吗？</summary>
+            <p>训练数据——鼠标输入、录屏、分析结果——只保存在你自己的电脑上。只有两种情况会发数据出去：你主动和 AI 教练对话（发送你选中的内容）、你主动一键上传日志报障。</p>
+          </details>
+          <details class="faq-item">
+            <summary>和看录像复盘比，强在哪？</summary>
+            <p>看录像是凭画面猜。Aiming Cookie 直接算：每一发的真实角误差（击杀点击实测中位 0.2–0.5°）、减速占比、轨迹平滑度，连屏幕外的目标都算在内——这些从画面上看不出来。</p>
+          </details>
+          <details class="faq-item">
+            <summary>支持哪些训练类型？</summary>
+            <p>static / dynamic clicking、continuous tracking、target switching，覆盖 KovaaK's 的主流场景分类。</p>
+          </details>
+          <details class="faq-item">
+            <summary>AI 教练能帮我做什么？</summary>
+            <p>讲弱点、定训练计划、解读复测、聊外设（基于外设点击者的经验，只在你问时说），还能直接帮你把要练的 KovaaK's 场景打开。</p>
+          </details>
+          <details class="faq-item">
+            <summary>对电脑有什么要求？</summary>
+            <p>Windows 10/11 64 位，装好 KovaaK's 即可。分析走引擎遥测而不是画面识别，不吃显卡。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <div class="container meta-notice" data-od-id="notice">
