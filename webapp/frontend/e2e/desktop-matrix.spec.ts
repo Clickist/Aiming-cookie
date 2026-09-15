@@ -24,7 +24,8 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
   await page!.goto(`${appUrl}/settings`);
 
   // Verify the WebView renders real Aiming Cookie product content, not just a live process.
-  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
+  // v6 起品牌行归 Session rail，Settings 不再显示 logo；改断言设置分区导航这一稳定标记。
+  await expect(page!.getByRole("navigation", { name: "设置导航" })).toBeVisible();
 
   const actual = await page!.evaluate(async () => {
     type TauriInternals = {
@@ -90,18 +91,17 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
   // Coach workspace is the default home surface with Session rail.
   await page!.goto(`${appUrl}/`);
   await expect(page!.getByRole("navigation", { name: "会话" })).toBeVisible();
-  await expect(page!.getByText("Aiming Coach", { exact: true })).toBeVisible();
+  await expect(page!.locator(".task7-session-rail__brand")).toBeVisible();
 
   // Retired URLs redirect to History (bounded compatibility).
-  await page!.goto(`${appUrl}/analyze`);
+  // 退役路由是 /tasks 与 /analysis；/analyze 从未是产品路由，不在此断言。
+  await page!.goto(`${appUrl}/analysis?id=42`);
   await expect(page!).toHaveURL(/\/history/);
   await page!.goto(`${appUrl}/tasks`);
   await expect(page!).toHaveURL(/\/history/);
 
-  // Settings storage section stays on the product surface.
+  // Settings storage section stays on the product surface（0912 起为「数据与存储」分区）。
   await page!.goto(`${appUrl}/settings`);
-  for (const label of ["Run 录像", "Raw trace", "分析产物", "未完成采集"]) {
-    await expect(page!.getByText(label, { exact: true }).first()).toBeVisible();
-  }
-  await expect(page!.getByText("仅保留最近 300 秒", { exact: false })).toBeVisible();
+  await page!.getByRole("navigation", { name: "设置导航" }).getByRole("button", { name: "数据与存储" }).click();
+  await expect(page!.getByText("本机分析产物、录像与遥测的占用与清理。")).toBeVisible();
 });

@@ -80,8 +80,8 @@ test("real Tauri WebView plays managed media from Coach evidence and degrades a 
 
   await page!.goto(new URL("/", appUrl).toString());
 
-  // Open the video from the Coach evidence card.
-  const videoButton = page!.getByRole("button", { name: /在视频中查看/ });
+  // Open the video from the Coach discussion chip (v6 起证据卡退役，视频入口=顶栏讨论 chip)。
+  const videoButton = page!.locator('button.task6-discussion-chip[title="打开视频讲解"]').first();
   await expect(videoButton).toBeVisible();
 
   const rangeResponse = page!.waitForResponse((response) =>
@@ -127,6 +127,7 @@ test("real Tauri WebView plays managed media from Coach evidence and degrades a 
     evidenceSegments: UNAVAILABLE_EVIDENCE_SEGMENTS,
   }));
   await page!.reload();
-  await expect(page!.getByRole("button", { name: /在视频中查看/ })).toHaveCount(0);
-  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
+  // 降级：切换到无视频的分析后，视频讲解 pane 不会被打开，产品表面保持完好。
+  await expect(page!.locator('[aria-label="Coach 视频讲解"]')).toHaveCount(0);
+  await expect(page!.locator(".task7-session-rail__brand")).toBeVisible();
 });
