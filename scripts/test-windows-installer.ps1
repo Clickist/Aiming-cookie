@@ -31,6 +31,9 @@ if ($InstallSmoke) {
         if (-not $app) { throw "Installer did not place an executable in $installRoot" }
         Write-Host "Install smoke placed: $($app.FullName)"
         New-Item -ItemType Directory -Path $smokeAppData | Out-Null
+        # 注意：APPDATA 覆盖只隔离 WebView2 用户目录，不影响 Tauri app_data_dir
+        # （Windows 走 Known Folder）。打包冒烟因此跑在真实 profile 上，断言仅
+        # 产品表面渲染；真全新环境需 identifier 覆盖构建（见 docs/testing-tiers.md L3）。
         $env:APPDATA = $smokeAppData
         if ($WebViewSmoke) {
             $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
