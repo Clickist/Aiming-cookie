@@ -868,10 +868,14 @@ export function CoachPanel({
         const optimistic = current.filter((message) => message.id < 0);
         const backendMessages = detail.messages ?? [];
         const backendKeys = new Set(backendMessages.map((message) => `${message.role}\x00${message.content}`));
+        // 乐观气泡已被后端接管（同 role+content）时丢弃，否则它一定比所有
+        // 落库消息都新（id<0 只由本次新增的未落库消息产生），必须拼在
+        // backendMessages 之后；拼在最前会让第二条消息显示在第一条上面
+        // （0915 CDP 真机实测的时序倒错）。
         const uniqueOptimistic = optimistic.filter(
           (message) => !backendKeys.has(`${message.role}\x00${message.content}`),
         );
-        return [...uniqueOptimistic, ...backendMessages];
+        return [...backendMessages, ...uniqueOptimistic];
       });
       setAnalysisSessionIds(detail.analysis_session_ids ?? []);
       setDeepReadAnalysisSessionIds(detail.deep_read_analysis_session_ids ?? []);

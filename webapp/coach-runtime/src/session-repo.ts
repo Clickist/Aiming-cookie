@@ -212,10 +212,22 @@ export async function readSessionMessages(threadId: number): Promise<SessionMess
  * assistant 消息，回合在会话里完全隐形（1.0.0 前实测）；标记让前端
  * 渲染「回答已停止」。仅喂 UI——agent-runs 的 priorMessages 走
  * readSessionMessages 原始路径，标记不得进入 Provider 上下文。
+ *
+ * `suppressTrailingInterruptMarker`：调用方已知该会话有活跃 run 时置位。
+ * 此时末尾「有工具/思考活动但尚无正文」的回合是正常的进行中中间态，
+ * 不是被停止；只跳过这一条尾标记，更早回合的真停止标记照常保留。
  */
-export async function readSessionMessagesForUi(threadId: number): Promise<SessionMessage[]> {
+export async function readSessionMessagesForUi(
+  threadId: number,
+  opts: { suppressTrailingInterruptMarker?: boolean } = {},
+): Promise<SessionMessage[]> {
   const session = await openSession(threadId);
-  if (session) return messagesFromSession(session, { withInterruptMarkers: true });
+  if (session) {
+    return messagesFromSession(session, {
+      withInterruptMarkers: true,
+      ...(opts.suppressTrailingInterruptMarker ? { suppressTrailingInterruptMarker: true } : {}),
+    });
+  }
   return readLegacyMessages(threadId);
 }
 
@@ -233,7 +245,7 @@ type VisibleMessage = { message: SessionMessage; keepThroughIndex: number };
 
 function collectVisibleMessages(
   entries: SessionEntryLike[],
-  opts: { withInterruptMarkers?: boolean } = {},
+  opts: { withInterruptMarkers?: boolean; suppressTrailingInterruptMarker?: boolean } = {},
 ): VisibleMessage[] {
   const visible: VisibleMessage[] = [];
   // 自上一条可见消息以来，本轮是否出现过 assistant 工具/思考活动而始终
@@ -249,7 +261,10 @@ function collectVisibleMessages(
     if (previous && previous.keepThroughIndex < 0) previous.keepThroughIndex = nextStart - 1;
   };
   const flushInterruptMarker = (nextStart: number | null) => {
-    if (opts.withInterruptMarkers && pendingInterruptStart !== null) {
+    // 尾部未完结回合（nextStart===null）在有活跃 run 时是进行中的中间态，
+    // 跳过合成；边界结算（nextStart 为下一条起点）的真停止标记不受影响。
+    const suppressTrailing = nextStart === null && opts.suppressTrailingInterruptMarker === true;
+    if (opts.withInterruptMarkers && pendingInterruptStart !== null && !suppressTrailing) {
       closeGroupBefore(pendingInterruptStart);
       visible.push({
         message: {
@@ -305,7 +320,7 @@ function collectVisibleMessages(
 
 async function messagesFromSession(
   session: SessionLike,
-  opts: { withInterruptMarkers?: boolean } = {},
+  opts: { withInterruptMarkers?: boolean; suppressTrailingInterruptMarker?: boolean } = {},
 ): Promise<SessionMessage[]> {
   const entries = await session.getBranch();
   return collectVisibleMessages(entries, opts).map((item) => item.message);
