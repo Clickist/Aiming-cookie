@@ -15,6 +15,7 @@
 | 视觉方向与语义设计语言 | [`../DESIGN-cursor.md`](../DESIGN-cursor.md) | 页面 IA、组件代码、当前实现状态 |
 | token、主题和组件如何实现与评审 | [`design-system.md`](design-system.md) + 当前前端实现 | 产品范围与视觉方向 |
 | 安装、启动、测试和代码入口 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | 产品决策、进度与发布承诺 |
+| 什么改动在什么时刻必须过什么测试；发版前全旅程验收清单 | [`testing-tiers.md`](testing-tiers.md) | 测试命令细节、Go/No-Go 结论、验证流水 |
 | 外部遥测（KovaaK's 内存读取管线）导入合同与启用方式 | [`EXTERNAL_TELEMETRY_IMPORT.md`](EXTERNAL_TELEMETRY_IMPORT.md) | KovaaKRun 主链路行为、分析侧指标定义 |
 
 核心原则：**上游文档定义”应该是什么”；代码、测试和运行结果定义”现在实际上是什么”。** 两者不一致时记录实现差距，不让任何一方静默覆盖另一方。
