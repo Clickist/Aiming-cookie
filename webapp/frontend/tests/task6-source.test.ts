@@ -316,6 +316,14 @@ test("Coach shows a sent user message immediately and restores the draft on fail
   assert.match(panel, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
 });
 
+test("Coach refresh appends not-yet-persisted optimistic bubbles after backend messages", async () => {
+  // 乐观消息（id<0）一定比所有已落库消息新：刷新合并若把它拼在 backendMessages
+  // 之前，第二条消息会显示在第一条上面（0915 真机实测的时序倒错）。
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /return \[\.\.\.backendMessages, \.\.\.uniqueOptimistic\]/);
+  assert.doesNotMatch(panel, /return \[\.\.\.uniqueOptimistic, \.\.\.backendMessages\]/);
+});
+
 test("Coach sends and streams Provider runs through the shared API adapter", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   assert.match(panel, /const created = await createCoachAgentRun\([\s\S]*?setRun\(created\)/);

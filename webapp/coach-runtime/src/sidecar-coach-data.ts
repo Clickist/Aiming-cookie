@@ -172,7 +172,13 @@ export async function getCoachSessionDetail(
     throw new CoachDataError(404, "Coach session is unavailable");
   }
   const meta = readConversationMeta(sessionId);
-  const entries = await readSessionMessagesForUi(sessionId);
+  // 活跃 run 期间，末尾「有工具/思考活动但尚无正文」的 assistant 回合是正常
+  // 进行中的中间态：若照常合成空 stopped 标记，前端刷新会误挂「回答已停止」
+  // 徽标（0915 CDP 真机实测；run 落定后徽标自行消失）。更早回合的真停止
+  // 标记必须保留，故只抑制尾部这一条。
+  const entries = await readSessionMessagesForUi(sessionId, {
+    ...(hasActiveAgentRunForSession(sessionId) ? { suppressTrailingInterruptMarker: true } : {}),
+  });
   const base = shapeSession(ownerId, sessionId, meta, entries);
   const messages = entries.map((entry, index) => ({
     id: index + 1,
