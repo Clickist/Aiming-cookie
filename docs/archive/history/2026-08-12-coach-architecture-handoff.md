@@ -109,8 +109,8 @@ ceb1c51  feat: native write commands with idempotency and audit
 ### Sidecar 启动方式
 
 ```bash
-set DATABASE_URL=sqlite+aiosqlite:///C:/Users/袜子/Desktop/Aiming-cookie/aiming_cookie_dev.db
-set DATA_ROOT=C:/Users/袜子/Desktop/Aiming-cookie
+set DATABASE_URL=sqlite+aiosqlite:///<repo>/aiming_cookie_dev.db
+set DATA_ROOT=<repo>
 cd webapp/coach-runtime && npx tsx src/start-sidecar.ts
 ```
 

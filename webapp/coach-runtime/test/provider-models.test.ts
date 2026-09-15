@@ -15,6 +15,11 @@ import {
 } from "../src/provider-profile.ts";
 import { loadPiAi, loadPiProvidersAll } from "../src/pi-source.ts";
 
+// 仓库/源码不含真实中转站地址（构建期注入，见 provider-models.ts）；
+// 测试用占位地址验证注入链路，须在模块函数被调用前设好环境变量。
+const RELAY_BASE_URL = "http://127.0.0.1:3000/v1";
+process.env.AC_RELAY_BASE_URL = RELAY_BASE_URL;
+
 const SECRET = "task3-secret-sentinel-do-not-return";
 
 test("catalog exposes the complete pinned Pi builtin provider/model catalog without product filtering", async () => {
@@ -54,7 +59,7 @@ test("aiming-cookie-relay injects as a builtin provider with the 26 relay models
   const relay = catalog.providers.find((provider) => provider.provider_id === "aiming-cookie-relay");
   assert.ok(relay, "relay provider present in catalog");
   assert.equal(relay.provider_name, "Aiming Cookie 官方");
-  assert.equal(relay.base_url, "http://58.60.231.76:3000/v1");
+  assert.equal(relay.base_url, RELAY_BASE_URL);
   assert.ok(relay.auth_modes.includes("api_key"), "interactive api_key auth is advertised");
 
   assert.equal(relay.models.length, 26);
@@ -87,7 +92,7 @@ test("builtin profile aiming-cookie-relay/deepseek-v4-flash resolves with the st
   });
   assert.equal(resolved.model.id, "deepseek-v4-flash");
   assert.equal(resolved.model.provider, "aiming-cookie-relay");
-  assert.equal(resolved.model.baseUrl, "http://58.60.231.76:3000/v1");
+  assert.equal(resolved.model.baseUrl, RELAY_BASE_URL);
   assert.equal(resolved.hasRuntimeCredential, true);
 });
 

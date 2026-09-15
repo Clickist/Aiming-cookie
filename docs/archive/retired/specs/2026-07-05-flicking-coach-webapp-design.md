@@ -2,7 +2,7 @@
 
 > 本 spec §2 认证 / §3 架构 / §5 设计已分别被 2026-07-06-aiming-cookie-ia-redesign-design.md 演进（密码+OTP / 桌面 hybrid / dark editorial）。其他段落（产品定位 / 数据流 / 错误处理 / 成本）仍有效。
 >
-> 2026-07-08 再演进：§3 部署 / §10 Phase 3 备案被 `docs/PRD.md` §5.2 + §9.1 取代——**绕过 ICP 备案**（持续境外香港 + Cloudflare），云端方案 A（香港小 VPS + CF Pages）。备案 / 迁国内云相关段落作废。
+> 2026-07-08 再演进：§3 部署 / §10 Phase 3 备案被 `docs/PRD.md` §5.2 + §9.1 取代——**境外部署 + Cloudflare**（暂不涉及国内备案），云端方案 A（境外小 VPS + CF Pages）。备案 / 迁国内云相关段落作废。
 
 > 2026-07-05 · 状态:设计待点点 review → 通过后转 writing-plans 出实现计划
 
@@ -23,7 +23,7 @@
 **非目标**(明确排除):
 - tracking 场景(方案 A 不适用)
 - 多 session ④ 计划(Phase 2;账号 + 数据基础先铺)
-- 国内 ICP 备案(Phase 3 商业化再做)
+- 境内部署与备案（不符当前产品形态，全程境外）
 - 手部摄像头(产品 B,远期)
 
 ## 2. 用户与核心流程
@@ -49,11 +49,11 @@
 | Postgres | 用户映射 + 结果历史 + 任务队列(`FOR UPDATE SKIP LOCKED`) |
 | Nginx | 反代 + HTTPS |
 
-### 部署(香港 + Cloudflare,不备案)
+### 部署(境外 + Cloudflare)
 
 ```
 [大陆用户]
-   ↓ HTTPS(域名境外注册,不备案)
+   ↓ HTTPS(境外注册域名)
 [Cloudflare 免费 CDN]   ← 大陆访问慢但通
    ↓
 [香港轻量应用服务器 2核4G — Docker Compose 单机]
@@ -63,7 +63,7 @@
 ```
 
 **关键决策**:
-- **不备案**:香港境外服务器 + Cloudflare,大陆可访问(点点优先省事,MVP 快速验证)
+- **境外部署**:境外服务器 + Cloudflare,大陆可访问(MVP 快速验证)
 - **单机 Docker Compose**:MVP 流量小,简化运维
 - **无 Redis**:Postgres 当任务队列(`FOR UPDATE SKIP LOCKED`)
 - **视频源文件分析完即删**(隐私 + 省盘),只持久化结果数据
@@ -215,14 +215,13 @@
 
 **Phase 3**(商业化):
 - 付费订阅 或 用户自带 key
-- 国内 ICP 备案 + 迁国内云(用户体验 + 合规)
-- 可能要企业主体(个人备案不能明显商业化)
+- 迁国内云与备案（用户体验 + 合规；是否需要企业主体届时再评估）
 
 ---
 
 ## 决策记录
 
-- **部署香港不备案**:点点优先省事 + MVP 快速验证;Phase 3 商业化再迁国内备案
+- **部署境外**:MVP 快速验证;商业化阶段再评估国内云与备案
 - **LLM 用 DeepSeek**:MVP 省钱(比 Claude 便宜 10-50×),中文质量够;切回 Claude 是一行配置(`providers.json` 改默认)
 - **账号提到 MVP**:点点要结果对应账号持久化 + 访问,且为 Phase 2 ④ 计划铺路
 - **单机 Docker Compose**:MVP 流量小,简化运维;Phase 3 扩展再拆服务

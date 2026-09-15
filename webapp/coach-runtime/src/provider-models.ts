@@ -74,15 +74,19 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
 }
 
 /**
- * Aiming Cookie 官方（自家中转站，内测）：注入为内置 Provider，目录下发、
+ * Aiming Cookie 官方（自家托管服务，内测）：注入为内置 Provider，目录下发、
  * 档解析、方言继承三条链路共用 createBuiltinModels，因此都在这里注入。
- * 模型清单按中转站 2026-09-10 实测 /v1/models（26 个）硬编码，中转站增减
- * 模型时同步这份列表；计费在中转站侧按额度结算，成本字段记 0。
- * TODO(内测)：base_url 换正式域名+HTTPS 时只改下方常量。
+ * 模型清单按服务 2026-09-10 实测 /v1/models（26 个）硬编码，服务增减
+ * 模型时同步这份列表；计费在服务侧按额度结算，成本字段记 0。
+ * base_url 不入库（开源仓库不含真实地址）：打包时由 scripts/build-windows-runtime.ps1
+ * 经 bun --define 注入 process.env.AC_RELAY_BASE_URL，值保存在 gitignore 的
+ * relay-base-url.local.txt；本地 dev/test 用同名环境变量提供，未配置时不注入官方档。
  */
 export const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
 const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie 官方";
-const AIMING_COOKIE_RELAY_BASE_URL = "http://58.60.231.76:3000/v1";
+function relayBaseUrl(): string {
+  return process.env.AC_RELAY_BASE_URL ?? "";
+}
 const AIMING_COOKIE_RELAY_MODEL_IDS = [
   "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "deepseek-v4-pro-0813",
   "gemini-2.5-pro", "gemini-3.6-flash",
@@ -97,6 +101,10 @@ const AIMING_COOKIE_RELAY_MODEL_IDS = [
 ] as const;
 
 async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> {
+  if (!relayBaseUrl()) {
+    // 未配置地址（本地 dev/test 未设环境变量、或构建未注入）：不注入官方档。
+    return;
+  }
   const ai = (await loadPiAi()) as {
     createProvider: (options: Record<string, unknown>) => PiProvider;
   };
@@ -117,7 +125,7 @@ async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> 
       name: catalogHit?.name ?? modelId,
       api: "openai-completions",
       provider: AIMING_COOKIE_RELAY_PROVIDER_ID,
-      baseUrl: AIMING_COOKIE_RELAY_BASE_URL,
+      baseUrl: relayBaseUrl(),
       reasoning: catalogHit ? catalogHit.reasoning === true : true,
       input: catalogHit ? [...catalogHit.input] : ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -130,7 +138,7 @@ async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> 
   const provider = ai.createProvider({
     id: AIMING_COOKIE_RELAY_PROVIDER_ID,
     name: AIMING_COOKIE_RELAY_PROVIDER_NAME,
-    baseUrl: AIMING_COOKIE_RELAY_BASE_URL,
+    baseUrl: relayBaseUrl(),
     auth: {
       apiKey: {
         name: `${AIMING_COOKIE_RELAY_PROVIDER_NAME} token`,
@@ -273,7 +281,7 @@ export async function fetchOfficialRelayBalance(
   apiKey: string,
   timeoutMs: number = OFFICIAL_RELAY_BALANCE_TIMEOUT_MS,
 ): Promise<OfficialRelayBalance> {
-  const base = AIMING_COOKIE_RELAY_BASE_URL.trim().replace(/\/+$/, "");
+  const base = relayBaseUrl().trim().replace(/\/+$/, "");
   const headers = { Authorization: `Bearer ${apiKey}` };
   const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
     const controller = new AbortController();

@@ -2,7 +2,7 @@
 
 评估对象：`x76-wiki-markdown-2026-08-16/`（x76.gg wiki 导出快照）。
 对照基线：registry v7（27 条目，仅存在于 `feat/capture-generalization-knowledge-2026-08-15` 分支，经 `git show` 读取，未触碰工作树）。
-本报告为只读评审产物，所有建议供决策，不构成待办合同。抓取快照的 robots 声明为 `use=reference, ai-train=no`，入库时应转述并引用来源，不逐字复制正文。
+本报告为只读评审产物，所有建议供决策，不构成待办合同。快照仅本地参考、不随仓库分发；任何知识入库均须转述改写并引用来源，不逐字复制正文。
 
 ## 1. Wiki 总览
 

@@ -321,7 +321,7 @@ Versioned Coach Knowledge Registry plan 的 Task 1–6 已全部完成并归档�
 - 对 ring 最近约 5 秒请求 immutable replay snapshot，返回 `coverageGap: replay snapshot failed: CoverageGap`，未创建 MP4。该结果已满足 Task 4 “任一来源缺少完整 `[start,end)` coverage 即停止”的条件，因此没有让点点开始普通局，也没有继续 timescale、短暂停、Restart、超 300 秒、finalization 后 KovaaK 保持开启或 adapter failure 矩阵。
 - Raw Input 同期保持健康：ACRI v1 snapshot `27212` bytes、`1360` points、跨度 `147699ms`、`0` dropped points、`0` snapshot failures；SHA-256 为 `4B1844CAAB116354DE4EB104C9921D18EFA98658E36CD20BEFE208264FC7491B`。
 - 性能采样仍证明 GPU 路径本身轻量：约 `0.0604` CPU core、`152.59 MiB` peak working set、GPU Video Encode 平均 `12.584%` / 最大 `12.72%`、GPU 3D 平均 `0.361%`。问题是 producer/MFT input-permit 节奏造成的完整性失败，不是 CPU-backed 性能回退；不得将低 CPU 误写成 Task 4 通过。
-- 证据包保存在仓库外 `E:\DevCache\temp\aiming-cookie-task4-1784430920662\bundle\validation-summary.json`；未经指示未提交、未推送。
+- 证据包保存在仓库外本地临时目录；未经指示未提交、未推送。
 
 2026-07-18 GPU Replay Buffer 决策与暂停证据：
 

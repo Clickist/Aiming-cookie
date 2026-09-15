@@ -2,7 +2,7 @@
 
 Cloudflare Worker：输入鼠标品牌/型号，返回淘宝联盟（物料搜索，结果自带推广短链）
 和拼多多多多客（搜索+转链）的购买链接。联盟密钥全部存 Worker Secrets，客户端只拿短链，
-所有点击佣金归本账号 PID。供 AC coach 与 mousedle（将来）共用；Mac 上的桌搭项目也可复用。
+佣金归属与账号信息见内部运营文档。供 AC coach 与 mousedle（将来）共用。
 
 ## API
 
@@ -32,7 +32,7 @@ npx wrangler deploy        # 自定义域名 affiliate.gearclickist.com（worker
 
 Secrets（wrangler secret put <NAME>）：`TB_APP_KEY` `TB_APP_SECRET` `TB_ADZONE_ID`
 `PDD_CLIENT_ID` `PDD_CLIENT_SECRET` `PDD_PID` `AC_SHARED_TOKEN`。
-凭证来源：桌面《渠道接入交接-2026-09-11.md》（淘宝 PID 第三段即 adzone_id）。
+凭证由维护者本地保存，不随仓库分发。
 
 ## 冒烟
 
@@ -42,9 +42,7 @@ curl -q -X POST https://affiliate.gearclickist.com/links \
   -d '{"items":[{"brand":"Logitech","model":"G304"}]}'
 ```
 
-## 已知状态（2026-09-11）
+## 已知边界（2026-09-11）
 
-- 淘宝：4/4 型号命中（GPX2 SE / 蜻蜓 R1 / 毒蝰 V3 Pro / G304），短链带佣金。
-- 拼多多：接口通、授权通，但新账号索引未放数，关键词一律 0 命中——放数后自动生效，无需改代码。
 - 京东：转链接口只支持网站/APP 推广位（要 ICP 备案），B站媒体位不可转——不进本服务；
   AC 侧继续用 marketplace-mapping 的静态直链做末位兜底（准确性未核验，被反爬拦无法批量验）。

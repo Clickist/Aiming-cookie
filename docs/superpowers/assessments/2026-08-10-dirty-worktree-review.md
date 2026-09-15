@@ -15,7 +15,7 @@
 - Remote relation at review start: `main...origin/main [ahead 23]`
 - Tracked modified files: 37
 - Tracked deletion: `docs/opendesign-desktop-handoff.md`
-- Untracked paths: `2026-08-06-human-aim-coaching-sop.md`, two archive documents, `logo.jfif`, and `viscose-youtube/`
+- Untracked paths: `2026-08-06-human-aim-coaching-sop.md`, two archive documents, `logo.jfif`, and other untracked local directories
 
 ## Review waves
 
@@ -49,4 +49,4 @@
 - Production build and browser smoke: `14 passed`.
 - The root onboarding smoke initially exposed a real routing defect: `AppShell` owns Coach routes and did not mount the page component containing the gate. The gate now lives in `AppShell`; the stale smoke copy was updated to assert the onboarding heading.
 - Real Tauri, KovaaK, hardware, Provider, installer/signing/updater/download, and cross-vendor capture gates remain unverified by these automated checks.
-- Final repository state: local `main` and `origin/main` both point to `05dd3e6`; tracked changes are clean. The root SOP, `logo.jfif`, and `viscose-youtube/` remain intentionally untracked pending explicit classification.
+- Final repository state: local `main` and `origin/main` both point to `05dd3e6`; tracked changes are clean. The root SOP and `logo.jfif` remain intentionally untracked pending explicit classification.

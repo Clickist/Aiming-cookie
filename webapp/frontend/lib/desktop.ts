@@ -65,14 +65,19 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
   return invoke<string>("desktop_export_capture_diagnostics", { path });
 }
 
-// 诊断包直传（ac-logs：洛杉矶机 + CF Tunnel，logs.aimingcookie.com）。
+// 诊断包直传（ac-logs，logs.aimingcookie.com）。
 // token 只是防滥用的轻门禁，不是机密；上传失败由调用方降级到本地导出。
+// token 不入库：由 Next 构建期从 .env.production.local（gitignore）注入
+// NEXT_PUBLIC_DIAGNOSTICS_UPLOAD_TOKEN；未注入的构建跳过上传、走本地导出。
 const DIAGNOSTICS_UPLOAD_URL = "https://logs.aimingcookie.com/upload";
-const DIAGNOSTICS_UPLOAD_TOKEN = "1a7432abc2f8e2bbe03121e953e0b3be2deedde581a5f65d";
+const DIAGNOSTICS_UPLOAD_TOKEN = process.env.NEXT_PUBLIC_DIAGNOSTICS_UPLOAD_TOKEN ?? "";
 
 export async function uploadDesktopCaptureDiagnostics(): Promise<string> {
   if (!isDesktopRuntime()) {
     throw new Error("Capture diagnostics are only available in the desktop app");
+  }
+  if (!DIAGNOSTICS_UPLOAD_TOKEN) {
+    throw new Error("Diagnostics upload is not configured in this build");
   }
   const bundle = await invoke<string>("desktop_collect_capture_diagnostics");
   const response = await fetch(DIAGNOSTICS_UPLOAD_URL, {

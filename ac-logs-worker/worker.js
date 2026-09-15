@@ -2,7 +2,7 @@
 // 取代部署在洛杉矶机的 ac_logs_server.py（该版本保留在 ../ac-logs-server/ 作退役备份）。
 // 存储：R2 桶 ac-logs（桶上配了 14 天自动删除生命周期）；台账/去重/限频：D1 库 ac-logs。
 // 响应形状与服务器版逐字节兼容（{id, bytes} / {id, duplicate:true} / 429 / 503），客户端零感知。
-// 防滥用语义见 ../ac-logs-server/README.md：去重、单 IP 10 次/小时、200MB/天；CF 边缘另有 20 次/10 秒兜底。
+// 防滥用语义：去重、单 IP 限次、日配额（常量见下方代码）；CF 边缘另有 20 次/10 秒兜底。
 
 const MAX_BODY = 10 * 1024 * 1024; // 单包上限：诊断包正常 <2MB
 const RATE_LIMIT_PER_HOUR = 10;    // 真实用户每天 1-2 次

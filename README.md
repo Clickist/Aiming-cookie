@@ -83,15 +83,15 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 
 ## 当前状态
 
-**v0.1.0-beta.1 内测中**（未签名构建，SmartScreen 需选择「仍要运行」）。
+**v1.2.1 已发布**（安装包与自动更新经官网分发；安装包未签名，SmartScreen 需选择「仍要运行」）。
 
-- ✅ 四源采集链路、四家族通用视觉、场景自动分类、Coach 全能力——均经真机验证
-- 🚧 已知限制：含视频的分析需等待 1-2 分钟（有进度显示）；击中判定存在 ±10px 视觉灰区；安装包未签名；打包/签名/更新链路尚未产品化
+- ✅ 四源采集链路、通用视觉分析、Coach 全能力、自动更新——均经真机验证
+- 🚧 已知限制：含视频的分析需等待 1-2 分钟（有进度显示）；击中判定存在 ±10px 视觉灰区；安装包未签名
 - 📋 详细状态与阻塞见 [`docs/PROGRESS.md`](docs/PROGRESS.md)
 
 ## 快速开始
 
-**内测用户**：从 [Releases](https://github.com/Clickist/Aiming-cookie/releases) 下载安装包 → 安装 → 设置页配置 LLM Provider → 授权 Raw Input 与窗口采集 → 打开 KovaaK 开打。
+**普通用户**：从官网 [aimingcookie.com](https://aimingcookie.com) 下载安装包 → 安装 → 设置页配置 LLM Provider → 授权 Raw Input 与窗口采集 → 打开 KovaaK 开打。
 
 **从源码运行与开发**：见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)（三进程启动、测试命令、Tauri 打包）。
 
@@ -117,6 +117,8 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 | `webapp/coach-runtime/` | Node Coach sidecar（对话、工具、知识库） |
 | `webapp/frontend/` | Next.js 前端与 Tauri 桌面壳 |
 | `third_party/pi/` | 项目接管的 Pi runtime 源码基线 |
+| `design/` | 官网落地页与历史设计稿 |
+| `scripts/` | 构建、打包、e2e 辅助脚本 |
 | `docs/` | 产品、架构、路线图、进度与历史资料 |
 | `tests/`, `webapp/tests/` | 核心与 Web/Desktop 回归测试 |
 
@@ -127,6 +129,15 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 - 安装、启动、测试：[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
 - 交付顺序：[`docs/ROADMAP.md`](docs/ROADMAP.md) · 当前快照：[`docs/PROGRESS.md`](docs/PROGRESS.md)
 - 文档体系总入口：[`docs/README.md`](docs/README.md)
+
+## 开源协议
+
+本项目以 [GPL-3.0-or-later](LICENSE) 开源发布。第三方归属见 [NOTICE](NOTICE)：
+
+- [RefleK's](https://github.com/ARm8-2/refleks)（GPL-3.0）：KovaaK `.perf` 成绩解析器的字段映射改编自其实现，见 [`kovaak_tracker/performance_parser.py`](kovaak_tracker/performance_parser.py)
+- [pi (Pi Agent Harness)](https://pi.dev)（MIT）：vendored 于 [`third_party/pi/`](third_party/pi/)
+
+本项目为独立个人项目，与 KovaaK's / FPS Aim Trainer、Steam、Valve 无任何从属关系。
 
 ---
 
