@@ -177,6 +177,8 @@
     }
     .pagefoot { padding-block: var(--gap-xl); color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
     .pagefoot .row-between { flex-wrap: wrap; gap: var(--gap-md); }
+    .pagefoot a { text-underline-offset: 2px; }
+    .pagefoot a:hover { color: var(--fg); text-decoration: underline; }
     .meta-notice {
       padding-block: clamp(40px, 5vw, 72px);
       text-align: center;
@@ -2177,7 +2179,7 @@
   <footer class="pagefoot" data-od-id="footer">
     <div class="container row-between">
       <span>© 2026 Aiming Cookie · KovaaK's aim analysis + AI coach</span>
-      <span class="meta">Simplified Chinese UI · Windows desktop app · Free</span>
+      <span class="meta">Simplified Chinese UI · Windows desktop app · Free · <a href="https://github.com/Clickist/Aiming-cookie" target="_blank" rel="noopener">GitHub (open source)</a></span>
     </div>
   </footer>
   <script>
