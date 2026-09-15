@@ -18,7 +18,8 @@ test("packaged release WebView renders the product surface", async () => {
   const page = browser!.contexts().flatMap((context) => context.pages())[0];
   expect(page, "packaged Tauri WebView page").toBeDefined();
 
-  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible({ timeout: 60_000 });
+  // v6 起品牌行归 Session rail；全新 profile 首启先落在 onboarding。两者任一可见即产品内容已渲染。
+  await expect(page!.locator(".task3-onboarding, .task7-session-rail__brand").first()).toBeVisible({ timeout: 60_000 });
   const content = await page!.locator("body").innerText();
   expect(content.trim().length).toBeGreaterThan(20);
   expect(content).not.toMatch(/asset not found|failed to load|application error/i);

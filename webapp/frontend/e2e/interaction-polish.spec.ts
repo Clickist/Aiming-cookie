@@ -358,7 +358,7 @@ test("real Tauri WebView keeps the Coach-first workspace layout at desktop width
   // Coach workspace at / has Session rail and toolbar.
   await page!.goto(new URL("/", appUrl).toString());
   await expect(page!.getByRole("navigation", { name: "会话" })).toBeVisible();
-  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
+  await expect(page!.locator(".task7-session-rail__brand")).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
   // History page keeps Session rail.
@@ -402,28 +402,31 @@ test("real Tauri WebView renders the Coach-first product surface", async () => {
   // Coach workspace at / is the default surface.
   await setTheme("light");
   await page!.goto(new URL("/", appUrl).toString());
-  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
+  await expect(page!.locator(".task7-session-rail__brand")).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
-  // Settings page shows KovaaK scores and theme.
+  // Settings page shows theme and the KovaaK section content (0912 起设置分区化，需切到 KovaaK 分区)。
   await setTheme("dark");
   await page!.goto(new URL("/settings", appUrl).toString());
   await expect(page!.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page!.getByRole("heading", { name: "KovaaK 成绩" })).toBeVisible();
+  await page!.getByRole("navigation", { name: "设置导航" }).getByRole("button", { name: "KovaaK" }).click();
+  await expect(page!.getByText("已连接 KovaaKs 在线成绩")).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
-  // Coach home shows the current training plan.
+  // Coach home shows the current training plan（0828 起默认折叠：先点胶囊展开）。
   await useScenario();
   await page!.goto(new URL("/", appUrl).toString());
+  const trainingChip = page!.getByRole("button", { name: "当前训练计划" });
+  await expect(trainingChip).toBeVisible();
+  await trainingChip.click();
   const currentTraining = page!.getByRole("region", { name: "当前训练计划" });
   await expect(currentTraining).toBeVisible();
-  await currentTraining.getByRole("button", { name: "展开" }).click();
-  for (const label of ["练什么", "练多少", "注意", "观察", "复测"]) {
+  for (const label of ["练什么", "练多少", "复测"]) {
     await expect(currentTraining.getByText(label, { exact: true })).toBeVisible();
   }
 
-  // Retired URLs redirect to History.
-  await page!.goto(new URL("/analyze", appUrl).toString());
+  // Retired URLs redirect to History（退役路由=/tasks 与 /analysis；/analyze 从未是产品路由）。
+  await page!.goto(new URL("/tasks", appUrl).toString());
   await expect(page!).toHaveURL(/\/history/);
   await page!.goto(new URL("/analysis?id=42", appUrl).toString());
   await expect(page!).toHaveURL(/\/history/);
