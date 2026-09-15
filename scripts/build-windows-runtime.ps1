@@ -71,10 +71,19 @@ if ($bunStageRoot -notmatch '^[\u0000-\u007F]+$') {
 New-Item -ItemType Directory -Path $bunStageRoot -Force | Out-Null
 $stagedBun = Join-Path $bunStageRoot "bun.exe"
 
+# Relay base_url is injected at build time and never committed to the repo
+# (the packaged sidecar needs the real address; the public source does not).
+$relayUrlFile = Join-Path $RepoRoot "webapp\coach-runtime\relay-base-url.local.txt"
+if (-not (Test-Path -LiteralPath $relayUrlFile)) {
+    throw "relay-base-url.local.txt is missing (kept out of the repo on purpose; it carries the relay base_url consumed by provider-models.ts)."
+}
+$relayBaseUrl = (Get-Content -LiteralPath $relayUrlFile -Raw).Trim()
+if (-not $relayBaseUrl) { throw "relay-base-url.local.txt is empty" }
+
 try {
     # Bun 1.3 on Windows cannot compile from the WinGet shim under this user's Unicode profile path.
     Copy-Item -LiteralPath $bunSource -Destination $stagedBun -Force
-    & $stagedBun build (Join-Path $RepoRoot "webapp\coach-runtime\start-sidecar.ts") --compile --outfile $coachExe
+    & $stagedBun build (Join-Path $RepoRoot "webapp\coach-runtime\start-sidecar.ts") --compile --outfile $coachExe --define "process.env.AC_RELAY_BASE_URL=`"$relayBaseUrl`""
     if ($LASTEXITCODE -ne 0) { throw "Bun Coach compilation failed with exit code $LASTEXITCODE" }
 } finally {
     if (Test-Path -LiteralPath $bunStageRoot) {

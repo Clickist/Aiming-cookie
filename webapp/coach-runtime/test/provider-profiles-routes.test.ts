@@ -7,6 +7,9 @@ import test from "node:test";
 
 const dataRoot = mkdtempSync(join(tmpdir(), "coach-provider-routes-"));
 process.env.DATA_ROOT = dataRoot;
+// 官方档（aiming-cookie-relay）的 base_url 走环境变量注入（源码不含真实地址）；
+// 不设则官方档不注入、建档 502。占位地址即可，计费请求由 stubBillingFetch 拦截。
+process.env.AC_RELAY_BASE_URL = "http://127.0.0.1:3000/v1";
 
 import { findStoredProfile, loadProfile, loadProviderStore } from "../src/provider-store.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";

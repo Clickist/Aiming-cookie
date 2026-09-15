@@ -61,7 +61,7 @@ v0.1.14（tag 指向落地页 commit `3355b89`）是**首个内置自动更新�
 
 - Windows 单机桌面应用（内测阶段，v1.0.0）：KovaaK's 训练诊断 + AI 教练。正常产品面 = Coach、History、Settings。
 - Coach 自动选最强可用 Run 档：`multimodal` → `input_native` → `video_fallback`；真值口径以 KovaaK 遥测为权威，CV 是行为细节与回退档（视频 e2e 回归锚的意义所在，见 `webapp/tests/test_e2e.py`）。
-- 商业模式（PRD 09-06 修订）：官方托管套餐 + BYOK 双轨；中转站（relay）接入已完成订阅 API 与排障，售卖链路（自建套餐/注册/订阅/支付页）拍板为不急。
+- 商业模式（PRD 09-06 修订）：官方托管套餐 + BYOK 双轨；官方托管服务接入已完成订阅 API 与排障，售卖链路拍板为不急。
 - 自动更新已上线：新版本发布 = 上传 R2 三件套（latest.json 最后）→ 老客户端自动弹更新。
 
 ## Implementation Status
@@ -84,8 +84,8 @@ v0.1.14（tag 指向落地页 commit `3355b89`）是**首个内置自动更新�
 
 - **未接线**：Coach usage 面板与 Composer next_turn 触发（后端合同已就绪，前端入口未做）。
 - **待确认**：设置页右侧 7 分区 layout 提案（点点）。
-- **内测**：两位内测用户待复测「中转站 + AC 搭配」（上下文治理已换 microcompact）。
-- **营销**：B站口播定稿待拍摄（录屏基准 v0.1.14）；HyperFrames hook 工作台推进中（工作台在 `Desktop\Aiming-cookie-video-fx`）。
+- **内测**：两位内测用户待复测「官方托管服务 + AC 搭配」（上下文治理已换 microcompact）。
+- **营销**：B站口播定稿待拍摄（录屏基准 v0.1.14）；HyperFrames hook 工作台推进中（工作台为本地独立工程）。
 - **既有失败**：coach-runtime `skills-loading`（pi 库 Windows 路径 split），不挡发版，待 pi 上游或本地补丁。
 - **仓库卫生（09-06 清扫）**：`.zcode/` 已 gitignore；output/、.firecrawl/、macos-vibrancy-style-pack/、compendium HTML 出库留本地；`data/` 保留（csv=测试夹具，mp4=CV 回退回归锚）；x76-wiki 快照仅本地参考（原站 robots `ai-train=no`，勿入库勿进产品知识库）。
 - **1.0.0 审计遗留（2026-09-13，已随 v1.0.1 清零）**：全量审计报告见本地 `.zcode/audit-2026-09-13/REPORT.md`（未入库，不随仓库分发）；审计的 5 个活 P1 中 4 个已随 v1.0.1 修复发版（回合终态收敛竞态、外部遥测重复导入、重试丢 contextRefs、stopped/truncate 错位），第 5 个（训练卡 observation 映射）经点点拍板删除死映射（UI 已不展示观察栏，翻译无人消费）；pytest 的 2 个回归已随 v1.0.1 修复。

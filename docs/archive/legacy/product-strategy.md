@@ -1,8 +1,10 @@
 # 产品战略：webapp 分阶段开放能力
 
+> **已废弃**：本文为早期战略草稿，仅作历史追溯。现行口径以 `docs/PRD.md`（09-06 修订）为准：核心分析能力不收费，商业化为官方托管套餐 + BYOK 双轨。
+
 ## 核心决策
 
-**一个产品**（Aiming Cookie webapp），分阶段开放分析能力。当前 scope 是 flicking（详见 `docs/superpowers/specs/2026-07-05-tracking-coach-design.md` 的 scope 审视）；tracking 分析代码保留但理论待重构；手部摄像头是未来扩展（不是平行产品线）。变现方向：会员订阅 / 外设佣金（用户先免费用起来，再分阶段引入付费能力）。
+**一个产品**（Aiming Cookie webapp），分阶段开放分析能力。当前 scope 是 flicking（详见 `docs/superpowers/specs/2026-07-05-tracking-coach-design.md` 的 scope 审视）；tracking 分析代码保留但理论待重构；手部摄像头是未来扩展（不是平行产品线）。
 
 详见 webapp 设计 spec：`docs/superpowers/specs/2026-07-05-flicking-coach-webapp-design.md`。
 
@@ -25,7 +27,7 @@
 ### Phase 3：tracking 接通 + 商业化
 - tracking coach v1 重构（基于 accuracy / loss_count / off_time / avg_error，spec 已落）→ 接进 webapp
 - 商业化：订阅（点点包 LLM key）或免费 + 用户自带 key
-- **绕过 ICP 备案**（持续境外部署 + Cloudflare；见 PRD §5.2 / §9.1）——不迁国内
+- 境外部署 + Cloudflare（暂不涉及国内备案；见 PRD §5.2 / §9.1）——不迁国内
 
 ## 已知限制（Phase 1）
 
@@ -71,9 +73,11 @@
 
 ---
 
-## 商业化：数据驱动的外设推荐（远期，Phase 3+）
+## 商业化：数据驱动的外设推荐（远期，Phase 3+；已废弃，未采纳）
 
-不是广告，是诊断结果直接导向的产品推荐。用户看到"你的握力过大是因为鼠标太重"比看到广告有说服力得多。转化率高，且可通过联盟佣金变现。
+> 本节为早期构想，未采纳，保留仅作历史追溯。现行商业化口径见 PRD。
+
+不是广告，是诊断结果直接导向的产品推荐。用户看到"你的握力过大是因为鼠标太重"比看到广告有说服力得多。
 
 | 诊断信号 | 来源 | 推荐 |
 |---|---|---|

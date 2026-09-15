@@ -7,7 +7,7 @@
     "rva_slot_scene": "USceneComponent 类注册静态结构槽 RVA（同上，sizeof=0x200）",
     "rva_blocks_expect": "FNamePool.Blocks 槽期望 RVA（自扫描层的对照值；自扫描失败时的人工核对基准）"
   },
-  "_howto": "新增版本见 RUNBOOK_OFFSETS.md §3。定位工具: E:\\DevCache\\temp\\reoffset_func_align.py(投票) + reoffset_slot_bootstrap.py(类槽) + reoffset_validate.py(在线校验)。",
+  "_howto": "新增版本见 RUNBOOK_OFFSETS.md（内部手册，不随仓库分发）。",
 
   "847d79e3cea87ccc34468626915ba71a70f9f61e1997ada97c1fa15552515180": {
     "label": "旧副本 Desktop\\FPSAimTrainer 2026-07-04 (92,191,232 B)",

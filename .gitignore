@@ -74,3 +74,6 @@ aiming-theory-compendium*.html
 # 本地参考快照与废弃素材（不入库：x76 原站 robots ai-train=no；logo.jfif 为废弃草稿）
 x76-wiki-markdown-*/
 *.jfif
+
+# 构建期注入值（开源仓库不含真实中转站地址，见 provider-models.ts / build-windows-runtime.ps1）
+webapp/coach-runtime/relay-base-url.local.txt
