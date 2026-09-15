@@ -544,8 +544,12 @@ fn collect_finalize_log_tail(data_root: &Path, max_bytes: usize) -> Option<Strin
     for entry in fs::read_dir(&sessions).ok()? {
         let Ok(entry) = entry else { continue };
         let log = entry.path().join("finalize.log");
-        let Ok(meta) = fs::metadata(&log) else { continue };
-        let Ok(modified) = meta.modified() else { continue };
+        let Ok(meta) = fs::metadata(&log) else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if newest.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
             newest = Some((modified, log));
         }
@@ -806,10 +810,7 @@ fn append_frontend_log(data_root: &Path, entry: &str) -> Result<(), String> {
     }
     // 一行一条：bounded_diagnostic_text 过滤控制字符（保留 \n/\t），再把
     // 换行/制表折成空格，避免多行错误文本破坏行结构。
-    let line = bounded_diagnostic_text(entry)
-        .replace('\r', " ")
-        .replace('\n', " ")
-        .replace('\t', " ");
+    let line = bounded_diagnostic_text(entry).replace(['\r', '\n', '\t'], " ");
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -901,8 +902,8 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 use windows::Win32::Graphics::Dwm::{
-                    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
-                    DWM_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+                    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+                    DWM_WINDOW_CORNER_PREFERENCE,
                 };
                 if let Some(window) = app.get_webview_window("main") {
                     if let Ok(hwnd) = window.hwnd() {

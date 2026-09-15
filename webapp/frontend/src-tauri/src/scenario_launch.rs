@@ -315,7 +315,10 @@ mod tests {
             resolve_local_scenario("  1Wall   6Targets   Small  ", &dir).as_deref(),
             Some("1wall 6targets small"),
         );
-        assert_eq!(resolve_local_scenario("pasu", &dir).as_deref(), Some("pasu"));
+        assert_eq!(
+            resolve_local_scenario("pasu", &dir).as_deref(),
+            Some("pasu")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
