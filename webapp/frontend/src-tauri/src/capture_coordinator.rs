@@ -1826,10 +1826,9 @@ mod tests {
         monitor_start_failure_status, parse_control_request, raw_snapshot_flush_allowed,
         read_control_line, replay_failure_code, resized_video_degraded_status,
         response_type_for_request, sha256_hex, track_control_connection_thread,
-        write_capture_enabled_file,
-        CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, CaptureSourceStatus,
-        ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord, StreamingSha256,
-        CONTROL_MAX_MESSAGE_BYTES,
+        write_capture_enabled_file, CaptureCoordinatorStatus, CapturePhase, CaptureSourceState,
+        CaptureSourceStatus, ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
+        StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
     use std::fs;
@@ -2372,7 +2371,7 @@ mod tests {
         ] {
             fs::write(&path, payload).expect("write corrupt fixture");
             assert!(
-                matches!(load_capture_enabled_file(&root), Err(_)),
+                load_capture_enabled_file(&root).is_err(),
                 "corrupt payload must be rejected: {payload:?}"
             );
         }
