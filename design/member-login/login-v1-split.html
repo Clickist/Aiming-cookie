@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aiming Cookie · 登录（设计稿 V1 · 分栏编辑式）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* 全部取值来自 AC 语义 token（webapp/frontend/ui/tokens.ts），浅/暗双主题 */
+  :root {
+    color-scheme: light;
+    --background: #f7f5f0;
+    --on-background: #24211d;
+    --surface: #fffdf8;
+    --on-surface: #24211d;
+    --on-surface-variant: #625c54;
+    --primary: #c83d00;
+    --on-primary: #ffffff;
+    --primary-container: #ffe1d5;
+    --on-primary-container: #4a1300;
+    --outline: #7b746b;
+    --outline-variant: #cec6bc;
+    --event-kill: #16875b;
+    --error: #ba1a1a;
+    --ring: #c83d00;
+    /* 右侧视觉板固定为深色（等同照片素材，不随主题翻转） */
+    --panel: #141413;
+    --panel-text: #eae8e3;
+    --panel-muted: #9e9a92;
+    --panel-accent: #ff8a5c;
+    --panel-line: #3a3833;
+  }
+  html.dark {
+    color-scheme: dark;
+    --background: #141413;
+    --on-background: #eae8e3;
+    --surface: #1c1c1a;
+    --on-surface: #eae8e3;
+    --on-surface-variant: #9e9a92;
+    --primary: #ff8a5c;
+    --on-primary: #1f0a00;
+    --primary-container: #4a220f;
+    --on-primary-container: #ffd9c7;
+    --outline: #6b6660;
+    --outline-variant: #3a3833;
+    --event-kill: #4fdca0;
+    --error: #ff9aa2;
+    --ring: #ff8a5c;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: Inter, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--background);
+    color: var(--on-background);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage { display: flex; min-height: 100vh; }
+
+  /* ---- 左：表单板 ---- */
+  .form-pane {
+    flex: 0 0 460px;
+    background: var(--surface);
+    border-right: 1px solid var(--outline-variant);
+    display: flex; flex-direction: column;
+    padding: 24px;
+  }
+  .pane-top { display: flex; justify-content: flex-end; }
+  .theme-btn {
+    font: 500 12px/1 Inter, "Microsoft YaHei", sans-serif;
+    color: var(--on-surface-variant);
+    background: none; border: 1px solid var(--outline-variant);
+    border-radius: 6px; padding: 8px 12px; cursor: pointer;
+  }
+  .form-body { flex: 1; display: flex; align-items: center; justify-content: center; }
+  .form-col { width: 100%; max-width: 340px; }
+
+  .logo-tile {
+    width: 44px; height: 44px; border-radius: 14px;
+    background: var(--primary-container);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; margin-bottom: 20px;
+  }
+  h1 { font: 600 20px/1.3 Outfit, "Microsoft YaHei", sans-serif; letter-spacing: .2px; }
+  .subtitle { margin-top: 6px; font-size: 14px; color: var(--on-surface-variant); }
+
+  form { margin-top: 28px; }
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--on-surface); margin-bottom: 8px; font-weight: 500; }
+  input {
+    width: 100%; height: 36px; padding: 0 12px;
+    font: 400 14px Inter, "Microsoft YaHei", sans-serif;
+    color: var(--on-surface); background: var(--background);
+    border: 1px solid var(--outline-variant); border-radius: 10px; outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  input::placeholder { color: var(--on-surface-variant); opacity: .7; }
+  input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent); }
+  #otp { font-family: "JetBrains Mono", Consolas, monospace; letter-spacing: 4px; }
+
+  .otp-row { display: flex; gap: 8px; }
+  .otp-row input { flex: 1; }
+  .ghost-btn {
+    height: 36px; padding: 0 12px; cursor: pointer; white-space: nowrap;
+    font: 400 13px Inter, "Microsoft YaHei", sans-serif;
+    color: var(--on-surface-variant); background: none;
+    border: 1px solid var(--outline-variant); border-radius: 10px;
+  }
+  .ghost-btn:hover { border-color: var(--outline); }
+
+  .cta {
+    width: 100%; height: 36px; margin-top: 4px; cursor: pointer;
+    font: 600 14px Inter, "Microsoft YaHei", sans-serif;
+    background: var(--primary); color: var(--on-primary);
+    border: none; border-radius: 10px;
+    transition: opacity .15s ease;
+  }
+  .cta:hover { opacity: .92; }
+  .cta:disabled { opacity: .5; cursor: wait; }
+
+  .msg { min-height: 20px; margin-top: 12px; font-size: 13px; color: var(--on-surface-variant); }
+  .msg.ok { color: var(--event-kill); }
+  .msg.err { color: var(--error); }
+  .back-link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-size: 12px; color: var(--on-surface-variant); text-decoration: underline; text-underline-offset: 2px;
+  }
+
+  /* 成功态 */
+  #done { text-align: center; padding: 8px 0; }
+  #done .badge {
+    width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%;
+    background: color-mix(in srgb, var(--event-kill) 14%, transparent);
+    color: var(--event-kill); font-size: 24px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #done h2 { font: 600 20px/1.3 Outfit, "Microsoft YaHei", sans-serif; }
+  #done p { margin-top: 8px; font-size: 14px; color: var(--on-surface-variant); }
+  #done .note { margin-top: 20px; font-size: 11px; color: var(--on-surface-variant); opacity: .8; }
+
+  .fine-print { margin-top: 24px; font-size: 12px; color: var(--on-surface-variant); }
+  .fine-print a { color: var(--outline); text-decoration: underline; text-underline-offset: 2px; }
+  .pane-foot { margin-top: 16px; font-size: 11px; color: var(--on-surface-variant); }
+
+  /* ---- 右：品牌视觉板（固定深色） ---- */
+  .visual-pane { flex: 1; background: var(--panel); position: relative; overflow: hidden; }
+  .glow-a, .glow-b { position: absolute; border-radius: 50%; filter: blur(80px); }
+  .glow-a { width: 480px; height: 480px; right: -120px; top: -140px;
+    background: radial-gradient(circle, rgba(255,138,92,.16), transparent 70%); }
+  .glow-b { width: 380px; height: 380px; left: -100px; bottom: -120px;
+    background: radial-gradient(circle, rgba(255,181,157,.10), transparent 70%); }
+  .target-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .visual-copy { position: absolute; left: 48px; bottom: 48px; max-width: 480px; }
+  .visual-copy .kicker {
+    font: 500 12px/1 "JetBrains Mono", Consolas, monospace;
+    letter-spacing: 2px; color: var(--panel-accent); margin-bottom: 14px; text-transform: uppercase;
+  }
+  .visual-copy h2 { font: 500 28px/1.45 Outfit, "Microsoft YaHei", sans-serif; color: var(--panel-text); }
+  .visual-copy p { margin-top: 12px; font-size: 13px; color: var(--panel-muted); }
+
+  @media (max-width: 880px) {
+    .visual-pane { display: none; }
+    .form-pane { flex: 1; border-right: none; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="form-pane">
+    <div class="pane-top">
+      <button class="theme-btn" id="themeBtn" type="button">主题 · 亮</button>
+    </div>
+
+    <div class="form-body">
+      <div class="form-col">
+        <div class="logo-tile">🍪</div>
+        <h1>登录 Aiming Cookie</h1>
+        <p class="subtitle">邮箱验证码登录，新邮箱自动注册</p>
+
+        <div class="form-col" id="stepEmail">
+          <form id="f">
+            <div class="field">
+              <label for="email">邮箱</label>
+              <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            </div>
+            <div class="field" id="otpField" style="display:none">
+              <label for="otp">验证码</label>
+              <div class="otp-row">
+                <input id="otp" inputmode="numeric" maxlength="8" placeholder="······">
+                <button type="button" class="ghost-btn" id="resend">重新发送</button>
+              </div>
+              <button type="button" class="back-link" id="back" style="margin-top:10px">换个邮箱</button>
+            </div>
+            <button class="cta" id="btn" type="submit">获取验证码</button>
+            <div class="msg" id="msg"></div>
+          </form>
+        </div>
+
+        <div id="done" style="display:none">
+          <div class="badge">✓</div>
+          <h2>登录成功</h2>
+          <p id="doneText">正在返回 Aiming Cookie…</p>
+          <div class="note">浏览器直访登录（无设备码）时，此页改为跳转账号中心</div>
+        </div>
+
+        <p class="fine-print">继续即表示你同意 <a href="#">《服务条款》</a> 与 <a href="#">《隐私政策》</a></p>
+      </div>
+    </div>
+
+    <div class="pane-foot">Aiming Cookie · 免费版永久可用，会员解锁云端教练</div>
+  </div>
+
+  <div class="visual-pane">
+    <div class="glow-a"></div>
+    <div class="glow-b"></div>
+    <div class="target-wrap">
+      <svg width="460" height="460" viewBox="0 0 460 460" fill="none" aria-hidden="true">
+        <circle cx="230" cy="230" r="210" stroke="#3a3833" stroke-width="1.5"/>
+        <circle cx="230" cy="230" r="160" stroke="#3a3833" stroke-width="1.5"/>
+        <circle cx="230" cy="230" r="110" stroke="#3a3833" stroke-width="1.5"/>
+        <circle cx="230" cy="230" r="60"  stroke="#3a3833" stroke-width="1.5"/>
+        <line x1="230" y1="8"   x2="230" y2="452" stroke="#3a3833" stroke-width="1"/>
+        <line x1="8"   y1="230" x2="452" y2="230" stroke="#3a3833" stroke-width="1"/>
+        <circle cx="230" cy="230" r="7" fill="#ff8a5c"/>
+        <circle cx="318" cy="152" r="6" fill="#ff8a5c" opacity=".9"/>
+        <circle cx="152" cy="296" r="6" fill="#ffb59d" opacity=".75"/>
+        <circle cx="262" cy="330" r="6" fill="#4fdca0"/>
+        <circle cx="118" cy="176" r="4" fill="#9e9a92" opacity=".7"/>
+      </svg>
+    </div>
+    <div class="visual-copy">
+      <div class="kicker">AIMING COOKIE</div>
+      <h2>本地优先的<br>瞄准训练分析工作台</h2>
+      <p>登录后同步会员状态与训练偏好，AI 教练解读每一次 KovaaK 训练。</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  /* 主题：亮 → 暗 → 跟随系统（对应 AC System/Light/Dark 三态） */
+  const themeBtn = document.getElementById("themeBtn");
+  const themes = [["亮", ()=>document.documentElement.classList.remove("dark")],
+                  ["暗", ()=>document.documentElement.classList.add("dark")],
+                  ["跟随系统", ()=>document.documentElement.classList.remove("dark")]];
+  let ti = 0;
+  themeBtn.onclick = () => { ti = (ti+1)%3; themes[ti][1](); themeBtn.textContent = "主题 · " + themes[ti][0]; };
+
+  /* 登录三步演示（不发请求） */
+  const $ = id => document.getElementById(id);
+  const msg = (t,c) => { $("msg").textContent = t; $("msg").className = "msg " + (c||""); };
+  let sent = false;
+  $("f").addEventListener("submit", e => {
+    e.preventDefault();
+    if (!sent) {
+      sent = true;
+      $("otpField").style.display = "";
+      $("btn").textContent = "登录";
+      msg("验证码已发送，请查收邮箱", "ok");
+      $("otp").focus();
+    } else {
+      $("f").style.display = "none";
+      $("done").style.display = "";
+    }
+  });
+  $("resend").onclick = () => msg("验证码已重新发送", "ok");
+  $("back").onclick = () => { sent = false; $("otpField").style.display = "none"; $("btn").textContent = "获取验证码"; msg(""); $("email").focus(); };
+</script>
+</body>
+</html>
