@@ -1260,6 +1260,8 @@
   align-items: center;
   gap: var(--space-1);
   height: 24px;
+  /* 0918 防遮三键：限宽防长场景名单 chip 独吞顶栏（超出以省略号截断）。 */
+  max-width: 220px;
   padding: 0 var(--space-2);
   /* 无边框：button 的 UA 默认 outset 白框会顶出来（0910 四轮验收发现）。 */
   border: 0;
@@ -1270,6 +1272,14 @@
   white-space: nowrap;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+/* chip 文本省略（0918）：inline-flex 上 text-overflow 无效，须由内层
+   块级 span 承接；flex 子项设 overflow 后才可被收缩截断。 */
+.task6-discussion-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 button.task6-discussion-chip:hover {
@@ -1313,7 +1323,12 @@ button.task6-discussion-chip:focus-visible {
    bar 保留 position: relative 承载 ▾ 下拉菜单的绝对定位；菜单改挂 bar 右缘
    （原 var(--space-4) 边距是面板内边距语境，顶栏内归零）。
    0910 拍板：slot 自身右缘吃掉剩余空白（margin-inline-end: auto），
-   chips 紧跟标题，右侧空间全部让白。 */
+   chips 紧跟标题，右侧空间全部让白。
+   0918 防遮三键：bar 原为 flex:none 不可收缩，标题+多条目超宽时整条溢出
+   槽位、越过顶栏给窗口三键留的 150px 保护区，直接压住最小化键（用户报障）。
+   改为可收缩，收缩量由内部 .task6-discussion-chips 裁剪吸收；▾ 与下拉
+   留在裁剪容器外，挤压时展开入口仍可见可点。菜单绝对定位向下弹出，
+   因此槽位不能加 overflow:hidden（会把菜单裁没）。 */
 .task3-coach-topbar-slot {
   display: flex;
   align-items: center;
@@ -1323,14 +1338,36 @@ button.task6-discussion-chip:focus-visible {
 }
 .task3-coach-topbar-slot .task6-discussion-bar {
   position: relative;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   width: auto;
   padding: 0;
-  overflow: hidden;
 }
 .task3-coach-topbar-slot .task6-discussion-menu {
   top: calc(100% + var(--space-1));
   right: 0;
+}
+
+/* chip 收缩裁剪容器（0918 防遮三键）：flex 收缩链条的末端，空间不足时
+   在自身框内裁掉 chip 溢出部分，绝不越过顶栏三键保护区。 */
+.task6-discussion-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 收缩分配（0918）：前面的 chip 保持完整可读可点，只让最后一个 chip
+   承担收缩（min-width:0 解除 flex 内容下限，内层 label 出省略号）；
+   极端挤压下才由容器 overflow 兜底硬裁。 */
+.task6-discussion-chips > .task6-discussion-chip {
+  flex-shrink: 0;
+}
+.task6-discussion-chips > .task6-discussion-chip:last-child {
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 /* 本次讨论溢出折叠（0905 拍板）：已完成 chip 只平铺前 3 个，余量收进行尾
@@ -1341,6 +1378,8 @@ button.task6-discussion-chip:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* 0918：▾ 是挤压时的展开入口，钉住不参与收缩。 */
+  flex: none;
   width: 24px;
   padding: 0;
 }

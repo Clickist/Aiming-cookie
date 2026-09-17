@@ -2735,29 +2735,35 @@ export function CoachPanel({
       {(!homeShell && (pendingAnalyses.length > 0 || discussionAnalysisIds.length > 0) && discussionBarHost != null) ? (
         createPortal(
           <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" ref={discussionBarRef} role="region">
-            {pendingAnalyses.map((item) => (
-              <span
-                className="task6-discussion-chip"
-                data-pending="true"
-                key={`pending-${item.id}`}
-                title="分析完成后可点击打开视频"
-              >
-                <span aria-hidden="true" className="task6-pulse-dot task6-chip-dot" />
-                {item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
-                <ElapsedTicker sinceMs={item.startedAtMs} />
-              </span>
-            ))}
-            {pinnedDiscussionChips.map((chip) => (
-              <button
-                className="task6-discussion-chip"
-                key={chip.id}
-                onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
-                title="打开视频讲解"
-                type="button"
-              >
-                {chip.label}
-              </button>
-            ))}
+            {/* 0918 防遮三键：chip 收进可收缩容器内裁剪，▾ 与下拉留在容器外，
+                挤压时展开入口始终可见可点。 */}
+            <div className="task6-discussion-chips">
+              {pendingAnalyses.map((item) => (
+                <span
+                  className="task6-discussion-chip"
+                  data-pending="true"
+                  key={`pending-${item.id}`}
+                  title="分析完成后可点击打开视频"
+                >
+                  <span aria-hidden="true" className="task6-pulse-dot task6-chip-dot" />
+                  <span className="task6-discussion-chip-label">
+                    {item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
+                  </span>
+                  <ElapsedTicker sinceMs={item.startedAtMs} />
+                </span>
+              ))}
+              {pinnedDiscussionChips.map((chip) => (
+                <button
+                  className="task6-discussion-chip"
+                  key={chip.id}
+                  onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
+                  title="打开视频讲解"
+                  type="button"
+                >
+                  <span className="task6-discussion-chip-label">{chip.label}</span>
+                </button>
+              ))}
+            </div>
             {overflowDiscussionChips.length > 0 ? (
               <button
                 aria-expanded={discussionOverflowOpen}
