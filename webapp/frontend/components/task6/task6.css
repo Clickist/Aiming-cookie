@@ -1342,6 +1342,10 @@ button.task6-discussion-chip:focus-visible {
   min-width: 0;
   width: auto;
   padding: 0;
+  /* 0918：bar 挂着 task6-suggestions 的 flex-wrap:wrap（旧吸顶建议条遗产），
+     顶栏挤压时 ▾ 会换行掉出 44px 顶栏（实测 y=30 越界）。顶栏内恒单行，
+     宽度不足交给 chips 容器裁剪 + 上方 JS 整颗收编。 */
+  flex-wrap: nowrap;
 }
 .task3-coach-topbar-slot .task6-discussion-menu {
   top: calc(100% + var(--space-1));
@@ -1359,15 +1363,17 @@ button.task6-discussion-chip:focus-visible {
   overflow: hidden;
 }
 
-/* 收缩分配（0918）：前面的 chip 保持完整可读可点，只让最后一个 chip
-   承担收缩（min-width:0 解除 flex 内容下限，内层 label 出省略号）；
-   极端挤压下才由容器 overflow 兜底硬裁。 */
+/* 收缩分配（0918）：前面的 chip 保持完整可读可点；最后一个 chip 承担收缩
+   （内层 label 出省略号），但保留 120px 可读下限——0 下限会让 flex 先把
+   末 chip 吸成细缝（「只露个头」，彩名报障）且容器永不溢出，上方 JS 收敛
+   逻辑就永远收不编；有了下限，缩到下限即产生真实溢出，整颗收进 ▾ 菜单。
+   极端挤压（pending 超长且无可收编项）才由容器 overflow 兜底硬裁。 */
 .task6-discussion-chips > .task6-discussion-chip {
   flex-shrink: 0;
 }
 .task6-discussion-chips > .task6-discussion-chip:last-child {
   flex-shrink: 1;
-  min-width: 0;
+  min-width: 120px;
 }
 
 /* 本次讨论溢出折叠（0905 拍板）：已完成 chip 只平铺前 3 个，余量收进行尾
@@ -1390,6 +1396,11 @@ button.task6-discussion-chip:focus-visible {
 
 .task6-discussion-menu {
   position: absolute;
+  /* 0918 彩名报障「没有下拉栏」：菜单挂在顶栏内向下弹进面板区，而对话
+     面板 task3-coach-conversation 是 z-index:1 的绝对定位层——无层级菜单
+     弹出即被整块盖住（用户看到「点了没反应」）。抬到面板与分割把手（z:2）
+     之上，仍低于设置 overlay(20)/窗口三键(60)。 */
+  z-index: 3;
   top: calc(100% + var(--space-1));
   right: var(--space-4);
   min-width: 228px;

@@ -560,7 +560,13 @@ test("Discussion bar pins at most three finished chips and folds the rest behind
   // 平铺/溢出分组收敛到 lib 纯函数（单测在 lib/discussion-bar.test.ts），
   // 面板只消费 pinned/overflow 两组；pending chip 独立平铺，不参与折叠。
   assert.match(lib, /export const DISCUSSION_BAR_MAX_PINNED = 3;/);
-  assert.match(coach, /groupDiscussionChips\(discussionChips\)/);
+  // 0918 宽度感知（彩名报障「框体砍半/只露个头」）：分组上限来自挤压反馈
+  // 收敛的平铺数（溢出→整颗收进菜单；富余→滞后试探放宽），不再写死 3。
+  assert.match(coach, /groupDiscussionChips\(discussionChips, discussionPinnedCount\)/);
+  assert.match(coach, /const chips = discussionChipsRef\.current/);
+  assert.match(coach, /chips\.scrollWidth - chips\.clientWidth > 1/);
+  // 平铺 chip 悬停给完整标题：截断时唯一能认出是哪局的途径。
+  assert.match(coach, /title=\{chip\.label\}/);
   assert.match(coach, /pinnedDiscussionChips\.map/);
   assert.match(coach, /overflowDiscussionChips\.length > 0 \? \(/);
   // 箭头按钮：discussion-chip 状态标签档 + aria-expanded + 计数 aria-label。
@@ -574,6 +580,10 @@ test("Discussion bar pins at most three finished chips and folds the rest behind
   assert.match(coach, /if \(event\.isComposing \|\| event\.keyCode === 229\) return;\s*if \(event\.key === "Escape"\) setDiscussionOverflowOpen\(false\);/);
   // 下拉样式：绝对定位悬浮层挂在吸顶条右缘，宽度有界不溢出面板。
   assert.match(styles, /\.task6-discussion-menu\s*\{[^}]*position:\s*absolute;[^}]*top:\s*calc\(100% \+ var\(--space-1\)\);[^}]*right:\s*var\(--space-4\);[^}]*max-width:\s*320px;[^}]*\}/s);
+  // 0918：菜单必须自带层级——对话面板 conversation 是 z-index:1 的绝对
+  // 定位层，无层级菜单弹出即被盖住（「点了没反应」）；须高于面板(1)/把手(2)，
+  // 低于设置 overlay(20)/窗口三键(60)。
+  assert.match(styles, /\.task6-discussion-menu\s*\{[^}]*z-index:\s*3/);
   assert.match(styles, /\.task6-discussion-item/);
 });
 
