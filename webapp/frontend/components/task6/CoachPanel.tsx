@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { ANALYSIS_AUTO_TEACH_EVENT, COACH_PENDING_INTENT_KEY, COACH_SESSION_UPDATED_EVENT, computeAnalysisEtaSeconds, formatHistoryDate } from "@/lib/contracts";
-import { discussionChipLabel, groupDiscussionChips } from "@/lib/discussion-bar";
+import { discussionChipLabel, groupDiscussionChips, DISCUSSION_BAR_MAX_PINNED } from "@/lib/discussion-bar";
 import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
@@ -1011,6 +1011,13 @@ export function CoachPanel({
   // 开关状态只归用户。进行中的 pending chip 不参与折叠（调用方永远平铺）。
   const [discussionOverflowOpen, setDiscussionOverflowOpen] = useState(false);
   const discussionBarRef = useRef<HTMLDivElement | null>(null);
+  // 0918 宽度感知收编（彩名报障「框体砍半/只露个头」）：平铺数不再写死 3，
+  // 顶栏放不下就整颗收进 ▾ 菜单，半截 chip 只允许作为 pending 超长的 CSS
+  // 兜底存在。收敛规则见 portal 后的挤压反馈 layout effect。
+  const [discussionPinnedCount, setDiscussionPinnedCount] = useState(DISCUSSION_BAR_MAX_PINNED);
+  const discussionChipsRef = useRef<HTMLDivElement | null>(null);
+  const discussionShrinkFailedRowWidthRef = useRef<number | null>(null);
+  const [discussionRowWidthTick, setDiscussionRowWidthTick] = useState(0);
   useEffect(() => {
     if (!discussionOverflowOpen) return undefined;
     // 关闭路径（CoachModelMenu 同款惯例）：点击菜单外部 mousedown 关闭 +
@@ -1035,7 +1042,9 @@ export function CoachPanel({
     id,
     label: discussionChipLabel(id, analysisScenarios[id]),
   }));
-  const { pinned: pinnedDiscussionChips, overflow: overflowDiscussionChips } = groupDiscussionChips(discussionChips);
+  // 标签文案宽度参与的收敛重算锚：场景名异步补齐会改变 chip 宽度。
+  const discussionLabelsKey = discussionChips.map((chip) => chip.label).join("\n");
+  const { pinned: pinnedDiscussionChips, overflow: overflowDiscussionChips } = groupDiscussionChips(discussionChips, discussionPinnedCount);
 
   // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」+ 呼吸点与经过
   // 时间，完成后由自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，
@@ -2415,6 +2424,49 @@ export function CoachPanel({
     const host = document.getElementById("task3-coach-topbar-slot");
     if (host !== discussionBarHost) setDiscussionBarHost(host);
   });
+  // 顶栏行宽度变化（拖窗/缩放）触发重收敛；行＝slot 的父级（task3-coach-topbar）。
+  useEffect(() => {
+    if (discussionBarHost === null) return undefined;
+    const row = discussionBarHost.parentElement;
+    if (!row || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => setDiscussionRowWidthTick((tick) => tick + 1));
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [discussionBarHost]);
+  // 挤压反馈收敛（0918）：唯一所有者是本 layout effect——列表/标签键值变化
+  // 时回到全平铺（键值记在 ref，不用 passive effect，否则与收敛 setState 跨
+  // 阶段批处理互吃：reset 设回 3、collapse 减到 2 合并成一次 3→3 渲染，
+  // deps 不再变化，溢出态永久卡死）。溢出就把最后一颗平铺 chip 整颗收进
+  // ▾ 菜单并记录失败时的行宽；行宽比失败点宽出一档（24px 滞后防拖动抖动）
+  // 才整体放宽到上限、让溢出分支自己走回收敛点。绘制前同步消化，用户
+  // 看不到中间的溢出帧。
+  const discussionCollapseKeysRef = useRef<string | null>(null);
+  const discussionPinnedCap = Math.min(DISCUSSION_BAR_MAX_PINNED, discussionChips.length);
+  useLayoutEffect(() => {
+    const chips = discussionChipsRef.current;
+    if (!chips) return;
+    const row = discussionBarHost?.parentElement ?? null;
+    const collapseKeys = `${discussionAnalysisKey}\u0000${discussionLabelsKey}`;
+    if (discussionCollapseKeysRef.current !== collapseKeys) {
+      discussionCollapseKeysRef.current = collapseKeys;
+      if (discussionPinnedCount !== discussionPinnedCap) {
+        setDiscussionPinnedCount(discussionPinnedCap);
+        return;
+      }
+    }
+    if (chips.scrollWidth - chips.clientWidth > 1) {
+      if (discussionPinnedCount <= 0) return;
+      if (row) discussionShrinkFailedRowWidthRef.current = row.clientWidth;
+      setDiscussionPinnedCount(discussionPinnedCount - 1);
+      return;
+    }
+    const failedAt = discussionShrinkFailedRowWidthRef.current;
+    if (failedAt === null || row === null) return;
+    if (row.clientWidth <= failedAt + 24) return;
+    if (discussionPinnedCount >= discussionPinnedCap) return;
+    discussionShrinkFailedRowWidthRef.current = null;
+    setDiscussionPinnedCount(discussionPinnedCap);
+  }, [discussionBarHost, discussionPinnedCount, discussionPinnedCap, discussionRowWidthTick, discussionAnalysisKey, discussionLabelsKey, pendingAnalyses.length]);
   const beginHomeExit = (text: string) => {
     if (messages.length !== 0 || run || prefersReducedMotion()) return;
     const rect = homeComposerRef.current?.getBoundingClientRect();
@@ -2736,8 +2788,9 @@ export function CoachPanel({
         createPortal(
           <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" ref={discussionBarRef} role="region">
             {/* 0918 防遮三键：chip 收进可收缩容器内裁剪，▾ 与下拉留在容器外，
-                挤压时展开入口始终可见可点。 */}
-            <div className="task6-discussion-chips">
+                挤压时展开入口始终可见可点。宽度不足由上方收敛逻辑整颗收编，
+                容器硬裁只是 pending 超长的兜底。 */}
+            <div className="task6-discussion-chips" ref={discussionChipsRef}>
               {pendingAnalyses.map((item) => (
                 <span
                   className="task6-discussion-chip"
@@ -2757,7 +2810,8 @@ export function CoachPanel({
                   className="task6-discussion-chip"
                   key={chip.id}
                   onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
-                  title="打开视频讲解"
+                  // 悬停给完整标题：挤压截断时唯一能认出是哪局的途径（菜单项同款全名）。
+                  title={chip.label}
                   type="button"
                 >
                   <span className="task6-discussion-chip-label">{chip.label}</span>
