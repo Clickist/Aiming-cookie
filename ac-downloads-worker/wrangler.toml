@@ -1,0 +1,24 @@
+name = "ac-downloads"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+account_id = "db06f26da8dfb170ef578da1ab37b6e2"
+
+# dl.aimingcookie.com 前置下载计数 Worker。
+# routes 定义后 wrangler deploy 会一并创建/更新 zone 路由（workers.dev 随之关闭）。
+# 回滚 = 控制台删掉该路由（zone: aimingcookie.com → Workers Routes），流量立即回落 R2 自定义域。
+
+routes = [
+  { pattern = "dl.aimingcookie.com/*", zone_name = "aimingcookie.com" }
+]
+
+[[r2_buckets]]
+binding = "DOWNLOADS"
+bucket_name = "aiming-cookie-downloads"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ac-downloads"
+database_id = "cff2d306-6ac2-4736-a7b5-c2b067b64ff0"
+
+[observability]
+enabled = true
