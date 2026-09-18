@@ -384,23 +384,12 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 /** Upper bound on context messages so long conversations don't grow unbounded. */
 const MAX_CONTEXT_MESSAGES = 40;
 
-// 条数窗口不够：工具结果单条可达数十万字符（read 整份 evidence.json、
-// product command 全量 JSON），持久化后每回合重发，实测把请求顶到 12-15
-// 万 token——免费中转通道直接 429/空回复（2026-09-06 中转站内测事故）。
-// 处置对齐 Claude Code 的 microcompact：超过触发阈值时，把旧 toolResult 的
-// 内容替换为占位符，只保留最近几条完整结果；user/assistant 文本永不触碰
-// （Anthropic 官方称清除旧工具结果是"最安全、最轻量的 compaction 形式"）。
-// 触发阈值对齐 Anthropic context editing 默认 100K token，按 OpenAI 口径
-// 1 token≈4 字符折算（上下文大头是 ASCII JSON，折算可信）；真实 token 计数
-// 由 pi compaction（contextWindow−16K 触发，shouldCompactNow）兜底。
-const CONTEXT_CLEAR_TRIGGER_CHARS = 400_000;
-const CLEAR_KEEP_TOOL_RESULTS = 3;
-export const CLEARED_TOOL_RESULT_PLACEHOLDER = "[Old tool result content cleared]";
-
-function contextMessageChars(message: unknown): number {
-  if (!isRecord(message)) return 0;
-  return JSON.stringify((message as { content?: unknown }).content ?? "").length;
-}
+// 曾有 microcompact：总字符超 40 万时把旧 toolResult 替换成占位符，治
+// 2026-09-06 内测大请求被免费商汤通道 429/空回复的事故。2026-09-19 移除：
+// 清除会打碎上下文前缀，DeepSeek 前缀缓存全量作废（实测命中率仅 33%），
+// 而谷段缓存命中价 ¥0.007/M 只有未命中 ¥0.22/M 的 3%，保历史反而便宜；
+// 大请求 429 由重试落 OPC 兜底。真实 token 压缩仍由 pi compaction
+// （contextWindow−16K 触发，shouldCompactNow）负责。
 
 function isMessageEntry(entry: unknown): entry is {
   type: string;
@@ -488,28 +477,6 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const withoutCurrent =
             last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
           let trimmed = withoutCurrent.slice(-MAX_CONTEXT_MESSAGES);
-          // microcompact：总字符超阈值时清除旧 toolResult 内容（保留最近
-          // CLEAR_KEEP_TOOL_RESULTS 条完整），对话文本不动。只改发往 Provider
-          // 的视图，不回写 session。清除不改变消息条数与角色序列，天然不产生
-          // 孤立 tool 开头。
-          const totalChars = trimmed.reduce((sum, m) => sum + contextMessageChars(m), 0);
-          if (totalChars > CONTEXT_CLEAR_TRIGGER_CHARS) {
-            const toolResultIndexes: number[] = [];
-            trimmed.forEach((m, index) => {
-              if ((m as { role?: unknown }).role === "toolResult") toolResultIndexes.push(index);
-            });
-            const staleCount = toolResultIndexes.length - CLEAR_KEEP_TOOL_RESULTS;
-            if (staleCount > 0) {
-              const staleIndexes = new Set(toolResultIndexes.slice(0, staleCount));
-              trimmed = trimmed.map((m, index) => {
-                if (!staleIndexes.has(index)) return m;
-                return {
-                  ...(m as object),
-                  content: [{ type: "text", text: CLEARED_TOOL_RESULT_PLACEHOLDER }],
-                };
-              });
-            }
-          }
           // 对齐到 user/system 边界：截断可能切断 assistant(tool_calls)→tool 的配对，
           // 孤立开头的 tool 消息会触发 Provider "tool must follow tool_calls" 错误。
           while (trimmed.length > 0) {
