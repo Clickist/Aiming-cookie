@@ -77,3 +77,6 @@ x76-wiki-markdown-*/
 
 # 构建期注入值（开源仓库不含真实中转站地址，见 provider-models.ts / build-windows-runtime.ps1）
 webapp/coach-runtime/relay-base-url.local.txt
+
+# wrangler 本地状态缓存（ac-downloads Worker，0918）
+ac-downloads-worker/.wrangler/
