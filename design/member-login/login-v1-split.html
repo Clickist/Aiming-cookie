@@ -25,7 +25,7 @@
     --event-kill: #16875b;
     --error: #ba1a1a;
     --ring: #c83d00;
-    /* 右侧视觉板固定为深色（等同照片素材，不随主题翻转） */
+    --input-h: 44px; /* 登录页专用：36 控件档在网页表单里显局促，放大一档 */
     --panel: #141413;
     --panel-text: #eae8e3;
     --panel-muted: #9e9a92;
@@ -77,20 +77,18 @@
   .form-body { flex: 1; display: flex; align-items: center; justify-content: center; }
   .form-col { width: 100%; max-width: 340px; }
 
-  .logo-tile {
-    width: 44px; height: 44px; border-radius: 14px;
-    background: var(--primary-container);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; margin-bottom: 20px;
-  }
+  /* 标题行：裸 logo + 登录 */
+  .brand-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .logo-img { width: 30px; height: 30px; filter: invert(1); }
+  html.dark .logo-img { filter: none; }
   h1 { font: 600 20px/1.3 Outfit, "Microsoft YaHei", sans-serif; letter-spacing: .2px; }
-  .subtitle { margin-top: 6px; font-size: 14px; color: var(--on-surface-variant); }
+  .subtitle { font-size: 14px; color: var(--on-surface-variant); margin-bottom: 28px; }
 
-  form { margin-top: 28px; }
+  form { margin-top: 0; }
   .field { margin-bottom: 16px; }
   label { display: block; font-size: 13px; color: var(--on-surface); margin-bottom: 8px; font-weight: 500; }
   input {
-    width: 100%; height: 36px; padding: 0 12px;
+    width: 100%; height: var(--input-h); padding: 0 14px;
     font: 400 14px Inter, "Microsoft YaHei", sans-serif;
     color: var(--on-surface); background: var(--background);
     border: 1px solid var(--outline-variant); border-radius: 10px; outline: none;
@@ -103,7 +101,7 @@
   .otp-row { display: flex; gap: 8px; }
   .otp-row input { flex: 1; }
   .ghost-btn {
-    height: 36px; padding: 0 12px; cursor: pointer; white-space: nowrap;
+    height: var(--input-h); padding: 0 14px; cursor: pointer; white-space: nowrap;
     font: 400 13px Inter, "Microsoft YaHei", sans-serif;
     color: var(--on-surface-variant); background: none;
     border: 1px solid var(--outline-variant); border-radius: 10px;
@@ -111,7 +109,7 @@
   .ghost-btn:hover { border-color: var(--outline); }
 
   .cta {
-    width: 100%; height: 36px; margin-top: 4px; cursor: pointer;
+    width: 100%; height: var(--input-h); margin-top: 4px; cursor: pointer;
     font: 600 14px Inter, "Microsoft YaHei", sans-serif;
     background: var(--primary); color: var(--on-primary);
     border: none; border-radius: 10px;
@@ -123,13 +121,18 @@
   .msg { min-height: 20px; margin-top: 12px; font-size: 13px; color: var(--on-surface-variant); }
   .msg.ok { color: var(--event-kill); }
   .msg.err { color: var(--error); }
-  .back-link {
+
+  /* 按钮下的辅助链接行：忘记密码 / 换个邮箱 */
+  .aux { margin-top: 4px; min-height: 20px; display: none; }
+  .aux.show { display: block; }
+  .aux button {
     background: none; border: none; padding: 0; cursor: pointer;
-    font-size: 12px; color: var(--on-surface-variant); text-decoration: underline; text-underline-offset: 2px;
+    font-size: 12px; color: var(--on-surface-variant);
+    text-decoration: underline; text-underline-offset: 2px;
   }
 
   /* 成功态 */
-  #done { text-align: center; padding: 8px 0; }
+  #done { text-align: center; padding: 8px 0; display: none; }
   #done .badge {
     width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%;
     background: color-mix(in srgb, var(--event-kill) 14%, transparent);
@@ -142,10 +145,12 @@
 
   .fine-print { margin-top: 24px; font-size: 12px; color: var(--on-surface-variant); }
   .fine-print a { color: var(--outline); text-decoration: underline; text-underline-offset: 2px; }
-  .pane-foot { margin-top: 16px; font-size: 11px; color: var(--on-surface-variant); }
+  .pane-foot { margin-top: 16px; font-size: 11px; color: var(--on-surface-variant); line-height: 1.8; }
 
   /* ---- 右：品牌视觉板（固定深色） ---- */
   .visual-pane { flex: 1; background: var(--panel); position: relative; overflow: hidden; }
+  /* 右侧正式视觉图：生成好后命名为 visual-art.png 放本目录，自动盖在靶心占位上 */
+  .visual-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .glow-a, .glow-b { position: absolute; border-radius: 50%; filter: blur(80px); }
   .glow-a { width: 480px; height: 480px; right: -120px; top: -140px;
     background: radial-gradient(circle, rgba(255,138,92,.16), transparent 70%); }
@@ -153,10 +158,6 @@
     background: radial-gradient(circle, rgba(255,181,157,.10), transparent 70%); }
   .target-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
   .visual-copy { position: absolute; left: 48px; bottom: 48px; max-width: 480px; }
-  .visual-copy .kicker {
-    font: 500 12px/1 "JetBrains Mono", Consolas, monospace;
-    letter-spacing: 2px; color: var(--panel-accent); margin-bottom: 14px; text-transform: uppercase;
-  }
   .visual-copy h2 { font: 500 28px/1.45 Outfit, "Microsoft YaHei", sans-serif; color: var(--panel-text); }
   .visual-copy p { margin-top: 12px; font-size: 13px; color: var(--panel-muted); }
 
@@ -176,32 +177,51 @@
 
     <div class="form-body">
       <div class="form-col">
-        <div class="logo-tile">🍪</div>
-        <h1>登录 Aiming Cookie</h1>
-        <p class="subtitle">邮箱验证码登录，新邮箱自动注册</p>
+        <div class="brand-row">
+          <img class="logo-img" src="../../webapp/frontend/public/logo-mark.png" alt="Aiming Cookie">
+          <h1>登录 Aiming Cookie</h1>
+        </div>
+        <p class="subtitle">输入邮箱继续，新邮箱将自动注册</p>
 
-        <div class="form-col" id="stepEmail">
-          <form id="f">
+        <form id="f" novalidate>
+          <div class="field">
+            <label for="email">邮箱</label>
+            <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+          </div>
+
+          <!-- 登录态：长出密码框 -->
+          <div class="field" id="pwdField" style="display:none">
+            <label for="pwd">密码</label>
+            <input id="pwd" type="password" autocomplete="current-password" placeholder="你的密码">
+          </div>
+
+          <!-- 注册态：长出设密码 + 确认 + 验证码 -->
+          <div id="regFields" style="display:none">
             <div class="field">
-              <label for="email">邮箱</label>
-              <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+              <label for="pwd1">设置密码</label>
+              <input id="pwd1" type="password" autocomplete="new-password" placeholder="至少 8 位">
             </div>
-            <div class="field" id="otpField" style="display:none">
+            <div class="field">
+              <label for="pwd2">再输一遍密码</label>
+              <input id="pwd2" type="password" autocomplete="new-password" placeholder="和上面一样">
+            </div>
+            <div class="field">
               <label for="otp">验证码</label>
               <div class="otp-row">
-                <input id="otp" inputmode="numeric" maxlength="8" placeholder="······">
-                <button type="button" class="ghost-btn" id="resend">重新发送</button>
+                <input id="otp" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="邮箱里收到的验证码">
+                <button type="button" class="ghost-btn" id="sendCode">获取验证码</button>
               </div>
-              <button type="button" class="back-link" id="back" style="margin-top:10px">换个邮箱</button>
             </div>
-            <button class="cta" id="btn" type="submit">获取验证码</button>
-            <div class="msg" id="msg"></div>
-          </form>
-        </div>
+          </div>
 
-        <div id="done" style="display:none">
+          <button class="cta" id="btn" type="submit">登录 / 注册</button>
+          <div class="msg" id="msg"></div>
+          <div class="aux" id="aux"></div>
+        </form>
+
+        <div id="done">
           <div class="badge">✓</div>
-          <h2>登录成功</h2>
+          <h2 id="doneTitle">登录成功</h2>
           <p id="doneText">正在返回 Aiming Cookie…</p>
           <div class="note">浏览器直访登录（无设备码）时，此页改为跳转账号中心</div>
         </div>
@@ -210,10 +230,14 @@
       </div>
     </div>
 
-    <div class="pane-foot">Aiming Cookie · 免费版永久可用，会员解锁云端教练</div>
+    <div class="pane-foot">
+      Aiming Cookie · 免费版永久可用，会员解锁云端教练<br>
+      演示规则：以 @example.com 结尾视为已注册（走密码登录），其他邮箱走注册流程
+    </div>
   </div>
 
   <div class="visual-pane">
+    <img class="visual-art" src="visual-art.png" alt="" onerror="this.remove()">
     <div class="glow-a"></div>
     <div class="glow-b"></div>
     <div class="target-wrap">
@@ -232,7 +256,6 @@
       </svg>
     </div>
     <div class="visual-copy">
-      <div class="kicker">AIMING COOKIE</div>
       <h2>本地优先的<br>瞄准训练分析工作台</h2>
       <p>登录后同步会员状态与训练偏好，AI 教练解读每一次 KovaaK 训练。</p>
     </div>
@@ -249,25 +272,96 @@
   let ti = 0;
   themeBtn.onclick = () => { ti = (ti+1)%3; themes[ti][1](); themeBtn.textContent = "主题 · " + themes[ti][0]; };
 
-  /* 登录三步演示（不发请求） */
+  /* 自适应登录/注册演示（不发请求）：
+     ask（只填邮箱）→ login（老账号，长出密码）→ 登录成功
+                    → register（新邮箱，长出设密码+确认+验证码）→ 注册成功并自动登录 */
   const $ = id => document.getElementById(id);
   const msg = (t,c) => { $("msg").textContent = t; $("msg").className = "msg " + (c||""); };
-  let sent = false;
+  const DEMO_EXISTING = /@example\.com$/i;
+  let mode = "ask";
+
+  function setAux(items) {
+    const aux = $("aux");
+    aux.innerHTML = "";
+    items.forEach(([label, fn], i) => {
+      if (i) { const sep = document.createElement("span"); sep.textContent = " · "; sep.style.opacity = .6; aux.appendChild(sep); }
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label; b.onclick = fn;
+      aux.appendChild(b);
+    });
+    aux.className = "aux" + (items.length ? " show" : "");
+  }
+
+  function resetToAsk() {
+    mode = "ask";
+    $("pwdField").style.display = "none";
+    $("regFields").style.display = "none";
+    $("btn").textContent = "登录 / 注册";
+    setAux([["忘记密码？", ()=>location.href = "forgot-password.html"]]);
+    msg("");
+  }
+  resetToAsk();
+
+  /* 从重置密码页跳回来：邮箱已知是老账号，直接进入输密码状态 */
+  const qp = new URLSearchParams(location.search);
+  if (qp.get("reset") === "ok") {
+    if (qp.get("email")) $("email").value = qp.get("email");
+    mode = "login";
+    $("pwdField").style.display = "";
+    $("btn").textContent = "登录";
+    setAux([["忘记密码？", ()=>location.href = "forgot-password.html"]]);
+    msg("密码已重置，用新密码登录", "ok");
+    $("pwd").focus();
+  }
+
+  /* 邮箱一改，识别作废：长出的字段自动缩回第一屏 */
+  $("email").addEventListener("input", () => {
+    if (mode !== "ask") { resetToAsk(); $("pwd").value = ""; $("pwd1").value = ""; $("pwd2").value = ""; $("otp").value = ""; }
+  });
+
   $("f").addEventListener("submit", e => {
     e.preventDefault();
-    if (!sent) {
-      sent = true;
-      $("otpField").style.display = "";
-      $("btn").textContent = "登录";
-      msg("验证码已发送，请查收邮箱", "ok");
-      $("otp").focus();
+    const email = $("email").value.trim();
+    if (mode === "ask") {
+      if (!email) { msg("先填邮箱", "err"); $("email").focus(); return; }
+      if (DEMO_EXISTING.test(email)) {
+        mode = "login";
+        $("pwdField").style.display = "";
+        $("btn").textContent = "登录";
+        setAux([["忘记密码？", ()=>location.href = "forgot-password.html"]]);
+        msg("这个邮箱已注册，输入密码登录");
+        $("pwd").focus();
+      } else {
+        mode = "register";
+        $("regFields").style.display = "";
+        $("btn").textContent = "注册";
+        setAux([]);
+        msg("新邮箱，设置密码完成注册", "ok");
+        $("pwd1").focus();
+      }
+    } else if (mode === "login") {
+      if (!$("pwd").value) { msg("先填密码", "err"); $("pwd").focus(); return; }
+      showDone("登录成功", "正在返回 Aiming Cookie…");
     } else {
-      $("f").style.display = "none";
-      $("done").style.display = "";
+      if ($("pwd1").value.length < 8) { msg("密码至少 8 位", "err"); $("pwd1").focus(); return; }
+      if ($("pwd1").value !== $("pwd2").value) { msg("两次密码不一致", "err"); $("pwd2").focus(); return; }
+      if (!$("otp").value.trim()) { msg("填一下验证码", "err"); $("otp").focus(); return; }
+      showDone("注册成功", "已自动登录，正在返回 Aiming Cookie…");
     }
   });
-  $("resend").onclick = () => msg("验证码已重新发送", "ok");
-  $("back").onclick = () => { sent = false; $("otpField").style.display = "none"; $("btn").textContent = "获取验证码"; msg(""); $("email").focus(); };
+
+  $("sendCode").onclick = () => {
+    $("otp").value = "826431"; /* 演示：模拟 dev 回显 */
+    msg("验证码已发送，请查收邮箱（演示已自动填入）", "ok");
+  };
+
+  function showDone(title, text) {
+    $("f").style.display = "none";
+    setAux([]);
+    $("doneTitle").textContent = title;
+    $("doneText").textContent = text;
+    $("done").style.display = "";
+  }
 </script>
 </body>
 </html>
