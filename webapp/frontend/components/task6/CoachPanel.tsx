@@ -722,7 +722,8 @@ export function CoachPanel({
   // 输入框自动长高（0911 点点，对齐 ZCode 规格）：随内容增长，上限 8 行；
   // 超过 8 行框停住、overflow 转 auto（内部滚动条）。padding（模型钮/引用钮
   // 让位 44px 等）动态读取，行高以 computed lineHeight 为准。
-  useLayoutEffect(() => {
+  const composerInputRef = useRef<HTMLDivElement | null>(null);
+  const autosizeComposer = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     const cs = getComputedStyle(ta);
@@ -731,7 +732,28 @@ export function CoachPanel({
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
     ta.style.overflowY = ta.scrollHeight > max + 1 ? "auto" : "hidden";
-  }, [draft]);
+  }, []);
+  useLayoutEffect(() => {
+    autosizeComposer();
+  }, [draft, autosizeComposer]);
+  // 高度自愈（0918 点点报障「输入框高度塌了」）：autosize 原本只认 draft，
+  // 模型钮在 provider 发现模型的窗口期会整颗卸载（CoachModelMenu return
+  // null），期间重算会把过时的小高度写进 inline style；按钮恢复后没人再
+  // 重算，塌陷高度就一直卡到下次输入。观察输入卡宽度（拖窗折行变化）与
+  // 角簇子树（模型钮挂载/卸载），布局一变即重算自愈。
+  useEffect(() => {
+    const input = composerInputRef.current;
+    if (!input) return undefined;
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => autosizeComposer()) : null;
+    if (ro) ro.observe(input);
+    const cornerEl = input.querySelector(".task6-composer-corner");
+    const mo = typeof MutationObserver !== "undefined" && cornerEl ? new MutationObserver(() => autosizeComposer()) : null;
+    if (mo && cornerEl) mo.observe(cornerEl, { childList: true, subtree: true });
+    return () => {
+      ro?.disconnect();
+      mo?.disconnect();
+    };
+  }, [autosizeComposer]);
   // ── 划选引用（quote-reply，docs/quote-feature-research.md）───────────
   // 引用块是 composer 外挂结构（独立数组），不混进 textarea 字符串：
   // 每块可整块删除、文字锁定不可编辑；发送时才由 composeQuotedContent 拼装。
@@ -1839,7 +1861,6 @@ export function CoachPanel({
         {summaryItem ? (
           <section aria-label="当前训练计划" className="task6-training-details">
             <div className="task6-current-training-scenario">
-              <span className="task6-training-scenario-label">当前训练项目</span>
               <strong>{summaryItem.display_name ?? "未命名项目"}</strong>
             </div>
             {/* 面板只讲用户要执行的三件事（1.0.0 内测反馈：注意/观察是
@@ -2567,7 +2588,7 @@ export function CoachPanel({
           ))}
         </div>
       ) : null}
-      <div className="task6-composer-input">
+      <div className="task6-composer-input" ref={composerInputRef}>
         <textarea
           aria-label="向 Coach 提问"
           id="coach-draft"

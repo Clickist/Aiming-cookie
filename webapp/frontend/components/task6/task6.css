@@ -172,11 +172,6 @@
   gap: 2px;
 }
 
-.task6-training-scenario-label {
-  color: var(--on-surface-variant);
-  font-size: var(--text-micro);
-}
-
 .task6-current-training-scenario strong {
   font-size: var(--text-ui);
   font-weight: 600;

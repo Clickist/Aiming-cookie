@@ -359,7 +359,9 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   const coach = await source("components/task6/CoachPanel.tsx");
   const desktop = await source("lib/desktop.ts");
   assert.match(coach, /当前训练计划/);
-  assert.match(coach, /当前训练项目/);
+  // 0918 拍板（点点）：浮层标题「当前训练」下再标「当前训练项目」信息重复，
+  // 标签退役，项目名 display_name 直接顶到浮层首行。
+  assert.doesNotMatch(coach, /当前训练项目/);
   assert.match(coach, /task6-training-item-actions/);
   assert.doesNotMatch(coach, /task6-training-actions/);
   // 0913 拍板：展开时头部行泛称化去重名；按钮行右对齐；删除训练计划直删不弹窗。
