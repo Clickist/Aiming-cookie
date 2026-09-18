@@ -20,7 +20,7 @@ const {
   nextSessionIdSync,
   readSessionMessages,
 } = await import("../src/session-repo.ts");
-const { wrapCoachSession, CLEARED_TOOL_RESULT_PLACEHOLDER: CLEAR_PLACEHOLDER } = await import("../src/turn.ts");
+const { wrapCoachSession } = await import("../src/turn.ts");
 
 test.after(() => {
   rmSync(dataRoot, { recursive: true, force: true });
@@ -162,7 +162,7 @@ test("wrapped session truncates buildContext to the recent window", async () => 
   );
 });
 
-test("wrapped session clears stale tool results Claude-Code style instead of dropping messages", async () => {
+test("wrapped session keeps full tool results so the prompt-cache prefix stays stable", async () => {
   const session = await ensureSession(105);
   const stamp = Date.now();
   const append = (role: string, text: string) =>
@@ -176,8 +176,9 @@ test("wrapped session clears stale tool results Claude-Code style instead of dro
       isError: false,
       timestamp: stamp,
     });
-  // 对话 + 4 条巨型 toolResult（共 ~600K 字符 > 400K 触发阈值）。
-  // 清除语义：最旧 1 条被占位符替换（keep=3），其余全部保留；对话文本一条不丢。
+  // 对话 + 4 条巨型 toolResult（共 ~600K 字符，远超原 400K 清除阈值）。
+  // 2026-09-19 拍板：清除机制已移除——清除会打碎上下文前缀、前缀缓存全量
+  // 作废。巨型 toolResult 全量原样保留，对话文本一条不丢。
   await append("user", "u0");
   await append("assistant", "a0");
   await giantToolResult("call-G", "G");
@@ -199,31 +200,18 @@ test("wrapped session clears stale tool results Claude-Code style instead of dro
   const roles = ctx.messages.map((m) => (m as { role?: string }).role ?? "");
   const serialized = JSON.stringify(ctx.messages);
 
-  // 最旧的巨型 toolResult 被替换为占位符，最近 3 条完整保留。
-  assert.ok(!serialized.includes("GGGG"), "stalest oversized tool result should be cleared");
-  assert.ok(serialized.includes(CLEAR_PLACEHOLDER), "clearing placeholder should be present");
-  assert.ok(serialized.includes("HHHH"), "kept tool result H stays intact");
-  assert.ok(serialized.includes("IIII"), "kept tool result I stays intact");
-  assert.ok(serialized.includes("JJJJ"), "kept tool result J stays intact");
-  // 对话文本一条不丢（microcompact 与旧逐出方案的核心差异）。
+  // 全部 4 条巨型 toolResult 原样保留，永不注入占位符。
+  assert.ok(serialized.includes("GGGG"), "oldest oversized tool result stays intact");
+  assert.ok(serialized.includes("HHHH"), "tool result H stays intact");
+  assert.ok(serialized.includes("IIII"), "tool result I stays intact");
+  assert.ok(serialized.includes("JJJJ"), "tool result J stays intact");
+  assert.ok(!serialized.includes("cleared"), "no placeholder is ever injected");
+  // 对话文本一条不丢。
   for (const t of ["u0", "a0", "u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4"]) {
     assert.ok(serialized.includes(`"${t}"`), `conversation text ${t} must survive`);
   }
-  // 条数与序列不变：清除不改消息条数/角色，天然无孤立 tool 开头。
+  // 条数与角色序列不变，天然无孤立 tool 开头。
   assert.equal(roles.filter((r) => r === "toolResult").length, 4);
   assert.equal(roles[0], "user");
   assert.equal(roles[roles.length - 1], "assistant");
-
-  // 未超阈值的纯小对话：一切原样，零行为变化。
-  const smallSession = await ensureSession(106);
-  for (let i = 0; i < 6; i++) {
-    await smallSession.appendMessage({ role: "user", content: [{ type: "text", text: `s-u${i}` }], timestamp: stamp });
-    await smallSession.appendMessage({ role: "assistant", content: [{ type: "text", text: `s-a${i}` }], timestamp: stamp });
-  }
-  await smallSession.appendMessage({ role: "user", content: [{ type: "text", text: "current" }], timestamp: stamp });
-  const smallCtx = await wrapCoachSession(smallSession, []).buildContext();
-  const smallSerialized = JSON.stringify(smallCtx.messages);
-  assert.ok(smallSerialized.includes("s-u0"), "small conversations keep full history");
-  assert.ok(smallSerialized.includes("s-a5"));
-  assert.ok(!smallSerialized.includes("cleared"), "no clearing below the trigger threshold");
 });
