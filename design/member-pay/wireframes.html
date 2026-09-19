@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AC 会员全流程线框稿 v3 · member-pay</title>
+<title>AC 会员全流程线框稿 v3.1 · member-pay</title>
 <style>
 /* AC 明主题语义 token（ui/tokens.ts LIGHT_TOKENS） */
 :root{
@@ -20,7 +20,7 @@
 body{background:var(--background);color:var(--on-background);font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:32px 24px;line-height:1.5}
 h1{font-size:22px;margin-bottom:4px}
 .sub{color:var(--on-surface-variant);font-size:13px;margin-bottom:28px;max-width:920px}
-h2{font-size:16px;margin:40px 0 6px;display:flex;align-items:center;gap:8px}
+h2{font-size:16px;margin:44px 0 6px;display:flex;align-items:center;gap:8px}
 h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none;padding:0 4px}
 .note{color:var(--on-surface-variant);font-size:13px;margin-bottom:14px;max-width:840px}
 .flow{background:var(--surface);border:1px solid var(--outline-variant);border-radius:12px;padding:20px;margin-bottom:8px;overflow-x:auto}
@@ -31,352 +31,411 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 .farrow{color:var(--outline);flex:none}
 .ftag{font-size:11px;color:var(--on-surface-variant);background:var(--surface-container);border-radius:6px;padding:2px 8px;white-space:nowrap}
 .screen-wrap{display:flex;gap:20px;align-items:flex-start;margin-bottom:8px;flex-wrap:wrap}
-.frame{background:var(--surface);border:1.5px solid var(--outline);border-radius:14px;overflow:hidden;flex:none}
-.frame.web{width:640px}
-.frame.narrow{width:380px}
-.frame-title{background:var(--surface-container-high);padding:6px 12px;font-size:12px;color:var(--on-surface-variant);display:flex;justify-content:space-between}
+/* —— 真实比例框架 —— */
+.frame{border-radius:12px;overflow:hidden;flex:none;box-shadow:0 2px 10px rgba(36,33,29,.08);border:1px solid var(--outline-variant)}
+.window{width:880px}
+.window .titlebar{height:34px;background:#1c1c1a;color:#eae8e3;display:flex;align-items:center;padding:0 14px;font-size:12px;font-weight:600;gap:8px}
+.window .titlebar .winbtns{margin-left:auto;display:flex;gap:6px}
+.window .titlebar .winbtns i{width:10px;height:10px;border-radius:2px;background:#555;display:inline-block}
+.window .body{height:550px;background:var(--background);overflow:hidden;display:flex;flex-direction:column}
+.browser{width:880px}
+.browser .addrbar{height:38px;background:var(--surface-container-low);border-bottom:1px solid var(--outline-variant);display:flex;align-items:center;padding:0 12px;gap:10px}
+.browser .addrbar .pill{flex:1;max-width:420px;background:var(--surface);border:1px solid var(--outline-variant);border-radius:99px;height:24px;display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--on-surface-variant)}
+.browser .addrbar .dots{display:flex;gap:5px}
+.browser .addrbar .dots i{width:9px;height:9px;border-radius:50%;background:var(--surface-container-high);display:inline-block}
+.browser .body{min-height:480px;background:var(--surface);display:flex;flex-direction:column}
 .annot{flex:1;min-width:260px;max-width:400px;font-size:13px}
 .annot .tag{display:inline-block;background:var(--primary-container);color:var(--on-primary-container);border-radius:6px;padding:2px 8px;font-size:12px;margin-bottom:8px;font-weight:600}
 .annot ul{list-style:none}
 .annot li{padding:5px 0;border-bottom:1px dashed var(--outline-variant)}
 .annot li b{color:var(--primary)}
-.wf{padding:18px}
-.ph{background:var(--surface-variant);border-radius:5px;height:10px;margin:6px 0}
-.ph.t{height:14px;width:60%}
-.ph.s{height:8px;width:40%}
-.btn{display:block;text-align:center;border-radius:10px;padding:12px;font-size:14px;font-weight:600;margin-top:10px}
+.ph{background:var(--surface-variant);border-radius:5px;height:11px;margin:7px 0}
+.ph.t{height:15px;width:60%}
+.ph.s{height:9px;width:40%}
+.btn{display:block;text-align:center;border-radius:10px;padding:11px;font-size:14px;font-weight:600;margin-top:12px}
 .btn.pri{background:var(--primary);color:var(--on-primary)}
 .btn.sec{background:var(--surface-variant);color:var(--on-surface)}
 .btn.text{background:none;color:var(--on-surface-variant);font-weight:400;font-size:13px}
 .badge{display:inline-block;background:var(--primary-container);color:var(--on-primary-container);font-size:11px;border-radius:6px;padding:2px 8px;font-weight:600}
 .badge.blue{background:var(--tertiary-container);color:var(--on-tertiary-container)}
 .badge.gray{background:var(--surface-container-high);color:var(--on-surface-variant)}
-.price{font-size:26px;font-weight:700}
+.price{font-size:28px;font-weight:700}
 .price small{font-size:13px;font-weight:400;color:var(--on-surface-variant)}
-.divider{border-top:1px solid var(--outline-variant);margin:12px 0}
+.divider{border-top:1px solid var(--outline-variant);margin:14px 0}
 .progress{background:var(--surface-container-high);border-radius:99px;height:10px;overflow:hidden;margin:6px 0}
 .progress i{display:block;background:var(--primary);height:100%}
-.card{background:var(--surface-container-low);border:1px solid var(--outline-variant);border-radius:12px;padding:14px}
+.card{background:var(--surface-container-low);border:1px solid var(--outline-variant);border-radius:12px;padding:16px}
 .center{text-align:center}
 .muted{color:var(--on-surface-variant);font-size:12px}
-.banner{display:flex;align-items:center;gap:8px;background:var(--primary-container);color:var(--on-primary-container);border-radius:10px;padding:10px 12px;font-size:13px}
+.banner{display:flex;align-items:center;gap:8px;background:var(--primary-container);color:var(--on-primary-container);border-radius:10px;padding:10px 14px;font-size:13px}
 .banner.warn{background:#fff3cd;color:#6b4e00}
 .banner.err{background:var(--error-container);color:var(--on-error-container)}
 .input{background:var(--surface-container-low);border:1px solid var(--outline-variant);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--on-surface-variant);margin:6px 0}
-.menu{border:1px solid var(--outline);border-radius:10px;background:var(--surface);overflow:hidden;margin-top:4px}
-.menu-item{padding:9px 12px;font-size:13px;border-bottom:1px solid var(--outline-variant)}
+.menu{border:1px solid var(--outline);border-radius:10px;background:var(--surface);overflow:hidden;margin-top:4px;box-shadow:0 6px 16px rgba(36,33,29,.10)}
+.menu-item{padding:10px 14px;font-size:13px;border-bottom:1px solid var(--outline-variant)}
 .menu-item.hot{background:var(--primary-container);color:var(--on-primary-container);font-weight:600}
 .menu-item:last-child{border-bottom:none}
-.app{display:flex;height:300px}
-.app-side{width:170px;background:var(--surface);border-right:1px solid var(--outline-variant);padding:12px 10px;display:flex;flex-direction:column}
-.app-main{flex:1;background:var(--background);padding:14px;display:flex;flex-direction:column;justify-content:flex-end}
-.side-btn{font-size:12px;padding:7px 9px;border-radius:8px;margin-bottom:5px;background:var(--surface-container-low)}
-.side-btn.pri{background:var(--primary);color:var(--on-primary);text-align:center;font-weight:600}
-.acct{margin-top:auto;border:1px solid var(--outline-variant);border-radius:9px;padding:8px;font-size:11px}
-.wizard{max-width:480px;margin:0 auto;background:var(--surface);border:1px solid var(--outline-variant);border-radius:14px;padding:22px}
-.steps{display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:16px;font-size:12px;color:var(--on-surface-variant)}
+/* 客户端窗口内部（真实比例：880×550，侧栏 220） */
+.app{display:flex;height:100%;flex:1}
+.app-side{width:220px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:14px 12px;display:flex;flex-direction:column}
+.app-main{flex:1;background:var(--background);padding:18px;display:flex;flex-direction:column}
+.side-new{background:var(--primary);color:var(--on-primary);text-align:center;font-weight:600;font-size:13px;border-radius:10px;padding:10px;margin-bottom:12px}
+.side-search{background:var(--surface-container-low);border-radius:9px;padding:8px 10px;font-size:12px;color:var(--on-surface-variant);margin-bottom:10px}
+.side-item{font-size:12px;padding:7px 9px;border-radius:8px;margin-bottom:4px}
+.side-item.act{background:var(--surface-container-high)}
+.acct{margin-top:auto;border:1px solid var(--outline-variant);border-radius:10px;padding:10px;font-size:12px}
+.chip-pop{border:1px solid var(--outline);border-radius:12px;background:var(--surface);padding:14px;box-shadow:0 6px 18px rgba(36,33,29,.14)}
+.wizard{width:420px;margin:26px auto;background:var(--surface);border:1px solid var(--outline-variant);border-radius:14px;padding:24px}
+.steps{display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:18px;font-size:12px;color:var(--on-surface-variant)}
 .step-dot{width:22px;height:22px;border-radius:50%;background:var(--primary);color:var(--on-primary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
 .step-dot.off{background:var(--surface-container-high);color:var(--on-surface-variant)}
-.ok{color:#16875b;font-size:12px;display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:10px}
-.errbar{background:var(--error-container);color:var(--on-error-container);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:8px}
+.ok{color:#16875b;font-size:13px;display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:12px}
+.errbar{background:var(--error-container);color:var(--on-error-container);border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:10px}
+.coach-top{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--outline-variant);background:var(--surface)}
+.coach-msg{background:var(--surface-container-low);border-radius:10px;padding:10px 12px;font-size:12px;margin-top:10px}
+.composer{margin-top:auto;background:var(--surface);border:1px solid var(--outline-variant);border-radius:12px;padding:12px;font-size:13px;color:var(--on-surface-variant)}
+.nav{display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--outline-variant);padding:14px 20px;background:var(--surface)}
+.hero{padding:36px 20px;text-align:center}
 </style>
 </head>
 <body>
 
-<h1>AC 会员全流程线框稿 v3</h1>
-<div class="sub">design/member-pay · 2026-09-20 · 明主题 · <b>v3 修订（按真实 Onboarding 骨架）</b>：会员＝Onboarding「连接模型服务」里的一个 Provider 选项（连通才放行），主界面无锁定态、无任何充值弹窗，余量只显示百分比；落地页右上角新增账号入口。订阅制（连续包月）+ 退款按剩余比例。双档：基础 ¥10/约120轮 · 高频 ¥30/约400轮</div>
+<h1>AC 会员全流程线框稿 v3.1</h1>
+<div class="sub">design/member-pay · 2026-09-20 · 明主题 · <b>v3.1：全部按真实比例</b>——客户端窗口 880×550（≈实机 1280×800 等比）带标题栏，网页 880 宽带浏览器地址栏；无压缩变形。订阅制（连续包月）+ 退款按剩余比例 · 双档：基础 ¥10/约120轮 · 高频 ¥30/约400轮 · 官方价 7.9 折</div>
 
 <h2><span class="no">⓪</span>流程总览</h2>
 <div class="flow">
   <div class="flow-row">
-    <span class="ftag">Onboarding（必须连通 Provider 才放行）</span>
+    <span class="ftag">Onboarding（连通 Provider 才放行）</span>
     <span class="fnode">步骤1 连接模型服务</span><span class="farrow">──▶</span>
     <span class="fnode pri">① 选「Aiming Cookie」＝登录/注册 → 订阅 → 自动配好</span>
     <span class="farrow">┆或┆</span>
-    <span class="fnode">选「自定义 Provider」＝BYOK（现状不变）</span><span class="farrow">──连接成功──▶</span>
+    <span class="fnode">自定义 Provider＝BYOK（现状）</span><span class="farrow">──连通──▶</span>
     <span class="fnode">步骤2 → 主界面</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">主界面（进来即已连通，无锁定态）</span>
-    <span class="fnode">② 左下角账号 chip（百分比余量）</span><span class="farrow">──剩20%──▶</span>
+    <span class="ftag">主界面（进来即连通，无锁定态、无弹窗）</span>
+    <span class="fnode">② 左下角账号 chip（余量 %）</span><span class="farrow">──剩20%──▶</span>
     <span class="fnode">③ 将尽横幅</span><span class="farrow">──用尽──▶</span>
-    <span class="fnode err">④ 发送时 inline 提示（升级/加速包/等下期）</span>
+    <span class="fnode err">④ 发送 inline 提示（升级/加速包/等下期）</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">付费与管理（网页侧，客户端只做入口跳转）</span>
-    <span class="fnode pri">⑤ /pay 购买页（订阅双档）</span><span class="farrow">──▶</span>
-    <span class="fnode">Stripe Checkout 订阅</span><span class="farrow">──▶</span>
-    <span class="fnode">⑥ 成功 / ⑥b 未完成付款 / ⑥c 处理中</span><span class="farrow">──▶</span>
+    <span class="ftag">付费与管理（网页侧）</span>
+    <span class="fnode pri">⑤ /pay（订阅双档）</span><span class="farrow">──▶</span>
+    <span class="fnode">Stripe Checkout</span><span class="farrow">──▶</span>
+    <span class="fnode">⑥ 成功 / 处理中 / 未完成付款</span><span class="farrow">──▶</span>
     <span class="fnode">⑦ 管理订阅 / 取消 / 退款申请</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">订阅周期与落地页</span>
+    <span class="ftag">周期与落地页</span>
     <span class="fnode">⑧ 扣款提醒 / 失败 dunning</span><span class="farrow">──彻底失效──▶</span>
-    <span class="fnode err">⑨ 连接断开提示（重新订阅即恢复）</span>
+    <span class="fnode err">⑨ 连接断开提示（重订即恢复）</span>
     <span class="ftag" style="margin-left:12px">⑩ 落地页右上角 登录/头像 → 账号中心（⑪ P2）</span>
   </div>
 </div>
-<div class="note">铁律（点点 0920 定）：①禁止任何形式的充值弹窗——付费引导全部是页面内常驻元素；②余量只显示百分比，不出现金额；③Onboarding 未连通 Provider 不放行进主界面——所以主界面里不存在"锁定态"，只存在"用尽"与"连接断开"。</div>
+<div class="note">铁律：①禁止任何形式的充值弹窗（付费引导＝页面内常驻元素）；②余量只显示百分比；③未连通 Provider 不放行主界面——主界面只有「用尽」与「断开」，没有「锁定」。</div>
 
-<h2><span class="no">①</span>Onboarding 步骤 1「连接模型服务」——新增 Aiming Cookie 会员选项</h2>
+<h2><span class="no">①</span>Onboarding 步骤 1「连接模型服务」——Provider 下拉展开</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · Onboarding 步骤1（真实骨架）</span><span>Provider 下拉展开</span></div>
-    <div class="wf">
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body" style="position:relative">
       <div class="wizard">
         <div class="steps"><span class="step-dot">1</span><span>──</span><span class="step-dot off">2</span></div>
-        <div class="center" style="font-weight:700;font-size:15px;margin-bottom:12px">连接模型服务</div>
-        <div class="muted" style="margin-bottom:4px">Provider</div>
-        <div class="input" style="border-color:var(--primary);color:var(--on-background)">Aiming Cookie（推荐）▾</div>
+        <div class="center" style="font-weight:700;font-size:16px;margin-bottom:16px">连接模型服务</div>
+        <div class="muted" style="margin-bottom:5px">Provider</div>
+        <div class="input" style="border-color:var(--primary);color:var(--on-background);display:flex;justify-content:space-between"><span>Aiming Cookie（推荐）</span><span>▾</span></div>
         <div class="menu">
-          <div class="menu-item hot">Aiming Cookie（推荐）—— 官方云教练，账号登录即用</div>
+          <div class="menu-item hot">Aiming Cookie（推荐）—— 账号登录即用，无需配置</div>
           <div class="menu-item">DeepSeek 官方</div>
           <div class="menu-item">OpenRouter</div>
-          <div class="menu-item">…其他官方 Provider</div>
+          <div class="menu-item">…（其他内置 Provider）</div>
           <div class="menu-item">自定义 Provider —— 填写 URL 和 API key 后自动识别接口</div>
         </div>
-        <div class="btn sec" style="margin-top:14px">连接测试</div>
+        <div class="btn sec" style="margin-top:18px">连接测试</div>
       </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">改动点（工程=目录加一条）</span>
     <ul>
-      <li><b>Provider catalog 新增「Aiming Cookie」</b>：auth_mode=账号登录（非 api_key/oauth），model=deepseek-v4-flash</li>
-      <li><b>置顶+推荐位：</b>获客主路径；官方列表与「自定义 Provider」保持现状（BYOK 路径不变）</li>
-      <li><b>放行规则不变：</b>连接测试通过才亮「继续」</li>
+      <li><b>Provider catalog 新增「Aiming Cookie」</b>：auth=账号登录，model=deepseek-v4-flash，列表置顶+「推荐」</li>
+      <li>官方 Provider 列表与「自定义 Provider」（BYOK）保持现状</li>
+      <li>放行规则不变：连接测试通过才亮「继续」（步骤 2）</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">①a</span>选「Aiming Cookie」后的内嵌流程：登录 → 订阅 → 连通</h2>
+<h2><span class="no">①a</span>选「Aiming Cookie」——登录 → 订阅 → 连通（同卡内三小态）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 步骤1 内嵌（同一张卡内切换）</span><span>三小态</span></div>
-    <div class="wf">
-      <div class="muted" style="margin-bottom:4px">Provider</div>
-      <div class="input" style="color:var(--on-background)">Aiming Cookie（推荐）</div>
-      <div style="font-weight:600;font-size:13px;margin-top:10px">登录 / 注册</div>
-      <div class="input">邮箱</div>
-      <div style="display:flex;gap:8px"><div class="input" style="flex:1">验证码</div><div class="btn sec" style="margin-top:0;padding:10px 12px">获取验证码</div></div>
-      <div class="btn pri">登录并继续</div>
-      <div class="divider"></div>
-      <div class="center" style="font-weight:600;font-size:13px">还没有订阅？开通即连</div>
-      <div class="card" style="margin:8px 0">
-        <div style="display:flex;justify-content:space-between"><span style="font-size:13px">基础档</span><b>¥10/月</b></div>
-        <div style="display:flex;justify-content:space-between"><span style="font-size:13px">高频档</span><b>¥30/月</b></div>
-        <div class="muted" style="margin-top:4px">约 120 / 400 轮对话 · 官方价 7.9 折 · 连续包月可随时取消</div>
-      </div>
-      <div class="btn pri">选择套餐并订阅</div>
-      <div class="muted center" style="margin-top:6px">↑ 跳转 ⑤ /pay 完成，回来自动连上</div>
-      <div class="divider"></div>
-      <div class="ok">● 连接成功 · Aiming Cookie · deepseek-v4-flash</div>
-      <div class="btn pri" style="margin-top:6px">继续</div>
-    </div>
-  </div>
-  <div class="annot">
-    <span class="tag">同一张卡内的三小态</span>
-    <ul>
-      <li><b>态1 未登录：</b>邮箱验证码两步（同登录页骨架）；登录成功 → 态2</li>
-      <li><b>态2 未订阅：</b>迷你套餐卡（完整版在 ⑤/pay）→ Stripe Checkout → 回来自动配 token → 态3</li>
-      <li><b>态3 已订阅：</b>直接「连接成功」——token 由 accounts 发放并注入，用户无感</li>
-      <li><b>放行：</b>只有态3 才亮「继续」；选自定义 Provider 则走现状 BYOK 测试</li>
-    </ul>
-  </div>
-</div>
-
-<h2><span class="no">②</span>主界面 · 左下角账号 chip + 弹卡（百分比口径）</h2>
-<div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 侧栏左下角（真实骨架）</span><span>常驻</span></div>
-    <div class="app" style="height:250px">
-      <div class="app-side">
-        <div class="side-btn">⏱ 训练历史</div>
-        <div class="side-btn">⚙ 系统设置</div>
-        <div class="acct" style="border-color:var(--primary);background:var(--primary-container)">
-          <b>👤 u***@gmail.com</b><br>基础档 · 余量 62%<br><span style="color:var(--primary)">管理 ▾</span>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="wizard">
+        <div class="steps"><span class="step-dot">1</span><span>──</span><span class="step-dot off">2</span></div>
+        <div class="center" style="font-weight:700;font-size:16px;margin-bottom:14px">连接模型服务 · Aiming Cookie</div>
+        <div style="font-weight:600;font-size:14px">登录 / 注册</div>
+        <div class="input" style="color:var(--on-background)">邮箱</div>
+        <div style="display:flex;gap:8px"><div class="input" style="flex:1">验证码</div><div class="btn sec" style="margin-top:0;padding:10px 14px;white-space:nowrap">获取验证码</div></div>
+        <div class="btn pri">登录并继续</div>
+        <div class="divider"></div>
+        <div class="center" style="font-weight:600;font-size:14px">还没有订阅？开通即连</div>
+        <div style="display:flex;gap:10px;margin-top:10px">
+          <div class="card" style="flex:1">
+            <div class="badge gray">基础档</div>
+            <div class="price" style="font-size:22px">¥10<small>/月</small></div>
+            <div class="muted">约 120 轮 · 40 局</div>
+          </div>
+          <div class="card" style="flex:1;border:2px solid var(--primary)">
+            <div class="badge">高频档</div>
+            <div class="price" style="font-size:22px">¥30<small>/月</small></div>
+            <div class="muted">约 400 轮 · 133 局</div>
+          </div>
         </div>
-      </div>
-      <div class="app-main">
-        <div class="chip-pop">
-          <div style="display:flex;justify-content:space-between"><b style="font-size:13px">基础档会员</b><span class="badge">生效中</span></div>
-          <div class="muted" style="margin:3px 0 6px">下期自动续费 10-20</div>
-          <div class="progress"><i style="width:62%"></i></div>
-          <div style="font-size:13px;font-weight:600">余量 62%</div>
-          <div class="divider" style="margin:8px 0"></div>
-          <div style="font-size:12px;color:var(--primary);font-weight:600">升级高频档 ›</div>
-          <div style="font-size:12px;color:var(--on-surface-variant)">管理订阅 / 取消自动续费 ›</div>
-        </div>
-        <div class="muted" style="margin-top:8px">↑ 百分比口径；BYOK 用户此位置显示「自定义 Provider · 已连接」，无会员内容</div>
+        <div class="btn pri">选择套餐并订阅 · 官方价 7.9 折</div>
+        <div class="muted center" style="margin-top:6px">跳转 Stripe 完成，回来自动连上</div>
+        <div class="divider"></div>
+        <div class="ok">● 连接成功 · Aiming Cookie · deepseek-v4-flash</div>
+        <div class="btn pri" style="margin-top:8px">继续 →</div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">口径铁律</span>
+    <span class="tag">同卡三小态</span>
     <ul>
-      <li><b>只显示百分比</b>（剩余额度 ÷ 本期初始额度），不出现任何金额</li>
-      <li>BYOK/本地用户：chip 显示引擎标识，与会员体系无关</li>
+      <li><b>态1 未登录：</b>邮箱验证码两步（与登录页同骨架）</li>
+      <li><b>态2 未订阅：</b>迷你双档卡 → Stripe Checkout → 回来自动配 token</li>
+      <li><b>态3 已订阅：</b>直接「连接成功」，token 由 accounts 注入，用户无感</li>
+      <li><b>放行：</b>态3 才亮「继续」；BYOK 用户走原自定义表单（Base URL 预填中转站）</li>
+      <li><b>上图为三态纵排展示</b>，实际同一时刻只显示一个态</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">③</span>额度将尽横幅（教练页顶部，不阻断）</h2>
+<h2><span class="no">②</span>主界面 · 左下角账号 chip + 弹卡（余量百分比）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 教练页顶部</span><span>剩 20% 出现一次</span></div>
-    <div class="wf">
-      <div class="banner">⚠ 本月额度剩 20%<span style="flex:1"></span><b>升级高频档</b></div>
-      <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-search">🔍 搜索会话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="side-item">请分析这局训练…</div>
+          <div class="side-item">甩枪收尾稳定训练</div>
+          <div class="acct" style="border-color:var(--primary);background:var(--primary-container)">
+            <b>👤 u***@gmail.com</b><br>基础档 · 余量 62%<br><span style="color:var(--primary)">管理 ▾</span>
+          </div>
+        </div>
+        <div class="app-main">
+          <div class="chip-pop" style="width:300px;margin-left:auto;margin-bottom:12px;align-self:flex-end">
+            <div style="display:flex;justify-content:space-between"><b style="font-size:13px">基础档会员</b><span class="badge">生效中</span></div>
+            <div class="muted" style="margin:3px 0 8px">下期自动续费 10-20</div>
+            <div class="progress"><i style="width:62%"></i></div>
+            <div style="font-size:14px;font-weight:700">余量 62%</div>
+            <div class="divider" style="margin:10px 0"></div>
+            <div style="font-size:13px;color:var(--primary);font-weight:600;padding:4px 0">升级高频档 ›</div>
+            <div style="font-size:13px;color:var(--on-surface-variant);padding:4px 0">管理订阅 / 取消自动续费 ›</div>
+          </div>
+          <div class="muted" style="margin-top:auto">↑ 账号行点击弹出小卡；BYOK 用户此位置＝「自定义 Provider · 已连接」，无会员内容</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">口径</span>
+    <ul>
+      <li><b>余量只显示百分比</b>（剩余 ÷ 本期初始），无金额</li>
+      <li>chip 三态：未登录（登录按钮）/ 已登录未订阅（开通入口）/ 会员（本卡）</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">③</span>额度将尽横幅（教练页顶部）</h2>
+<div class="screen-wrap">
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="side-item">请分析这局训练…</div>
+          <div class="acct">👤 u***@gmail.com<br>基础档 · 余量 20%</div>
+        </div>
+        <div class="app-main">
+          <div class="banner" style="margin-bottom:12px">⚠ 本月额度剩 20%<span style="flex:1"></span><b>升级高频档 ›</b></div>
+          <div class="ph t"></div><div class="ph"></div><div class="ph"></div><div class="ph"></div><div class="ph s"></div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…（照常可用）</div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">不阻断</span>
-    <ul><li>横幅可关闭；对话照常</li></ul>
+    <ul><li>剩 20% 出现一次，可关闭；对话照常</li></ul>
   </div>
 </div>
 
 <h2><span class="no">④</span>额度用尽 · 页内提示条（非弹窗）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 教练页</span><span>本期额度用尽时</span></div>
-    <div class="app" style="height:270px">
-      <div class="app-main">
-        <div class="errbar"><b>本期额度已用完。</b> 10-20 将随订阅自动发放下期额度。</div>
-        <div style="display:flex;gap:8px;margin-bottom:10px">
-          <div class="btn pri" style="flex:1;margin-top:0;padding:9px">升级高频档 ¥30/月</div>
-          <div class="btn sec" style="flex:1;margin-top:0;padding:9px">加速包 ¥10（约120轮，立即到账）</div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct">👤 u***@gmail.com<br>基础档 · 余量 0%</div>
         </div>
-        <div class="input">向 Coach 提问…（当前不可发送）</div>
-        <div class="muted center" style="margin-top:6px">↑ 输入框保留可打字，发送按钮禁用；历史照常可读</div>
+        <div class="app-main">
+          <div class="errbar"><b>本期额度已用完。</b>10-20 将随订阅自动发放下期额度。</div>
+          <div style="display:flex;gap:10px;margin-bottom:12px">
+            <div class="btn pri" style="flex:1;margin-top:0">升级高频档 ¥30/月</div>
+            <div class="btn sec" style="flex:1;margin-top:0">加速包 ¥10（约120轮，立即到账）</div>
+          </div>
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…（发送暂不可用，历史照常可读）</div>
+        </div>
       </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">形态</span>
     <ul>
-      <li><b>页内提示条+按钮组</b>，非弹窗；输入框保留、发送禁用</li>
-      <li>升级=改订阅档（次周期或按 README 待定规则）；加速包=订阅外一次性购买（待定点 3）</li>
+      <li><b>页内提示条+双按钮</b>，非弹窗；输入框保留、发送禁用；历史可读</li>
+      <li>升级=改订阅档（规则待定）；加速包=一次性购买（待定项 3）</li>
     </ul>
   </div>
 </div>
 
 <h2><span class="no">⑤</span>/pay 购买页（订阅制 · 双档 · 网页）</h2>
 <div class="screen-wrap">
-  <div class="frame web">
-    <div class="frame-title"><span>accounts.gearclickist.com/pay</span><span>Stripe Checkout 订阅</span></div>
-    <div class="wf">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/pay</span></div>
+    <div class="body">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 28px 0">
         <b>🍪 Aiming Cookie</b><span class="badge gray">已登录：u***@gmail.com</span>
       </div>
-      <div class="center" style="margin:10px 0 4px;font-weight:700;font-size:18px">选择你的教练套餐</div>
-      <div class="center muted" style="margin-bottom:16px">连续包月 · 额度每周期发放 · 随时可取消 · 约为官方价格的 7.9 折</div>
-      <div style="display:flex;gap:14px">
-        <div class="card" style="flex:1">
+      <div class="center" style="margin:18px 0 4px;font-weight:700;font-size:20px">选择你的教练套餐</div>
+      <div class="center muted" style="margin-bottom:22px">连续包月 · 额度每周期发放 · 随时可取消 · 约为官方价格的 7.9 折</div>
+      <div style="display:flex;gap:18px;padding:0 28px 20px;max-width:720px;margin:0 auto">
+        <div class="card" style="flex:1;padding:20px">
           <div class="badge gray">基础档</div>
           <div class="price">¥10<small>/月 · 自动续费</small></div>
-          <div style="font-size:13px;margin:6px 0">每月约 <b>120 轮</b>教练对话<br><span class="muted">≈ 40 局完整分析 · 2100 万 Token</span></div>
+          <div style="font-size:14px;margin:8px 0">每月约 <b>120 轮</b>教练对话<br><span class="muted">≈ 40 局完整分析 · 2100 万 Token</span></div>
           <div class="btn sec">订阅基础档</div>
         </div>
-        <div class="card" style="flex:1;border:2px solid var(--primary)">
+        <div class="card" style="flex:1;padding:20px;border:2px solid var(--primary)">
           <div style="display:flex;justify-content:space-between"><span class="badge">高频档</span><span class="badge blue">单轮价低 10%</span></div>
           <div class="price">¥30<small>/月 · 自动续费</small></div>
-          <div style="font-size:13px;margin:6px 0">每月约 <b>400 轮</b>教练对话<br><span class="muted">≈ 133 局完整分析 · 7000 万 Token</span></div>
+          <div style="font-size:14px;margin:8px 0">每月约 <b>400 轮</b>教练对话<br><span class="muted">≈ 133 局完整分析 · 7000 万 Token</span></div>
           <div class="btn pri">订阅高频档</div>
         </div>
       </div>
-      <div class="muted center" style="margin-top:10px">连续包月，随时可取消（当前周期仍有效）· 按 DeepSeek 官方价对比 · 未使用全额退款</div>
-      <div class="divider"></div>
-      <div class="ph"></div>
-      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">额度是什么？怎么算？</div>
-      <div class="ph s"></div><div class="ph s"></div>
-      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">怎么取消自动续费？</div>
-      <div class="ph s"></div><div class="ph s"></div>
-      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">可以退款吗？</div>
-      <div class="ph s"></div>
-      <div class="muted center" style="margin-top:14px">支付由 Stripe 安全处理</div>
+      <div class="muted center" style="padding-bottom:8px">连续包月，随时可取消（当前周期仍有效）· 按 DeepSeek 官方价对比 · 未使用全额退款</div>
+      <div class="divider" style="max-width:720px;margin:10px auto"></div>
+      <div style="max-width:720px;margin:0 auto;padding:0 28px 20px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">常见问题</div>
+        <div style="font-size:13px;font-weight:600;margin:10px 0 4px">额度是什么？怎么算？</div>
+        <div class="ph s"></div><div class="ph s"></div>
+        <div style="font-size:13px;font-weight:600;margin:12px 0 4px">怎么取消自动续费？</div>
+        <div class="ph s"></div><div class="ph s"></div>
+        <div style="font-size:13px;font-weight:600;margin:12px 0 4px">可以退款吗？（未使用全额退 / 已使用按剩余比例退）</div>
+        <div class="ph s"></div>
+        <div class="muted center" style="margin-top:16px">支付由 Stripe 安全处理</div>
+      </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">逻辑</span>
     <ul>
-      <li><b>未登录：</b>CTA 置灰引导登录（Onboarding 场景则已登录）</li>
-      <li><b>已有订阅：</b>状态行「你已是基础档 · 下期扣款 X」+「管理订阅」</li>
-      <li><b>CTA →</b> Stripe Checkout（subscription mode），成功回跳触发发放</li>
+      <li>未登录：CTA 置灰引导登录；已有订阅：状态行「你已是基础档 · 下期扣款 X」+「管理订阅」</li>
+      <li>CTA → Stripe Checkout（subscription mode）</li>
     </ul>
   </div>
 </div>
 
 <h2><span class="no">⑥</span>支付结果三态（网页回跳）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>⑥a 成功</span><span>return ?status=success</span></div>
-    <div class="wf center">
-      <div style="font-size:40px;color:var(--primary)">✓</div>
-      <div style="font-weight:700">订阅成功，额度已到账</div>
-      <div class="card" style="text-align:left;margin:12px 0">
-        <div style="display:flex;justify-content:space-between"><span>订阅</span><b>基础档 · 连续包月</b></div>
-        <div style="display:flex;justify-content:space-between"><span>本期额度</span><b>100%</b></div>
-        <div style="display:flex;justify-content:space-between"><span>下期自动续费</span><b>2026-10-20 · ¥10</b></div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=success</span></div>
+    <div class="body">
+      <div class="center" style="padding:56px 0 8px;font-size:46px;color:var(--primary)">✓</div>
+      <div class="center" style="font-weight:700;font-size:18px">订阅成功，额度已到账</div>
+      <div class="card" style="text-align:left;max-width:460px;margin:18px auto">
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>订阅</span><b>基础档 · 连续包月</b></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>本期额度</span><b>100%</b></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>下期自动续费</span><b>2026-10-20 · ¥10</b></div>
       </div>
-      <div class="btn pri">回到教练（自动完成连接）</div>
-    </div>
-  </div>
-  <div class="frame narrow">
-    <div class="frame-title"><span>⑥b 已扣款未到账</span><span>异常兜底 A</span></div>
-    <div class="wf center">
-      <div style="font-size:36px">⏳</div>
-      <div style="font-weight:700;font-size:15px">支付已确认，额度到账中…</div>
-      <div class="muted" style="margin:8px 0">通常 1~2 分钟内自动到账</div>
-      <div class="btn sec">刷新</div>
-      <div class="btn text">超 10 分钟？联系我们（Stripe 凭证已记录）</div>
-    </div>
-  </div>
-  <div class="frame narrow">
-    <div class="frame-title"><span>⑥c 点了订阅没付款</span><span>异常兜底 B</span></div>
-    <div class="wf center">
-      <div style="font-size:36px">🍪</div>
-      <div style="font-weight:700;font-size:15px;margin-top:6px">还没有完成订阅</div>
-      <div class="muted" style="margin:8px 0">随时可以再来；Onboarding 停留在本步，<br>完成后即可继续。</div>
-      <div class="btn pri">继续订阅</div>
-      <div class="btn text">返回（改用 BYOK 也可）</div>
+      <div class="btn pri" style="max-width:460px;margin:0 auto 10px">回到教练，继续训练</div>
+      <div class="btn text" style="max-width:460px;margin:0 auto">管理订阅 / 查看额度明细</div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">三态说明</span>
+    <span class="tag">⑥a 成功</span>
+    <ul><li>轮询 ac-gateway 确认发放后才显示；Onboarding 场景「回到教练」＝回步骤1 自动连接成功</li></ul>
+  </div>
+</div>
+<div class="screen-wrap">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=processing</span></div>
+    <div class="body">
+      <div class="center" style="padding:56px 0 8px;font-size:40px">⏳</div>
+      <div class="center" style="font-weight:700;font-size:17px">支付已确认，额度到账中…</div>
+      <div class="muted center" style="margin:10px 0 16px">通常 1~2 分钟内自动到账</div>
+      <div class="btn sec" style="max-width:320px;margin:0 auto 8px">刷新额度</div>
+      <div class="btn text" style="max-width:320px;margin:0 auto">超 10 分钟？联系我们（Stripe 凭证已记录）</div>
+    </div>
+  </div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=canceled</span></div>
+    <div class="body">
+      <div class="center" style="padding:56px 0 8px;font-size:40px">🍪</div>
+      <div class="center" style="font-weight:700;font-size:17px">还没有完成订阅</div>
+      <div class="muted center" style="margin:10px 0 16px">随时可以再来；Onboarding 停留在本步，完成后即可继续</div>
+      <div class="btn pri" style="max-width:320px;margin:0 auto 8px">继续订阅</div>
+      <div class="btn text" style="max-width:320px;margin:0 auto">返回（改用 BYOK 也可）</div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">⑥b 处理中 / ⑥c 未完成付款</span>
     <ul>
-      <li><b>⑥a：</b>轮询 ac-gateway 确认发放后才显示；Onboarding 场景「回到教练」＝回到步骤1 并自动连接成功</li>
-      <li><b>⑥b：</b>webhook 延迟兜底，Stripe 凭证已记录可人工补发</li>
-      <li><b>⑥c：</b>无半态残留；Onboarding 场景停留本步（不锁定产品外路径）</li>
+      <li><b>⑥b：</b>回跳 success 但 quota 未发放（webhook 延迟）——刷新重查，凭证可人工补发</li>
+      <li><b>⑥c：</b>Checkout 取消回跳；直接关标签则客户端维持原态（等价）；无半态残留</li>
     </ul>
   </div>
 </div>
 
 <h2><span class="no">⑦</span>管理订阅 / 取消 / 退款申请（accounts 网页）</h2>
 <div class="screen-wrap">
-  <div class="frame web">
-    <div class="frame-title"><span>accounts · 管理订阅</span><span>P1</span></div>
-    <div class="wf">
-      <div class="card">
-        <div style="display:flex;justify-content:space-between"><b>基础档 · 连续包月</b><span class="badge">生效中</span></div>
-        <div class="muted" style="margin-top:4px">下期自动续费 2026-10-20 · ¥10 · 支付方式 Visa •••• 4242</div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <div class="btn sec" style="flex:1;margin-top:0">升级高频档</div>
-          <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/billing</span></div>
+    <div class="body">
+      <div style="max-width:640px;margin:24px auto;padding:0 20px">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between"><b>基础档 · 连续包月</b><span class="badge">生效中</span></div>
+          <div class="muted" style="margin-top:4px">下期自动续费 2026-10-20 · ¥10 · 支付方式 Visa •••• 4242</div>
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <div class="btn sec" style="flex:1;margin-top:0">升级高频档</div>
+            <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
+          </div>
         </div>
-      </div>
-      <div class="card" style="margin-top:10px;border-style:dashed">
-        <b style="font-size:13px">取消自动续费</b>
-        <div class="muted" style="margin:4px 0">取消后本期额度仍可用至 2026-10-20，之后不再扣款、Aiming Cookie 云教练停止（训练数据保留）。</div>
-        <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
-      </div>
-      <div class="card" style="margin-top:10px;border-style:dashed">
-        <b style="font-size:13px">申请退款</b>
-        <div class="muted" style="margin:4px 0">
-          未使用（0 消耗）且购买 14 天内：全额退。<br>
-          已使用：按<b>剩余额度比例</b>退（退款 = 实付 × 剩余额度比例），退款后订阅立即结束、剩余额度清零。<br>
-          例：¥10 订阅、额度用掉 40% → 可退 ¥6.00。
+        <div class="card" style="margin-top:14px;border-style:dashed">
+          <b style="font-size:14px">取消自动续费</b>
+          <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、Aiming Cookie 云教练停止（训练数据保留）。</div>
+          <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
         </div>
-        <div class="btn text">邮件申请（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
+        <div class="card" style="margin-top:14px;border-style:dashed">
+          <b style="font-size:14px">申请退款</b>
+          <div class="muted" style="margin:5px 0 10px">
+            未使用（0 消耗）且购买 14 天内：全额退。<br>
+            已使用：按<b>剩余额度比例</b>退（退款 = 实付 × 剩余额度比例），退款后订阅立即结束、剩余额度清零。<br>
+            例：¥10 订阅、额度用掉 40% → 可退 ¥6.00。
+          </div>
+          <div class="btn text">邮件申请（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
+        </div>
       </div>
     </div>
   </div>
@@ -384,122 +443,155 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <span class="tag">Stripe 配合</span>
     <ul>
       <li><b>取消：</b>cancel at period_end</li>
-      <li><b>退款：</b>Refund API 部分退款，MVP 人工在 Dashboard 执行（不建自助退款）；退款完成同步清额度</li>
+      <li><b>退款：</b>Refund API 部分退款，MVP 人工在 Dashboard 执行（不建自助退款）</li>
+      <li><b>退款后：</b>订阅立即取消+剩余额度清零（退款买断剩余量）</li>
     </ul>
   </div>
 </div>
 
 <h2><span class="no">⑧</span>扣款提醒 / 扣款失败（横幅 + 邮件）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端教练页顶部 / 邮件</span><span>续费前 3 天 / 失败当天</span></div>
-    <div class="wf">
-      <div class="banner">💳 10-20 将自动续费基础档 ¥10<span style="flex:1"></span><b>管理订阅</b></div>
-      <div class="ph t"></div><div class="ph s"></div>
-      <div class="banner warn" style="margin-top:10px">❗自动续费失败（卡片被拒），请更新支付方式，避免云教练暂停<span style="flex:1"></span><b>更新支付方式</b></div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="acct">👤 u***@gmail.com<br>基础档 · 下期扣款 10-20</div>
+        </div>
+        <div class="app-main">
+          <div class="banner" style="margin-bottom:10px">💳 10-20 将自动续费基础档 ¥10<span style="flex:1"></span><b>管理订阅 ›</b></div>
+          <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
+          <div class="banner warn" style="margin-top:14px">❗自动续费失败（卡片被拒），请更新支付方式，避免云教练暂停<span style="flex:1"></span><b>更新支付方式 ›</b></div>
+          <div class="ph t" style="margin-top:14px"></div><div class="ph"></div><div class="ph s"></div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">Stripe 原生配合</span>
+    <span class="tag">两条横幅不同时出现</span>
     <ul>
-      <li>Smart Retries 自动重试 ~7 天，期间服务不中断</li>
-      <li>彻底失败 → 订阅失效 → 见⑨</li>
+      <li><b>上：</b>续费日前 3 天的信息提醒（+邮件）</li>
+      <li><b>下：</b>扣款失败当天（Stripe Smart Retries ~7 天窗口，期间服务不中断）</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑨</span>订阅失效 · 连接断开提示（重新订阅即恢复）</h2>
+<h2><span class="no">⑨</span>订阅失效 · 连接断开提示（重订即恢复）</h2>
 <div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · Aiming Cookie 连接失效</span><span>回到 Onboarding 步骤1 也可</span></div>
-    <div class="app" style="height:270px">
-      <div class="app-main">
-        <div class="errbar"><b>Aiming Cookie 连接已断开：</b>订阅已结束（10-20）。历史与设置全部保留。</div>
-        <div style="display:flex;gap:8px;margin-bottom:10px">
-          <div class="btn pri" style="flex:1;margin-top:0;padding:9px">重新订阅 ¥10/月起</div>
-          <div class="btn sec" style="flex:1;margin-top:0;padding:9px">改用 BYOK / 本地引擎</div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct">👤 u***@gmail.com<br><span style="color:var(--error)">订阅已结束</span></div>
         </div>
-        <div class="input">向 Coach 提问…（当前不可发送）</div>
-        <div class="muted center" style="margin-top:6px">↑ 侧栏历史照常可读；左下角 chip 显示「订阅已结束」</div>
+        <div class="app-main">
+          <div class="errbar"><b>Aiming Cookie 连接已断开：</b>订阅已结束（10-20）。历史与设置全部保留。</div>
+          <div style="display:flex;gap:10px;margin-bottom:12px">
+            <div class="btn pri" style="flex:1;margin-top:0">重新订阅 ¥10/月起</div>
+            <div class="btn sec" style="flex:1;margin-top:0">改用 BYOK / 本地引擎</div>
+          </div>
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…（发送暂不可用，历史照常可读）</div>
+        </div>
       </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">形态</span>
     <ul>
-      <li>连接断开的页内提示条+双按钮（重新订阅 / 切 BYOK）——不是弹窗</li>
+      <li>连接断开的页内提示条+双按钮——不是弹窗</li>
       <li>重新订阅成功后连接自动恢复，无需重走 Onboarding</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑩</span>落地页 · 右上角账号入口（aimingcookie.com，v2 新增）</h2>
+<h2><span class="no">⑩</span>落地页 · 右上角账号入口（两态）</h2>
 <div class="screen-wrap">
-  <div class="frame web">
-    <div class="frame-title"><span>aimingcookie.com 顶部导航</span><span>未登录 / 已登录 两态</span></div>
-    <div class="wf">
-      <div style="display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--outline-variant);padding-bottom:10px">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">aimingcookie.com</span></div>
+    <div class="body">
+      <div class="nav">
         <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
         <span style="font-size:13px">Coach</span><span style="font-size:13px">下载 Windows 版</span><span style="font-size:13px">Bilibili</span>
-        <span class="btn pri" style="margin:0;padding:8px 16px;font-size:13px;display:inline-block">登录 / 注册</span>
+        <span class="btn pri" style="margin:0;padding:9px 18px;font-size:13px;display:inline-block">登录 / 注册</span>
       </div>
-      <div style="display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--outline-variant);padding:10px;margin-top:14px">
+      <div class="hero">
+        <div style="font-weight:700;font-size:22px">练一局，向 AI 教练提问</div>
+        <div class="muted" style="margin-top:6px">Aiming Cookie 在你训练时读取一手数据……</div>
+        <div class="btn pri" style="max-width:220px;margin:16px auto 0">下载 Windows 版</div>
+      </div>
+    </div>
+  </div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">aimingcookie.com（已登录）</span></div>
+    <div class="body">
+      <div class="nav">
         <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
         <span style="font-size:13px">Coach</span><span style="font-size:13px">下载 Windows 版</span>
-        <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:24px;height:24px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:11px">u</span><b>u***@gmail.com ▾</b></span>
+        <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px">u</span><b>u***@gmail.com ▾</b></span>
       </div>
-      <div class="chip-pop" style="width:230px;margin:8px 0 0 auto">
-        <div style="font-size:12px;color:var(--on-surface-variant)">u***@gmail.com · 基础档</div>
-        <div class="progress" style="margin:6px 0"><i style="width:62%"></i></div>
-        <div style="font-size:12px">余量 62%</div>
-        <div class="divider" style="margin:6px 0"></div>
-        <div style="font-size:12px;font-weight:600;color:var(--primary)">前往账号中心 ›</div>
-        <div style="font-size:12px;color:var(--on-surface-variant)">管理订阅 / 退出登录</div>
+      <div style="display:flex;justify-content:flex-end;padding:8px 20px">
+        <div class="chip-pop" style="width:250px">
+          <div style="font-size:12px;color:var(--on-surface-variant)">u***@gmail.com · 基础档</div>
+          <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
+          <div style="font-size:13px;font-weight:700">余量 62%</div>
+          <div class="divider" style="margin:8px 0"></div>
+          <div style="font-size:13px;font-weight:600;color:var(--primary);padding:3px 0">前往账号中心 ›</div>
+          <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">管理订阅</div>
+          <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">退出登录</div>
+        </div>
+      </div>
+      <div class="hero" style="padding-top:12px">
+        <div style="font-weight:700;font-size:20px">练一局，向 AI 教练提问</div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">v2 新增确认</span>
+    <span class="tag">两态</span>
     <ul>
       <li><b>未登录：</b>右上「登录 / 注册」→ accounts 登录页（0918 稿）</li>
-      <li><b>已登录：</b>头像+邮箱下拉 → 前往账号中心（⑬）</li>
-      <li>落地页本体（下载/案例）不动，只加导航右侧</li>
+      <li><b>已登录：</b>头像+邮箱下拉（余量 % + 前往账号中心 + 管理订阅 + 退出）</li>
+      <li>落地页本体（下载/案例）不动，只在导航右侧加</li>
     </ul>
   </div>
 </div>
 
 <h2><span class="no">⑪</span>账号中心网页（P2 · 线框级）</h2>
 <div class="screen-wrap">
-  <div class="frame web">
-    <div class="frame-title"><span>accounts.gearclickist.com/account</span><span>P2</span></div>
-    <div class="wf" style="display:flex;gap:18px">
-      <div style="width:120px;flex:none">
-        <div class="ph s" style="width:80%"></div><div class="ph s" style="width:90%"></div><div class="ph s" style="width:70%"></div>
-      </div>
-      <div style="flex:1">
-        <div class="card">
-          <div style="display:flex;justify-content:space-between"><b>订阅 · 基础档（连续包月）</b><span class="badge">生效中</span></div>
-          <div class="muted" style="margin-top:4px">下期扣款 2026-10-20 · [管理订阅] [申请退款]</div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account</span></div>
+    <div class="body">
+      <div style="display:flex;gap:20px;max-width:760px;margin:24px auto;padding:0 20px">
+        <div style="width:150px;flex:none">
+          <div class="ph s" style="width:85%"></div><div class="ph s" style="width:95%"></div><div class="ph s" style="width:75%"></div>
         </div>
-        <div class="card" style="margin-top:10px">
-          <b style="font-size:13px">本期用量</b>
-          <div class="progress"><i style="width:38%"></i></div>
-          <div class="muted" style="font-size:12px">余量 62%</div>
-          <div class="ph s"></div><div class="ph s"></div>
+        <div style="flex:1">
+          <div class="card">
+            <div style="display:flex;justify-content:space-between"><b>订阅 · 基础档（连续包月）</b><span class="badge">生效中</span></div>
+            <div class="muted" style="margin-top:4px">下期扣款 2026-10-20 · [管理订阅] [申请退款]</div>
+          </div>
+          <div class="card" style="margin-top:12px">
+            <b style="font-size:14px">本期用量</b>
+            <div class="progress"><i style="width:38%"></i></div>
+            <div class="muted" style="font-size:12px">余量 62%</div>
+            <div class="ph s"></div><div class="ph s"></div>
+          </div>
         </div>
       </div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">定位</span>
-    <ul>
-      <li>网页端可查，不依赖客户端；余额争议明细兜底</li>
-    </ul>
+    <ul><li>网页端可查，不依赖客户端；余额争议明细兜底</li></ul>
   </div>
 </div>
 
 <div class="divider" style="margin:36px 0"></div>
-<div class="muted"><b>异常覆盖</b>：Onboarding 未连通不放行（①放行规则）· 点了订阅没付款（⑥c）· 已扣款未到账（⑥b）· 未登录点支付（③置灰）· 扣款失败（⑧dunning）· 订阅失效（⑨重订即恢复）· 额度争议（⑪明细）· 退款（⑦按剩余比例，人工审核）· BYOK 用户全程不受会员体系影响。</div>
+<div class="muted"><b>异常覆盖</b>：Onboarding 未连通不放行（①放行规则）· 点了订阅没付款（⑥c）· 已扣款未到账（⑥b）· 未登录点支付（⑤置灰）· 扣款失败（⑧dunning）· 订阅失效（⑨重订即恢复）· 额度争议（⑪明细）· 退款（⑦按剩余比例，人工审核）· BYOK 用户全程不受会员体系影响。</div>
 
 </body>
 </html>
