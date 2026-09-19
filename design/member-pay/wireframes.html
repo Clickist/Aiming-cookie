@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AC 会员全流程线框稿 v3.2 · member-pay</title>
+<title>AC 会员全流程线框稿 v3.3 · member-pay</title>
 <style>
 /* AC 明主题语义 token（ui/tokens.ts LIGHT_TOKENS） */
 :root{
@@ -105,8 +105,8 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 </head>
 <body>
 
-<h1>AC 会员全流程线框稿 v3.2</h1>
-<div class="sub">design/member-pay · 2026-09-20 · 明主题 · <b>v3.2 修订</b>：①选「Aiming Cookie」后弹<b>网页</b>完成登录+订阅，deep-link 回客户端自动配置（客户端内不做登录/付费）；②左下角用户卡片点击 → <b>右侧主区域整体切换为用户中心</b>（带 ← 返回，对齐训练历史页导航模式）；③额度用尽只提示事实+指引账户/BYOK，<b>主消费页面零商业化</b>；④删除将尽提醒（百分比常驻，用户自己会看）；⑤落地页按真实导航加右上角账号入口。订阅制（连续包月）+ 退款按剩余额度比例。</div>
+<h1>AC 会员全流程线框稿 v3.3</h1>
+<div class="sub">design/member-pay · 2026-09-20 · 明主题 · <b>v3.3 修订（0919 深夜第三轮拍板落图）</b>：档位定名 <b>Standard（¥10）/ Plus（¥30）</b>；新增<b>加油包</b>全链（¥10 · 永不过期 · 须订阅才能买 · 余额归零才能再买 · 断订可烧完）；余量＝<b>单条百分比</b>（只显示当前池，用户中心看两池全貌）；<b>升级＝自动退旧订新</b>（按剩余比例折差价，新周期当日起算）；无降级；退款＝订阅+加油包一起清算；不发任何提醒邮件；退出登录 fallback BYOK 不打回 Onboarding。v3.2 基础：弹网页登录+订阅 deep-link 回、零充值弹窗、主消费页零商业化。</div>
 
 <h2><span class="no">⓪</span>流程总览</h2>
 <div class="flow">
@@ -120,17 +120,24 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
   <div class="flow-row">
     <span class="ftag">主界面（无弹窗、无商业化元素、余量只显示百分比）</span>
-    <span class="fnode">左下角用户卡片（余量 %）</span><span class="farrow">──点击──▶</span>
-    <span class="fnode pri">右侧区域＝用户中心（← 返回）</span><span class="farrow">──额度用尽──▶</span>
-    <span class="fnode err">发送时 inline 提示「本期额度已用完」+ 指引账户/BYOK</span>
+    <span class="fnode">左下角用户卡片（当前池余量 %）</span><span class="farrow">──点击──▶</span>
+    <span class="fnode pri">右侧区域＝用户中心（← 返回 · 两池全貌）</span><span class="farrow">──双池皆空──▶</span>
+    <span class="fnode err">发送时 inline 提示「额度已用完」+ 指引账户/BYOK</span>
+  </div>
+  <div class="flow-row">
+    <span class="ftag">加油包（订阅用户的补充池）</span>
+    <span class="fnode">②c/⑪ 购买入口</span><span class="farrow">──须有效订阅──▶</span>
+    <span class="fnode">网页一次性 Checkout ¥10</span><span class="farrow">──▶</span>
+    <span class="fnode pri">到账永不过期 · 订阅池烧完自动接续</span><span class="farrow">──烧完──▶</span>
+    <span class="fnode">可买下一包（余额未尽＝置灰）</span>
   </div>
   <div class="flow-row">
     <span class="ftag">网页侧（付费与管理）</span>
-    <span class="fnode">⑤ /pay 购买页（订阅双档）</span><span class="farrow">──▶</span>
+    <span class="fnode">⑤ /pay（Standard/Plus + 加油包加购）</span><span class="farrow">──▶</span>
     <span class="fnode">Stripe Checkout</span><span class="farrow">──▶</span>
     <span class="fnode">⑥ 成功 / 处理中 / 未完成</span><span class="farrow">──▶</span>
-    <span class="fnode">⑦ 管理订阅 / 取消 / 退款申请</span><span class="farrow">──彻底失效──▶</span>
-    <span class="fnode err">⑨ 连接断开提示（重订即恢复）</span>
+    <span class="fnode">⑦ 管理 / 升级（自动折差价）/ 取消·恢复 / 退款</span><span class="farrow">──彻底失效──▶</span>
+    <span class="fnode err">⑨ 断开提示（重订即恢复）</span>
   </div>
   <div class="flow-row">
     <span class="ftag">落地页</span>
@@ -196,7 +203,70 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>客户端动作：</b>仅打开系统浏览器 → 等待 deep-link（<code>aimingcookie://</code>）</li>
       <li><b>网页侧：</b>登录/注册（0918 登录页稿）→ ⑤ 购买页选档 → Stripe → ⑥ 成功页「回到 Aiming Cookie」按钮 → deep-link 携 token 回客户端</li>
       <li><b>客户端收 token：</b>自动注入 Provider 配置 → 连接测试 → 「连接成功」亮「继续」</li>
-      <li><b>放弃场景：</b>网页没完成就关闭 → 客户端停留本步，可重开网页或改 BYOK</li>
+      <li><b>放弃场景：</b>网页没完成就关闭 → 客户端停留本步，可重开网页或改 BYOK（三中间态见下屏 ①b）</li>
+      <li><b>deep-link 没唤起客户端？</b>⑥ 成功页兜底文案：「没反应？打开 Aiming Cookie 客户端，登录同一账号即自动连接」——协议被浏览器拦截时用户可手动走通</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">①b</span>①a 客户端侧 · 三个中间态（补全，v3.3 新增）</h2>
+<div class="note">①a 主流程只画了「等待网页」与「连接成功」两端；本屏补全中间会出现的三个状态。三态共用同一张 wizard 卡的位置，到达即原位切换。</div>
+<div class="screen-wrap">
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body" style="position:relative">
+      <div class="wizard">
+        <div class="steps"><span class="step-dot">1</span><span>──</span><span class="step-dot off">2</span></div>
+        <div class="center" style="font-weight:700;font-size:15px;margin-bottom:12px">连接模型服务 · Aiming Cookie</div>
+        <div class="card center">
+          <div style="font-size:26px">👤</div>
+          <div style="font-weight:700;font-size:14px;margin:6px 0">已登录 u***@gmail.com · 还差订阅</div>
+          <div class="muted" style="margin-bottom:8px">检测到账号暂无有效订阅。<br>完成订阅后本页自动继续。</div>
+        </div>
+        <div class="btn pri" style="margin-top:8px">打开订阅页面（Standard / Plus）</div>
+        <div class="btn text">改用自定义 Provider（BYOK）</div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body" style="position:relative">
+      <div class="wizard">
+        <div class="steps"><span class="step-dot">1</span><span>──</span><span class="step-dot off">2</span></div>
+        <div class="center" style="font-weight:700;font-size:15px;margin-bottom:12px">连接模型服务 · Aiming Cookie</div>
+        <div class="card center">
+          <div style="font-size:26px">✅</div>
+          <div style="font-weight:700;font-size:14px;margin:6px 0">已是 Standard 会员 · 直接连接</div>
+          <div class="muted" style="margin-bottom:8px">检测到有效订阅，跳过购买步骤。<br>换机 / 重装同样走这里。</div>
+        </div>
+        <div class="ok">● 已连接 Aiming Cookie · deepseek-v4-flash</div>
+        <div class="btn pri" style="margin-top:8px">继续 →</div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body" style="position:relative">
+      <div class="wizard">
+        <div class="steps"><span class="step-dot">1</span><span>──</span><span class="step-dot off">2</span></div>
+        <div class="center" style="font-weight:700;font-size:15px;margin-bottom:12px">连接模型服务 · Aiming Cookie</div>
+        <div class="card center">
+          <div style="font-size:26px">⚠️</div>
+          <div style="font-weight:700;font-size:14px;margin:6px 0;color:var(--error)">登录成功，但连接测试未通过</div>
+          <div class="muted" style="margin-bottom:8px">网络异常或服务暂不可用。<br>账号与订阅不受影响，稍后重试即可。</div>
+        </div>
+        <div class="btn pri" style="margin-top:8px">重试连接</div>
+        <div class="btn sec">重新打开浏览器页面</div>
+        <div class="btn text">改用自定义 Provider（BYOK）</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">三态规则</span>
+    <ul>
+      <li><b>态1 已登录未订阅：</b>网页登录完成但未购买就关闭 → 不清进度，卡内提示「还差订阅」，一键回订阅页</li>
+      <li><b>态2 老会员直连：</b>deep-link 回来发现有有效订阅 → 跳过购买直接连通（换机/重装用户的快路径）</li>
+      <li><b>态3 连通失败：</b>token 已到手但连接测试不过 → 红字事实 + 重试；不放行主界面（铁律⑤），但订阅与账号无损</li>
     </ul>
   </div>
 </div>
@@ -212,7 +282,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="side-search">🔍 搜索会话</div>
           <div class="side-item act">8月基准跟枪局分析</div>
           <div class="side-item">请分析这局训练…</div>
-          <div class="acct">👤 u***@gmail.com<br>基础档 · 余量 62%</div>
+          <div class="acct">👤 u***@gmail.com<br>Standard · 余量 62%</div>
         </div>
         <div class="app-main">
           <div class="ph t"></div><div class="ph"></div><div class="ph"></div><div class="ph"></div><div class="ph s"></div>
@@ -242,7 +312,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct" style="border-color:var(--primary);background:var(--primary-container)"><b>👤 u***@gmail.com</b><br>基础档 · 余量 62%</div>
+            <div class="acct" style="border-color:var(--primary);background:var(--primary-container)"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
           </div>
           <div class="muted" style="margin-top:8px">点击卡片 → 右侧切「用户中心」</div>
         </div>
@@ -273,13 +343,14 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>两态而已</b>：会员 / BYOK——没有本地引擎</li>
       <li><b>BYOK 不显示模型名</b>（输入框已显示过）；引擎行显示<b>用户所选 Provider 名</b>（设置里可选各来源）</li>
       <li>BYOK 已登录：邮箱 + 「BYOK 模式 · 已连接」；未登录：引擎行 + 登录引导（一句话）</li>
-      <li>订阅过期：状态 A 变「订阅已结束 · 余量 0%」+「重新订阅 ›」</li>
+      <li>订阅过期且无加油包：状态 A 变「订阅已结束 · 余量 0%」+「重新订阅 ›」；<b>加油包有余额则不显示本态</b>，变「订阅已到期 · 正在使用加油包 余量 X%」（见⑨）</li>
       <li>卡片为真实侧栏尺寸（220px 内），非拉伸</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">②c</span>用户中心（点击会员卡片后 · 右侧主区域整体切换 · ← 返回）</h2>
+<h2><span class="no">②c</span>用户中心（点击会员卡片后 · 右侧主区域整体切换 · ← 返回）——两态</h2>
+<div class="note">态A 常态（含加油包副池行）；态B 已取消未到期（必然出现的状态：取消后本周期剩余天数里客户端的呈现）。加油包未购买时副池行与购买卡中「余额未尽」说明均不出现，界面零负担。</div>
 <div class="screen-wrap">
   <div class="frame window">
     <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
@@ -289,14 +360,14 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="side-new">+ 新建对话</div>
           <div class="side-search">🔍 搜索会话</div>
           <div class="side-item">8月基准跟枪局分析</div>
-          <div class="acct sel"><b>👤 u***@gmail.com</b><br>基础档 · 余量 62%</div>
+          <div class="acct sel"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
         </div>
         <div class="app-main" style="padding:0">
           <div class="pagehead">← 返回　用户中心</div>
           <div style="padding:22px 26px;overflow:auto">
             <div class="darkbar">
               <div style="display:flex;justify-content:space-between;align-items:center">
-                <b style="font-size:15px">基础档会员 · 生效中</b>
+                <b style="font-size:15px">Standard 会员 · 生效中</b>
                 <span style="font-size:12px;opacity:.75">下期自动续费 10-20</span>
               </div>
               <div class="progress dark" style="margin:12px 0 8px"><i style="width:62%"></i></div>
@@ -304,17 +375,72 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
                 <span style="font-size:20px;font-weight:700">余量 62%</span>
                 <span style="opacity:.75;align-self:center">额度每周期发放 · 连续包月</span>
               </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid rgba(249,238,232,.18);font-size:12px;opacity:.9">
+                <span>🍪 加油包 · 永不过期</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="progress dark" style="width:90px;height:6px;margin:0"><i style="width:100%;background:#e8930c"></i></span>余量 100%</span>
+              </div>
             </div>
             <div style="display:flex;gap:10px;margin:14px 0">
               <div class="btn dark" style="flex:1;margin-top:0">管理订阅 / 取消自动续费</div>
               <div class="btn sec" style="flex:1;margin-top:0">申请退款</div>
             </div>
             <div class="muted" style="margin:10px 0 6px">↑ 两项在系统浏览器打开（accounts 网页 · 管理订阅页）</div>
+            <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+              <div>
+                <b style="font-size:13px">加油包 ¥10</b>
+                <div class="muted" style="margin-top:3px">订阅额度不够时加购；烧完才可买下一包，买过的永不过期。</div>
+              </div>
+              <span class="btn sec" style="margin:0;padding:9px 14px;font-size:12px;white-space:nowrap;opacity:.45">当前加油包还有余量</span>
+            </div>
             <div class="card">
               <b style="font-size:13px">账户</b>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
-              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>基础档 · 连续包月</span></div>
-              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录</div>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 连续包月</span></div>
+              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（云教练停用，自动转用已配置的 BYOK）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-search">🔍 搜索会话</div>
+          <div class="side-item">8月基准跟枪局分析</div>
+          <div class="acct sel"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
+        </div>
+        <div class="app-main" style="padding:0">
+          <div class="pagehead">← 返回　用户中心</div>
+          <div style="padding:22px 26px;overflow:auto">
+            <div class="darkbar">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b style="font-size:15px">Standard 会员 · 已取消</b>
+                <span style="font-size:12px;opacity:.75">额度可用至 10-20</span>
+              </div>
+              <div class="progress dark" style="margin:12px 0 8px"><i style="width:62%;background:#e8930c"></i></div>
+              <div style="display:flex;justify-content:space-between;font-size:13px">
+                <span style="font-size:20px;font-weight:700">余量 62%</span>
+                <span style="opacity:.75;align-self:center">本期仍可正常使用 · 10-20 后不再续费</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid rgba(249,238,232,.18);font-size:12px;opacity:.9">
+                <span>🍪 加油包 · 永不过期</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="progress dark" style="width:90px;height:6px;margin:0"><i style="width:100%;background:#e8930c"></i></span>余量 100%</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;margin:14px 0">
+              <div class="btn pri" style="flex:1;margin-top:0">恢复自动续费</div>
+              <div class="btn sec" style="flex:1;margin-top:0">申请退款</div>
+            </div>
+            <div class="muted" style="margin:10px 0 6px">↑ 取消后同位置变「恢复自动续费」（⑦ 网页侧同双态）；恢复即回到态A</div>
+            <div class="card">
+              <b style="font-size:13px">账户</b>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 本期结束后终止</span></div>
+              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（云教练停用，自动转用已配置的 BYOK）</div>
             </div>
           </div>
         </div>
@@ -322,12 +448,14 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     </div>
   </div>
   <div class="annot">
-    <span class="tag">交互与内容</span>
+    <span class="tag">交互与内容（态A / 态B）</span>
     <ul>
       <li><b>导航模式：</b>与训练历史页一致——点击左下角会员卡进入，顶部「← 返回」回对话</li>
-      <li><b>内容：</b>订阅横幅 + 深色余量大条（百分比）+ 管理订阅/退款（跳网页）+ 账户信息 + 退出登录</li>
-      <li><b>零商业化：</b>无升级按钮、无价格——升级行为只发生在网页 /pay</li>
-      <li><b>BYOK/本地引擎用户：</b>进入的页面显示引擎信息 + 「登录以开通云教练」（无订阅内容）</li>
+      <li><b>两池全貌只在这里：</b>订阅条（绿橙红分档）+ 加油包小行（固定橙，不搞分档）；左下角 chip 永远只显示当前池单条</li>
+      <li><b>态B 已取消未到期：</b>横幅「已取消 · 额度可用至 10-20」，进度条转橙提示非续费态；按钮变「恢复自动续费」，恢复即回态A</li>
+      <li><b>加油包购买置灰：</b>余额未尽时按钮置灰「当前加油包还有余量」——烧完才可再买</li>
+      <li><b>退出登录：</b>不打回 Onboarding——配过 BYOK 自动切 BYOK 照常用；没配过则主界面照常进、Coach 置灰+「去设置连接」（见④b）</li>
+      <li><b>BYOK 用户：</b>进入的页面显示引擎信息 + 「登录以开通云教练」（无订阅内容）</li>
     </ul>
   </div>
 </div>
@@ -341,7 +469,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div class="app-side">
           <div class="side-new">+ 新建对话</div>
           <div class="side-item act">8月基准跟枪局分析</div>
-          <div class="acct">👤 u***@gmail.com<br>基础档 · 余量 0%</div>
+          <div class="acct">👤 u***@gmail.com<br>Standard · 余量 0%</div>
         </div>
         <div class="app-main">
           <div class="errbar"><b>本期额度已用完。</b>点击左下角账户可充值或管理订阅；也可以在设置中改用 BYOK。</div>
@@ -355,12 +483,60 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <span class="tag">零商业化</span>
     <ul>
       <li>只陈述事实（用完了）+ 指路（账户充值 / 配 BYOK）——<b>不放任何套餐、价格、升级按钮</b></li>
+      <li><b>触发条件（v3.3）＝双池皆空：</b>订阅池烧完但加油包有余额时，自动切加油包继续用，本提示不出现（chip 自动改显加油包余量 %）</li>
       <li>充值/升级的完整选择在网页 /pay（从用户中心→管理订阅进入）</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑤</span>/pay 购买页（网页 · 订阅双档）</h2>
+<h2><span class="no">④b</span>退出登录 · fallback（不打回 Onboarding · v3.3 新增）</h2>
+<div class="note">用户在用户中心点「退出登录」后的两个去向。铁律：Onboarding 放行门只在首次启动出现，任何时候都不把已进入主界面的用户打回去。</div>
+<div class="screen-wrap">
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct"><span style="color:var(--primary)">登录 / 注册 ›</span><br>⚙ DeepSeek 官方 · 已连接</div>
+        </div>
+        <div class="app-main">
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
+          <div class="muted center" style="margin-top:8px">配过 BYOK：自动切 BYOK，一切照常（仅云教练额度停用）</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct"><span style="color:var(--primary)">登录 / 注册 ›</span><br><span style="color:var(--on-surface-variant)">未连接模型服务</span></div>
+        </div>
+        <div class="app-main">
+          <div class="errbar"><b>未连接模型服务。</b>在 设置 → 模型服务 中连接 Aiming Cookie 或自定义 Provider 后即可使用 Coach。</div>
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…（发送暂不可用，历史照常可读）</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">两去向</span>
+    <ul>
+      <li><b>左（配过 BYOK）：</b>自动激活用户配置过的自定义 Provider，体验与 BYOK 用户完全一致</li>
+      <li><b>右（没配过）：</b>主界面照常进（训练数据/历史全保留），Coach 置灰 + 一行指路「去设置连接」——与④用尽提示同一模式，永不绑架</li>
+      <li>重新登录后：云教练自动恢复（订阅有效期内），无需重走 Onboarding</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">⑤</span>/pay 购买页（网页 · Standard / Plus + 加油包加购区）</h2>
 <div class="screen-wrap">
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/pay</span></div>
@@ -370,21 +546,30 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       </div>
       <div class="center" style="margin:18px 0 4px;font-weight:700;font-size:20px">选择你的教练套餐</div>
       <div class="center muted" style="margin-bottom:22px">连续包月 · 额度每周期发放 · 随时可取消 · 约为官方价格的 7.9 折</div>
-      <div style="display:flex;gap:18px;padding:0 28px 20px;max-width:720px;margin:0 auto">
-        <div class="card" style="flex:1;padding:20px">
-          <div class="badge gray">基础档</div>
+      <div style="display:flex;gap:18px;padding:0 28px 16px;max-width:720px;margin:0 auto">
+        <div class="card" style="flex:1;padding:18px">
+          <div class="badge gray">Standard</div>
           <div class="price">¥10<small>/月 · 自动续费</small></div>
           <div style="font-size:14px;margin:8px 0">每月约 <b>120 轮</b>教练对话<br><span class="muted">≈ 40 局完整分析 · 2100 万 Token</span></div>
-          <div class="btn sec">订阅基础档</div>
+          <div class="btn sec">订阅 Standard</div>
         </div>
-        <div class="card" style="flex:1;padding:20px;border:2px solid var(--primary)">
-          <div style="display:flex;justify-content:space-between"><span class="badge">高频档</span><span class="badge blue">单轮价低 10%</span></div>
+        <div class="card" style="flex:1;padding:18px;border:2px solid var(--primary)">
+          <div style="display:flex;justify-content:space-between"><span class="badge">Plus</span><span class="badge blue">单轮价低 10%</span></div>
           <div class="price">¥30<small>/月 · 自动续费</small></div>
           <div style="font-size:14px;margin:8px 0">每月约 <b>400 轮</b>教练对话<br><span class="muted">≈ 133 局完整分析 · 7000 万 Token</span></div>
-          <div class="btn pri">订阅高频档</div>
+          <div class="btn pri">订阅 Plus</div>
         </div>
       </div>
-      <div class="muted center" style="padding-bottom:8px">连续包月，随时可取消（当前周期仍有效）· 按 DeepSeek 官方价对比 · 未使用全额退款</div>
+      <div style="max-width:720px;margin:0 auto;padding:0 28px">
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:14px 16px">
+          <div>
+            <b style="font-size:13px">🍪 加油包 · ¥10</b>
+            <div class="muted" style="margin-top:3px">一次性加购（约 120 轮当量）· 永不过期 · 订阅额度用完后自动接续 · 烧完才可买下一包</div>
+          </div>
+          <span class="btn sec" style="margin:0;padding:9px 14px;font-size:12px;white-space:nowrap">购买加油包</span>
+        </div>
+      </div>
+      <div class="muted center" style="padding:10px 0 8px">连续包月，随时可取消（当前周期仍有效）· 按 DeepSeek 官方价对比 · 未使用全额退款</div>
       <div class="divider" style="max-width:720px;margin:10px auto"></div>
       <div style="max-width:720px;margin:0 auto;padding:0 28px 20px">
         <div style="font-size:14px;font-weight:600;margin-bottom:8px">常见问题</div>
@@ -392,22 +577,25 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div class="ph s"></div><div class="ph s"></div>
         <div style="font-size:13px;font-weight:600;margin:12px 0 4px">怎么取消自动续费？</div>
         <div class="ph s"></div><div class="ph s"></div>
-        <div style="font-size:13px;font-weight:600;margin:12px 0 4px">可以退款吗？（未使用全额退 / 已使用按剩余比例退）</div>
+        <div style="font-size:13px;font-weight:600;margin:12px 0 4px">可以退款吗？（未使用全额退 / 已使用按剩余比例退，订阅与加油包一起清算）</div>
+        <div class="ph s"></div>
+        <div style="font-size:13px;font-weight:600;margin:12px 0 4px">升级套餐怎么算钱？（自动把没用完的折成退款抵扣，只付差价，立即生效）</div>
         <div class="ph s"></div>
         <div class="muted center" style="margin-top:16px">支付由 Stripe 安全处理 · 完成后自动返回 Aiming Cookie</div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">逻辑</span>
+    <span class="tag">逻辑（含已订阅视角）</span>
     <ul>
-      <li>未登录：先登录页（0918 稿）再回本页；已有订阅：状态行+「管理订阅」</li>
-      <li>CTA → Stripe Checkout（subscription mode）→ 成功回跳含 deep-link 唤起客户端</li>
+      <li>未登录：先登录页（0918 稿）再回本页；加油包按钮对未订阅用户置灰「订阅后可用」（须有效订阅才能购买）</li>
+      <li><b>已订阅用户进本页（升级场景）：</b>双档卡替换为状态条「当前套餐 Standard · 生效中 · 下期续费 10-20」+ CTA「升级 Plus（自动折算差价）」；点击后确认弹层一句话：「立即生效 · 抵扣后本单 ¥X · 下期起 ¥30/月」；加油包区正常可购</li>
+      <li>订阅 CTA → Stripe Checkout（subscription mode）；加油包 → Checkout（payment mode 一次性）→ ⑥ 成功页对应文案</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑥</span>支付结果三态（网页回跳）</h2>
+<h2><span class="no">⑥</span>支付结果四态（网页回跳 · 订阅三态 + 加油包成功态）</h2>
 <div class="screen-wrap">
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=success</span></div>
@@ -415,12 +603,26 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <div class="center" style="padding:56px 0 8px;font-size:46px;color:var(--primary)">✓</div>
       <div class="center" style="font-weight:700;font-size:18px">订阅成功，额度已到账</div>
       <div class="card" style="text-align:left;max-width:460px;margin:18px auto">
-        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>订阅</span><b>基础档 · 连续包月</b></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>订阅</span><b>Standard · 连续包月</b></div>
         <div style="display:flex;justify-content:space-between;padding:4px 0"><span>本期额度</span><b>100%</b></div>
         <div style="display:flex;justify-content:space-between;padding:4px 0"><span>下期自动续费</span><b>2026-10-20 · ¥10</b></div>
       </div>
       <div class="btn pri" style="max-width:460px;margin:0 auto 10px">回到 Aiming Cookie（自动完成连接）</div>
       <div class="btn text" style="max-width:460px;margin:0 auto">管理订阅 / 查看额度明细</div>
+    </div>
+  </div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=success&amp;item=booster</span></div>
+    <div class="body">
+      <div class="center" style="padding:56px 0 8px;font-size:46px;color:var(--primary)">🍪</div>
+      <div class="center" style="font-weight:700;font-size:18px">加油包已到账</div>
+      <div class="card" style="text-align:left;max-width:460px;margin:18px auto">
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>加油包</span><b>¥10 · 约 120 轮当量</b></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>加油包余量</span><b>100% · 永不过期</b></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0"><span>使用顺序</span><b>订阅额度用完后自动接续</b></div>
+      </div>
+      <div class="btn pri" style="max-width:460px;margin:0 auto 10px">回到 Aiming Cookie（额度自动刷新）</div>
+      <div class="btn text" style="max-width:460px;margin:0 auto">查看账单</div>
     </div>
   </div>
   <div class="frame browser">
@@ -437,49 +639,72 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/pay?status=canceled</span></div>
     <div class="body">
       <div class="center" style="padding:56px 0 8px;font-size:40px">🍪</div>
-      <div class="center" style="font-weight:700;font-size:17px">还没有完成订阅</div>
-      <div class="muted center" style="margin:10px 0 16px">随时可以再来；关闭本页后可在 Onboarding 重新打开</div>
-      <div class="btn pri" style="max-width:320px;margin:0 auto 8px">继续订阅</div>
+      <div class="center" style="font-weight:700;font-size:17px">还没有完成付款</div>
+      <div class="muted center" style="margin:10px 0 16px">随时可以再来；订阅与加油包购买通用此页</div>
+      <div class="btn pri" style="max-width:320px;margin:0 auto 8px">继续购买</div>
       <div class="btn text" style="max-width:320px;margin:0 auto">返回</div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">三态说明</span>
+    <span class="tag">四态说明</span>
     <ul>
-      <li><b>⑥a 成功：</b>轮询确认发放后显示；「回到 Aiming Cookie」＝deep-link 唤起客户端</li>
+      <li><b>⑥a 订阅成功：</b>轮询确认发放后显示；「回到 Aiming Cookie」＝deep-link 唤起客户端</li>
+      <li><b>⑥a2 加油包成功（v3.3）：</b>一次性支付（payment mode）成功回跳；同样带「回到客户端」按钮（从客户端来买的场景），客户端轮询自动刷新余量</li>
       <li><b>⑥b 处理中：</b>已扣款未发放（webhook 延迟），凭证已记录可人工补发</li>
-      <li><b>⑥c 未完成：</b>无半态残留，重进即全新流程</li>
+      <li><b>⑥c 未完成（文案通用化）：</b>「还没有完成付款」覆盖订阅与加油包；无半态残留，重进即全新流程</li>
+      <li><b>deep-link 兜底：</b>点「回到 Aiming Cookie」没反应 → 页尾提示「打开客户端登录同一账号即自动连接」</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑦</span>管理订阅 / 取消 / 退款申请（accounts 网页）</h2>
+<h2><span class="no">⑦</span>管理订阅 / 升级（自动折差价）/ 取消·恢复双态 / 退款申请（accounts 网页）</h2>
 <div class="screen-wrap">
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/billing</span></div>
     <div class="body">
       <div style="max-width:640px;margin:24px auto;padding:0 20px">
         <div class="card">
-          <div style="display:flex;justify-content:space-between"><b>基础档 · 连续包月</b><span class="badge">生效中</span></div>
+          <div style="display:flex;justify-content:space-between"><b>Standard · 连续包月</b><span class="badge">生效中</span></div>
           <div class="muted" style="margin-top:4px">下期自动续费 2026-10-20 · ¥10 · 支付方式 Visa •••• 4242</div>
           <div style="display:flex;gap:10px;margin-top:12px">
-            <div class="btn sec" style="flex:1;margin-top:0">升级高频档</div>
+            <div class="btn sec" style="flex:1;margin-top:0">升级 Plus（自动折算差价）</div>
             <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
           </div>
+          <div class="muted" style="margin-top:8px">↑ 升级＝自动退旧订新：没用完的额度按比例折成退款抵扣，只付差价、立即生效；确认弹层展示「抵扣后本单 ¥X · 下期起 ¥30/月」</div>
         </div>
         <div class="card" style="margin-top:14px;border-style:dashed">
           <b style="font-size:14px">取消自动续费</b>
-          <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、云教练停止（训练数据保留）。</div>
+          <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、云教练停止（训练数据保留，加油包余额永不过期仍可用）。</div>
           <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
         </div>
         <div class="card" style="margin-top:14px;border-style:dashed">
           <b style="font-size:14px">申请退款</b>
           <div class="muted" style="margin:5px 0 10px">
             未使用（0 消耗）且购买 14 天内：全额退。<br>
-            已使用：按<b>剩余额度比例</b>退（退款 = 实付 × 剩余额度比例），退款后订阅立即结束、剩余额度清零。<br>
-            例：¥10 订阅、额度用掉 40% → 可退 ¥6.00。
+            已使用：按<b>剩余额度比例</b>退（退款 = 实付 × 剩余额度比例）。<b>订阅与加油包一起清算，不留余额</b>，退款后即恢复免费用户（BYOK）。<br>
+            例：¥10 订阅、额度用掉 40% → 订阅退 ¥6.00；加油包按同规则另算。
           </div>
-          <div class="btn text">邮件申请（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
+          <div class="btn text">邮件申请 support@aimingcookie.com（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/account/billing（已取消态）</span></div>
+    <div class="body">
+      <div style="max-width:640px;margin:24px auto;padding:0 20px">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between"><b>Standard · 连续包月</b><span class="badge gray">已取消 · 10-20 到期</span></div>
+          <div class="muted" style="margin-top:4px">本期货额度可用至 2026-10-20 · 到期后不再扣款、云教练停止</div>
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <div class="btn pri" style="flex:1;margin-top:0">恢复自动续费</div>
+            <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
+          </div>
+          <div class="muted" style="margin-top:8px">↑ 取消后同一位置变「恢复自动续费」——按钮双态，恢复即回到「生效中」，客户端②c同步</div>
+        </div>
+        <div class="card" style="margin-top:14px;border-style:dashed">
+          <b style="font-size:14px">加油包</b>
+          <div class="muted" style="margin:5px 0 10px">当前加油包余量 100% · 永不过期；取消订阅后仍可继续用完，烧完后须重新订阅才能再购买。</div>
         </div>
       </div>
     </div>
@@ -487,27 +712,41 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   <div class="annot">
     <span class="tag">Stripe 配合</span>
     <ul>
-      <li><b>取消：</b>cancel at period_end</li>
-      <li><b>退款：</b>Refund API 部分退款，MVP 人工 Dashboard 执行；退款后订阅立即取消+额度清零</li>
+      <li><b>取消：</b>cancel at period_end；<b>恢复：</b>同一订阅 resume（按钮双态，不新建订阅）</li>
+      <li><b>升级：</b>立即切档 + proration 按比例折算差价（Stripe 原生）；<b>无降级</b>——想下去只有退款一条路</li>
+      <li><b>退款：</b>Refund API 部分退款（订阅、加油包两笔），MVP 人工 Dashboard 执行；退款后订阅立即取消+两池清零</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑧</span>扣款提醒 / 扣款失败（邮件为主 + 客户端轻提示）</h2>
+<h2><span class="no">⑧</span>扣款失败处理（Stripe 自带邮件 + 客户端轻提示 · v3.3 修订）</h2>
+<div class="note">v3.3 拍板：<b>不发任何主动提醒邮件</b>（续费提醒/到期提醒/额度提醒全部不做——用户用软件自己会看到，别烦客户）。原「邮件模板两枚」工作项删除；仅扣款失败属异常告知，由 Stripe 自带邮件覆盖，我们零模板零 Resend 消耗。</div>
 <div class="screen-wrap">
   <div class="frame browser">
-    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">邮件模板（P3 文字稿）</span></div>
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">Stripe 自带（无我们自己模板）</span></div>
     <div class="body">
       <div style="max-width:560px;margin:24px auto;padding:0 20px">
-        <div class="card">
-          <b style="font-size:14px">邮件 ① · 续费提醒（下期扣款前 3 天）</b>
+        <div class="card" style="border-style:dashed">
+          <b style="font-size:14px">Stripe 自带 · 扣款失败通知（当天）</b>
           <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
-          <div class="btn sec" style="max-width:220px">管理订阅</div>
+          <div class="muted" style="margin-top:8px">我们不做模板；邮件文案与「更新支付方式」链接均由 Stripe Customer Portal 承担</div>
         </div>
-        <div class="card" style="margin-top:12px">
-          <b style="font-size:14px">邮件 ② · 扣款失败（当天）</b>
-          <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
-          <div class="btn pri" style="max-width:220px">更新支付方式</div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct">👤 u***@gmail.com<br>Standard · 余量 62%</div>
+        </div>
+        <div class="app-main">
+          <div class="banner warn" style="margin-bottom:10px"><b>本次自动续费未成功（10-17）：</b>7 天内会自动重试，期间一切照常。可<a style="color:inherit">更新支付方式</a>。</div>
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
         </div>
       </div>
     </div>
@@ -515,13 +754,15 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   <div class="annot">
     <span class="tag">Stripe 配合</span>
     <ul>
-      <li>Smart Retries 自动重试 ~7 天，期间服务不中断</li>
-      <li>彻底失败 → 订阅失效 → 客户端显示「连接已断开」（重订即恢复）</li>
+      <li>Smart Retries 自动重试 ~7 天，期间服务不中断（客户端只显示一条可关闭的黄色事实条）</li>
+      <li>彻底失败 → 订阅失效：加油包有余额 → ⑨「正在使用加油包」；双池皆空 → ⑨ 断开提示</li>
+      <li>更新支付方式走 Stripe Customer Portal（跳浏览器），客户端内不做支付表单</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑨</span>订阅失效 · 连接断开提示（重订即恢复）</h2>
+<h2><span class="no">⑨</span>订阅失效两态：加油包续命 / 连接断开（重订即恢复）</h2>
+<div class="note">v3.3 拆成两态：加油包还有余额＝服务不断，只换池子；双池皆空才真正断开。</div>
 <div class="screen-wrap">
   <div class="frame window">
     <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
@@ -530,10 +771,27 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div class="app-side">
           <div class="side-new">+ 新建对话</div>
           <div class="side-item act">8月基准跟枪局分析</div>
-          <div class="acct">👤 u***@gmail.com<br><span style="color:var(--error)">订阅已结束</span></div>
+          <div class="acct">👤 u***@gmail.com<br><span style="color:#e8930c">订阅已到期 · 加油包 45%</span></div>
         </div>
         <div class="app-main">
-          <div class="errbar"><b>Aiming Cookie 连接已断开：</b>订阅已结束（10-20）。历史与设置全部保留。点击左下角账户可重新订阅；也可以在设置中改用 BYOK。</div>
+          <div class="banner warn"><b>订阅已于 10-20 到期。</b>正在使用加油包余量（45%）；重新订阅后自动回到订阅额度。</div>
+          <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
+          <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app">
+        <div class="app-side">
+          <div class="side-new">+ 新建对话</div>
+          <div class="side-item act">8月基准跟枪局分析</div>
+          <div class="acct">👤 u***@gmail.com<br><span style="color:var(--error)">订阅已结束 · 余量 0%</span></div>
+        </div>
+        <div class="app-main">
+          <div class="errbar"><b>Aiming Cookie 连接已断开：</b>订阅已结束且加油包已用完（10-20）。历史与设置全部保留。点击左下角账户可重新订阅；也可以在设置中改用 BYOK。</div>
           <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
           <div class="composer" style="margin-top:auto">向 Coach 提问…（发送暂不可用，历史照常可读）</div>
         </div>
@@ -541,10 +799,12 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     </div>
   </div>
   <div class="annot">
-    <span class="tag">形态</span>
+    <span class="tag">两态规则</span>
     <ul>
-      <li>页内提示条，零商业化；指引左下角账户（用户中心→管理订阅→重新订阅）或 BYOK</li>
-      <li>重新订阅成功后连接自动恢复，无需重走 Onboarding</li>
+      <li><b>左（加油包有余额）：</b>服务不中断，Coach 照常可用；黄色事实条说清「订阅到期 · 正在烧加油包」；chip 显示加油包余量 %（当前池）</li>
+      <li><b>右（双池皆空）：</b>页内提示条，零商业化；指路左下角账户（用户中心→管理订阅→重新订阅）或 BYOK</li>
+      <li>重新订阅成功后连接自动恢复、额度重新满上，无需重走 Onboarding；加油包若仍有余量继续保留（永不过期）</li>
+      <li>此态＝退订用户的自然回流点（想再买加油包必须先续订）</li>
     </ul>
   </div>
 </div>
@@ -583,7 +843,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <span style="display:flex;align-items:center;gap:6px;font-size:13px;border:1px solid var(--outline-variant);border-bottom:none;border-radius:12px 12px 0 0;padding:8px 14px 8px 8px;background:var(--surface)"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none">u</span><b>u***@gmail.com</b><span style="margin-left:auto;color:var(--on-surface-variant)">▾</span></span>
           <span style="position:absolute;top:100%;left:-1px;right:-1px;border:1px solid var(--outline-variant);border-top:none;border-radius:0 0 12px 12px;background:var(--surface);overflow:hidden;box-shadow:0 12px 22px rgba(36,33,29,.14);display:block;text-align:left">
           <div style="padding:12px 14px">
-            <div style="font-size:12px;color:var(--on-surface-variant)">基础档 · 连续包月</div>
+            <div style="font-size:12px;color:var(--on-surface-variant)">Standard · 连续包月</div>
             <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
             <div style="font-size:14px;font-weight:700">余量 62%</div>
           </div>
@@ -607,6 +867,47 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
+<h2><span class="no">⑩b</span>落地页 · 底部三档价格块（v3.3 新增）</h2>
+<div class="note">挂在落地页最底部（页脚之前）。三档：免费 BYOK / Standard / Plus。「免费」说的是应用本身——API 费用只发生在用户与模型厂商之间（落地页既有声明），价格块措辞照此写清，避免「免费」歧义。</div>
+<div class="screen-wrap">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">aimingcookie.com（页面底部 · 定价区）</span></div>
+    <div class="body">
+      <div class="center" style="margin:26px 0 4px;font-weight:700;font-size:20px">选择你的练法</div>
+      <div class="center muted" style="margin-bottom:20px">云教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</div>
+      <div style="display:flex;gap:16px;padding:0 28px 24px;max-width:760px;margin:0 auto">
+        <div class="card" style="flex:1;padding:18px">
+          <div class="badge gray">BYOK</div>
+          <div class="price">¥0<small> · 应用免费</small></div>
+          <div style="font-size:13px;margin:8px 0;min-height:56px">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）<br><span class="muted">API 费用只发生在你和模型厂商之间，与我们无关</span></div>
+          <div class="btn sec">下载客户端</div>
+        </div>
+        <div class="card" style="flex:1;padding:18px">
+          <div class="badge">Standard</div>
+          <div class="price">¥10<small>/月 · 自动续费</small></div>
+          <div style="font-size:13px;margin:8px 0;min-height:56px">云教练每月约 120 轮对话<br><span class="muted">≈ 40 局完整分析 · 未使用全额退款</span></div>
+          <div class="btn sec">订阅 Standard</div>
+        </div>
+        <div class="card" style="flex:1;padding:18px;border:2px solid var(--primary)">
+          <div style="display:flex;justify-content:space-between"><span class="badge">Plus</span><span class="badge blue">单轮价低 10%</span></div>
+          <div class="price">¥30<small>/月 · 自动续费</small></div>
+          <div style="font-size:13px;margin:8px 0;min-height:56px">云教练每月约 400 轮对话<br><span class="muted">≈ 133 局完整分析 · 未使用全额退款</span></div>
+          <div class="btn pri">订阅 Plus</div>
+        </div>
+      </div>
+      <div class="muted center" style="padding-bottom:20px">CTA 未登录 → 先登录再回 /pay；已登录直达 /pay；加油包（¥10 · 永不过期）在订阅后于账号中心加购</div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">要点</span>
+    <ul>
+      <li><b>三档并列：</b>BYOK 档明示「¥0 · 应用免费」并写清 API 费付给厂商——既诚实又衬出订阅档省心</li>
+      <li><b>不打折话术只一条：</b>「约为官方价格的 7.9 折」；轮数为估算（承诺物是额度）</li>
+      <li><b>加油包不进价格块：</b>它是订阅用户的补充池，入口在 ②c / ⑪，落地页只加一句说明防误解</li>
+    </ul>
+  </div>
+</div>
+
 <h2><span class="no">⑪</span>账号中心网页 · 完全重做（Open Design 左栏布局 · P2）</h2>
 <div class="screen-wrap">
   <div class="frame browser">
@@ -623,7 +924,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant);display:flex;justify-content:space-between"><span>语言切换</span><span>文A</span></div>
           <div class="card" style="margin-top:10px;padding:10px;font-size:12px;display:flex;gap:8px;align-items:center">
             <span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;flex:none">u</span>
-            <span><b>u***@gmail.com</b><br><span class="muted">基础档</span></span>
+            <span><b>u***@gmail.com</b><br><span class="muted">Standard</span></span>
           </div>
         </div>
       </div>
@@ -632,27 +933,33 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div style="background:linear-gradient(120deg,var(--primary),#8a2b00);border-radius:14px 14px 0 0;color:var(--on-primary);padding:22px 26px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start">
             <div>
-              <div style="font-size:20px;font-weight:700">基础档</div>
+              <div style="font-size:20px;font-weight:700">Standard</div>
               <div style="font-size:12px;opacity:.85">订阅状态：连续包月 · 生效中</div>
             </div>
             <span style="background:#fff;color:var(--primary);padding:9px 16px;font-size:13px;border-radius:10px;font-weight:600">🔔 升级订阅</span>
           </div>
         </div>
-        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:0 0 14px 14px;padding:16px 26px;display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:13px;opacity:.85">个人可用额度</span>
-          <span style="font-size:26px;font-weight:700">62% <span style="font-size:12px;opacity:.7">ⓘ</span></span>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:0 0 14px 14px;padding:16px 26px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:13px;opacity:.85">个人可用额度（订阅池）</span>
+            <span style="font-size:26px;font-weight:700">62% <span style="font-size:12px;opacity:.7">ⓘ</span></span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid rgba(249,238,232,.18);font-size:12px;opacity:.9">
+            <span>🍪 加油包 · 永不过期</span>
+            <span style="display:flex;align-items:center;gap:8px"><span style="background:rgba(249,238,232,.2);border-radius:99px;width:90px;height:6px;overflow:hidden;display:inline-block"><span style="display:block;background:#e8930c;width:100%;height:100%"></span></span>余量 100%</span>
+          </div>
         </div>
         <div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:14px">
           <div>
             <b style="font-size:13px">加油包</b>
-            <div class="muted" style="margin-top:3px">本期额度不够用？立即加购一份（约 120 轮，立即到账）。</div>
+            <div class="muted" style="margin-top:3px">¥10 · 约 120 轮当量 · 永不过期，订阅额度用完后自动接续；烧完才可买下一包。</div>
           </div>
-          <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap">购买加速包 · ¥10</span>
+          <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap;opacity:.45">当前加油包还有余量</span>
         </div>
         <div class="card" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:14px">
           <div>
             <b style="font-size:13px">自动续费</b>
-            <div class="muted" style="margin-top:3px">下期自动续费 2026-10-20 · ¥10（基础档）。</div>
+            <div class="muted" style="margin-top:3px">下期自动续费 2026-10-20 · ¥10（Standard）。</div>
           </div>
           <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap">管理自动续费</span>
         </div>
@@ -663,9 +970,9 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <span class="tag">布局（对标点点提供的 Open Design 截图）</span>
     <ul>
       <li><b>左栏导航：</b>logo+折叠钮 · 概览（激活态）/用量/账单/设置 · 底部 模型与价格、帮助与文档、语言切换、账号卡（个人产品，无「成员」）</li>
-      <li><b>右主区：</b>品牌色订阅横幅（档位+状态+「升级订阅」）→ <b>黑色余量大条</b>（左「个人可用额度」右大字百分比，无金额）→ 加速包卡（✅ 已确认要做）→ 自动续费卡</li>
-      <li><b>子页：</b>用量=逐笔明细；账单=Stripe 收据列表；设置=邮箱/支付方式/注销</li>
-      <li><b>免费用户态：</b>横幅显示「免费版 · 正在使用 BYOK/本地引擎」，按钮「升级订阅」→ /pay</li>
+      <li><b>右主区：</b>品牌色订阅横幅（档位+状态+「升级订阅」→ /pay）→ <b>黑色余量大条</b>（订阅池大字百分比 + 加油包小行＝两池全貌，无金额）→ 加油包卡（置灰态=余额未尽）→ 自动续费卡</li>
+      <li><b>子页：</b>用量=按天汇总明细；账单=Stripe 收据列表；子页无「设置」（账号中心只有概览/用量/账单）</li>
+      <li><b>免费用户态：</b>横幅显示「免费版 · 正在使用 BYOK」，按钮「升级订阅」→ /pay；无加油包行（未订阅不可购）</li>
     </ul>
   </div>
 </div>
@@ -724,7 +1031,8 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div class="card" style="padding:0;overflow:hidden">
           <table style="width:100%;border-collapse:collapse;font-size:13px">
             <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">时间</th><th style="padding:10px 14px">购买内容</th><th style="padding:10px 14px;text-align:right">金额</th><th style="padding:10px 14px">状态</th><th style="padding:10px 14px">收据</th></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:10</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">基础档 · 连续包月（首期）</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:10</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">Standard · 连续包月（首期）</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:12</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">加油包 · 一次性</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
             <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:56px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:48px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:36px"></div></td></tr>
           </table>
         </div>
@@ -742,7 +1050,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 </div>
 
 <div class="divider" style="margin:36px 0"></div>
-<div class="muted"><b>异常覆盖</b>：Onboarding 未连通不放行（①规则）· 网页未完成订阅就关闭（①a 停留本步可重开/BYOK）· 已扣款未到账（⑥b）· 未完成付款（⑥c）· 未登录点支付（⑤置灰引导）· 扣款失败（⑧dunning）· 订阅失效（⑨重订即恢复）· 额度争议（⑪明细）· 退款（⑦按剩余比例人工审核）· BYOK 用户全程不受会员体系影响。</div>
+<div class="muted"><b>异常覆盖（v3.3）</b>：Onboarding 未连通不放行（①铁律）· 登录未订阅/老会员直连/连通失败（①b 三态）· 网页未完成付款就关闭（①a 停留本步可重开/BYOK）· 已扣款未到账（⑥b）· 未完成付款（⑥c 订阅与加油包通用）· 未登录点支付（⑤置灰引导）· 扣款失败（⑧ Stripe 自带+轻提示，无提醒邮件）· 订阅失效+加油包有余额（⑨左续命态）/双池皆空（⑨右断开）· 升级（⑦自动折算差价退旧订新）· 取消后反悔（⑦/②c 恢复双态）· 退出登录（④b fallback BYOK/置灰，不打回 Onboarding）· 额度争议（⑪a 明细）· 退款（⑦订阅+加油包一起按比例清算，人工审核）· BYOK 用户全程不受会员体系影响。</div>
 
 </body>
 </html>
