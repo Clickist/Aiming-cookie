@@ -396,7 +396,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
               <b style="font-size:13px">账户</b>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 连续包月</span></div>
-              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（云教练停用，自动转用已配置的 BYOK）</div>
+              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（订阅额度停用，自动转用已配置的 BYOK）</div>
             </div>
           </div>
         </div>
@@ -440,7 +440,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
               <b style="font-size:13px">账户</b>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 本期结束后终止</span></div>
-              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（云教练停用，自动转用已配置的 BYOK）</div>
+              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（订阅额度停用，自动转用已配置的 BYOK）</div>
             </div>
           </div>
         </div>
@@ -455,7 +455,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>态B 已取消未到期：</b>横幅「已取消 · 额度可用至 10-20」，进度条转橙提示非续费态；按钮变「恢复自动续费」，恢复即回态A</li>
       <li><b>加油包购买置灰：</b>余额未尽时按钮置灰「当前加油包还有余量」——烧完才可再买</li>
       <li><b>退出登录：</b>不打回 Onboarding——配过 BYOK 自动切 BYOK 照常用；没配过则主界面照常进、Coach 置灰+「去设置连接」（见④b）</li>
-      <li><b>BYOK 用户：</b>进入的页面显示引擎信息 + 「登录以开通云教练」（无订阅内容）</li>
+      <li><b>BYOK 用户：</b>进入的页面显示引擎信息 + 「登录以开通 Aiming Cookie 教练」（无订阅内容）</li>
     </ul>
   </div>
 </div>
@@ -504,7 +504,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div class="app-main">
           <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
           <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
-          <div class="muted center" style="margin-top:8px">配过 BYOK：自动切 BYOK，一切照常（仅云教练额度停用）</div>
+          <div class="muted center" style="margin-top:8px">配过 BYOK：自动切 BYOK，一切照常（仅订阅额度停用）</div>
         </div>
       </div>
     </div>
@@ -531,7 +531,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <ul>
       <li><b>左（配过 BYOK）：</b>自动激活用户配置过的自定义 Provider，体验与 BYOK 用户完全一致</li>
       <li><b>右（没配过）：</b>主界面照常进（训练数据/历史全保留），Coach 置灰 + 一行指路「去设置连接」——与④用尽提示同一模式，永不绑架</li>
-      <li>重新登录后：云教练自动恢复（订阅有效期内），无需重走 Onboarding</li>
+      <li>重新登录后：教练额度自动恢复（订阅有效期内），无需重走 Onboarding</li>
     </ul>
   </div>
 </div>
@@ -674,7 +674,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         </div>
         <div class="card" style="margin-top:14px;border-style:dashed">
           <b style="font-size:14px">取消自动续费</b>
-          <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、云教练停止（训练数据保留，加油包余额永不过期仍可用）。</div>
+          <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、订阅额度失效（训练数据保留；加油包余额永不过期仍可用）。</div>
           <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
         </div>
         <div class="card" style="margin-top:14px;border-style:dashed">
@@ -695,7 +695,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <div style="max-width:640px;margin:24px auto;padding:0 20px">
         <div class="card">
           <div style="display:flex;justify-content:space-between"><b>Standard · 连续包月</b><span class="badge gray">已取消 · 10-20 到期</span></div>
-          <div class="muted" style="margin-top:4px">本期货额度可用至 2026-10-20 · 到期后不再扣款、云教练停止</div>
+          <div class="muted" style="margin-top:4px">本期货额度可用至 2026-10-20 · 到期后不再扣款、订阅额度失效</div>
           <div style="display:flex;gap:10px;margin-top:12px">
             <div class="btn pri" style="flex:1;margin-top:0">恢复自动续费</div>
             <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
@@ -744,7 +744,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="acct">👤 u***@gmail.com<br>Standard · 余量 62%</div>
         </div>
         <div class="app-main">
-          <div class="banner warn" style="margin-bottom:10px"><b>本次自动续费未成功（10-17）：</b>7 天内会自动重试，期间一切照常。可<a style="color:inherit">更新支付方式</a>。</div>
+          <div class="banner warn" style="margin-bottom:10px"><span><b>本次自动续费未成功（10-17）：</b>7 天内会自动重试，期间一切照常。可<a style="color:inherit">更新支付方式</a>。</span><span style="margin-left:auto;opacity:.6;flex:none;padding-left:8px">✕</span></div>
           <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
           <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
         </div>
@@ -774,7 +774,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="acct">👤 u***@gmail.com<br><span style="color:#e8930c">订阅已到期 · 加油包 45%</span></div>
         </div>
         <div class="app-main">
-          <div class="banner warn"><b>订阅已于 10-20 到期。</b>正在使用加油包余量（45%）；重新订阅后自动回到订阅额度。</div>
+          <div class="banner warn"><span><b>订阅已于 10-20 到期。</b>正在使用加油包余量（45%）；重新订阅后自动回到订阅额度。</span><span style="margin-left:auto;opacity:.6;flex:none;padding-left:8px">✕</span></div>
           <div class="coach-msg">这周每天 20 分钟的跟枪版练法排好了，全用你本机已装的图…</div>
           <div class="composer" style="margin-top:auto">向 Coach 提问…</div>
         </div>
@@ -801,7 +801,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   <div class="annot">
     <span class="tag">两态规则</span>
     <ul>
-      <li><b>左（加油包有余额）：</b>服务不中断，Coach 照常可用；黄色事实条说清「订阅到期 · 正在烧加油包」；chip 显示加油包余量 %（当前池）</li>
+      <li><b>左（加油包有余额）：</b>服务不中断，Coach 照常可用；黄色条为<b>一次性提示、可关闭（✕）——非常驻</b>，关闭后不再出现，到期状态由左下角 chip 常驻承载（「订阅已到期 · 加油包 45%」）</li>
       <li><b>右（双池皆空）：</b>页内提示条，零商业化；指路左下角账户（用户中心→管理订阅→重新订阅）或 BYOK</li>
       <li>重新订阅成功后连接自动恢复、额度重新满上，无需重走 Onboarding；加油包若仍有余量继续保留（永不过期）</li>
       <li>此态＝退订用户的自然回流点（想再买加油包必须先续订）</li>
@@ -874,25 +874,25 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">aimingcookie.com（页面底部 · 定价区）</span></div>
     <div class="body">
       <div class="center" style="margin:26px 0 4px;font-weight:700;font-size:20px">选择你的练法</div>
-      <div class="center muted" style="margin-bottom:20px">云教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</div>
-      <div style="display:flex;gap:16px;padding:0 28px 24px;max-width:760px;margin:0 auto">
-        <div class="card" style="flex:1;padding:18px">
+      <div class="center muted" style="margin-bottom:20px">教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</div>
+      <div style="display:flex;gap:16px;padding:0 28px 24px;max-width:760px;margin:0 auto;align-items:stretch">
+        <div class="card" style="flex:1;padding:18px;display:flex;flex-direction:column">
           <div class="badge gray">BYOK</div>
           <div class="price">¥0<small> · 应用免费</small></div>
-          <div style="font-size:13px;margin:8px 0;min-height:56px">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）<br><span class="muted">API 费用只发生在你和模型厂商之间，与我们无关</span></div>
-          <div class="btn sec">下载客户端</div>
+          <div style="font-size:13px;margin:8px 0">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）<br><span class="muted">API 费用只发生在你和模型厂商之间，与我们无关</span></div>
+          <div class="btn sec" style="margin:auto 0 0">下载客户端</div>
         </div>
-        <div class="card" style="flex:1;padding:18px">
+        <div class="card" style="flex:1;padding:18px;display:flex;flex-direction:column">
           <div class="badge">Standard</div>
           <div class="price">¥10<small>/月 · 自动续费</small></div>
-          <div style="font-size:13px;margin:8px 0;min-height:56px">云教练每月约 120 轮对话<br><span class="muted">≈ 40 局完整分析 · 未使用全额退款</span></div>
-          <div class="btn sec">订阅 Standard</div>
+          <div style="font-size:13px;margin:8px 0">教练每月约 120 轮对话<br><span class="muted">≈ 40 局完整分析 · 未使用全额退款</span></div>
+          <div class="btn sec" style="margin:auto 0 0">订阅 Standard</div>
         </div>
-        <div class="card" style="flex:1;padding:18px;border:2px solid var(--primary)">
+        <div class="card" style="flex:1;padding:18px;border:2px solid var(--primary);display:flex;flex-direction:column">
           <div style="display:flex;justify-content:space-between"><span class="badge">Plus</span><span class="badge blue">单轮价低 10%</span></div>
           <div class="price">¥30<small>/月 · 自动续费</small></div>
-          <div style="font-size:13px;margin:8px 0;min-height:56px">云教练每月约 400 轮对话<br><span class="muted">≈ 133 局完整分析 · 未使用全额退款</span></div>
-          <div class="btn pri">订阅 Plus</div>
+          <div style="font-size:13px;margin:8px 0">教练每月约 400 轮对话<br><span class="muted">≈ 133 局完整分析 · 未使用全额退款</span></div>
+          <div class="btn pri" style="margin:auto 0 0">订阅 Plus</div>
         </div>
       </div>
       <div class="muted center" style="padding-bottom:20px">CTA 未登录 → 先登录再回 /pay；已登录直达 /pay；加油包（¥10 · 永不过期）在订阅后于账号中心加购</div>
