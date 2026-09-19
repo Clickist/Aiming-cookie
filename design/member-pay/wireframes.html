@@ -88,7 +88,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 .side-item{font-size:12px;padding:7px 9px;border-radius:8px;margin-bottom:4px}
 .side-item.act{background:var(--surface-container-high)}
 .acct{margin-top:auto;border:1px solid var(--outline-variant);border-radius:10px;padding:10px;font-size:12px;cursor:pointer}
-.acct.sel{border-color:var(--primary);background:var(--primary-container)}
+.acct.sel{background:var(--surface-container)}
 .wizard{width:420px;margin:26px auto;background:var(--surface);border:1px solid var(--outline-variant);border-radius:14px;padding:24px}
 .steps{display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:18px;font-size:12px;color:var(--on-surface-variant)}
 .step-dot{width:22px;height:22px;border-radius:50%;background:var(--primary);color:var(--on-primary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
@@ -282,6 +282,8 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="side-search">🔍 搜索会话</div>
           <div class="side-item act">8月基准跟枪局分析</div>
           <div class="side-item">请分析这局训练…</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
           <div class="acct">👤 u***@gmail.com<br>Standard · 余量 62%</div>
         </div>
         <div class="app-main">
@@ -312,16 +314,20 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct" style="border-color:var(--primary);background:var(--primary-container)"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
+            <div class="acct" style="margin-top:auto"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
           </div>
-          <div class="muted" style="margin-top:8px">点击卡片 → 右侧切「用户中心」</div>
+          <div class="muted" style="margin-top:8px">卡片＝侧栏最末元素；视觉与普通条目一致（无边框无填充）</div>
         </div>
         <div style="width:220px;flex:none">
           <div class="muted" style="margin-bottom:6px"><b>状态 B1 · BYOK 未登录</b></div>
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct"><span style="color:var(--primary)">登录 / 注册 ›</span><br>⚙ DeepSeek 官方 · 已连接</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
+            <div class="acct" style="margin-top:auto"><span style="color:var(--primary)">登录 / 注册 ›</span><br>⚙ DeepSeek 官方 · 已连接</div>
           </div>
           <div class="muted" style="margin-top:8px">引擎行＝用户所选 Provider；不显示模型名（输入框已有）</div>
         </div>
@@ -330,7 +336,9 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct"><b>👤 u***@gmail.com</b><br>⚙ DeepSeek 官方 · 已连接</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+            <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
+            <div class="acct" style="margin-top:auto"><b>👤 u***@gmail.com</b><br>⚙ DeepSeek 官方 · 已连接</div>
           </div>
           <div class="muted" style="margin-top:8px">两卡对称：上行＝身份（邮箱/登录入口），下行＝引擎</div>
         </div>
@@ -344,7 +352,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>BYOK 不显示模型名</b>（输入框已显示过）；引擎行显示<b>用户所选 Provider 名</b>（设置里可选各来源）</li>
       <li>BYOK 已登录：邮箱 + 「BYOK 模式 · 已连接」；未登录：引擎行 + 登录引导（一句话）</li>
       <li>订阅过期且无加油包：状态 A 变「订阅已结束 · 余量 0%」+「重新订阅 ›」；<b>加油包有余额则不显示本态</b>，变「订阅已到期 · 正在使用加油包 余量 X%」（见⑨）</li>
-      <li>卡片为真实侧栏尺寸（220px 内），非拉伸</li>
+      <li>卡片为真实侧栏尺寸（220px 内），非拉伸；<b>位于侧栏最底部</b>（训练历史/系统设置之下），视觉与普通条目一致——无边框无填充、hover 才轻高亮，<b>不用橙色强调</b>（0919 实测纠偏）</li>
     </ul>
   </div>
 </div>
@@ -360,6 +368,8 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="side-new">+ 新建对话</div>
           <div class="side-search">🔍 搜索会话</div>
           <div class="side-item">8月基准跟枪局分析</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
           <div class="acct sel"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
         </div>
         <div class="app-main" style="padding:0">
@@ -411,6 +421,8 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="side-new">+ 新建对话</div>
           <div class="side-search">🔍 搜索会话</div>
           <div class="side-item">8月基准跟枪局分析</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">🕘 训练历史</div>
+          <div class="side-item" style="color:var(--on-surface-variant)">⚙ 系统设置</div>
           <div class="acct sel"><b>👤 u***@gmail.com</b><br>Standard · 余量 62%</div>
         </div>
         <div class="app-main" style="padding:0">
