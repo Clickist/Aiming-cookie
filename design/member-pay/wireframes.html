@@ -231,35 +231,50 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
-<h2><span class="no">②b</span>左下角用户卡片 · 三种状态（会员 / BYOK / 本地引擎）</h2>
+<h2><span class="no">②b</span>左下角用户卡片 · 真实尺寸三态（会员 / BYOK 未登录 / BYOK 已登录）</h2>
 <div class="screen-wrap">
   <div class="frame window">
     <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
     <div class="body">
-      <div class="app" style="height:100%;flex:1">
-        <div style="flex:1;display:flex;gap:16px;padding:14px;background:var(--background)">
-          <div style="flex:1">
-            <div class="muted" style="margin-bottom:6px"><b>状态 A · 会员（已登录）</b></div>
-            <div class="acct sel" style="font-size:12px"><b>👤 u***@gmail.com</b><br>基础档 · 余量 62%</div>
-            <div class="muted" style="margin-top:8px">点击 → 右侧区域切换「用户中心」（← 返回）</div>
+      <div style="display:flex;gap:24px;padding:18px;background:var(--background)">
+        <div style="width:220px;flex:none">
+          <div class="muted" style="margin-bottom:6px"><b>状态 A · 会员（已登录）</b></div>
+          <div class="app-side" style="height:280px">
+            <div class="side-new">+ 新建对话</div>
+            <div class="side-item">8月基准跟枪局分析</div>
+            <div class="acct" style="border-color:var(--primary);background:var(--primary-container)"><b>👤 u***@gmail.com</b><br>基础档 · 余量 62%</div>
           </div>
-          <div style="flex:1">
-            <div class="muted" style="margin-bottom:6px"><b>状态 B · BYOK（未登录或已登录均可）</b></div>
-            <div class="acct" style="font-size:12px"><b>⚙ DeepSeek 官方 · 已连接</b><br>deepseek-v4-flash<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
-            <div class="muted" style="margin-top:8px">引擎信息照常显示；「登录」引导开通云教练（BYOK 永久保留，登录是叠加）</div>
+          <div class="muted" style="margin-top:8px">点击卡片 → 右侧切「用户中心」</div>
+        </div>
+        <div style="width:220px;flex:none">
+          <div class="muted" style="margin-bottom:6px"><b>状态 B1 · BYOK 未登录</b></div>
+          <div class="app-side" style="height:280px">
+            <div class="side-new">+ 新建对话</div>
+            <div class="side-item">8月基准跟枪局分析</div>
+            <div class="acct"><b>⚙ DeepSeek 官方 · 已连接</b><br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
           </div>
-          
+          <div class="muted" style="margin-top:8px">引擎行＝用户所选 Provider；不显示模型名（输入框已有）</div>
+        </div>
+        <div style="width:220px;flex:none">
+          <div class="muted" style="margin-bottom:6px"><b>状态 B2 · BYOK 已登录</b></div>
+          <div class="app-side" style="height:280px">
+            <div class="side-new">+ 新建对话</div>
+            <div class="side-item">8月基准跟枪局分析</div>
+            <div class="acct"><b>👤 u***@gmail.com</b><br>⚙ BYOK 模式 · 已连接</div>
+          </div>
+          <div class="muted" style="margin-top:8px">有账户归属、无会员内容；用户中心此态显示引擎信息</div>
         </div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">规则</span>
+    <span class="tag">规则（0920 定）</span>
     <ul>
-      <li>左下角<b>永远有内容</b>：会员=邮箱+档位+%；BYOK=⚙引擎+模型；本地=🖥引擎+CLI 名</li>
-      <li>非会员的卡上只有「登录/注册 ›」引导（一句话，无价格无营销）；BYOK 卡显示用户所选 Provider 名</li>
-      <li>订阅过期：会员卡变「订阅已结束 · 余量 0%」+「重新订阅 ›」</li>
-      <li>口径：只显示百分比，无金额</li>
+      <li><b>两态而已</b>：会员 / BYOK——没有本地引擎</li>
+      <li><b>BYOK 不显示模型名</b>（输入框已显示过）；引擎行显示<b>用户所选 Provider 名</b>（设置里可选各来源）</li>
+      <li>BYOK 已登录：邮箱 + 「BYOK 模式 · 已连接」；未登录：引擎行 + 登录引导（一句话）</li>
+      <li>订阅过期：状态 A 变「订阅已结束 · 余量 0%」+「重新订阅 ›」</li>
+      <li>卡片为真实侧栏尺寸（220px 内），非拉伸</li>
     </ul>
   </div>
 </div>
@@ -676,17 +691,16 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       </div>
       <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
         <div style="font-weight:700;font-size:18px;margin-bottom:6px">用量</div>
-        <div class="muted" style="margin-bottom:14px">本期剩余 62% · 以下为本期逐次调用明细（最新在前）</div>
+        <div class="muted" style="margin-bottom:14px">本期剩余 62% · 按天汇总（粒度说明见下）</div>
         <div class="card" style="padding:0;overflow:hidden">
           <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">时间</th><th style="padding:10px 14px">会话 / 场景</th><th style="padding:10px 14px">类型</th><th style="padding:10px 14px;text-align:right">轮次</th></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 10:12</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">1wall 6targets small · run 54020</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">完整分析</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">3 轮</td></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 10:31</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">同上 · 追问</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">追问</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">1 轮</td></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-19 23:41</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">Tile Frenzy 180 Strafing</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">完整分析</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">3 轮</td></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:40px"></div></td></tr>
+            <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">日期</th><th style="padding:10px 14px">模型</th><th style="padding:10px 14px;text-align:right">调用次数</th><th style="padding:10px 14px;text-align:right">额度消耗</th></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20（今天）</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">deepseek-v4-flash</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">6</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">2%</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-19</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">deepseek-v4-flash</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">24</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">36%</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-18</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">deepseek-v4-flash</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">70</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">—</td></tr>
           </table>
         </div>
-        <div class="muted" style="margin-top:10px">每页 50 条 · 底部分页</div>
+        <div class="muted" style="margin-top:10px">数据粒度＝小时×模型（new-api 原生聚合），页面按天汇总展示；不可细到单次调用</div></div>
       </div>
     </div>
   </div>
