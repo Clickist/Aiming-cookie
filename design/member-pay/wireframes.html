@@ -696,11 +696,20 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           </div>
           <div class="btn text">邮件申请 support@aimingcookie.com（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
         </div>
+        <div class="card" style="margin-top:14px;max-width:560px;padding:0;overflow:hidden">
+          <div style="padding:12px 16px 0"><b style="font-size:14px">付款记录</b></div>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">
+            <tr style="background:var(--surface-container);text-align:left"><th style="padding:8px 14px">时间</th><th style="padding:8px 14px">购买内容</th><th style="padding:8px 14px;text-align:right">金额</th><th style="padding:8px 14px">收据</th></tr>
+            <tr><td style="padding:8px 14px;border-top:1px solid var(--outline-variant)">09-20 01:10</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant)">Standard · 首期</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
+            <tr><td style="padding:8px 14px;border-top:1px solid var(--outline-variant)">09-20 01:12</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant)">加油包 · 一次性</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:8px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
+          </table>
+          <div class="muted" style="padding:8px 14px 12px">常驻页尾 · 退款记录以负数显示</div>
+        </div>
       </div>
     </div>
   </div>
   <div class="frame browser">
-    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/account/billing（已取消态）</span></div>
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/account/billing（已取消态 · 仅订阅卡变化，其余同上）</span></div>
     <div class="body" style="flex-direction:row;min-height:540px">
       <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
         <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
@@ -725,12 +734,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <b style="font-size:14px">加油包</b>
           <div class="muted" style="margin:5px 0 10px">当前加油包余量 100% · 永不过期；取消订阅后仍可继续用完，烧完后须重新订阅才能再购买。</div>
         </div>
-        <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
-          <b style="font-size:14px">付款记录</b>
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--outline-variant)"><span>09-20 · Standard 首期</span><span>¥10.00</span></div>
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--outline-variant)"><span>09-20 · 加油包</span><span>¥10.00</span></div>
-          <div class="muted" style="margin-top:8px">含订阅扣款与加油包加购；退款记录以负数显示（收据=Stripe）</div>
-        </div>
+        <div class="muted" style="margin-top:12px;max-width:560px">↑ 本态只画与「生效中」的差异：仅订阅卡变为「已取消 + 恢复自动续费」。取消卡（隐藏取消按钮）、退款卡、付款记录表位置内容不变。</div>
       </div>
     </div>
   </div>
@@ -741,7 +745,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>取消：</b>cancel at period_end；<b>恢复：</b>同一订阅 resume（按钮双态，不新建订阅）</li>
       <li><b>升级：</b>立即切档 + proration 按比例折算差价（Stripe 原生）；<b>无降级</b>——想下去只有退款一条路</li>
       <li><b>退款：</b>Refund API 部分退款（订阅、加油包两笔），MVP 人工 Dashboard 执行；退款后订阅立即取消+两池清零</li>
-      <li><b>付款记录：</b>账单子页底部列表（时间/内容/金额），与 ⑪b 详表同数据源</li>
+      <li><b>付款记录：</b>常驻账单子页页尾（时间/内容/金额/收据）——原 ⑪b 独立屏已并入本页，账号中心=一套左栏壳+概览/用量/账单三子页</li>
     </ul>
   </div>
 </div>
@@ -1040,41 +1044,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
-<h2><span class="no">⑪b</span>账号中心 · 账单页（充值与付款记录）</h2>
-<div class="screen-wrap">
-  <div class="frame browser">
-    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/billing</span></div>
-    <div class="body" style="flex-direction:row;min-height:520px">
-      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
-        <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
-        <div style="padding:9px 12px;font-size:13px">概览</div>
-        <div style="padding:9px 12px;font-size:13px">用量</div>
-        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px">账单</div>
-        <div style="margin-top:auto"><div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div></div>
-      </div>
-      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
-        <div style="font-weight:700;font-size:18px;margin-bottom:6px">账单</div>
-        <div class="muted" style="margin-bottom:14px">全部付款与加购记录（含收据）</div>
-        <div class="card" style="padding:0;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">时间</th><th style="padding:10px 14px">购买内容</th><th style="padding:10px 14px;text-align:right">金额</th><th style="padding:10px 14px">状态</th><th style="padding:10px 14px">收据</th></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:10</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">Standard · 连续包月（首期）</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:12</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">加油包 · 一次性</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
-            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:56px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:48px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:36px"></div></td></tr>
-          </table>
-        </div>
-        <div class="muted" style="margin-top:10px">含订阅扣款与加油包加购；退款记录以负数显示</div>
-      </div>
-    </div>
-  </div>
-  <div class="annot">
-    <span class="tag">口径</span>
-    <ul>
-      <li>列＝时间 / 购买内容（订阅首期·续期·加油包）/ 金额 / 状态 / 收据</li>
-      <li>数据源：Stripe 付款记录 + accounts 订单表</li>
-    </ul>
-  </div>
-</div>
+<!-- ⑪b 独立账单页已删除（v3.3）：付款记录表并入 ⑦ 账单子页页尾，账号中心只有概览/用量/账单三个子页、一套左栏壳 -->
 
 <div class="divider" style="margin:36px 0"></div>
 <div class="muted"><b>异常覆盖（v3.3）</b>：Onboarding 未连通不放行（①铁律）· 登录未订阅/老会员直连/连通失败（①b 三态）· 网页未完成付款就关闭（①a 停留本步可重开/BYOK）· 已扣款未到账（⑥b）· 未完成付款（⑥c 订阅与加油包通用）· 未登录点支付（⑤置灰引导）· 扣款失败（⑧ Stripe 自带+轻提示，无提醒邮件）· 订阅失效+加油包有余额（⑨左续命态）/双池皆空（⑨右断开）· 升级（⑦自动折算差价退旧订新）· 取消后反悔（⑦/②c 恢复双态）· 退出登录（④b fallback BYOK/置灰，不打回 Onboarding）· 额度争议（⑪a 明细）· 退款（⑦订阅+加油包一起按比例清算，人工审核）· BYOK 用户全程不受会员体系影响。</div>
