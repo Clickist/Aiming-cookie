@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AC 会员全流程线框稿 · member-pay</title>
+<title>AC 会员全流程线框稿 v2 · member-pay</title>
 <style>
 /* AC 明主题语义 token（ui/tokens.ts LIGHT_TOKENS） */
 :root{
@@ -19,32 +19,29 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--background);color:var(--on-background);font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:32px 24px;line-height:1.5}
 h1{font-size:22px;margin-bottom:4px}
-.sub{color:var(--on-surface-variant);font-size:13px;margin-bottom:28px}
+.sub{color:var(--on-surface-variant);font-size:13px;margin-bottom:28px;max-width:900px}
 h2{font-size:16px;margin:40px 0 6px;display:flex;align-items:center;gap:8px}
-h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}
-.note{color:var(--on-surface-variant);font-size:13px;margin-bottom:14px;max-width:760px}
-/* 流程总览 */
+h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none;padding:0 4px}
+.note{color:var(--on-surface-variant);font-size:13px;margin-bottom:14px;max-width:820px}
 .flow{background:var(--surface);border:1px solid var(--outline-variant);border-radius:12px;padding:20px;margin-bottom:8px;overflow-x:auto}
-.flow-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;font-size:12px;min-width:1100px;margin:6px 0}
+.flow-row{display:flex;align-items:center;gap:6px;font-size:12px;min-width:1150px;margin:6px 0}
 .fnode{border:1.5px solid var(--outline);border-radius:8px;padding:5px 10px;background:var(--surface-container-low);white-space:nowrap}
 .fnode.pri{border-color:var(--primary);color:var(--primary);font-weight:600}
 .fnode.err{border-color:var(--error);color:var(--error)}
 .farrow{color:var(--outline);flex:none}
 .ftag{font-size:11px;color:var(--on-surface-variant);background:var(--surface-container);border-radius:6px;padding:2px 8px;white-space:nowrap}
-/* 屏区块 */
 .screen-wrap{display:flex;gap:20px;align-items:flex-start;margin-bottom:8px;flex-wrap:wrap}
 .frame{background:var(--surface);border:1.5px solid var(--outline);border-radius:14px;overflow:hidden;flex:none}
 .frame.web{width:640px}
-.frame.narrow{width:360px}
+.frame.narrow{width:380px}
 .frame-title{background:var(--surface-container-high);padding:6px 12px;font-size:12px;color:var(--on-surface-variant);display:flex;justify-content:space-between}
 .annot{flex:1;min-width:260px;max-width:400px;font-size:13px}
 .annot .tag{display:inline-block;background:var(--primary-container);color:var(--on-primary-container);border-radius:6px;padding:2px 8px;font-size:12px;margin-bottom:8px;font-weight:600}
 .annot ul{list-style:none}
 .annot li{padding:5px 0;border-bottom:1px dashed var(--outline-variant)}
 .annot li b{color:var(--primary)}
-/* 线框内元素 */
 .wf{padding:18px}
-.ph{background:var(--surface-variant);border-radius:5px;height:10px;margin:6px 0}  /* 文本占位条 */
+.ph{background:var(--surface-variant);border-radius:5px;height:10px;margin:6px 0}
 .ph.t{height:14px;width:60%}
 .ph.s{height:8px;width:40%}
 .btn{display:block;text-align:center;border-radius:10px;padding:12px;font-size:14px;font-weight:600;margin-top:10px}
@@ -61,206 +58,258 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;width
 .progress i{display:block;background:var(--primary);height:100%}
 .card{background:var(--surface-container-low);border:1px solid var(--outline-variant);border-radius:12px;padding:14px}
 .center{text-align:center}
-.overlay-dim{background:rgba(36,33,29,.45);padding:26px}
 .muted{color:var(--on-surface-variant);font-size:12px}
 .banner{display:flex;align-items:center;gap:8px;background:var(--primary-container);color:var(--on-primary-container);border-radius:10px;padding:10px 12px;font-size:13px}
 .banner.warn{background:#fff3cd;color:#6b4e00}
+/* 客户端骨架（模拟真实侧栏结构） */
+.app{display:flex;height:300px}
+.app-side{width:170px;background:var(--surface);border-right:1px solid var(--outline-variant);padding:12px 10px;display:flex;flex-direction:column}
+.app-main{flex:1;background:var(--background);padding:14px;display:flex;flex-direction:column;justify-content:flex-end}
+.side-btn{font-size:12px;padding:7px 9px;border-radius:8px;margin-bottom:5px;background:var(--surface-container-low)}
+.side-btn.pri{background:var(--primary);color:var(--on-primary);text-align:center;font-weight:600}
+.acct{margin-top:auto;border:1px solid var(--outline-variant);border-radius:9px;padding:8px;font-size:11px}
+.lock{border:1.5px dashed var(--outline);border-radius:12px;padding:14px;text-align:center;background:var(--surface-container-low)}
+.chip-pop{border:1px solid var(--outline);border-radius:12px;background:var(--surface);padding:12px;box-shadow:0 4px 14px rgba(36,33,29,.12)}
 </style>
 </head>
 <body>
 
-<h1>AC 会员全流程线框稿</h1>
-<div class="sub">design/member-pay · 2026-09-20 · 明主题（LIGHT_TOKENS）· 线框稿：结构+关键文案，非像素稿 · 双档：基础 ¥10/约120轮 · 高频 ¥30/约400轮（档位名待定，暂用「基础/高频」）</div>
+<h1>AC 会员全流程线框稿 v2</h1>
+<div class="sub">design/member-pay · 2026-09-20 · 明主题 · <b>v2 修订</b>：①按客户端真实骨架重做（锁定态内嵌+左下角账号 chip，不再用遮罩弹窗）；②改连续包月（Stripe 订阅，自动续费+自助取消+扣款失败提醒）；③退款政策落地（未使用全额退 / 已使用按剩余额度比例退）。双档：基础 ¥10/约120轮 · 高频 ¥30/约400轮（档位名待定）</div>
 
 <h2><span class="no">⓪</span>流程总览</h2>
 <div class="flow">
   <div class="flow-row">
-    <span class="fnode">未付费用户</span><span class="farrow">──点击教练功能──▶</span>
-    <span class="fnode pri">①拦截·首购</span><span class="farrow">──▶</span>
-    <span class="fnode pri">②购买页 /pay</span><span class="farrow">──▶</span>
-    <span class="fnode">Stripe Payment Link</span><span class="farrow">──┬─支付成功──▶</span>
-    <span class="fnode pri">③成功回跳</span><span class="farrow">──▶</span>
-    <span class="fnode">④会员常态</span>
+    <span class="ftag">Onboarding（已设计 0918）</span>
+    <span class="fnode">首次启动 → 三岔口：登录 / 本地 Agent / BYOK</span><span class="farrow">──选登录──▶</span>
+    <span class="fnode">邮箱验证码登录</span><span class="farrow">──▶</span>
+    <span class="fnode err">已登录·未订阅＝云端教练锁定态（②a）</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">支付异常分支</span>
-    <span class="farrow">├─已扣款未到账─▶</span><span class="fnode err">④b处理中（刷新兜底）</span>
-    <span class="farrow">├─点了没付/取消──▶</span><span class="fnode err">④c取消挽回</span>
-    <span class="farrow">└─直接关页────▶</span><span class="fnode err">回到①拦截态（不保留支付半态）</span>
+    <span class="ftag">转化路径</span>
+    <span class="fnode">②a 锁定态 / 左下角账号chip / 设置页横幅</span><span class="farrow">──▶</span>
+    <span class="fnode pri">③购买页 /pay（订阅制）</span><span class="farrow">──▶</span>
+    <span class="fnode">Stripe Checkout 订阅</span><span class="farrow">──┬─成功──▶</span>
+    <span class="fnode pri">④成功回跳（发额度）</span><span class="farrow">──▶</span>
+    <span class="fnode">⑤会员常态（额度条）</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">额度生命周期</span>
-    <span class="fnode">④会员卡（余量条）</span><span class="farrow">──剩20%──▶</span>
-    <span class="fnode">⑦将尽横幅（不阻断）</span><span class="farrow">──用尽──▶</span>
-    <span class="fnode pri">⑧耗尽拦截（续费/升级）</span><span class="farrow">──▶</span>
-    <span class="fnode">回到④</span>
+    <span class="ftag">订阅周期</span>
+    <span class="fnode">⑤额度条</span><span class="farrow">──剩20%──▶</span>
+    <span class="fnode">⑧将尽横幅</span><span class="farrow">──用尽──▶</span>
+    <span class="fnode pri">⑨耗尽（加购/升级）</span><span class="farrow">──每周期──▶</span>
+    <span class="fnode">自动扣款+发额度</span><span class="farrow">──扣款失败──▶</span>
+    <span class="fnode err">⑩扣款失败提醒（dunning）</span>
   </div>
   <div class="flow-row">
-    <span class="ftag">到期分支</span>
-    <span class="fnode">⑨到期前横幅（前3天）</span><span class="farrow">──过期──▶</span>
-    <span class="fnode pri">⑩过期续费拦截（认老用户）</span><span class="farrow">──▶</span>
-    <span class="fnode">②购买页</span>
-    <span class="ftag" style="margin-left:16px">⑪账号中心（P2）＝额度/订阅/用量明细 常驻入口</span>
+    <span class="ftag">退出路径</span>
+    <span class="fnode">⑪订阅管理（自助取消，周期末止）</span><span class="farrow">──周期末──▶</span>
+    <span class="fnode err">⑫失效·续费引导（数据保留）</span>
+    <span class="ftag" style="margin-left:12px">退款：邮件申请 → 人工按剩余额度比例退（Stripe Refund）→ 见 FAQ/README</span>
   </div>
 </div>
-<div class="note">配合邮件（P3，Resend 模板）：到期前 3 天提醒 / 额度耗尽提醒。全流程承诺物 = 额度（quota 余额），轮数一律为估算展示。</div>
+<div class="note">原则（0918 已定，v2 回归）：登录是增强不是门槛，任何状态不锁死进产品的路；BYOK/本地引擎永远可用。承诺物=额度（quota 余额），轮数为估算展示。</div>
 
-<h2><span class="no">①</span>拦截 · 未付费首购（客户端弹窗）</h2>
+<h2><span class="no">②a</span>已登录·未订阅 —— 教练页锁定态（内嵌，非弹窗）</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 教练对话页</span><span>触发弹层</span></div>
-    <div class="wf overlay-dim">
-      <div class="card center">
-        <div style="font-size:34px">🍪</div>
-        <div style="font-weight:700;font-size:16px;margin:6px 0">解锁你的 AI 瞄准教练</div>
-        <div class="muted" style="margin-bottom:10px">每月约 120 轮教练对话 · 约 40 局完整分析</div>
-        <div class="divider"></div>
-        <div class="ph"></div><div class="ph"></div><div class="ph s"></div>
-        <div class="btn pri">开通会员 · ¥10/月起</div>
-        <div class="btn text">先不用，稍后再说</div>
+    <div class="frame-title"><span>客户端 · 教练对话页（真实骨架）</span><span>已登录·未订阅</span></div>
+    <div class="app">
+      <div class="app-side">
+        <div class="side-btn pri">+ 新建对话</div>
+        <div class="ph s" style="width:80%"></div>
+        <div class="ph s" style="width:70%"></div>
+        <div class="acct">👤 u***@gmail.com<br><span class="badge gray">未订阅</span></div>
+      </div>
+      <div class="app-main">
+        <div class="lock">
+          <div style="font-size:26px">🍪</div>
+          <div style="font-weight:700;font-size:14px;margin:4px 0">云端教练需开通会员</div>
+          <div class="muted" style="margin-bottom:8px">每月约 120 轮对话起 · 约官方价 7.9 折<br>你的训练历史不受影响</div>
+          <div class="btn pri" style="padding:9px;font-size:13px">订阅会员 · ¥10/月起</div>
+          <div class="btn text">改用本地引擎 / BYOK</div>
+        </div>
+        <div class="muted" style="margin-top:8px">↑ 输入框位置（发送被锁定，页面其余可浏览）</div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">触发条件</span>
+    <span class="tag">v2 修正</span>
     <ul>
-      <li><b>触发：</b>未付费用户点击「开始分析」或向教练发送消息（后端 quota 校验失败 / 本地无会员标记）</li>
-      <li><b>去向：</b>「开通会员」→ 打开 ② /pay（客户端内弹网页）</li>
-      <li><b>次入口：</b>「先不用」关闭弹层；设置页左下角常驻登录/开通入口兜底（0918 已定）</li>
-      <li><b>BYOK 用户：</b>不弹此窗（自带 Key 永久保留，走另一路）</li>
+      <li><b>不是弹窗：</b>锁定卡<b>内嵌在输入框位置</b>，会话历史/侧栏照常可浏览——"任何状态不锁死进产品的路"</li>
+      <li><b>未登录态：</b>同位置文案改「登录以解锁云端教练」+ CTA「登录/注册」；左下角账号 chip 常驻「登录」（见②b）</li>
+      <li><b>次出路：</b>「改用本地引擎 / BYOK」永远在场（免费出路）</li>
+      <li><b>触发：</b>发送动作被后端 quota 校验拒绝 / 本地无订阅标记</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">②</span>/pay 购买页（网页 · 客户端弹窗打开）</h2>
+<h2><span class="no">②b</span>左下角账号 chip + 点击弹卡（常驻入口，v2 新增）</h2>
+<div class="screen-wrap">
+  <div class="frame narrow">
+    <div class="frame-title"><span>客户端 · 侧栏左下角</span><span>所有状态常驻</span></div>
+    <div class="app" style="height:250px">
+      <div class="app-side">
+        <div class="side-btn">⏱ 训练历史</div>
+        <div class="side-btn">⚙ 系统设置</div>
+        <div class="acct" style="border-color:var(--primary);background:var(--primary-container)">
+          <b>👤 u***@gmail.com</b><br>基础档会员 · 剩 62%<br><span style="color:var(--primary)">管理 ▾</span>
+        </div>
+      </div>
+      <div class="app-main">
+        <div class="chip-pop" style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between"><b style="font-size:13px">基础档会员</b><span class="badge">生效中</span></div>
+          <div class="muted" style="margin:3px 0 6px">下期自动续费 10-20 · ¥10</div>
+          <div class="progress"><i style="width:62%"></i></div>
+          <div style="font-size:11px;color:var(--on-surface-variant)">剩余 ¥7.75（约 93 轮）</div>
+          <div class="divider" style="margin:8px 0"></div>
+          <div style="font-size:12px;color:var(--primary);font-weight:600">升级高频档 ›</div>
+          <div style="font-size:12px;color:var(--on-surface-variant)">管理订阅 / 取消自动续费 ›</div>
+        </div>
+        <div class="muted">↑ 左下角账号行点击弹出的小卡（会员态）；未登录时此位置＝「登录以解锁云端教练」按钮</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">v2 新增</span>
+    <ul>
+      <li><b>三态：</b>未登录（登录按钮）/ 已登录未订阅（开通入口）/ 会员（本卡）</li>
+      <li><b>数据：</b>余量条接 ac-gateway quota 查询（点点说的现有余额百分比功能）</li>
+      <li><b>入口收敛：</b>设置页绿色账户横幅（0918 稿）与本 chip 同数据源</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">③</span>/pay 购买页（订阅制 · 网页 · 客户端弹窗打开）</h2>
 <div class="screen-wrap">
   <div class="frame web">
-    <div class="frame-title"><span>accounts.gearclickist.com/pay（网页）</span><span>明主题</span></div>
+    <div class="frame-title"><span>accounts.gearclickist.com/pay</span><span>Stripe Checkout 订阅</span></div>
     <div class="wf">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <b>🍪 Aiming Cookie</b><span class="badge gray">已登录：u***@gmail.com</span>
       </div>
       <div class="center" style="margin:10px 0 4px;font-weight:700;font-size:18px">选择你的教练套餐</div>
-      <div class="center muted" style="margin-bottom:16px">按月订阅 · 额度每月发放 · 约为官方价格的 7.9 折</div>
+      <div class="center muted" style="margin-bottom:16px">连续包月 · 额度每周期发放 · 随时可取消 · 约为官方价格的 7.9 折</div>
       <div style="display:flex;gap:14px">
         <div class="card" style="flex:1">
           <div class="badge gray">基础档</div>
-          <div class="price">¥10<small>/月</small></div>
-          <div style="font-size:13px;margin:6px 0">约 <b>120 轮</b>教练对话<br><span class="muted">≈ 40 局完整分析 · 2100 万 Token</span></div>
-          <div class="btn sec">开通基础档</div>
+          <div class="price">¥10<small>/月 · 自动续费</small></div>
+          <div style="font-size:13px;margin:6px 0">每月约 <b>120 轮</b>教练对话<br><span class="muted">≈ 40 局完整分析 · 2100 万 Token</span></div>
+          <div class="btn sec">订阅基础档</div>
         </div>
         <div class="card" style="flex:1;border:2px solid var(--primary)">
           <div style="display:flex;justify-content:space-between"><span class="badge">高频档</span><span class="badge blue">单轮价低 10%</span></div>
-          <div class="price">¥30<small>/月</small></div>
-          <div style="font-size:13px;margin:6px 0">约 <b>400 轮</b>教练对话<br><span class="muted">≈ 133 局完整分析 · 7000 万 Token</span></div>
-          <div class="btn pri">开通高频档</div>
+          <div class="price">¥30<small>/月 · 自动续费</small></div>
+          <div style="font-size:13px;margin:6px 0">每月约 <b>400 轮</b>教练对话<br><span class="muted">≈ 133 局完整分析 · 7000 万 Token</span></div>
+          <div class="btn pri">订阅高频档</div>
         </div>
       </div>
-      <div class="muted center" style="margin-top:10px">额度每月发放 · 随时停用无捆绑 · 按 DeepSeek 官方价对比</div>
+      <div class="muted center" style="margin-top:10px">连续包月，随时可取消（取消后当前周期仍然有效）· 按 DeepSeek 官方价对比 · 支持未使用全额退款</div>
       <div class="divider"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:6px">常见问题</div>
-      <div class="ph"></div><div class="ph"></div>
-      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">额度是什么？</div>
+      <div class="ph"></div>
+      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">额度是什么？怎么算？</div>
       <div class="ph s"></div><div class="ph s"></div>
-      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">用完了怎么办？能退款吗？</div>
+      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">怎么取消自动续费？</div>
+      <div class="ph s"></div><div class="ph s"></div>
+      <div style="font-size:13px;font-weight:600;margin:10px 0 6px">可以退款吗？（未使用全额退 / 已使用按剩余比例退）</div>
       <div class="ph s"></div>
-      <div class="muted center" style="margin-top:14px">支付由 Stripe 安全处理 · 开通即视为同意订阅条款</div>
+      <div class="muted center" style="margin-top:14px">支付由 Stripe 安全处理</div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">页面逻辑</span>
+    <span class="tag">订阅制要点</span>
     <ul>
-      <li><b>未登录：</b>先走登录流程（邮箱验证码，0918 稿）再回本页——登录态缺失时支付按钮置灰引导登录</li>
-      <li><b>两档 CTA：</b>都跳 Stripe Payment Link（不同价格两条链接），新标签打开</li>
-      <li><b>已订阅用户：</b>本页显示当前档位状态行「你已是基础档 · 有效期至 X」，CTA 变「续费」/「升级高频」（见⑧）</li>
-      <li><b>FAQ 折叠：</b>额度=按官方计价的用量余额；用完可再购或等下月；已生效订阅不退款</li>
+      <li><b>Stripe 订阅（recurring）：</b>每个计费周期自动发放额度（invoice.paid webhook → 发 quota）</li>
+      <li><b>取消＝周期末止：</b>自助取消后当前周期额度仍可用，到期不再扣款</li>
+      <li><b>未登录：</b>CTA 置灰引导登录后回来（deep-link 返回）</li>
+      <li><b>已有订阅：</b>卡片状态行变「你已是基础档 · 下期扣款 X」，CTA 变「管理订阅」</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">③</span>支付成功 · 回跳页</h2>
+<h2><span class="no">④</span>支付成功回跳</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>网页 · Payment Link return_url</span><span>?status=success</span></div>
+    <div class="frame-title"><span>网页 · Checkout return_url</span><span>?status=success</span></div>
     <div class="wf center">
       <div style="font-size:40px;color:var(--primary)">✓</div>
-      <div style="font-weight:700;font-size:16px">支付成功，额度已到账</div>
+      <div style="font-weight:700;font-size:16px">订阅成功，额度已到账</div>
       <div class="card" style="text-align:left;margin:12px 0">
-        <div style="display:flex;justify-content:space-between"><span>当前套餐</span><b>基础档</b></div>
-        <div style="display:flex;justify-content:space-between"><span>本月额度</span><b>¥12.5（约 120 轮）</b></div>
-        <div style="display:flex;justify-content:space-between"><span>有效期至</span><b>2026-10-20</b></div>
+        <div style="display:flex;justify-content:space-between"><span>订阅</span><b>基础档 · 连续包月</b></div>
+        <div style="display:flex;justify-content:space-between"><span>本期额度</span><b>¥12.5（约 120 轮）</b></div>
+        <div style="display:flex;justify-content:space-between"><span>下期自动续费</span><b>2026-10-20 · ¥10</b></div>
       </div>
       <div class="btn pri">回到教练，继续训练</div>
-      <div class="btn text">查看额度明细（账号中心）</div>
+      <div class="btn text">管理订阅 / 查看额度明细</div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">到账确认</span>
     <ul>
-      <li><b>数据：</b>回跳后前端轮询 ac-gateway 查 quota，确认发放成功才显示本页</li>
-      <li><b>「回到教练」：</b>deep-link 唤起客户端并刷新会员态（0917 架构）</li>
+      <li>回跳后轮询 ac-gateway 确认 quota 已发放（invoice.paid 已处理）才显示本页</li>
+      <li>「回到教练」deep-link 唤起客户端并刷新会员态</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">④</span>异常态 · 已扣款未到账（处理中）</h2>
+<h2><span class="no">④b</span>异常态 · 已扣款未到账（处理中）</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>网页 · 回跳后检测到未发放</span><span>异常兜底 A</span></div>
+    <div class="frame-title"><span>网页 · 回跳后未检测到发放</span><span>异常兜底 A</span></div>
     <div class="wf center">
       <div style="font-size:36px">⏳</div>
       <div style="font-weight:700;font-size:16px">支付已确认，额度到账中…</div>
-      <div class="muted" style="margin:8px 0">通常 1~2 分钟内自动到账，<br>到账后本页会自动更新</div>
+      <div class="muted" style="margin:8px 0">通常 1~2 分钟内自动到账</div>
       <div class="btn sec">刷新额度</div>
       <div class="btn text">超过 10 分钟未到账？联系我们</div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">触发条件</span>
+    <span class="tag">兜底</span>
     <ul>
-      <li><b>触发：</b>Stripe 回跳 success，但 ac-gateway 查 quota 未增长（webhook 延迟/抖动）</li>
-      <li><b>兜底：</b>「刷新」手动重查；超时展示客服邮箱；<b>绝不丢支付凭证</b>——Stripe 会话 id 已记录，可人工补发</li>
+      <li>Stripe 会话/订阅 id 已记录，超时可人工补发，<b>绝不丢支付凭证</b></li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑤</span>异常态 · 点击充值但没付款（取消/放弃）</h2>
+<h2><span class="no">④c</span>异常态 · 点了订阅但没完成付款（取消/放弃）</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>网页 · Stripe 取消回跳 / 用户直接关闭</span><span>异常兜底 B</span></div>
+    <div class="frame-title"><span>网页 · Checkout 取消回跳</span><span>异常兜底 B</span></div>
     <div class="wf center">
       <div style="font-size:36px">🍪</div>
-      <div style="font-weight:700;font-size:16px;margin-top:6px">还没有完成支付</div>
-      <div class="muted" style="margin:8px 0">你的额度尚未开通，随时可以再来。<br>教练的历史与设置不会丢失。</div>
-      <div class="btn pri">继续开通</div>
+      <div style="font-weight:700;font-size:16px;margin-top:6px">还没有完成订阅</div>
+      <div class="muted" style="margin:8px 0">你的教练尚未开通，随时可以再来。<br>历史与设置不会丢失。</div>
+      <div class="btn pri">继续订阅</div>
       <div class="btn text">暂不需要，返回</div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">三种路径全覆盖</span>
+    <span class="tag">三路径</span>
     <ul>
-      <li><b>Stripe 页点取消：</b>回跳带 canceled 参数 → 本页</li>
-      <li><b>用户直接关闭 Stripe 标签：</b>无回跳 → 客户端维持①拦截态（等价效果，本页可不做单独入口）</li>
-      <li><b>无半态残留：</b>未支付不产生任何额度/状态变更，重进购买页即为全新流程</li>
+      <li><b>Checkout 页取消：</b>回跳 canceled → 本页</li>
+      <li><b>直接关 Checkout 标签：</b>无回跳 → 客户端维持②a锁定态（等价）</li>
+      <li><b>无半态残留：</b>订阅未创建，重进即全新流程</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑥</span>会员常态 · 会员卡（客户端设置页内）</h2>
+<h2><span class="no">⑤</span>会员常态 · 会员卡（设置页账户区 / 左下角弹卡共用）</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 设置页「账户」区</span><span>常驻</span></div>
+    <div class="frame-title"><span>客户端 · 账户区</span><span>常驻</span></div>
     <div class="wf">
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <b style="font-size:14px">🍪 基础档会员</b><span class="badge">生效中</span>
+          <b style="font-size:14px">🍪 基础档 · 连续包月</b><span class="badge">生效中</span>
         </div>
-        <div class="muted" style="margin:4px 0 8px">有效期至 2026-10-20</div>
+        <div class="muted" style="margin:4px 0 8px">下期自动续费 2026-10-20 · ¥10</div>
         <div class="progress"><i style="width:62%"></i></div>
         <div style="display:flex;justify-content:space-between;font-size:12px"><span>剩余 ¥7.75（约 93 轮）</span><span>已用 38%</span></div>
         <div style="display:flex;gap:8px;margin-top:10px">
-          <div class="btn sec" style="flex:1;margin-top:0">续费</div>
           <div class="btn sec" style="flex:1;margin-top:0">升级高频档</div>
+          <div class="btn sec" style="flex:1;margin-top:0">管理订阅</div>
         </div>
       </div>
     </div>
@@ -268,124 +317,151 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;width
   <div class="annot">
     <span class="tag">数据源</span>
     <ul>
-      <li><b>余量条：</b>接 ac-gateway 的 quota 查询（复用现有「中转站余额百分比」展示位，换成会员额度口径）</li>
-      <li><b>轮数换算：</b>剩余额度 ÷ 综合价 ¥0.106/轮 = 估算轮数（只做展示）</li>
-      <li><b>升级：</b>高频档生效方式＝当月补差升级或次月切换，实现前先定规则（见 README 待定项）</li>
+      <li>余量条=ac-gateway quota 查询（现有余额百分比功能的会员化）</li>
+      <li>轮数=剩余额度 ÷ 综合价 ¥0.106（仅展示）</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑦</span>额度将尽 · 温和提醒（客户端教练页横幅）</h2>
+<h2><span class="no">⑧</span>额度将尽 · 温和提醒</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 教练页顶部</span><span>剩 20% 时出现一次</span></div>
+    <div class="frame-title"><span>客户端 · 教练页顶部</span><span>剩 20% 一次</span></div>
     <div class="wf">
-      <div class="banner">⚠ 本月额度剩约 20%（~24 轮）<span style="flex:1"></span><b>升级高频档</b></div>
-      <div class="ph t"></div><div class="ph"></div><div class="ph"></div><div class="ph s"></div>
-      <div class="muted center" style="margin-top:8px">↑ 教练对话照常可用，横幅可关闭</div>
+      <div class="banner">⚠ 本期额度剩约 20%（~24 轮）<span style="flex:1"></span><b>升级高频档</b></div>
+      <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
     </div>
   </div>
   <div class="annot">
     <span class="tag">不阻断</span>
     <ul>
-      <li><b>触发：</b>余额 ≤20% 时出现一次，可关闭不再弹</li>
-      <li><b>意图：</b>提前告知，避免「聊到一半突然锁死」的差体验</li>
+      <li>可关闭；用尽前的体面预告</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑧</span>额度耗尽 · 已付费用户（客户端弹窗）</h2>
+<h2><span class="no">⑨</span>额度耗尽 · 已订阅用户</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · quota 扣减为 0 触发</span><span>区别于①</span></div>
+    <div class="frame-title"><span>客户端 · 本期 quota 用尽</span><span>订阅仍生效</span></div>
     <div class="wf overlay-dim">
       <div class="card center">
-        <div style="font-size:32px"> Cookie 用完了</div>
-        <div style="font-weight:700;font-size:16px;margin:6px 0">本月教练额度已用完</div>
-        <div class="muted" style="margin-bottom:10px">本月共聊了约 120 轮 · 下月 10-20 自动发放</div>
+        <div style="font-size:30px">🍪 用完了</div>
+        <div style="font-weight:700;font-size:16px;margin:6px 0">本期教练额度已用完</div>
+        <div class="muted" style="margin-bottom:10px">本期共约 120 轮 · <b>10-20</b> 随订阅自动发放下期额度</div>
         <div class="divider"></div>
-        <div class="muted" style="text-align:left;margin-bottom:4px">不想等？两个选择：</div>
-        <div class="btn pri">立即再购本月额度 ¥10</div>
-        <div class="btn sec">升级高频档 ¥30（约 400 轮）</div>
-        <div class="btn text">先不续，等下月发放</div>
+        <div class="btn pri">升级高频档 ¥30/月（约 400 轮）</div>
+        <div class="btn sec">加购本期加速包 ¥10（约 120 轮，立即生效）</div>
+        <div class="btn text">等下期自动发放</div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">与①的区分</span>
+    <span class="tag">订阅制的特殊点</span>
     <ul>
-      <li><b>①</b>从未付费 → 主推首购；<b>⑧</b>已付费用完 → 给「立即加购 / 升级 / 等下月」三条路</li>
-      <li><b>加购规则：</b>立即购买=叠加一份当月额度（立即生效），实现见 README 待定项</li>
-      <li><b>upgrade 规则：</b>高频档生效方式（补差/叠加/次月）需点点拍板</li>
+      <li>订阅还活着，所以主CTA=升级档位（永久解决），次CTA=一次性加速包（立即到账）</li>
+      <li>「加速包」=订阅外一次性购买（Stripe 一次性 Payment Link），规则见 README 待定项</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑨</span>到期前提醒（客户端横幅 + 邮件同步）</h2>
+<h2><span class="no">⑩</span>下期扣款提醒 / 扣款失败（订阅 dunning）</h2>
 <div class="screen-wrap">
   <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 教练页顶部</span><span>到期前 3 天</span></div>
+    <div class="frame-title"><span>客户端横幅 + 邮件</span><span>续费日前 3 天 / 失败当天</span></div>
     <div class="wf">
-      <div class="banner warn">⏰ 会员 10-20 到期，到期后教练将暂停<span style="flex:1"></span><b>续费 ¥10</b></div>
-      <div class="ph t"></div><div class="ph"></div><div class="ph s"></div>
+      <div class="banner">💳 10-20 将自动续费基础档 ¥10<span style="flex:1"></span><b>管理订阅</b></div>
+      <div class="ph t"></div><div class="ph s"></div>
+      <div class="banner warn" style="margin-top:10px">❗上次自动续费失败（卡片被拒），请更新支付方式，避免教练暂停<span style="flex:1"></span><b>更新支付方式</b></div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">双通道</span>
+    <span class="tag">Stripe 原生能力配合</span>
     <ul>
-      <li><b>客户端：</b>横幅可关闭，续费按钮直达 ②</li>
-      <li><b>邮件（P3）：</b>Resend 模板，到期前 3 天一封（内容同横幅）</li>
+      <li>续费前 3 天：信息横幅+邮件（可选，Stripe 也能自动发收据）</li>
+      <li>扣款失败：Stripe Smart Retries 自动重试；客户端横幅+邮件引导更新卡</li>
+      <li>重试期（~7 天）内教练暂不锁定，重试彻底失败才进⑫</li>
     </ul>
   </div>
 </div>
 
-<h2><span class="no">⑩</span>会员过期 · 续费拦截（客户端弹窗）</h2>
-<div class="screen-wrap">
-  <div class="frame narrow">
-    <div class="frame-title"><span>客户端 · 有效期结束触发</span><span>认得老用户</span></div>
-    <div class="wf overlay-dim">
-      <div class="card center">
-        <div style="font-size:32px">🍪</div>
-        <div style="font-weight:700;font-size:16px;margin:6px 0">会员已到期</div>
-        <div class="muted" style="margin-bottom:10px">你的教练历史、训练计划与设置都还在，<br>续费后立即回来。</div>
-        <div class="divider"></div>
-        <div class="btn pri">续费 · ¥10/月</div>
-        <div class="btn text">暂不续费</div>
-      </div>
-    </div>
-  </div>
-  <div class="annot">
-    <span class="tag">与①的区分</span>
-    <ul>
-      <li><b>文案：</b>强调「数据还在、立即回来」，不说「解锁」——对老用户的语气差异</li>
-      <li><b>续费动作：</b>同一 Payment Link；续费=延长有效期+重新发额度</li>
-    </ul>
-  </div>
-</div>
-
-<h2><span class="no">⑪</span>账号中心网页（P2 · 线框级）</h2>
+<h2><span class="no">⑪</span>订阅管理 / 取消自动续费</h2>
 <div class="screen-wrap">
   <div class="frame web">
-    <div class="frame-title"><span>accounts.gearclickist.com/account</span><span>P2 · 上线后实现</span></div>
+    <div class="frame-title"><span>accounts 网页 · 管理订阅</span><span>P1</span></div>
+    <div class="wf">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between"><b>基础档 · 连续包月</b><span class="badge">生效中</span></div>
+        <div class="muted" style="margin-top:4px">下期自动续费 2026-10-20 · ¥10 · 支付方式 Visa •••• 4242</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <div class="btn sec" style="flex:1;margin-top:0">升级高频档</div>
+          <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:10px;border-style:dashed">
+        <b style="font-size:13px">取消自动续费</b>
+        <div class="muted" style="margin:4px 0">取消后本期额度仍可用至 2026-10-20，之后不再扣款、教练暂停（数据保留）。</div>
+        <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
+      </div>
+      <div class="card" style="margin-top:10px;border-style:dashed">
+        <b style="font-size:13px">申请退款</b>
+        <div class="muted" style="margin:4px 0">未使用（0 消耗）14 天内可全额退；已使用按剩余额度比例退。点击打开邮件申请（人工审核，1~3 个工作日）。</div>
+        <div class="btn text">mail to: 客服邮箱（自动附上账号/订阅/用量摘要）</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">Stripe 配合</span>
+    <ul>
+      <li><b>取消：</b>cancel at period_end——当前周期不退、到期自动止</li>
+      <li><b>退款：</b>Stripe Refund API 部分退款（金额=实付×剩余比例）；MVP 人工在 Dashboard 操作，不建自助退款</li>
+      <li><b>退款后：</b>订阅立即取消+剩余额度清零（退款买断了剩余量）</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">⑫</span>订阅失效 · 回归引导（数据保留）</h2>
+<div class="screen-wrap">
+  <div class="frame narrow">
+    <div class="frame-title"><span>客户端 · 订阅彻底失效</span><span>取消到期/重试耗尽</span></div>
+    <div class="wf overlay-dim">
+      <div class="card center">
+        <div style="font-size:30px">🍪</div>
+        <div style="font-weight:700;font-size:16px;margin:6px 0">订阅已结束</div>
+        <div class="muted" style="margin-bottom:10px">教练历史、训练计划与设置都还在，<br>重新订阅立即回来。</div>
+        <div class="divider"></div>
+        <div class="btn pri">重新订阅 · ¥10/月起</div>
+        <div class="btn text">改用本地引擎 / BYOK（免费）</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">回归即转化</span>
+    <ul>
+      <li>锁定形态同②a（内嵌输入区），文案变「重新订阅」</li>
+      <li>本地引擎/BYOK 次出路永远在场</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">⑬</span>账号中心网页（P2 · 线框级）</h2>
+<div class="screen-wrap">
+  <div class="frame web">
+    <div class="frame-title"><span>accounts.gearclickist.com/account</span><span>P2</span></div>
     <div class="wf" style="display:flex;gap:18px">
       <div style="width:120px;flex:none">
         <div class="ph s" style="width:80%"></div><div class="ph s" style="width:90%"></div><div class="ph s" style="width:70%"></div>
       </div>
       <div style="flex:1">
         <div class="card">
-          <div style="display:flex;justify-content:space-between"><b>订阅 · 基础档</b><span class="badge">生效中</span></div>
-          <div class="muted" style="margin-top:4px">有效期至 2026-10-20 · 下月发放日 10-20</div>
+          <div style="display:flex;justify-content:space-between"><b>订阅 · 基础档（连续包月）</b><span class="badge">生效中</span></div>
+          <div class="muted" style="margin-top:4px">下期扣款 2026-10-20 · [管理订阅] [申请退款]</div>
         </div>
         <div class="card" style="margin-top:10px">
-          <b style="font-size:13px">本月用量</b>
+          <b style="font-size:13px">本期用量</b>
           <div class="progress"><i style="width:38%"></i></div>
           <div class="muted" style="font-size:12px">已用 ¥4.75 / ¥12.5 · 约 45 轮</div>
-          <div class="ph s"></div><div class="ph s"></div><div class="ph s"></div>
-        </div>
-        <div class="card" style="margin-top:10px">
-          <b style="font-size:13px">管理</b>
-          <div class="btn sec" style="margin-top:8px">续费 / 升级</div>
-          <div class="btn text">取消自动续费（如有）</div>
+          <div class="ph s"></div><div class="ph s"></div>
         </div>
       </div>
     </div>
@@ -393,14 +469,14 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;width
   <div class="annot">
     <span class="tag">定位</span>
     <ul>
-      <li>「额度对不上」争议的兜底：这里给逐笔消耗明细（时间/轮数/扣减）</li>
-      <li>登录后 any browser 可查，不依赖客户端</li>
+      <li>额度争议的兜底：逐笔消耗明细</li>
+      <li>网页端可查，不依赖客户端</li>
     </ul>
   </div>
 </div>
 
 <div class="divider" style="margin:36px 0"></div>
-<div class="muted">异常覆盖清单：点击充值未付款（⑤）· 已扣款未到账（④）· 直接关闭 Stripe 页（⑤无回跳路径）· 未登录点支付（②引导登录）· 额度争议（⑪明细）· 到期不续（⑩数据保留）· 退款（FAQ 声明已生效订阅不退，人工例外）· 重复购买（同档重复=延长有效期，规则见 README 待定项）。</div>
+<div class="muted"><b>异常覆盖</b>：点了订阅没付款（④c 三路径）· 已扣款未到账（④b）· 未登录点支付（③置灰引导）· 扣款失败（⑩ dunning）· 额度争议（⑬明细）· 取消后反悔（周期内重开订阅）· 退款（⑪人工按比例）· 数据保留（⑫永不丢）。</div>
 
 </body>
 </html>
