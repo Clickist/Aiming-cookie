@@ -572,17 +572,15 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">aimingcookie.com（已登录）</span></div>
     <div class="body">
-      <div class="nav">
+      
+      <div class="nav" style="position:relative;z-index:5">
         <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
         <span style="font-size:13px">对照</span><span style="font-size:13px">采集</span><span style="font-size:13px">指标</span><span style="font-size:13px">Coach</span>
         <span style="border:1px solid var(--outline-variant);border-radius:99px;padding:4px 12px;font-size:12px">EN</span>
         <span style="border:1px solid var(--outline-variant);border-radius:99px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center">🌙</span>
         <span style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600">Bilibili 主页</span>
-        <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px">u</span><b>u***@gmail.com ▾</b></span>
-      </div>
-      <div style="display:flex;justify-content:flex-end;padding:14px 20px 6px;background:var(--background)">
-        <div style="width:280px;border:1px solid var(--outline);border-radius:14px;background:var(--surface);overflow:hidden">
-          <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--surface-container-low);font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none">u</span><b>u***@gmail.com</b><span style="margin-left:auto;color:var(--on-surface-variant)">▾</span></div>
+        <span style="position:absolute;top:100%;right:20px;margin-top:-1px;width:270px;border:1px solid var(--outline);border-top:none;border-radius:0 0 14px 14px;background:var(--surface);overflow:hidden;box-shadow:0 10px 20px rgba(36,33,29,.12)">
+          <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;font-size:13px;background:var(--surface-container-low)"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none">u</span><b>u***@gmail.com</b><span style="margin-left:auto;color:var(--on-surface-variant)">▾</span></div>
           <div style="padding:12px 14px;border-top:1px solid var(--outline-variant)">
             <div style="font-size:12px;color:var(--on-surface-variant)">基础档 · 连续包月</div>
             <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
@@ -591,9 +589,9 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;font-weight:600;color:var(--primary)">前往账号中心 ›</div>
           <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;color:var(--on-surface-variant)">管理订阅</div>
           <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;color:var(--on-surface-variant)">退出登录</div>
-        </div>
+        </span>
       </div>
-      <div class="muted" style="padding:10px 20px">页眉形式仍在讨论中——下拉为挂在导航右下的示意。</div>
+      <div class="muted" style="padding:10px 20px">示意：下拉从导航右上角「头像+邮箱」原位直接向下展开，与导航无缝衔接（页眉形式仍在讨论中）。</div>
       <div class="hero" style="padding-top:8px">
         <div style="font-weight:700;font-size:26px">练一局，向AI教练提问</div>
       </div>
