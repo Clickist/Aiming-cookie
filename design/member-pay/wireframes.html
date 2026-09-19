@@ -64,7 +64,9 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 .price small{font-size:13px;font-weight:400;color:var(--on-surface-variant)}
 .divider{border-top:1px solid var(--outline-variant);margin:14px 0}
 .progress{background:var(--surface-container-high);border-radius:99px;height:10px;overflow:hidden;margin:6px 0}
-.progress i{display:block;background:var(--primary);height:100%}
+.progress i{display:block;background:#16875b;height:100%}
+.progress i.o{background:#e8930c}
+.progress i.r{background:#c53442}
 .progress.dark{background:rgba(249,238,232,.2)}
 .progress.dark i{background:var(--primary)}
 .card{background:var(--surface-container-low);border:1px solid var(--outline-variant);border-radius:12px;padding:16px}
@@ -96,7 +98,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 .coach-msg{background:var(--surface-container-low);border-radius:10px;padding:10px 12px;font-size:12px;margin-top:10px}
 .composer{margin-top:auto;background:var(--surface);border:1px solid var(--outline-variant);border-radius:12px;padding:12px;font-size:13px;color:var(--on-surface-variant)}
 .pagehead{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--outline-variant);background:var(--surface);font-size:14px;font-weight:600}
-.nav{display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--outline-variant);padding:14px 20px;background:var(--surface)}
+.nav{display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--outline-variant);padding:14px 20px;background:var(--surface);position:relative}
 .hero{padding:36px 20px;text-align:center}
 .darkbar{background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:12px;padding:16px}
 </style>
@@ -243,14 +245,10 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           </div>
           <div style="flex:1">
             <div class="muted" style="margin-bottom:6px"><b>状态 B · BYOK（未登录或已登录均可）</b></div>
-            <div class="acct" style="font-size:12px"><b>⚙ 自定义 Provider · 已连接</b><br>deepseek-v4-flash<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
+            <div class="acct" style="font-size:12px"><b>⚙ DeepSeek 官方 · 已连接</b><br>deepseek-v4-flash<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
             <div class="muted" style="margin-top:8px">引擎信息照常显示；「登录」引导开通云教练（BYOK 永久保留，登录是叠加）</div>
           </div>
-          <div style="flex:1">
-            <div class="muted" style="margin-bottom:6px"><b>状态 C · 本地引擎</b></div>
-            <div class="acct" style="font-size:12px"><b>🖥 本地引擎 · 已连接</b><br>Claude Code<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
-            <div class="muted" style="margin-top:8px">同 B：显示引擎标识 + 登录引导；<b>位置永远不空</b></div>
-          </div>
+          
         </div>
       </div>
     </div>
@@ -259,7 +257,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <span class="tag">规则</span>
     <ul>
       <li>左下角<b>永远有内容</b>：会员=邮箱+档位+%；BYOK=⚙引擎+模型；本地=🖥引擎+CLI 名</li>
-      <li>非会员的卡上只有「登录/注册 ›」引导（一句话，无价格无营销）</li>
+      <li>非会员的卡上只有「登录/注册 ›」引导（一句话，无价格无营销）；BYOK 卡显示用户所选 Provider 名</li>
       <li>订阅过期：会员卡变「订阅已结束 · 余量 0%」+「重新订阅 ›」</li>
       <li>口径：只显示百分比，无金额</li>
     </ul>
@@ -567,17 +565,26 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <span style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600">Bilibili 主页</span>
         <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px">u</span><b>u***@gmail.com ▾</b></span>
       </div>
-      <div style="display:flex;justify-content:flex-end;padding:8px 20px">
-        <div class="chip-pop" style="width:260px">
+      <div style="position:relative">
+      <div class="nav">
+        <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
+        <span style="font-size:13px">对照</span><span style="font-size:13px">采集</span><span style="font-size:13px">指标</span><span style="font-size:13px">Coach</span>
+        <span style="border:1px solid var(--outline-variant);border-radius:99px;padding:4px 12px;font-size:12px">EN</span>
+        <span style="border:1px solid var(--outline-variant);border-radius:99px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center">🌙</span>
+        <span style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600">Bilibili 主页</span>
+        <span style="display:flex;align-items:center;gap:6px;font-size:13px;border:1.5px solid var(--primary);border-radius:99px;padding:5px 10px"><span style="width:24px;height:24px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:11px">u</span><b>u***@gmail.com ▾</b></span>
+      </div>
+      <div class="chip-pop" style="width:260px;position:absolute;top:100%;right:20px;margin-top:6px;z-index:5">
           <div style="font-size:12px;color:var(--on-surface-variant)">u***@gmail.com · 基础档</div>
           <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
-          <div style="font-size:13px;font-weight:700">余量 62%</div>
+          <div style="font-size:13px;font-weight:700">余量 62% <span class="muted" style="font-weight:400">（绿）</span></div>
           <div class="divider" style="margin:8px 0"></div>
           <div style="font-size:13px;font-weight:600;color:var(--primary);padding:3px 0">前往账号中心 ›</div>
           <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">管理订阅</div>
           <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">退出登录</div>
         </div>
       </div>
+      <div class="muted" style="padding:10px 20px">页眉形式仍在讨论中——下拉为挂在导航右下的示意。</div>
       <div class="hero" style="padding-top:8px">
         <div style="font-weight:700;font-size:26px">练一局，向AI教练提问</div>
       </div>
@@ -602,7 +609,6 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px;display:flex;justify-content:space-between"><span>概览</span><span>✓</span></div>
         <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>用量</span><span class="muted">📊</span></div>
         <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>账单</span><span class="muted">🧾</span></div>
-        <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>设置</span><span class="muted">⚙</span></div>
         <div style="margin-top:auto">
           <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">模型与价格</div>
           <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div>
@@ -630,7 +636,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         </div>
         <div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:14px">
           <div>
-            <b style="font-size:13px">加速包</b>
+            <b style="font-size:13px">加油包</b>
             <div class="muted" style="margin-top:3px">本期额度不够用？立即加购一份（约 120 轮，立即到账）。</div>
           </div>
           <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap">购买加速包 · ¥10</span>
@@ -652,6 +658,78 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>右主区：</b>品牌色订阅横幅（档位+状态+「升级订阅」）→ <b>黑色余量大条</b>（左「个人可用额度」右大字百分比，无金额）→ 加速包卡（✅ 已确认要做）→ 自动续费卡</li>
       <li><b>子页：</b>用量=逐笔明细；账单=Stripe 收据列表；设置=邮箱/支付方式/注销</li>
       <li><b>免费用户态：</b>横幅显示「免费版 · 正在使用 BYOK/本地引擎」，按钮「升级订阅」→ /pay</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">⑪a</span>账号中心 · 用量页（调用次数与用量明细）</h2>
+<div class="screen-wrap">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/usage</span></div>
+    <div class="body" style="flex-direction:row;min-height:520px">
+      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
+        <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
+        <div style="padding:9px 12px;font-size:13px">概览</div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px">用量</div>
+        <div style="padding:9px 12px;font-size:13px">账单</div>
+        <div style="margin-top:auto"><div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div></div>
+      </div>
+      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
+        <div style="font-weight:700;font-size:18px;margin-bottom:6px">用量</div>
+        <div class="muted" style="margin-bottom:14px">本期剩余 62% · 以下为本期逐次调用明细（最新在前）</div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">时间</th><th style="padding:10px 14px">会话 / 场景</th><th style="padding:10px 14px">类型</th><th style="padding:10px 14px;text-align:right">轮次</th></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 10:12</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">1wall 6targets small · run 54020</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">完整分析</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">3 轮</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 10:31</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">同上 · 追问</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">追问</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">1 轮</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-19 23:41</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">Tile Frenzy 180 Strafing</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">完整分析</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">3 轮</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:40px"></div></td></tr>
+          </table>
+        </div>
+        <div class="muted" style="margin-top:10px">每页 50 条 · 底部分页</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">口径</span>
+    <ul>
+      <li>列＝时间 / 会话与场景 / 类型（完整分析·追问）/ 轮次——<b>无金额列</b></li>
+      <li>数据源：ac-gateway 调用日志（轮 = 教练回复次数）</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">⑪b</span>账号中心 · 账单页（充值与付款记录）</h2>
+<div class="screen-wrap">
+  <div class="frame browser">
+    <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/billing</span></div>
+    <div class="body" style="flex-direction:row;min-height:520px">
+      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
+        <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
+        <div style="padding:9px 12px;font-size:13px">概览</div>
+        <div style="padding:9px 12px;font-size:13px">用量</div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px">账单</div>
+        <div style="margin-top:auto"><div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div></div>
+      </div>
+      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
+        <div style="font-weight:700;font-size:18px;margin-bottom:6px">账单</div>
+        <div class="muted" style="margin-bottom:14px">全部付款与加购记录（含收据）</div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <tr style="background:var(--surface-container);text-align:left"><th style="padding:10px 14px">时间</th><th style="padding:10px 14px">购买内容</th><th style="padding:10px 14px;text-align:right">金额</th><th style="padding:10px 14px">状态</th><th style="padding:10px 14px">收据</th></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">09-20 01:10</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">基础档 · 连续包月（首期）</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);text-align:right">¥10.00</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)">已支付</td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant);color:var(--primary)">查看</td></tr>
+            <tr><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:56px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:48px"></div></td><td style="padding:10px 14px;border-top:1px solid var(--outline-variant)"><div class="ph s" style="margin:0;width:36px"></div></td></tr>
+          </table>
+        </div>
+        <div class="muted" style="margin-top:10px">含订阅扣款与加油包加购；退款记录以负数显示</div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">口径</span>
+    <ul>
+      <li>列＝时间 / 购买内容（订阅首期·续期·加油包）/ 金额 / 状态 / 收据</li>
+      <li>数据源：Stripe 付款记录 + accounts 订单表</li>
     </ul>
   </div>
 </div>
