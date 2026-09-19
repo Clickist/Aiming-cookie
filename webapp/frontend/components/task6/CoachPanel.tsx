@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -17,6 +18,9 @@ import {
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { ANALYSIS_AUTO_TEACH_EVENT, COACH_PENDING_INTENT_KEY, COACH_SESSION_UPDATED_EVENT, computeAnalysisEtaSeconds, formatHistoryDate } from "@/lib/contracts";
 import { discussionChipLabel, groupDiscussionChips, DISCUSSION_BAR_MAX_PINNED } from "@/lib/discussion-bar";
+import { MEMBER_COPY, bothPoolsEmpty, classifyMemberGatewayError, formatMemberDate, gatewayErrorNotice } from "@/lib/member";
+import { useMemberState } from "@/lib/member-state";
+import { MemberNotice, memberEndDate, memberNotice, memberNoticeText } from "@/components/task3/MemberChrome";
 import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
@@ -559,9 +563,34 @@ export function CoachPanel({
   /** 当前会话 assistant 讲解文本上报：视频面板底部回看 chips 跟随正文 @time。 */
   onCoachMessagesChange?: (texts: ReadonlyArray<string>) => void;
 }) {
+  const router = useRouter();
   const [messages, setMessages] = useState<CoachThreadMessageOut[]>([]);
   const [draft, setDraft] = useState("");
   const [run, setRun] = useState<CoachAgentRunV1 | null>(null);
+  // 会员态（④ 双池皆空 / ⑨ 提示 / 401 降级）：与 AppShell 同源，60s 轮询。
+  const member = useMemberState();
+  const [memberNoticeDismissed, setMemberNoticeDismissed] = useState(false);
+  const [memberSoftNoticeDismissed, setMemberSoftNoticeDismissed] = useState(false);
+  // ④/⑨ 右：会员双池皆空才触发发送禁用（历史照常可读）。BYOK 用户 me=null，
+  // 永远不进这两态——会员体系不影响 BYOK（回归红线）。
+  const memberQuotaOut = member.me !== null && member.me.member && bothPoolsEmpty(member.me);
+  const memberConnectionLost = member.me !== null
+    && (member.me.status === "expired" || member.me.status === "refunded")
+    && bothPoolsEmpty(member.me);
+  const sendBlockedByMember = memberQuotaOut || memberConnectionLost;
+  const memberPeriodEnd = formatMemberDate(member.me?.period_end ?? null);
+  const memberBlockNotice = memberQuotaOut
+    ? MEMBER_COPY.quotaExhausted
+    : memberConnectionLost
+      ? MEMBER_COPY.connectionLost(memberPeriodEnd)
+      : null;
+  // ⑨ 左（订阅失效但加油包有余量）与 ⑧（扣款失败）：线框里这两条挂在教练页，
+  // 一次性可关闭；到期状态由左下角 chip 常驻承载。④（双池皆空）覆盖前者，
+  // 故 "lost" 在这里让位给上面的 block 提示。推导复用 memberNotice 单一事实源。
+  const memberSoftNoticeKey = memberBlockNotice ? null : memberNotice(member.me);
+  const memberSoftNotice = memberSoftNoticeKey && memberSoftNoticeKey !== "lost" && member.me
+    ? memberNoticeText(memberSoftNoticeKey, member.me, memberEndDate(member.me))
+    : null;
   const [loadError, setLoadError] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; seq: number } | null>(null);
   const feedbackSeqRef = useRef(0);
@@ -2661,7 +2690,9 @@ export function CoachPanel({
           }}
           placeholder={composerBusy
             ? "继续输入以排队后续修改"
-            : "向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"}
+            : sendBlockedByMember
+              ? "向 Coach 提问…（发送暂不可用，历史照常可读）"
+              : "向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"}
           ref={textareaRef}
           rows={3}
           value={draft}
@@ -2735,7 +2766,7 @@ export function CoachPanel({
               <button
                 aria-label="发送"
                 className="task6-composer-send"
-                disabled={!draft.trim()}
+                disabled={!draft.trim() || sendBlockedByMember}
                 onClick={submitComposer}
                 title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
                 type="button"
@@ -2984,16 +3015,23 @@ export function CoachPanel({
             error = failedCard;
           }
           if (!error) return null;
+          // 网关错误码分流（契约 §5.3，新旧值双认）：quota_exhausted → ④ 口径，
+          // member_required → 未订阅引导，jwt_expired → 重登录引导（静默降级未登录）。
+          const gatewayCode = classifyMemberGatewayError(error.message);
+          const gateway = gatewayCode ? gatewayErrorNotice(gatewayCode) : null;
           return (
             <div className="task6-error-card" role="alert">
               <div className="task6-error-card-head">
                 <div className="task6-error-card-title">{error.title}</div>
                 <div className="task6-error-card-desc">
-                  {error.message} 已生成的部分已保留；本地分析、历史和视频不受影响。
+                  {gateway ? gateway.text : <>{error.message} 已生成的部分已保留；本地分析、历史和视频不受影响。</>}
                 </div>
               </div>
               <div className="task6-error-card-actions">
-                {error.retryable ? (
+                {gatewayCode === "jwt_expired" ? (
+                  <Button onClick={() => router.push("/account")} size="compact" variant="secondary">重新登录</Button>
+                ) : null}
+                {error.retryable && !gateway ? (
                   <Button onClick={() => void retry(error.runRef)} size="compact" variant="secondary">重试</Button>
                 ) : null}
                 <Button onClick={() => { setFailedCard(null); setRun(null); }} size="compact" variant="ghost">稍后再说</Button>
@@ -3020,6 +3058,25 @@ export function CoachPanel({
         ) : null}
       </section>
       </div>
+
+      {/* ④/⑨/⑧ 页内提示（线框：只陈述事实 + 指路，零商业化）。一次性可关闭；
+          关闭后状态由左下角 chip 常驻承载。发送键禁用由 sendBlockedByMember 控制。 */}
+      {homeMode || !memberBlockNotice || memberNoticeDismissed ? null : (
+        <MemberNotice
+          onDismiss={() => setMemberNoticeDismissed(true)}
+          tone={memberConnectionLost ? "error" : "warn"}
+        >
+          {memberBlockNotice}
+        </MemberNotice>
+      )}
+      {homeMode || !memberSoftNotice || memberSoftNoticeDismissed ? null : (
+        <MemberNotice
+          onDismiss={() => setMemberSoftNoticeDismissed(true)}
+          tone="warn"
+        >
+          {memberSoftNotice}
+        </MemberNotice>
+      )}
 
       {homeMode ? null : (
         <footer className="task6-composer" ref={footerComposerRef} data-home-drop={homeExit ? "true" : undefined}>

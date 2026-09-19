@@ -49,6 +49,9 @@ import type {
   KovaaKScoreSyncRequestV1,
   KovaaKScoreSyncResultV1,
   KovaaKScoresV1,
+  MemberExchangeResponse,
+  MemberLoginStartResponse,
+  MemberStatusResponse,
   KovaaKRunItem,
   KovaaKRunListResponse,
   ProductStateV1,
@@ -790,13 +793,79 @@ export async function getDefaultProviderStatus(
 }
 
 /** 官方中转档余额（点点 0912 拍板）：sidecar 用存档 key 查 new-api 计费端点，
- * 前端只拿算好的数字。401=Key 无效；502=站点不可达。 */
+ * 前端只拿算好的数字。401=Key 无效；502=站点不可达。
+ * @deprecated WP-C 退役：会员档额度以百分比由 `/api/me` 下发，改用 fetchMemberStatus。 */
 export async function getOfficialRelayBalance(
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<OfficialRelayBalance> {
   const res = await apiFetchSidecar("/v1/provider-profiles/official/balance", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as OfficialRelayBalance;
+}
+
+// ── Aiming Cookie 会员档（WP-C，契约 §2/§3/§7.1-8）───────────────────────────
+// JWT 全程留在 sidecar：前端只收结构化会员状态，任何响应体都不含凭据明文。
+
+/** 换票第一步：起 device_code，返回 login_url（用系统浏览器打开）。 */
+export async function startMemberLogin(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<MemberLoginStartResponse> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/member/login/start",
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as MemberLoginStartResponse;
+}
+
+/**
+ * deep-link 到达：ticket + dc 换 JWT。契约 §3.3：校验失败一律是 200 +
+ * `{ok:false, code}`（不是异常）——调用方据此降级为「无 ticket」分支，
+ * 用本地 JWT 拉 `/api/me` 刷新，绝不弹错误。
+ */
+export async function exchangeMemberTicket(
+  input: { ticket?: string | null; dc?: string | null },
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<MemberExchangeResponse> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/member/exchange",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticket: input.ticket ?? null, dc: input.dc ?? null }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as MemberExchangeResponse;
+}
+
+/** 会员状态（chip/用户中心/④/⑨ 唯一数据源）；未登录与不可用都是 200。 */
+export async function fetchMemberStatus(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<MemberStatusResponse> {
+  const res = await apiFetchSidecar("/v1/provider-profiles/member/me", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as MemberStatusResponse;
+}
+
+/** 连通测试（①b 态3 重试 / 态2 直连快路径）。 */
+export async function testMemberConnection(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<{ ok: true } | { ok: false; code: "unauthorized" | "unreachable"; message: string }> {
+  const res = await apiFetchSidecar("/v1/provider-profiles/member/test", { method: "POST" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as { ok: true } | { ok: false; code: "unauthorized" | "unreachable"; message: string };
+}
+
+/** 退出登录（④b）：只清会员凭据，档案全留；有 BYOK 则自动切过去。 */
+export async function logoutMemberAccount(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<{ ok: true; relay_profile_id: number | null; fallback_profile_id: number | null; active_profile_id: number | null }> {
+  const res = await apiFetchSidecar("/v1/provider-profiles/member/logout", { method: "POST" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as { ok: true; relay_profile_id: number | null; fallback_profile_id: number | null; active_profile_id: number | null };
 }
 
 /** 眼睛按钮的「显示 Key」（点点 0912 拍板）：测试阶段 key 对用户可见。 */

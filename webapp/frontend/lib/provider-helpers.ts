@@ -13,12 +13,20 @@ export function isCustomProviderKind(kind: string): kind is CustomProviderKind {
   return kind === "custom_openai_compatible" || kind === "custom_anthropic_compatible";
 }
 
-/** Aiming Cookie 官方中转（sidecar 注入的托管内置 Provider，计费在官方侧结算）。 */
+/** Aiming Cookie 会员档（sidecar 注入的托管内置 Provider，账号订阅制，WP-C 升级）。 */
 export const OFFICIAL_RELAY_PROVIDER_ID = "aiming-cookie-relay";
 
-/** 官方档识别：详情走专属模板（计费方式/套餐/额度），无 Base URL 等常规连接行。 */
+/** 会员档显示名（线框 ①：置顶推荐、账号订阅，登录即用）。 */
+export const OFFICIAL_RELAY_PROVIDER_LABEL = "Aiming Cookie（推荐）";
+
+/** 会员档识别：详情走会员专属模板（套餐/余量/管理按钮），无 Base URL / API key 行。 */
 export function isOfficialRelayProfile(profile: { provider_id?: string | null; kind: string }): boolean {
   return !isCustomProviderKind(profile.kind) && profile.provider_id === OFFICIAL_RELAY_PROVIDER_ID;
+}
+
+/** 会员档 auth 走账号订阅（浏览器登录 + deep-link），不是 API key 表单。 */
+export function isMemberAccountProfile(profile: { provider_id?: string | null; kind: string }): boolean {
+  return isOfficialRelayProfile(profile);
 }
 
 export function isAuthTerminal(operation: ProviderAuthOperation): boolean {

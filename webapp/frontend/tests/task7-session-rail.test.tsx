@@ -122,3 +122,32 @@ test("SessionRail keeps session rows at equal height with no stray border", asyn
   assert.match(styles, /\.task7-session-rail__session\s*\{[\s\S]*border:\s*0;[\s\S]*\}/);
   assert.match(styles, /\.task7-session-rail__session-summary\[aria-hidden="true"\][\s\S]*min-height/);
 });
+
+test("account chip sits last in the rail and speaks the footer-row visual language", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  const styles = await source("components/task7/session-rail.css");
+  // 站长 0919 修订：卡片是侧栏最末元素（页脚两行之下）。
+  const footerIndex = component.indexOf('<footer className="task7-session-rail__footer">');
+  const accountIndex = component.indexOf('className="task7-session-rail__account"');
+  assert.ok(footerIndex > 0 && accountIndex > footerIndex, "account chip must render after the footer rows");
+  // 与页脚两行同视觉语言：无边框、无填充、同字号字重、次级文字色。
+  const block = styles.match(/\.task7-session-rail__account\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.ok(block.length > 0);
+  assert.match(block, /border:\s*0/);
+  assert.match(block, /background:\s*transparent/);
+  assert.match(block, /color:\s*var\(--on-surface-variant\)/);
+  assert.match(block, /font:\s*500 var\(--text-caption\)/);
+  // 橙卡样式作废：不得出现 primary 边框 / primary-container 底 / primary 文字。
+  assert.doesNotMatch(styles, /\.task7-session-rail__account\[aria-current="true"\]\s*\{[^}]*--primary/);
+  const currentBlock = styles.match(/\.task7-session-rail__account\[aria-current="true"\]\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.ok(currentBlock.length > 0);
+  assert.doesNotMatch(currentBlock, /primary/);
+  assert.match(currentBlock, /background:\s*var\(--surface-container\)/);
+});
+
+test("the account chip is the last flex child and hugs the rail bottom", async () => {
+  const styles = await source("components/task7/session-rail.css");
+  // 列表吃剩余高度（footer/账号卡都 flex:none），账号卡自然被推到底部。
+  assert.match(styles, /\.task7-session-rail__account\s*\{[^}]*flex:\s*none/);
+  assert.match(styles, /\.task7-session-rail__account\s*\{[^}]*margin:\s*0 var\(--space-3\) var\(--space-3\)/);
+});

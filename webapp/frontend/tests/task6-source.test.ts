@@ -68,7 +68,9 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
     assert.match(providerSection, new RegExp(status));
   }
   assert.doesNotMatch(combined, />\s*一键清空\s*</);
-  assert.doesNotMatch(combined, /\{profile\.status\}|\{capture\.raw_input_permission\}|Account/);
+  assert.doesNotMatch(combined, /\{profile\.status\}|\{capture\.raw_input_permission\}/);
+  // 设置页仍不引入 Clerk 式 Account 挂件（WP-C 会员档走自家账号会话与用户中心）。
+  assert.doesNotMatch(combined, /<Account|from "@clerk/);
 });
 
 test("Settings reuses the in-memory snapshot when revisiting and forces refresh after changes", async () => {

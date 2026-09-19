@@ -18,11 +18,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-single-instance = "2"
+# deep-link feature：二次启动时把 argv 里的 deep-link URL 转交已运行实例的
+# deep-link 插件（Windows 协议唤起走 argv，插件自身不监听）。
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-opener = "2"
 sha2 = "0.10"
+tauri-plugin-deep-link = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

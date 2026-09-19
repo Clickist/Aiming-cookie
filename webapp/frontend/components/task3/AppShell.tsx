@@ -12,6 +12,7 @@ import {
   getIntroSession,
   getProductState,
   listCoachSessions,
+  listProviderProfiles,
   updateCoachSession,
 } from "@/lib/api";
 import {
@@ -25,11 +26,15 @@ import {
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
+import { memberChipView } from "@/lib/member";
+import { notifyMemberStateChanged, useMemberState } from "@/lib/member-state";
+import { useMemberDeepLinks } from "@/lib/member-deeplink";
 import { triggerIntroSession } from "@/lib/intro-session";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CoachAgentRunV1, CoachSessionOut, ProviderProfileState } from "@/lib/types";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { ErrorBoundary } from "@/components/task3/ErrorBoundary";
+import { MemberCenter } from "@/components/task3/MemberCenter";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane, invalidateAnalysisPresentationCache } from "@/components/task7/CoachVideoPane";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
@@ -59,8 +64,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
   const settingsRoute = pathname.startsWith("/settings");
   const historyRoute = pathname.startsWith("/history");
+  const memberCenterRoute = pathname.startsWith("/account");
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [startupRouteResolved, setStartupRouteResolved] = useState(false);
+  // 会员态（②/②c/④/⑧/⑨ 的唯一数据源）：60s 轮询 + 聚焦 + 变更广播，见 member-state.ts。
+  const member = useMemberState();
+  const [providerName, setProviderName] = useState<string | null>(null);
   // onboarding 完成度由启动路由的 getProductState 解析；未完成/未知一律 false，
   // 首启「开场分析」触发据此门控（未走完 onboarding 不触发）。
   const [onboardingResolved, setOnboardingResolved] = useState(false);
@@ -168,7 +177,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
   const settingsChildrenRef = useRef<ReactNode>(null);
   const settingsPresence = useAnimatedPresence(settingsRoute, 160);
-  const historyPresence = useAnimatedPresence(historyRoute, 160);
+  // 常规页路由（历史 / 用户中心）的面板存在态：两个路由共用一套进出场，
+  // 漏掉一个就会让该页永远停在 data-page-motion="opening"（opacity:0，见
+  // task3.css）——用户中心"点了没反应"的根因正是这里。
+  const pageRoute = historyRoute || memberCenterRoute;
+  const pagePresence = useAnimatedPresence(pageRoute, 160);
   const startupPending = coachWorkspaceRoute && !startupRouteResolved;
   const showSessionRail = !shellHidden && !settingsRoute && !startupPending;
   const keepSessionRailMounted = !shellHidden && !startupPending;
@@ -288,6 +301,29 @@ export function AppShell({ children }: { children: ReactNode }) {
       });
     return () => controller.abort();
   }, [shellHidden]);
+
+  // BYOK 引擎行文案（②b：显示用户所选 Provider 名，不显示模型名）。
+  useEffect(() => {
+    if (shellHidden) return undefined;
+    const controller = new AbortController();
+    void listProviderProfiles({ signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        // 投影缺失（sidecar 未就绪/异常响应）按「没有名字」处理，不让壳挂掉。
+        const profiles = Array.isArray(result?.profiles) ? result.profiles : [];
+        const active = profiles.find((profile) => profile.is_default) ?? profiles[0] ?? null;
+        setProviderName(active && active.name ? active.name : null);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [shellHidden, capability, member.me?.member]);
+
+  // deep-link（契约 §3.3-8：进主界面同样处理）：scene=subscribe/booster → 刷新
+  // /api/me；scene=login → exchange 后刷新。无 ticket 的第二次跳转不报错。
+  useMemberDeepLinks({
+    onRefreshed: () => notifyMemberStateChanged(),
+  }, !shellHidden);
+
 
   useEffect(() => {
     if (shellHidden) return undefined;
@@ -586,6 +622,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   // v6：空对话首页无顶栏（点点拍板），窗口三键独立常浮。
   const [coachHomeActive, setCoachHomeActive] = useState(false);
 
+  // 左下角账号卡（②/②b/⑨ 常驻态）：会员 / BYOK / 未连接 三种呈现由纯函数压好。
+  const chip = memberChipView(
+    member.me,
+    providerName ? { providerName, connected: capability === "ready" } : null,
+  );
+  const chipEmail = chip.email;
+
   if (shellHidden) return <ErrorBoundary>{children}</ErrorBoundary>;
 
   return (
@@ -618,6 +661,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             }}
             onSettings={() => router.push("/settings")}
             onSoftDeleteSession={(session) => void handleDeleteCoachSession(session)}
+            account={{
+              kind: chip.kind,
+              email: chipEmail,
+              pct: member.me?.pools.sub?.pct ?? null,
+              engine: providerName,
+              status: chip.status,
+              tone: chip.tone,
+              relink: chip.relink,
+            }}
+            accountSelected={memberCenterRoute}
+            onAccountClick={() => router.push("/account")}
             providerStatus={capability === "ready" ? "ready" : capability === "loading" ? "loading" : capability === "unavailable" ? "unavailable" : "waiting"}
                     sessions={
                       draftSession
@@ -718,7 +772,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               {!coachWorkspaceRoute && !settingsRoute ? (
                 <div
                   className="task3-page-view"
-                  data-page-motion={historyPresence.state === "open" ? "open" : "opening"}
+                  data-page-motion={pagePresence.state === "open" ? "open" : "opening"}
                 >
                   <ErrorBoundary>{children}</ErrorBoundary>
                 </div>

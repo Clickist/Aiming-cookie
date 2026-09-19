@@ -2293,3 +2293,8 @@ button.task6-discussion-chip:focus-visible {
 .task6-composer[data-home-drop="true"] .task6-composer-input {
   opacity: 0;
 }
+
+/* ④/⑨ 会员页内提示条（教练页内一份；主区那份见 task3.css 同名字体族）。 */
+.task6-coach-shell > .task3-member-notice {
+  margin: var(--space-3) var(--space-4) 0;
+}

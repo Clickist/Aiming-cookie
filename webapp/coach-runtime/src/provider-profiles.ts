@@ -30,9 +30,17 @@ import {
 import {
   AIMING_COOKIE_RELAY_PROVIDER_ID,
   fetchCustomProviderModels,
-  fetchOfficialRelayBalance,
   resolveProviderModel,
 } from "./provider-models.ts";
+import {
+  activeProfileId,
+  exchangeMemberTicket,
+  fetchMemberMe,
+  logoutMember,
+  relayProfileId,
+  startMemberLogin,
+  testMemberConnection,
+} from "./member-auth.ts";
 import {
   deleteProfileById,
   findStoredProfile,
@@ -397,28 +405,96 @@ export async function handleProviderProfileRequest(
     return true;
   }
 
-  // 官方中转档余额（点点 0912 拍板）：用存档 key 查 new-api 计费兼容端点，
-  // 余额在 sidecar 算好，前端只拿数字。未存 key → 400；站点不可达/形状变了 → 502。
-  if (req.method === "GET" && pathname === "/v1/provider-profiles/official/balance") {
+  // ── Aiming Cookie 会员档（WP-C，契约 §2/§3/§7.1-8）─────────────────────────
+  // 换票三步与会员状态全在 sidecar 内完成：JWT 只进 provider 档凭据仓，
+  // 前端拿到的是结构化状态，永远不接触 JWT 明文（② chip / ②c 用户中心数据源）。
+
+  /** 起 device_code：返回 login_url 供 Tauri 用系统浏览器打开。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/login/start") {
     try {
-      const store = loadProviderStore();
-      const entry = store.profiles.find(
-        (candidate) => candidate.provider_id === AIMING_COOKIE_RELAY_PROVIDER_ID,
-      );
-      const apiKey = entry?.credential?.type === "api_key" && typeof entry.credential.key === "string"
-        ? entry.credential.key
-        : null;
-      if (!apiKey) {
-        writeJson(res, 400, { detail: "官方档还没有保存 API Key" });
+      const result = await startMemberLogin();
+      writeJson(res, result.ok ? 200 : 502, result);
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** deep-link 到达：ticket + dc 换 JWT + 连通测试。所有拒绝都是 200 + 结构化 code。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/exchange") {
+    try {
+      const body = await readJsonBody(req);
+      const exchange = await exchangeMemberTicket({
+        ticket: isRecord(body) && typeof body.ticket === "string" ? body.ticket : null,
+        dc: isRecord(body) && typeof body.dc === "string" ? body.dc : null,
+      });
+      if (!exchange.ok) {
+        // failed 分支不是错误：caller 据此降级为「无 ticket」路径（§3.2 触发 2）。
+        writeJson(res, 200, { ok: false, code: exchange.code, message: exchange.message });
         return true;
       }
-      const balance = await fetchOfficialRelayBalance(apiKey);
-      writeJson(res, 200, { schema_version: "coach_provider_balance.v1", ...balance });
+      // exchange 成功时 JWT 已由 member-auth 写进 relay 档凭据（§3.2 触发 1 第 7 步），
+      // 这里紧接着跑连通测试，把「登录 + 订阅 + 连通」三件事一次性告知 wizard。
+      const connection = await testMemberConnection();
+      writeJson(res, 200, {
+        ok: true,
+        user: exchange.user,
+        member: exchange.member,
+        profile_id: relayProfileId(),
+        connection_ok: connection.ok,
+        connection_code: connection.ok ? null : connection.code,
+        connection_message: connection.ok ? null : connection.message,
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      writeJson(res, message.includes("billing_401") || message.includes("billing_403")
-        ? 401
-        : 502, { detail: message.includes("billing_401") || message.includes("billing_403") ? "API Key 无效或已被重置" : "暂时无法读取余额，请稍后重试。" });
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** 会员状态（②/②c/④/⑨ 唯一数据源）；未登录 → 200 + logged_in:false。 */
+  if (req.method === "GET" && pathname === "/v1/provider-profiles/member/me") {
+    try {
+      const result = await fetchMemberMe();
+      if (!result.ok) {
+        writeJson(res, 200, {
+          ok: false,
+          logged_in: result.code !== "unauthorized",
+          code: result.code,
+          message: result.message,
+        });
+        return true;
+      }
+      writeJson(res, 200, {
+        ok: true,
+        logged_in: true,
+        profile_id: relayProfileId(),
+        active_profile_id: activeProfileId(),
+        me: result.me,
+      });
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** 连通测试 / ①b 态2 直连快路径：拿已存 JWT 打网关。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/test") {
+    try {
+      const result = await testMemberConnection();
+      writeJson(res, 200, result);
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** 退出登录（④b）：只清会员凭据；有 BYOK 则自动切过去，否则 Coach 置灰。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/logout") {
+    try {
+      const result = logoutMember();
+      writeJson(res, 200, { ok: true, ...result, active_profile_id: activeProfileId() });
+    } catch (error) {
+      writeProfileError(res, error);
     }
     return true;
   }

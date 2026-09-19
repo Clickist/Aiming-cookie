@@ -44,6 +44,30 @@ export interface SessionRailProps {
   providerStatus?: "ready" | "waiting" | "unavailable" | "loading";
   historyCount?: number | null;
   className?: string;
+  /** 左下角账号卡（②/②b）：会员/BYOK 两态由调用方压好，本组件只渲染。 */
+  account?: SessionRailAccount | null;
+  onAccountClick?: () => void;
+  accountSelected?: boolean;
+}
+
+/**
+ * 左下角账号卡的两态（线框 ②b：两态而已——会员 / BYOK；没有本地引擎）。
+ * 上行＝身份（邮箱 / 登录入口），下行＝引擎行；BYOK 不显示模型名。
+ */
+export interface SessionRailAccount {
+  /** "member" | "byok"；null 表示未登录且未配置（④b 右态）。 */
+  kind: "member" | "byok" | "none";
+  email: string | null;
+  /** 会员当前池单条百分比；非会员为 null。 */
+  pct: number | null;
+  /** 引擎行文案（BYOK 显示所选 Provider 名 + 状态）。 */
+  engine: string | null;
+  /** 状态行文案（会员的「Standard · 余量 62%」等）。 */
+  status: string | null;
+  /** 非续费态（订阅已到期等）时提示色。 */
+  tone: "default" | "warn" | "error";
+  /** 需要显示「重新订阅 ›」入口时给的值。 */
+  relink: boolean;
 }
 
 function sessionTitle(session: SessionRailSession): string {
@@ -116,6 +140,9 @@ export function SessionRail({
   onSoftDeleteSession,
   historyCount = null,
   className,
+  account = null,
+  onAccountClick,
+  accountSelected = false,
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<SessionRailId | null>(null);
@@ -280,6 +307,29 @@ export function SessionRail({
         <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>
         <button aria-label="系统设置" className="task7-session-rail__footer-row" onClick={onSettings} type="button"><span className="task7-session-rail__footer-label"><IconSettings /><span>系统设置</span></span></button>
       </footer>
+      {/* 账号卡（②/②b）：侧栏最末元素、在「训练历史 / 系统设置」之下。
+          站长 0919 修订：与页脚两行同一视觉语言（无边框、无填充、同字号、
+          次级文字色），不抢注意力；选中态只用极轻中性底色，不加橙。 */}
+      {account || onAccountClick ? (
+        <button
+          aria-current={accountSelected ? "true" : undefined}
+          className="task7-session-rail__account"
+          data-kind={account?.kind ?? "none"}
+          data-tone={account?.tone ?? "default"}
+          onClick={onAccountClick}
+          type="button"
+        >
+          <span className="task7-session-rail__account-identity">
+            {account?.email ? <span>👤 {account.email}</span> : <span className="task7-session-rail__account-login">登录 / 注册 ›</span>}
+          </span>
+          <span className="task7-session-rail__account-engine">
+            {account?.relink ? <span className="task7-session-rail__account-relink">重新订阅 ›</span> : null}
+            <span className="task7-session-rail__account-status">
+              {account?.status ?? account?.engine ?? "未连接模型服务"}
+            </span>
+          </span>
+        </button>
+      ) : null}
     </aside>
   );
 }

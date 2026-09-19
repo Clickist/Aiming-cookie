@@ -1357,3 +1357,23 @@
   background: var(--event-peak);
   cursor: help;
 }
+
+/* 会员档详情（WP-C）：账号视图 + 余量百分比 + 管理/退出。
+   旧「会员计划 / API 计费」下拉与余额金额已退役。 */
+.task6-provider-member-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.task6-provider-quota-meter > i[data-tier="good"] {
+  background: var(--quota-ok);
+}
+
+.task6-provider-quota-meter > i[data-tier="warn"] {
+  background: var(--quota-warn);
+}
+
+.task6-provider-quota-meter > i[data-tier="low"] {
+  background: var(--quota-low);
+}

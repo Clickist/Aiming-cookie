@@ -87,7 +87,9 @@ test("quote-only sends are blocked with a visible hint at both gates (拍板①)
   const gate = chunkBetween(panel, "const composeOutgoing", "const submitComposer");
   assert.match(gate, /只有引用、没有正文时不能发送，请补充你的问题或要求。/);
   const idleSend = chunkBetween(panel, 'aria-label="发送"', "<IconSend /></button>");
-  assert.match(idleSend, /disabled=\{!draft\.trim\(\)\}/);
+  // 发送门：空草稿恒禁用（拍板①）；WP-C 追加会员双池皆空禁用（④），
+  // 两者是同一条 disabled 表达式，语义不叠加成别的门槛。
+  assert.match(idleSend, /disabled=\{!draft\.trim\(\)(?: \|\| sendBlockedByMember)?\}/);
   assert.match(idleSend, /只有引用、没有正文时不能发送，请补充你的问题或要求/);
 });
 
