@@ -18,7 +18,12 @@ test("app shell exposes skip navigation, a SessionRail, and the Coach workspace 
   assert.match(value, /skip-link/);
   assert.match(value, /<SessionRail/);
   assert.match(value, /<CoachPanel/);
-  assert.doesNotMatch(value, /Account/);
+  // 旧 Clerk 式 Account 挂件未引入；会员体系改由 WP-C 的账号卡（SessionRail 的
+  // account 属性）+ 用户中心承载，两者都在壳内、不由壳自行拉取会员数据。
+  assert.doesNotMatch(value, /from "@clerk\//);
+  assert.doesNotMatch(value, /<Account/);
+  assert.match(value, /useMemberState/);
+  assert.match(value, /account=\{\{/);
 });
 
 test("window controls float globally and title areas take over window dragging", async () => {

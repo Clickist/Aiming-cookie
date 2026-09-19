@@ -54,6 +54,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["aimingcookie"]
+      }
+    },
     "updater": {
       "endpoints": ["https://dl.aimingcookie.com/latest.json"],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFEOEEyMEU4QkIzQzQ5RjEKUldUeFNUeTc2Q0NLSGVqSzQwUTV3T3ZwRlhoWEsrclVPc1ZuR2ozY2dQRGY3VTVzdUlMbXdYKzEK",

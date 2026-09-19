@@ -54,19 +54,17 @@ test("catalog exposes the complete pinned Pi builtin provider/model catalog with
   assert.ok(catalog.providers.reduce((count, provider) => count + provider.models.length, 0) > 1000);
 });
 
-test("aiming-cookie-relay injects as a builtin provider with the 26 relay models", async () => {
+test("aiming-cookie-relay injects as the recommended member tier with one locked model", async () => {
+  // WP-C（2026-09-19 契约冻结）：这条档从内测中转升级为账号订阅档——
+  // 显示名挂「（推荐）」，模型锁 deepseek-v4-flash（sub/boost 两令牌同款）。
   const catalog = await listBuiltinProviderCatalog();
   const relay = catalog.providers.find((provider) => provider.provider_id === "aiming-cookie-relay");
   assert.ok(relay, "relay provider present in catalog");
-  assert.equal(relay.provider_name, "Aiming Cookie 官方");
+  assert.equal(relay.provider_name, "Aiming Cookie（推荐）");
   assert.equal(relay.base_url, RELAY_BASE_URL);
-  assert.ok(relay.auth_modes.includes("api_key"), "interactive api_key auth is advertised");
+  assert.ok(relay.auth_modes.includes("api_key"), "stored JWT credential is an api_key credential");
 
-  assert.equal(relay.models.length, 26);
-  const modelIds = relay.models.map((model) => model.model_id).sort();
-  assert.ok(modelIds.includes("deepseek-v4-flash"));
-  assert.ok(modelIds.includes("opus-5"));
-  assert.ok(modelIds.includes("glm-5.3-free"));
+  assert.deepEqual(relay.models.map((model) => model.model_id), ["deepseek-v4-flash"]);
 
   // 方言继承：flash 与 Pi 内建 deepseek 的同名模型共享能力（contextWindow/reasoning），
   // 缺失即 thinkingFormat 方言没带上（"说出声"复发根因）。
@@ -77,8 +75,7 @@ test("aiming-cookie-relay injects as a builtin provider with the 26 relay models
   };
   const builtinFlash = all.builtinModels().getModel("deepseek", "deepseek-v4-flash");
   assert.ok(builtinFlash);
-  const relayFlash = relay.models.find((model) => model.model_id === "deepseek-v4-flash");
-  assert.ok(relayFlash);
+  const relayFlash = relay.models[0];
   assert.equal(relayFlash.context_window, builtinFlash.contextWindow);
   assert.equal(relayFlash.reasoning, builtinFlash.reasoning);
 });

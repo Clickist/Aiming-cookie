@@ -488,3 +488,75 @@
   }
 
     }
+
+/* 账号卡（②/②b）：侧栏最末元素，落在「训练历史 / 系统设置」之下。
+   站长 0919 修订（线框 ②/②b 同步）：与页脚两行同一视觉语言——无边框、无填充、
+   同字号（caption / 500）、次级文字色；hover 才轻微高亮（surface-container-low）。
+   橙卡样式作废：不加 primary 边框、不加 primary-container 底、选中态不加橙。 */
+.task7-session-rail__account {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  margin: 0 var(--space-3) var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: 500 var(--text-caption)/1.35 var(--font-ui);
+  text-align: start;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task7-session-rail__account:hover {
+    background: var(--surface-container-low);
+    color: var(--on-surface);
+  }
+}
+
+.task7-session-rail__account:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* 展开用户中心：极轻中性底色区分，不加橙（站长 0919）。 */
+.task7-session-rail__account[aria-current="true"] {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.task7-session-rail__account-identity {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task7-session-rail__account-login {
+  font-weight: 500;
+}
+
+.task7-session-rail__account-engine {
+  display: block;
+  min-width: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task7-session-rail__account[data-tone="warn"] .task7-session-rail__account-status {
+  color: var(--quota-warn);
+}
+
+.task7-session-rail__account[data-tone="error"] .task7-session-rail__account-status {
+  color: var(--quota-low);
+}
+
+.task7-session-rail__account-relink {
+  font-weight: 600;
+}
+

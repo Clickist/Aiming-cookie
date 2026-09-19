@@ -9,10 +9,12 @@ import {
   deleteProviderProfile,
   discoverCustomProviderModels,
   getProviderAuthOperation,
-  getOfficialRelayBalance,
   getProviderCatalog,
   getProviderCredential,
+  fetchMemberStatus,
   listStoredCustomProviderModels,
+  logoutMemberAccount,
+  startMemberLogin,
   setDefaultProviderProfile,
   setProviderApiKey,
   submitProviderAuthInput,
@@ -43,7 +45,9 @@ import {
   wizardTypeOptions,
   type WizardDraft,
 } from "@/lib/provider-wizard";
+import { MEMBER_COPY, formatMemberDate, planLabel, poolTier } from "@/lib/member";
 import type {
+  MemberMe,
   ProviderAuthOperation,
   ProviderCatalogV1,
   ProviderProfile,
@@ -65,6 +69,16 @@ function handleExternalClick(event: { preventDefault(): void }, url: string): vo
   });
 }
 
+/** 会员档的账号中心入口（订阅管理与退款都在网页账单子页；客户端无支付界面）。 */
+const ACCOUNT_BILLING_URL = "https://accounts.gearclickist.com/account/billing";
+
+/** 订阅池下方的加油包小行（没买过包时不出现——线框：零负担）。 */
+function boosterSubline(me: MemberMe): string {
+  const boost = me.pools.boost;
+  if (!boost || boost.remaining <= 0) return MEMBER_COPY.quotaPerCycle;
+  return `${MEMBER_COPY.boosterRow} · ${MEMBER_COPY.boosterRemain(boost.pct)}`;
+}
+
 // Raycast 式先验后存：干跑结果绑定提交时的表单指纹，
 // 表单任何变动都会让旧结论失效并回到未验证态。
 type DraftCheck =
@@ -82,10 +96,10 @@ type ConfirmAction = {
 
 const WIZARD_STEP_LABELS = ["选类型", "名称与凭据"] as const;
 
-/** 官方档未建档时的合成档案（0911 拍板：未连接也可选中查看详情、可填 Key）。 */
+/** 会员档未建档时的合成档案（未登录也可选中查看会员模板）。 */
 const SYNTHETIC_OFFICIAL_PROFILE: ProviderProfile = {
   id: -1,
-  name: "Aiming Cookie 官方",
+  name: "Aiming Cookie（推荐）",
   provider_id: OFFICIAL_RELAY_PROVIDER_ID,
   kind: "builtin",
   base_url: null,
@@ -189,15 +203,12 @@ export function ProviderSettingsSection({
   const [revealedKey, setRevealedKey] = useState<{ id: number; key: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [lastTest, setLastTest] = useState<{ passed: boolean; message: string } | null>(null);
-  // 官方档（aiming-cookie-relay）的计费方式视图：会员计划 / API 计费。
-  const [billingMode, setBillingMode] = useState<"plan" | "api">("plan");
-  const [billingMenuOpen, setBillingMenuOpen] = useState(false);
-  const billingMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // 官方档余额（0912 线框拍板）：打开 API 计费视图自动拉一次，「刷新余额」手动重拉。
-  const [relayBalance, setRelayBalance] = useState<
-    { phase: "idle" | "loading" | "ready" | "error"; value: number | null; message: string | null }
-  >({ phase: "idle", value: null, message: null });
+  // 会员档（aiming-cookie-relay）账号视图（WP-C）：登录 + 会员态。
+  // 旧的「会员计划 / API 计费」二选与余额查询已退役——额度只以百分比由
+  // `/api/me` 下发（契约 §7.1-8），key 对用户不可见。
+  const [memberMe, setMemberMe] = useState<MemberMe | null>(null);
+  const [memberLoaded, setMemberLoaded] = useState(false);
+  const [memberBusy, setMemberBusy] = useState(false);
   // 已存自定义档详情的模型发现（点「获取模型」后才有内容；内置档走目录刷新）。
   const [detailModels, setDetailModels] = useState<
     { phase: "idle" | "loading" | "ready" | "error"; models: string[]; message: string | null }
@@ -206,29 +217,56 @@ export function ProviderSettingsSection({
   const [detailCatalogReload, setDetailCatalogReload] = useState<ProviderCatalogV1 | null>(null);
   const [detailCatalogReloading, setDetailCatalogReloading] = useState(false);
 
-  const loadRelayBalance = () => {
-    setRelayBalance((current) => ({ phase: "loading", value: current.value, message: null }));
-    void getOfficialRelayBalance()
-      .then((next) => setRelayBalance({ phase: "ready", value: next.balance, message: null }))
-      .catch((error: unknown) => {
-        // apiError 约定：状态码编码在 err.name（ApiError_401）。
-        const name = error instanceof Error ? error.name : "";
-        const badKey = name === "ApiError_401" || name === "ApiError_403";
-        setRelayBalance((current) => ({
-          phase: "error",
-          value: current.value,
-          message: badKey ? "API Key 无效或已被重置" : "余额暂时无法读取，请稍后重试。",
-        }));
-      });
+  const loadMemberMe = () => {
+    void fetchMemberStatus()
+      .then((status) => {
+        setMemberMe(status.ok && status.logged_in ? status.me : null);
+        setMemberLoaded(true);
+      })
+      .catch(() => setMemberLoaded(true));
   };
 
-  // 打开 API 计费视图且已存 Key 时自动拉一次（幂等：仅在 idle 态触发）。
+  // 打开会员档详情即拉一次会员态（幂等：已加载过不重复打）。
   useEffect(() => {
-    if (!officialSelected || billingMode !== "api" || !relayArchive?.credential_configured) return;
-    if (relayBalance.phase !== "idle") return;
-    loadRelayBalance();
+    if (!officialSelected || memberLoaded) return;
+    loadMemberMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [officialSelected, billingMode, relayArchive?.credential_configured, relayBalance.phase]);
+  }, [officialSelected, memberLoaded]);
+
+  /** 设置页内的会员登录（①a 同链路）：起 device_code → 系统浏览器 → deep-link 回来刷新。 */
+  const startMemberLoginFromSettings = () => {
+    if (memberBusy) return;
+    setMemberBusy(true);
+    void startMemberLogin()
+      .then(async (result) => {
+        if (!result.ok) {
+          notify(result.message);
+          return;
+        }
+        await openExternalUrl(result.login_url);
+        notify("已打开系统浏览器，完成登录与订阅后本页会自动刷新。");
+      })
+      .catch(() => notify("登录会话创建失败，请稍后重试。"))
+      .finally(() => setMemberBusy(false));
+  };
+
+  /** 外链统一出口（桌面端走 opener，浏览器预览新标签）。 */
+  const openExternalUrl = (url: string) => {
+    void import("@/lib/desktop").then(({ openExternalUrl: open }) => open(url));
+  };
+
+  const logoutMemberFromSettings = () => {
+    if (memberBusy) return;
+    setMemberBusy(true);
+    void logoutMemberAccount()
+      .then(async () => {
+        notify("已退出登录；订阅额度停用，其余设置保留。");
+        await refresh(true);
+        loadMemberMe();
+      })
+      .catch(() => notify("退出登录未完成，请稍后重试。"))
+      .finally(() => setMemberBusy(false));
+  };
 
   /** 已存自定义档「获取模型」：只传 profile_id，key 留在 sidecar 就地发现并
    *  更新存档列表（点点 0912 拍板）；成功后刷新投影，下次直接显示。 */
@@ -322,17 +360,6 @@ export function ProviderSettingsSection({
   }, [wizardCheck, wizardFingerprint]);
 
   useEffect(() => () => wizardCheckAbort.current?.abort(), []);
-
-  // 计费方式下拉（官方档）：外点即收起（CoachModelMenu 同款 mousedown 惯例）。
-  useEffect(() => {
-    if (!billingMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (event.target instanceof Node && billingMenuRef.current?.contains(event.target)) return;
-      setBillingMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [billingMenuOpen]);
 
   const openWizard = () => {
     setWizardDraft(emptyWizardDraft());
@@ -690,14 +717,12 @@ export function ProviderSettingsSection({
                 setRevealedKey(null);
                 setBaseUrlDraft(null);
                 setLastTest(null);
-                setBillingMode("plan");
-                setBillingMenuOpen(false);
               }}
               role="listitem"
               type="button"
             >
               <span className="task6-provider-list-text">
-                <span className="task6-provider-list-name">Aiming Cookie 官方</span>
+                <span className="task6-provider-list-name">Aiming Cookie（推荐）</span>
                 <span className="task6-provider-list-type">内置</span>
               </span>
               <span
@@ -723,8 +748,6 @@ export function ProviderSettingsSection({
                   setLastTest(null);
                   setDetailModels({ phase: "idle", models: [], message: null });
                   setDetailCatalogReload(null);
-                  setBillingMode("plan");
-                  setBillingMenuOpen(false);
                 }}
                 role="listitem"
                 type="button"
@@ -755,108 +778,80 @@ export function ProviderSettingsSection({
                 {officialDetail ? (
                   <>
                     <div className="task6-provider-head">
-                      <span className="task6-provider-name-plain">Aiming Cookie 官方</span>
+                      <span className="task6-provider-name-plain">Aiming Cookie（推荐）</span>
                       <span className="task6-provider-head-gap" />
                       {/* 设为当前收进卡右上角 ghost 小钮（点点 0912 拍板 b）。 */}
                       {relayArchive && !relayArchive.is_default ? (
                         <Button disabled={switchingProvider} onClick={() => void makeActive(relayArchive.id)} size="compact" variant="ghost">设为当前</Button>
                       ) : null}
-                      <div className="task6-provider-billing" ref={billingMenuRef}>
-                        <Button
-                          aria-expanded={billingMenuOpen}
-                          onClick={() => setBillingMenuOpen((open) => !open)}
-                          size="compact"
-                          variant="secondary"
-                        >
-                          {billingMode === "plan" ? "会员计划" : "API 计费"} ▾
-                        </Button>
-                        {billingMenuOpen ? (
-                          <div className="task6-provider-billing-menu" role="menu">
-                            <button
-                              className="task6-provider-billing-item"
-                              data-selected={billingMode === "plan"}
-                              onClick={() => { setBillingMode("plan"); setBillingMenuOpen(false); }}
-                              role="menuitem"
-                              type="button"
-                            >
-                              会员计划
-                            </button>
-                            <button
-                              className="task6-provider-billing-item"
-                              data-selected={billingMode === "api"}
-                              onClick={() => { setBillingMode("api"); setBillingMenuOpen(false); }}
-                              role="menuitem"
-                              type="button"
-                            >
-                              API 计费
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
                     </div>
 
-                    {billingMode === "plan" ? (
+                    {/* 会员专属模板（WP-C）：套餐 / 余量 / 登录与退出。不显示
+                        Base URL、API key，也没有任何余额金额——额度只出百分比。 */}
+                    {memberMe ? (
                       <>
-                        {/* 会员系统未上线（点点 0912 拍板）：完整线框 UI + 空态，
-                            数值显示「—」，升级/管理/解绑禁用带提示，上线后接真数据。 */}
-                        <div className="task6-provider-plan" data-placeholder="true">
+                        <div className="task6-provider-plan" data-member="true">
                           <div className="task6-provider-plan-head">
-                            <strong>AC 会员 Pro</strong>
+                            <strong>{memberMe.member ? `${planLabel(memberMe.plan)} 会员` : "已登录 · 未订阅"}</strong>
                             <span className="task6-provider-head-gap" />
-                            <Button disabled title="会员系统上线后开放" variant="secondary">升级</Button>
+                            <span className="task6-muted">{memberMe.user.email}</span>
                           </div>
                           <p className="task6-provider-plan-meta">
-                            到期 — · <span className="task6-provider-plan-link" title="会员系统上线后开放">管理</span> · <span className="task6-provider-plan-link" title="会员系统上线后开放">解绑</span>
+                            {memberMe.member
+                              ? `${memberMe.cancel_at_period_end ? "已取消 · 额度可用至" : "下期自动续费"} ${formatMemberDate(memberMe.period_end)}`
+                              : "还没有有效订阅；在账号中心完成订阅后本页自动更新。"}
                           </p>
                         </div>
                         <div className="task6-provider-quota-label">剩余额度</div>
-                        <div className="task6-provider-quota" data-placeholder="true">
-                          <div className="task6-provider-quota-head">本月剩余</div>
-                          <div className="task6-provider-quota-value">
-                            <b>—</b>
-                            <span className="task6-provider-quota-sub">重置于 —</span>
+                        <div className="task6-provider-quota" data-member="true">
+                          <div className="task6-provider-quota-head">
+                            {memberMe.pools.sub ? `订阅池 · ${memberMe.member ? "当前池" : "本期"}` : "订阅池"}
                           </div>
-                          <div className="task6-provider-quota-meter"><i style={{ width: "0%" }} /></div>
+                          <div className="task6-provider-quota-value">
+                            <b>{memberMe.pools.sub ? `${memberMe.pools.sub.pct}%` : "—"}</b>
+                            <span className="task6-provider-quota-sub">{boosterSubline(memberMe)}</span>
+                          </div>
+                          <div className="task6-provider-quota-meter">
+                            <i
+                              data-tier={memberMe.pools.sub ? poolTier(memberMe.pools.sub.pct) : undefined}
+                              style={{ width: `${Math.max(0, Math.min(100, memberMe.pools.sub?.pct ?? 0))}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="task6-provider-member-actions">
+                          <Button onClick={() => void openExternalUrl(ACCOUNT_BILLING_URL)} size="compact" variant="secondary">
+                            管理订阅
+                          </Button>
+                          <Button disabled={memberBusy} onClick={logoutMemberFromSettings} size="compact" variant="ghost">
+                            退出登录
+                          </Button>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div className="task6-provider-conn">
-                          <div className="task6-provider-conn-row">
-                            <dt>API Key</dt>
-                            <dd>{renderKeyMaskRow(relayArchive ?? SYNTHETIC_OFFICIAL_PROFILE)}</dd>
+                        <div className="task6-provider-plan" data-member="true">
+                          <div className="task6-provider-plan-head">
+                            <strong>未登录</strong>
                           </div>
-                          <div className="task6-provider-conn-row">
-                            <dt>余额</dt>
-                            <dd className="task6-provider-liveness">
-                              <span className="task6-provider-balance">
-                                {relayBalance.phase === "ready" && relayBalance.value !== null ? `¥ ${relayBalance.value.toFixed(2)}` : "¥ --"}
-                              </span>
-                              {relayBalance.phase === "error" ? <span className="task6-provider-balance-error">{relayBalance.message}</span> : null}
-                              <Button
-                                className="task6-provider-liveness-btn"
-                                disabled={!relayArchive?.credential_configured || relayBalance.phase === "loading"}
-                                onClick={loadRelayBalance}
-                                title={relayArchive?.credential_configured ? undefined : "填写 API Key 后可查余额"}
-                                variant="secondary"
-                              >
-                                刷新余额
-                              </Button>
-                            </dd>
-                          </div>
+                          <p className="task6-provider-plan-meta">
+                            用浏览器登录后，本档会自动拿到会员额度会话；订阅与支付都在网页完成。
+                          </p>
+                        </div>
+                        <div className="task6-provider-member-actions">
+                          <Button disabled={memberBusy} onClick={startMemberLoginFromSettings} size="compact" variant="primary">
+                            {memberBusy ? "正在打开浏览器…" : "登录 Aiming Cookie"}
+                          </Button>
                         </div>
                       </>
                     )}
 
                     <div className="task6-provider-models">
-                      <div className="task6-provider-models-title">模型列表</div>
+                      <div className="task6-provider-models-title">模型</div>
                       <div className="task6-provider-models-list">
-                        {(detailCatalogEntry?.models ?? []).map((model) => (
-                          <div className="task6-provider-model-row" key={model.model_id}>
-                            <span>{model.model_name ?? model.model_id}</span>
-                          </div>
-                        ))}
-                        {(detailCatalogEntry?.models ?? []).length === 0 ? <p className="task6-muted">模型目录暂时无法读取。</p> : null}
+                        <div className="task6-provider-model-row" key="deepseek-v4-flash">
+                          <span>deepseek-v4-flash</span>
+                          <span className="task6-muted">账号订阅 · 模型固定</span>
+                        </div>
                       </div>
                     </div>
                   </>

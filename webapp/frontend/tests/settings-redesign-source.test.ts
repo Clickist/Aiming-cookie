@@ -90,15 +90,17 @@ test("Provider section is a master-detail surface with a single add entry", asyn
   assert.match(section, /listStoredCustomProviderModels/);
   assert.match(section, /连接失败，请检查设置/);
   assert.match(section, /detail\.discovered_models\?\.length/);
-  // 官方档（线框 B）：按 provider_id=aiming-cookie-relay 识别，详情无
-  // Base URL/API Key 常规行，改走计费二选 + 会员计划空态 + API 计费真余额。
+  // 会员档（WP-C 升级，原「官方档」）：按 provider_id=aiming-cookie-relay 识别，
+  // 详情走会员专属模板——无 Base URL/API Key 常规行、无余额金额；
+  // 「会员计划 / API 计费」二选与查余额已退役（额度只出百分比，来自 /api/me）。
   assert.match(helpers, /"aiming-cookie-relay"/);
   assert.match(section, /isOfficialRelayProfile/);
-  assert.match(section, /会员计划/);
-  assert.match(section, /API 计费/);
-  assert.match(section, /会员系统上线后开放/);
-  assert.match(section, /刷新余额/);
-  assert.match(section, /getOfficialRelayBalance/);
+  assert.match(section, /fetchMemberStatus/);
+  assert.match(section, /startMemberLogin/);
+  assert.match(section, /logoutMemberAccount/);
+  assert.match(section, /Aiming Cookie（推荐）/);
+  assert.doesNotMatch(section, /getOfficialRelayBalance/);
+  assert.doesNotMatch(section, /刷新余额/);
   // 皮肤 token 化：主从式样式走容器/描边 token，不出硬编码色。
   assert.match(styles, /\.task6-provider-master\s*\{[^}]*display:\s*flex/);
   assert.match(styles, /\.task6-provider-list-card\s*\{[^}]*flex:\s*0 0 190px/);

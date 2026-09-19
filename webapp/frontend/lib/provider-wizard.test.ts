@@ -15,6 +15,7 @@ import {
   wizardDefaultName,
   wizardNameConflicts,
   wizardPayloadReady,
+  isMemberWizardType,
   wizardTypeOptions,
   type WizardBuildContext,
   type WizardDraft,
@@ -60,14 +61,15 @@ test("wizard keeps the fixed four-entry list as the missing-catalog fallback", (
   }
 });
 
-test("wizard derives the full vendor catalog with custom fallback and hides the official relay", () => {
+test("wizard derives the full vendor catalog with the member tier pinned first", () => {
   // 点点 0911 线框拍板：第 1 步类型卡从 catalog 派生完整厂商目录，
   // 「自定义 OpenAI 兼容」恒兜底在末尾。
   const options = wizardTypeOptions(catalog);
   assert.deepEqual(options.map((type) => type.id), ["deepseek", "openai", "custom"]);
   assert.equal(options[options.length - 1].label, "自定义 OpenAI 兼容");
   assert.equal(options.filter((type) => type.custom).length, 1);
-  // 官方中转是托管档案，不出现在「添加服务」类型目录。
+  // 会员档（WP-C 升级，线框 ①）：出现在「添加服务」列表且**置顶为推荐**，
+  // 显示名照线框文案，不是目录里的旧名。
   const withRelay: ProviderCatalogV1 = {
     schema_version: "coach_provider_catalog.v1",
     providers: [
@@ -75,8 +77,14 @@ test("wizard derives the full vendor catalog with custom fallback and hides the 
       { provider_id: "aiming-cookie-relay", provider_name: "Aiming Cookie 官方", auth_modes: ["api_key"], models: [] },
     ],
   };
-  assert.equal(wizardTypeOptions(withRelay).some((type) => type.id === "aiming-cookie-relay"), false);
-  // 目录缺失时回落固定四项（离线行为与上一批一致）。
+  const memberOptions = wizardTypeOptions(withRelay);
+  assert.equal(memberOptions[0].id, "aiming-cookie-relay");
+  assert.equal(memberOptions[0].label, "Aiming Cookie（推荐）");
+  assert.equal(memberOptions[0].custom, false);
+  assert.equal(isMemberWizardType("aiming-cookie-relay"), true);
+  assert.equal(isMemberWizardType("deepseek"), false);
+  // 目录缺失时回落固定四项（离线行为与上一批一致）——没有目录就没有会员档，
+  // 不做"凭硬编码 ID 也能选"的幽灵入口。
   assert.deepEqual(wizardTypeOptions(null).map((type) => type.id), ["deepseek", "openai", "anthropic", "custom"]);
   assert.deepEqual(wizardTypeOptions({ providers: [] }).map((type) => type.id), ["deepseek", "openai", "anthropic", "custom"]);
 });

@@ -6,10 +6,14 @@
  * API Key，自定义多一行 Base URL），底部「测试」：失败红字「连接失败」留在
  * 本步，成功绿字「✓ 连接成功」且按钮变「完成」写入列表。
  *
- * 类型目录从内置 catalog（/v1/providers/catalog）派生：官方中转
- *（aiming-cookie-relay）是托管档案，不出现在「添加服务」列表；目录缺失时
- * 回落固定四项，「自定义 OpenAI 兼容」恒兜底在末尾。卡片可用性仍按目录
- * 存在与否置灰（目录缺失置灰逻辑保留）。
+ * 类型目录从内置 catalog（/v1/providers/catalog）派生，并把会员档
+ *（aiming-cookie-relay）**置顶为「Aiming Cookie（推荐）」**（WP-C：线框 ①
+ * 要求它出现在「连接模型服务」下拉里且排第一，账号订阅、登录即用）；
+ * 目录缺失时回落固定四项，「自定义 OpenAI 兼容」恒兜底在末尾。卡片可用性
+ * 仍按目录存在与否置灰（目录缺失置灰逻辑保留）。
+ *
+ * 选中会员档后向导第 2 步整页换成「登录并订阅」流（弹系统浏览器 + deep-link 回），
+ * 不走 API key 表单；BYOK（自定义 Provider）路径一行逻辑不动。
  *
  * 内置类型的端点由后端 vendored 目录按 provider_id 决定（sidecar 的
  * parseProviderProfile 不接受 builtin 自带 base_url），因此向导对内置类型
@@ -21,7 +25,7 @@
  * 调整不令已通过的测试失效。
  */
 
-import { OFFICIAL_RELAY_PROVIDER_ID } from "@/lib/provider-helpers";
+import { OFFICIAL_RELAY_PROVIDER_ID, OFFICIAL_RELAY_PROVIDER_LABEL } from "@/lib/provider-helpers";
 import type {
   CustomProviderKind,
   CustomProviderModel,
@@ -56,7 +60,17 @@ export function wizardTypeOptions(catalog: ProviderCatalogV1 | null): WizardType
   const builtin = (catalog?.providers ?? [])
     .filter((provider) => provider.provider_id !== OFFICIAL_RELAY_PROVIDER_ID)
     .map((provider) => ({ id: provider.provider_id, label: provider.provider_name, custom: false }));
-  return builtin.length ? [...builtin, WIZARD_CUSTOM_FALLBACK] : [...WIZARD_TYPES];
+  if (!builtin.length) return [...WIZARD_TYPES];
+  // 会员档置顶（线框 ①）：目录里存在才置顶，缺失时列表与旧行为一致。
+  const member = (catalog?.providers ?? []).some((provider) => provider.provider_id === OFFICIAL_RELAY_PROVIDER_ID)
+    ? [{ id: OFFICIAL_RELAY_PROVIDER_ID, label: OFFICIAL_RELAY_PROVIDER_LABEL, custom: false }]
+    : [];
+  return [...member, ...builtin, WIZARD_CUSTOM_FALLBACK];
+}
+
+/** 会员档：第 2 步整页换「登录并订阅」流（不走 API key 表单）。 */
+export function isMemberWizardType(typeId: string): boolean {
+  return typeId === OFFICIAL_RELAY_PROVIDER_ID;
 }
 
 export const WIZARD_STEP_COUNT = 2;

@@ -846,53 +846,81 @@ function stubBillingFetch(total: number, used: number, status = 200): () => void
   return () => { globalThis.fetch = original; };
 }
 
-test("GET /v1/provider-profiles/official/balance returns 400 before an official key is saved", async () => {
+test("member status reports logged_in false when no member credential is stored", async () => {
+  // WP-C：会员档退役了「API 计费 / 余额」路径，额度只以百分比由 /api/me 下发；
+  // 未登录是常态（不是错误）→ 200 + logged_in:false。
   await withServer(async (server) => {
     await clearProfiles(server);
-    const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
-    assert.equal(res.statusCode, 400);
+    const res = await request(server, "GET", "/v1/provider-profiles/member/me");
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.json as { ok: boolean }).ok, false);
+    assert.equal((res.json as { logged_in: boolean }).logged_in, false);
+    assert.equal((res.json as { code: string }).code, "unauthorized");
   });
 });
 
-test("GET /v1/provider-profiles/official/balance computes balance from the billing endpoints", async () => {
+test("member exchange rejects a ticket that has no local pending device_code", async () => {
+  // 契约 §3.3-4（dc 绑定）：本地没有待用 dc（转发的链接 / 冷启动）→ 丢弃 ticket，
+  // 降级为「无 ticket」分支，且必须是 200 + 结构化 code（不是异常）。
   await withServer(async (server) => {
     await clearProfiles(server);
-    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
-      kind: "builtin",
-      provider_id: "aiming-cookie-relay",
-      model_id: "deepseek-v4-flash",
-      api_key: "sk-test-balance",
+    const res = await request(server, "POST", "/v1/provider-profiles/member/exchange", JSON.stringify({
+      ticket: "a".repeat(64),
+      dc: "no-such-device-code",
     }));
-    assert.equal(created.statusCode, 201);
-    const restore = stubBillingFetch(200, 53.5);
-    try {
-      const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
-      assert.equal(res.statusCode, 200);
-      assert.equal((res.json as { balance: number }).balance, 146.5);
-    } finally {
-      restore();
-    }
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.json as { ok: boolean }).ok, false);
+    assert.equal((res.json as { code: string }).code, "dc_mismatch");
   });
 });
 
-test("GET /v1/provider-profiles/official/balance maps a rejected key to 401", async () => {
+test("member exchange without a ticket pair degrades to the no-ticket branch", async () => {
+  // 契约 §3.3-3：ticket 与 dc 必须成对；只有一个 → 忽略 ticket（不报错）。
   await withServer(async (server) => {
     await clearProfiles(server);
-    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+    const res = await request(server, "POST", "/v1/provider-profiles/member/exchange", JSON.stringify({
+      ticket: "b".repeat(64),
+    }));
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.json as { code: string }).code, "no_ticket");
+  });
+});
+
+test("member logout clears the relay credential and reports the BYOK fallback", async () => {
+  // ④b：退出登录只停用订阅额度；配过 BYOK → 自动切过去，没配过 → 返回 null。
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const member = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
       kind: "builtin",
       provider_id: "aiming-cookie-relay",
       model_id: "deepseek-v4-flash",
-      api_key: "sk-test-balance",
+      api_key: "jwt-like-token",
     }));
-    assert.equal(created.statusCode, 201);
-    const restore = stubBillingFetch(0, 0, 401);
-    try {
-      const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
-      assert.equal(res.statusCode, 401);
-      assert.equal((res.json as { detail: string }).detail, "API Key 无效或已被重置");
-    } finally {
-      restore();
-    }
+    assert.equal(member.statusCode, 201);
+    const byok = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "custom_openai_compatible",
+      provider_id: "byok-user",
+      provider_name: "BYOK User",
+      base_url: "https://provider.example/v1",
+      model_id: "some-model",
+      api_key: "sk-byok",
+      context_window: 32768,
+      max_tokens: 4096,
+    }));
+    assert.equal(byok.statusCode, 201);
+    const byokId = (byok.json as { id: number }).id;
+
+    const res = await request(server, "POST", "/v1/provider-profiles/member/logout");
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, {
+      ok: true,
+      relay_profile_id: (member.json as { id: number }).id,
+      fallback_profile_id: byokId,
+      active_profile_id: byokId,
+    });
+    // 档还在（只是凭据被清），会员状态回到未登录。
+    const me = await request(server, "GET", "/v1/provider-profiles/member/me");
+    assert.equal((me.json as { logged_in: boolean }).logged_in, false);
   });
 });
 

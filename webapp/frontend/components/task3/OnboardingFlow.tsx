@@ -1,30 +1,47 @@
 "use client";
 
+/**
+ * Onboarding「连接模型服务」（线框 ①/①a/①b，v3.3）。
+ *
+ * 步骤 1 是 Provider 选择：会员档「Aiming Cookie（推荐）」置顶（①），选中并
+ * 「下一步」后整页换成会员登录流（①a 等待 / ①b 三中间态），不走 API key 表单；
+ * BYOK（自定义 Provider 与其余目录档）路径与升级前完全一致。
+ *
+ * 铁律⑤：未连通 Provider 不放行主界面——会员流的「继续」只在连通测试通过后亮。
+ * 铁律①：客户端内不出现登录表单、套餐选择与支付界面——一律弹系统浏览器。
+ */
+
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   authorizeProviderProfile,
   completeOnboarding,
   createProviderProfile,
   discoverCustomProviderModels,
+  exchangeMemberTicket,
+  fetchMemberStatus,
   getCaptureStatus,
   getDefaultProviderStatus,
   getProviderAuthCapabilities,
   getProviderAuthOperation,
   getProviderCatalog,
   listProviderProfiles,
+  startMemberLogin,
   submitProviderAuthInput,
   takeProviderAuthResult,
   testProviderProfile,
   updateProviderProfile,
 } from "@/lib/api";
-import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { isDesktopRuntime, openExternalUrl, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { MEMBER_COPY, maskEmail } from "@/lib/member";
+import { isMemberWizardType, wizardTypeOptions } from "@/lib/provider-wizard";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import type {
   CaptureStatusV1,
   CustomProviderKind,
   CustomProviderProtocol,
+  MemberMe,
   ProviderAuthMode,
   ProviderAuthOperation,
   ProviderCatalogEntry,
@@ -47,7 +64,12 @@ function handleExternalClick(event: { preventDefault(): void }, url: string): vo
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
 type OpenMenu = "provider" | "protocol" | "model" | null;
 
+/** 会员流状态机的四个可见态（①a 等待 / ①b 态1 未订阅 / ①b 态2 会员直连 / ①b 态3 连通失败）。 */
+type MemberStage = "waiting" | "not_subscribed" | "member" | "test_failed";
+
 const CUSTOM_PROVIDER_ID = "custom";
+/** 订阅页（契约 §0：落地页 origin 白名单含 accounts）。①b 态1 一键回订阅页。 */
+const MEMBER_SUBSCRIBE_URL = "https://accounts.gearclickist.com/pay";
 const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: CustomProviderProtocol }> = {
   custom_openai_compatible: {
     label: "OpenAI-compatible",
@@ -89,6 +111,13 @@ export function OnboardingFlow() {
   const [captureStatus, setCaptureStatus] = useState<CaptureStatusV1 | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [desktop, setDesktop] = useState(false);
+  // ── 会员流（①a/①b）──────────────────────────────────────────────────────
+  const memberSelected = providerId !== "" && isMemberWizardType(providerId) && !custom;
+  const [memberStage, setMemberStage] = useState<MemberStage>("waiting");
+  const [memberMe, setMemberMe] = useState<MemberMe | null>(null);
+  const [memberMessage, setMemberMessage] = useState("");
+  const [memberBusy, setMemberBusy] = useState(false);
+  const [memberLoginUrl, setMemberLoginUrl] = useState("");
   const providerMenuRef = useRef<HTMLDivElement>(null);
   const protocolMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -116,6 +145,164 @@ export function OnboardingFlow() {
   useEffect(() => {
     setDesktop(isDesktopRuntime());
   }, []);
+
+  /**
+   * 换票第一步 + 打开系统浏览器（契约 §3.1/§3.2）：device/start → login_url →
+   * 系统浏览器。客户端停留等待页，只等 deep-link，不轮询。
+   */
+  const startMemberFlow = useCallback(async (): Promise<void> => {
+    setMemberStage("waiting");
+    setMemberMessage("");
+    if (!isDesktopRuntime()) {
+      setMemberMessage("浏览器预览不能唤起系统浏览器与接收 deep-link，请在桌面版中完成登录。");
+      return;
+    }
+    const result = await startMemberLogin();
+    if (!result.ok) {
+      setMemberMessage(result.message);
+      return;
+    }
+    setMemberLoginUrl(result.login_url);
+    try {
+      await openExternalUrl(result.login_url);
+    } catch {
+      setMemberMessage("没能打开系统浏览器，可点下方「重新打开浏览器页面」。");
+    }
+  }, []);
+
+  /** 「重新打开浏览器页面」：复用已起的 login_url；没有则重起一轮 device_code。 */
+  const reopenMemberBrowser = useCallback(async (): Promise<void> => {
+    if (memberLoginUrl) {
+      try {
+        await openExternalUrl(memberLoginUrl);
+        return;
+      } catch {
+        /* 落到重起一轮 */
+      }
+    }
+    await startMemberFlow();
+  }, [memberLoginUrl, startMemberFlow]);
+
+  /** 收到 deep-link / 手动重试后的收口：刷新会员状态并决定中间态（①b）。 */
+  const syncMemberState = useCallback(async (): Promise<MemberMe | null> => {
+    const status = await fetchMemberStatus().catch(() => null);
+    if (!status || !status.ok || !status.logged_in) {
+      setMemberMe(null);
+      return null;
+    }
+    setMemberMe(status.me);
+    if (status.me.member) {
+      setMemberStage("member");
+      return status.me;
+    }
+    // 已登录但无有效订阅（态1）；本地已有 JWT 时也走这里（换机/重装快路径）。
+    setMemberStage("not_subscribed");
+    return status.me;
+  }, []);
+
+  /** 连通测试（铁律⑤ 的放行门）：态2 直连路径也要过这一关。 */
+  const probeMemberConnection = useCallback(async (): Promise<boolean> => {
+    try {
+      const { testMemberConnection } = await import("@/lib/api");
+      const result = await testMemberConnection();
+      if (result.ok) {
+        setMemberStage("member");
+        setMemberMessage("");
+        return true;
+      }
+      setMemberStage("test_failed");
+      setMemberMessage(result.message);
+      return false;
+    } catch {
+      setMemberStage("test_failed");
+      setMemberMessage("连接测试未能发起，请稍后重试。");
+      return false;
+    }
+  }, []);
+
+  // 选中会员档即起流（线框 ① 注：选中后按钮变「登录并订阅」→ 打开系统浏览器）。
+  useEffect(() => {
+    if (!memberSelected) return;
+    void startMemberFlow();
+  }, [memberSelected, startMemberFlow]);
+
+  // deep-link 监听：只在会员流内消费；scene 无关，失败一律静默（§3.3-7）。
+  const handledUrlsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!memberSelected || !desktop) return undefined;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const process = async (urls: string[] | null) => {
+      const fresh = (urls ?? []).filter((url) => !handledUrlsRef.current.has(url));
+      for (const url of fresh) handledUrlsRef.current.add(url);
+      if (!fresh.length) return;
+      const link = (await import("@/lib/member")).firstMemberDeepLink(fresh);
+      if (!link) return;
+      if (link.scene === "open" || !link.ticket || !link.dc) {
+        // §3.2 触发 2：无 ticket 的第二次跳转（支付成功唤醒）不报错，只用已有
+        // 凭证刷新；会员态变化照常推进中间态。
+        await syncMemberState();
+        return;
+      }
+      setMemberBusy(true);
+      try {
+        const result = await exchangeMemberTicket({ ticket: link.ticket, dc: link.dc });
+        if (disposed) return;
+        if (!result.ok) {
+          // dc 不匹配 / ticket 过期 / 已消费：都降级为「用已有凭证刷新」。
+          await syncMemberState();
+          return;
+        }
+        if (result.connection_ok === false) {
+          const me = await syncMemberState();
+          if (me?.member) {
+            setMemberStage("test_failed");
+            setMemberMessage(result.connection_message ?? "连接测试未通过，可重试。");
+          }
+          return;
+        }
+        const me = await syncMemberState();
+        if (me?.member) setMemberStage("member");
+      } finally {
+        if (!disposed) setMemberBusy(false);
+      }
+    };
+
+    void (async () => {
+      try {
+        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
+        if (disposed) return;
+        unlisten = await onOpenUrl((urls) => {
+          void process(urls);
+        });
+        if (disposed) {
+          unlisten();
+          unlisten = null;
+          return;
+        }
+        await process(await getCurrent());
+      } catch {
+        // 插件不可用：不影响其余路径（手动重开、BYOK）。
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [memberSelected, desktop, syncMemberState]);
+
+  // 已存会员档（换机/重装）直接进 ①b 态2：先取一次会员态，再连通测试。
+  useEffect(() => {
+    if (!memberSelected || !desktop) return;
+    void (async () => {
+      const me = await syncMemberState();
+      if (me?.member) await probeMemberConnection();
+    })();
+    // 只在选中会员档时跑一次；deep-link 到达由上面的监听推进。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberSelected, desktop]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -308,6 +495,8 @@ export function OnboardingFlow() {
   const selectedCustomModel = customModels.find((model) => model.model_id === customModel);
   const selectedModelLabel = selectedModel?.model_name ?? selectedModel?.model_id ?? modelId;
   const connectionReady = connectionState === "ready";
+  // ①b 态2（老会员直连）：会员态 + 连通测试都过才放行（铁律⑤）。
+  const memberReady = memberSelected && memberStage === "member" && connectionState !== "failed";
   const builtinModelSelectable = Boolean(
     selectedProvider
     && (authMode !== "api_key" || apiKey.trim() || (connectionReady && savedProfile?.has_api_key)),
@@ -385,6 +574,15 @@ export function OnboardingFlow() {
     customDiscovery.enterManualMode();
   };
 
+  // 档位显示名（会员档强制线框文案；其余沿用目录名）。
+  const wizardTypeLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const option of wizardTypeOptions({ schema_version: "coach_provider_catalog.v1", providers })) {
+      map.set(option.id, option.label);
+    }
+    return map;
+  }, [providers]);
+
   return (
     <main className="task3-onboarding" id="main-content">
       <div
@@ -403,7 +601,24 @@ export function OnboardingFlow() {
         <span data-active={step === 2 || undefined}>2</span>
       </div>
 
-      {step === 1 ? (
+      {step === 1 && memberSelected ? (
+        <MemberConnect
+          busy={memberBusy}
+          email={memberMe?.user.email ?? null}
+          message={memberMessage}
+          onContinue={() => setStep(2)}
+          onReopen={() => void reopenMemberBrowser()}
+          onRetry={() => void (async () => {
+            setMemberBusy(true);
+            const me = await syncMemberState();
+            if (me?.member) await probeMemberConnection();
+            setMemberBusy(false);
+          })()}
+          onSubscribe={() => void openExternalUrl(MEMBER_SUBSCRIBE_URL)}
+          onUseByok={() => selectProvider(CUSTOM_PROVIDER_ID)}
+          stage={memberStage}
+        />
+      ) : step === 1 ? (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="provider-title" key="provider">
           <h1 id="provider-title">连接模型服务</h1>
 
@@ -426,11 +641,13 @@ export function OnboardingFlow() {
                     }}
                     type="button"
                   >
-                    <span aria-live="polite">{custom ? "自定义 Provider" : selectedProvider?.provider_name ?? "选择 Provider"}</span>
+                    <span aria-live="polite">{custom ? "自定义 Provider" : (wizardTypeLabels.get(providerId) ?? selectedProvider?.provider_name ?? "选择 Provider")}</span>
                   </button>
                   {openMenu === "provider" ? (
                     <div aria-label="Provider 选项" className="task3-onboarding-dropdown-menu" id="onboarding-provider-listbox" role="listbox">
-                      {providers.map((provider) => (
+                      {providers
+                        .filter((provider) => !isMemberWizardType(provider.provider_id))
+                        .map((provider) => (
                         <button
                           aria-selected={!custom && provider.provider_id === providerId}
                           className="task3-onboarding-dropdown-option"
@@ -443,6 +660,20 @@ export function OnboardingFlow() {
                           <small>{provider.auth_modes.map(authModeLabel).join(" / ")}</small>
                         </button>
                       ))}
+                      {/* 会员档置顶（线框 ①）：账号订阅，登录即用。 */}
+                      {providers.some((provider) => isMemberWizardType(provider.provider_id)) ? (
+                        <button
+                          aria-selected={!custom && isMemberWizardType(providerId)}
+                          className="task3-onboarding-dropdown-option"
+                          data-member="true"
+                          onClick={() => selectProvider("aiming-cookie-relay")}
+                          role="option"
+                          type="button"
+                        >
+                          <span>{MEMBER_COPY.providerDropdownLabel}</span>
+                          <small>{MEMBER_COPY.providerDropdownHint}</small>
+                        </button>
+                      ) : null}
                       <button
                         aria-selected={custom}
                         className="task3-onboarding-dropdown-option"
@@ -698,10 +929,118 @@ export function OnboardingFlow() {
           {message ? <Notice tone="error">{message}</Notice> : null}
           <div className="task3-onboarding-actions">
             <Button onClick={() => setStep(1)} variant="secondary">返回</Button>
-            <Button disabled={finishing || !desktop || !captureOptIn} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
+            <Button disabled={finishing || !desktop || !captureOptIn || !(connectionReady || memberReady)} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
           </div>
         </section>
       )}
     </main>
+  );
+}
+
+/**
+ * 会员连接流（线框 ①a/①b）：同一张 wizard 卡按 stage 原位切换。
+ * 卡位固定，不动布局；等待页只做展示、不报错（契约 §3.3-7）。
+ */
+function MemberConnect({
+  stage,
+  email,
+  busy,
+  message,
+  onContinue,
+  onReopen,
+  onRetry,
+  onSubscribe,
+  onUseByok,
+}: {
+  stage: MemberStage;
+  email: string | null;
+  busy: boolean;
+  message: string;
+  onContinue: () => void;
+  onReopen: () => void;
+  onRetry: () => void;
+  onSubscribe: () => void;
+  onUseByok: () => void;
+}) {
+  return (
+    <section className="task3-onboarding-sheet task3-onboarding-step task3-member-connect" aria-labelledby="member-title" key="member">
+      <h1 id="member-title">连接模型服务 · Aiming Cookie</h1>
+
+      {stage === "waiting" ? (
+        <>
+          <div className="task3-member-card" data-tone="waiting">
+            <div aria-hidden="true" className="task3-member-glyph">🌐</div>
+            <strong>{MEMBER_COPY.waitingTitle}</strong>
+            <p>
+              {MEMBER_COPY.waitingBody}
+              <br />
+              {MEMBER_COPY.waitingReopenHint}
+              <button className="task3-member-link" onClick={onReopen} type="button">点此重新打开</button>
+            </p>
+          </div>
+          <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
+        </>
+      ) : null}
+
+      {stage === "not_subscribed" ? (
+        <>
+          <div className="task3-member-card" data-tone="account">
+            <div aria-hidden="true" className="task3-member-glyph">👤</div>
+            <strong>
+              {MEMBER_COPY.notSubscribedPrefix}
+              {email ? ` ${maskEmail(email)}` : ""} · {MEMBER_COPY.notSubscribedSuffix}
+            </strong>
+            <p>
+              {MEMBER_COPY.notSubscribedBody}
+              <br />
+              {MEMBER_COPY.notSubscribedBodyLine2}
+            </p>
+          </div>
+          <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
+          <div className="task3-member-secondary-actions">
+            <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
+          </div>
+          <Button onClick={onUseByok} variant="ghost">{MEMBER_COPY.useByok}</Button>
+        </>
+      ) : null}
+
+      {stage === "member" ? (
+        <>
+          <div className="task3-member-card" data-tone="member">
+            <div aria-hidden="true" className="task3-member-glyph">✅</div>
+            <strong>{MEMBER_COPY.alreadyMember}</strong>
+            <p>
+              {MEMBER_COPY.alreadyMemberBody}
+              <br />
+              {MEMBER_COPY.alreadyMemberBodyLine2}
+            </p>
+          </div>
+          <p className="task3-member-ok">● {MEMBER_COPY.connected}</p>
+          <Button className="task3-member-primary" onClick={onContinue} variant="primary">{MEMBER_COPY.continueLabel}</Button>
+        </>
+      ) : null}
+
+      {stage === "test_failed" ? (
+        <>
+          <div className="task3-member-card" data-tone="error">
+            <div aria-hidden="true" className="task3-member-glyph">⚠️</div>
+            <strong data-tone="error">{MEMBER_COPY.testFailed}</strong>
+            <p>
+              {message || MEMBER_COPY.testFailedBody}
+              <br />
+              {MEMBER_COPY.testFailedBodyLine2}
+            </p>
+          </div>
+          <Button className="task3-member-primary" disabled={busy} onClick={onRetry} variant="primary">{MEMBER_COPY.retryConnect}</Button>
+          <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
+          <Button onClick={onUseByok} variant="ghost">{MEMBER_COPY.useByok}</Button>
+        </>
+      ) : null}
+
+      {/* 退出会员流（①a/①b 的「改用自定义 Provider（BYOK）」）：清理已存会员
+          凭据不必——凭据是会员资产，退出流不等于退出登录。 */}
+      {stage === "waiting" ? <Button onClick={onUseByok} variant="ghost">{MEMBER_COPY.useByok}</Button> : null}
+      {message && stage === "waiting" ? <Notice tone="warning">{message}</Notice> : null}
+    </section>
   );
 }

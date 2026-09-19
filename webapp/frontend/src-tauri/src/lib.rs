@@ -828,14 +828,49 @@ fn desktop_capture_coordinator_set_enabled(
     state.set_enabled(enabled)
 }
 
+/// deep-link 到达的落盘痕迹（排障用）：只记 scheme/scene 与 ticket/dc **是否存在**，
+/// 不记 ticket、dc、邮箱等任何值——ticket 是一次性凭证但仍是凭证（契约 §3.1 的同一条
+/// 推理：自定义协议 URL 会进浏览器历史与其他应用日志）。
+fn log_deep_link_receipt(source: &str, args: impl Iterator<Item = impl AsRef<str>>) {
+    for arg in args {
+        let value = arg.as_ref();
+        if !value.starts_with("aimingcookie:") {
+            continue;
+        }
+        let parsed = value
+            .split_once('?')
+            .map(|(_, query)| query)
+            .unwrap_or_default();
+        let mut scene = "open";
+        let mut has_ticket = false;
+        let mut has_dc = false;
+        for pair in parsed.split('&') {
+            match pair.split_once('=') {
+                Some(("scene", value)) if !value.is_empty() => scene = value,
+                Some(("ticket", value)) if !value.is_empty() => has_ticket = true,
+                Some(("dc", value)) if !value.is_empty() => has_dc = true,
+                _ => {}
+            }
+        }
+        diag_log::write_line(&format!(
+            "deep-link: source={source} scene={scene} ticket={has_ticket} dc={has_dc}"
+        ));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
+pub fn run() {    let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
     let media_handler = Arc::clone(&managed_media);
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // 会员 deep-link（aimingcookie://，契约 accounts/INTERFACE.md §3）：
+        // Windows/Linux 由协议注册表以 argv 拉起新实例，插件本身不监听——
+        // single-instance 的 deep-link feature 会把二次实例的 argv 转交本插件
+        // 并广播 deep-link://new-url 事件；首启实例的 URL 由前端 get_current 读回。
+        builder = builder.plugin(tauri_plugin_deep_link::init());
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            log_deep_link_receipt("secondary-instance", args.iter().map(String::as_str));
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -853,6 +888,35 @@ pub fn run() {
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;
             diag_log::init(app_data_dir.join("logs"));
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // 协议注册自愈：安装版由 NSIS 写注册表（tauri.conf.json 的
+                // plugins.deep-link.desktop.schemes 也是打包器读的那份），
+                // 但 tauri dev 与手工搬移过安装目录的场景没有安装器代劳。
+                // 未注册才写一次，失败只落日志——协议唤起失败是常态，
+                // 不能拖垮启动（契约 §3.3-7）。
+                let deep_link = app.deep_link();
+                // scheme 与 tauri.conf.json 的 plugins.deep-link.desktop.schemes 必须一致。
+                for scheme in ["aimingcookie"] {
+                    match deep_link.is_registered(scheme) {
+                        Ok(true) => {}
+                        Ok(false) => match deep_link.register(scheme) {
+                            Ok(()) => diag_log::write_line(&format!("deep-link: registered {scheme}")),
+                            Err(error) => {
+                                diag_log::write_line(&format!("deep-link: register {scheme} failed: {error}"))
+                            }
+                        },
+                        Err(error) => {
+                            diag_log::write_line(&format!("deep-link: is_registered {scheme} failed: {error}"))
+                        }
+                    }
+                }
+                // 冷启动由协议唤起时，插件的 current 里已有 argv 读到的 URL。
+                if let Ok(Some(urls)) = deep_link.get_current() {
+                    log_deep_link_receipt("cold-start", urls.iter().map(|url| url.as_str()));
+                }
+            }
             managed_media
                 .configure(app_data_dir.clone())
                 .map_err(io::Error::other)?;

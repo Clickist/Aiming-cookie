@@ -47,6 +47,11 @@ export const LIGHT_TOKENS = {
   "event-miss": "#c53442",
   "event-corrective": "#1769c2",
   "event-peak": "#c83d00",
+  // 会员余量三档（member-pay 线框 v3.3 冻结值：绿/橙/红）。余量只以百分比呈现，
+  // 这三枚只用于进度条与百分比文字的分档着色，不做装饰。
+  "quota-ok": "#16875b",
+  "quota-warn": "#e8930c",
+  "quota-low": "#c53442",
   "inverse-surface": "#312b25",
   "inverse-on-surface": "#f9eee8",
   "inverse-primary": "#ffb59d",
@@ -103,6 +108,11 @@ export const DARK_TOKENS: { [K in keyof typeof LIGHT_TOKENS]: string } = {
   "event-miss": "#ff8792",
   "event-corrective": "#85c2ff",
   "event-peak": "#ff8a5c",
+  // 暗色对应档：绿/红取 event-* 同族亮值，橙独立取亮琥珀（亮模式 #e8930c
+  // 在暗背景上对比不足，2.4:1）。
+  "quota-ok": "#4fdca0",
+  "quota-warn": "#e8a33d",
+  "quota-low": "#ff8792",
   "inverse-surface": "#e9e4dd",
   "inverse-on-surface": "#3e2c26",
   "inverse-primary": "#ac3400",

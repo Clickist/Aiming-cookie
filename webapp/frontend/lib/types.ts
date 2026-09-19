@@ -985,6 +985,75 @@ export interface OfficialRelayBalance {
   used: number;
 }
 
+/**
+ * Aiming Cookie 会员状态（契约 §7.1-8 `/api/me`，字段冻结）。
+ * 客户端唯一数据源：chip 单条百分比、用户中心两池全貌、④/⑨ 提示态都读它。
+ */
+export interface MemberMe {
+  user: { id: string; email: string; name: string | null };
+  member: boolean;
+  plan: "standard" | "plus" | null;
+  status: "active" | "canceled" | "expired" | "refunded" | "none";
+  cancel_at_period_end: boolean;
+  period_start: string | null;
+  period_end: string | null;
+  dunning: boolean;
+  pools: {
+    sub: MemberPool | null;
+    boost: MemberPool | null;
+  };
+  current_pool: "sub" | "boost" | null;
+  boost_buyable: boolean;
+  server_time: string;
+}
+
+export interface MemberPool {
+  remaining: number;
+  grant: number;
+  pct: number;
+}
+
+/** `/v1/provider-profiles/member/me`：会员状态 + 档案路由（未登录恒 200）。 */
+export type MemberStatusResponse =
+  | {
+      ok: true;
+      logged_in: true;
+      profile_id: number | null;
+      active_profile_id: number | null;
+      me: MemberMe;
+    }
+  | { ok: false; logged_in: false; code: "unauthorized"; message: string }
+  | { ok: false; logged_in: true; code: "unavailable"; message: string };
+
+/** `/v1/provider-profiles/member/exchange`：deep-link 换票结果（失败不是错误）。 */
+export type MemberExchangeResponse =
+  | {
+      ok: true;
+      user: { id: string; email: string; name: string | null };
+      member: boolean;
+      profile_id: number | null;
+      connection_ok: boolean;
+      connection_code: "unauthorized" | "unreachable" | null;
+      connection_message: string | null;
+    }
+  | { ok: false; code: MemberExchangeFailureCode; message: string };
+
+export type MemberExchangeFailureCode =
+  | "no_ticket"
+  | "dc_mismatch"
+  | "already_consumed"
+  | "invalid_ticket"
+  | "ticket_expired"
+  | "device_code_invalid"
+  | "device_code_claimed"
+  | "device_code_expired"
+  | "network_error";
+
+/** `/v1/provider-profiles/member/login/start`：换票第一步。 */
+export type MemberLoginStartResponse =
+  | { ok: true; device_code: string; login_url: string; expires_in: number }
+  | { ok: false; message: string };
+
 /** Raw sidecar status detail with the resolved catalog model (model switch response). */
 export interface ProviderProfileStatusDetail {
   schema_version: "coach_provider_profile_status.v1";

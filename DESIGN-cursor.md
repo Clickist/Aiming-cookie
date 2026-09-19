@@ -105,6 +105,9 @@ All themes expose the identical token names below. Values are intentionally sema
 | `event-miss` | `#c53442` | `#ff8792` | Miss event |
 | `event-corrective` | `#1769c2` | `#85c2ff` | Corrective event |
 | `event-peak` | `#c83d00` | `#ff8a5c` | Peak-tension event |
+| `quota-ok` | `#16875b` | `#4fdca0` | Member quota bar — healthy tier |
+| `quota-warn` | `#e8930c` | `#e8a33d` | Member quota bar — 10–30% tier |
+| `quota-low` | `#c53442` | `#ff8792` | Member quota bar — <10% tier |
 | `inverse-surface` | `#312b25` | `#e9e4dd` | Inverted surface |
 | `inverse-on-surface` | `#f9eee8` | `#3e2c26` | Text on inverted surface |
 | `inverse-primary` | `#ffb59d` | `#ac3400` | Action on inverted surface |

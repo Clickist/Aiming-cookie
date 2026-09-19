@@ -74,37 +74,39 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
 }
 
 /**
- * Aiming Cookie 官方（自家托管服务，内测）：注入为内置 Provider，目录下发、
- * 档解析、方言继承三条链路共用 createBuiltinModels，因此都在这里注入。
- * 模型清单按服务 2026-09-10 实测 /v1/models（26 个）硬编码，服务增减
- * 模型时同步这份列表；计费在服务侧按额度结算，成本字段记 0。
- * base_url 不入库（开源仓库不含真实地址）：打包时由 scripts/build-windows-runtime.ps1
- * 经 bun --define 注入 process.env.AC_RELAY_BASE_URL，值保存在 gitignore 的
- * relay-base-url.local.txt；本地 dev/test 用同名环境变量提供，未配置时不注入官方档。
+ * Aiming Cookie（推荐）——会员档（WP-C 升级，2026-09-19 契约冻结）。
+ *
+ * 这条档从「内测中转（key 对用户可见、模型全家桶、按 API 计费）」升级为
+ * **账号订阅档**：auth 换成浏览器登录 + deep-link 换票拿到的 JWT（存在档案
+ * credential 里，见 member-auth.ts），模型锁 `deepseek-v4-flash`，端点固定
+ * 指向广东 ECS 的 ac-gateway 会员入口（契约 §0：客户端 AI base_url 是
+ * `https://token.gearclickist.com:8443/member`，网关只透传 `/v1/...`，
+ * 故这里带上 `/v1` 让 OpenAI 兼容调用打到 `/member/v1/chat/completions`）。
+ *
+ * 目录、档解析、方言继承三条链路共用 createBuiltinModels，因此在这里注入。
+ * 模型清单固定一条，能力/方言按 model_id 从 Pi 内建目录继承
+ * （deepseek-v4-flash 自带 thinkingFormat 方言，缺失会让"说出声"复发）。
+ *
+ * 基址仍可由环境变量覆盖，供本地 dev / e2e 指向 mock：
+ * `AC_MEMBER_GATEWAY_BASE_URL`（新）优先，`AC_RELAY_BASE_URL`（旧注入名）保留
+ * 一个版本以兼容既有构建脚本。
  */
 export const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
-const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie 官方";
-function relayBaseUrl(): string {
-  return process.env.AC_RELAY_BASE_URL ?? "";
+/** 档显示名（剑线稿 ①：置顶推荐、账号订阅，登录即用）。 */
+export const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie（推荐）";
+/** 模型锁（契约 §0）：sub / boost 两令牌都是这一个模型。 */
+export const AIMING_COOKIE_RELAY_MODEL_ID = "deepseek-v4-flash";
+/** 会员档端点默认值（契约 §0）；带 /v1 以便 OpenAI 兼容路径透传给网关。 */
+export const MEMBER_GATEWAY_BASE_URL = "https://token.gearclickist.com:8443/member/v1";
+
+export function relayBaseUrl(): string {
+  return process.env.AC_MEMBER_GATEWAY_BASE_URL
+    ?? process.env.AC_RELAY_BASE_URL
+    ?? MEMBER_GATEWAY_BASE_URL;
 }
-const AIMING_COOKIE_RELAY_MODEL_IDS = [
-  "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "deepseek-v4-pro-0813",
-  "gemini-2.5-pro", "gemini-3.6-flash",
-  "glm-5.3", "glm-5.3-free",
-  "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
-  "haiku-4.5",
-  "kimi-2.7-code", "kimi-k3",
-  "opus-4.6", "opus-4.7", "opus-4.8", "opus-5",
-  "qwen3.6-flash", "qwen3.6-plus", "qwen3.8-flash-free", "qwen3.8-max",
-  "sensenova-6.7-flash-lite", "sensenova-6.8-flash-lite",
-  "sonnet-4.6",
-] as const;
+const AIMING_COOKIE_RELAY_MODEL_IDS = [AIMING_COOKIE_RELAY_MODEL_ID] as const;
 
 async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> {
-  if (!relayBaseUrl()) {
-    // 未配置地址（本地 dev/test 未设环境变量、或构建未注入）：不注入官方档。
-    return;
-  }
   const ai = (await loadPiAi()) as {
     createProvider: (options: Record<string, unknown>) => PiProvider;
   };
@@ -140,6 +142,8 @@ async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> 
     name: AIMING_COOKIE_RELAY_PROVIDER_NAME,
     baseUrl: relayBaseUrl(),
     auth: {
+      // 会员档凭据 = 换票拿到的 JWT（member-auth.ts 写进档 credential）。
+      // 交互式 prompt 保留为兜底（未走登录链时手贴凭据），主链路不触达。
       apiKey: {
         name: `${AIMING_COOKIE_RELAY_PROVIDER_NAME} token`,
         login: async (interaction: {
@@ -261,48 +265,6 @@ export async function fetchCustomProviderModels(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-const OFFICIAL_RELAY_BALANCE_TIMEOUT_MS = 10_000;
-
-export type OfficialRelayBalance = {
-  /** 余额（站点额度单位折算值，保留两位）。 */
-  balance: number;
-  total: number;
-  used: number;
-};
-
-/**
- * 官方中转档余额（点点 0912 拍板）：new-api 系计费兼容端点
- * （/dashboard/billing/subscription + /usage），余额 = hard_limit_usd - total_usage。
- * 用档内存档 key 就地查询；测试阶段 key 本就对用户可见，无脱敏诉求。
- */
-export async function fetchOfficialRelayBalance(
-  apiKey: string,
-  timeoutMs: number = OFFICIAL_RELAY_BALANCE_TIMEOUT_MS,
-): Promise<OfficialRelayBalance> {
-  const base = relayBaseUrl().trim().replace(/\/+$/, "");
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    timeout.unref?.();
-    try {
-      const response = await fetch(`${base}${path}`, { headers, signal: controller.signal });
-      if (!response.ok) throw new Error(`billing_${response.status}`);
-      return (await response.json()) as Record<string, unknown>;
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
-  const [subscription, usage] = await Promise.all([
-    fetchJson("/dashboard/billing/subscription"),
-    fetchJson("/dashboard/billing/usage"),
-  ]);
-  const total = typeof subscription.hard_limit_usd === "number" ? subscription.hard_limit_usd : null;
-  const used = typeof usage.total_usage === "number" ? usage.total_usage : null;
-  if (total === null || used === null) throw new Error("billing_shape");
-  return { balance: Math.max(0, Math.round((total - used) * 100) / 100), total, used };
 }
 
 async function resolveBuiltinProfile(
