@@ -229,7 +229,44 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
-<h2><span class="no">②b</span>用户中心（点击用户卡片后 · 右侧主区域整体切换 · 带 ← 返回）</h2>
+<h2><span class="no">②b</span>左下角用户卡片 · 三种状态（会员 / BYOK / 本地引擎）</h2>
+<div class="screen-wrap">
+  <div class="frame window">
+    <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
+    <div class="body">
+      <div class="app" style="height:100%;flex:1">
+        <div style="flex:1;display:flex;gap:16px;padding:14px;background:var(--background)">
+          <div style="flex:1">
+            <div class="muted" style="margin-bottom:6px"><b>状态 A · 会员（已登录）</b></div>
+            <div class="acct sel" style="font-size:12px"><b>👤 u***@gmail.com</b><br>基础档 · 余量 62%</div>
+            <div class="muted" style="margin-top:8px">点击 → 右侧区域切换「用户中心」（← 返回）</div>
+          </div>
+          <div style="flex:1">
+            <div class="muted" style="margin-bottom:6px"><b>状态 B · BYOK（未登录或已登录均可）</b></div>
+            <div class="acct" style="font-size:12px"><b>⚙ 自定义 Provider · 已连接</b><br>deepseek-v4-flash<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
+            <div class="muted" style="margin-top:8px">引擎信息照常显示；「登录」引导开通云教练（BYOK 永久保留，登录是叠加）</div>
+          </div>
+          <div style="flex:1">
+            <div class="muted" style="margin-bottom:6px"><b>状态 C · 本地引擎</b></div>
+            <div class="acct" style="font-size:12px"><b>🖥 本地引擎 · 已连接</b><br>Claude Code<br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
+            <div class="muted" style="margin-top:8px">同 B：显示引擎标识 + 登录引导；<b>位置永远不空</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <span class="tag">规则</span>
+    <ul>
+      <li>左下角<b>永远有内容</b>：会员=邮箱+档位+%；BYOK=⚙引擎+模型；本地=🖥引擎+CLI 名</li>
+      <li>非会员的卡上只有「登录/注册 ›」引导（一句话，无价格无营销）</li>
+      <li>订阅过期：会员卡变「订阅已结束 · 余量 0%」+「重新订阅 ›」</li>
+      <li>口径：只显示百分比，无金额</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="no">②c</span>用户中心（点击会员卡片后 · 右侧主区域整体切换 · ← 返回）</h2>
 <div class="screen-wrap">
   <div class="frame window">
     <div class="titlebar">🍪 Aiming Cookie<span class="winbtns"><i></i><i></i><i></i></span></div>
@@ -243,7 +280,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         </div>
         <div class="app-main" style="padding:0">
           <div class="pagehead">← 返回　用户中心</div>
-          <div style="padding:20px 24px;overflow:auto">
+          <div style="padding:22px 26px;overflow:auto">
             <div class="darkbar">
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <b style="font-size:15px">基础档会员 · 生效中</b>
@@ -274,10 +311,10 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   <div class="annot">
     <span class="tag">交互与内容</span>
     <ul>
-      <li><b>导航模式：</b>与训练历史页一致——点击左下角卡片进入，顶部「← 返回」回对话</li>
-      <li><b>内容（0918 学的 Open Design 账号中心）：</b>订阅横幅 + <b>深色余量大条（百分比）</b> + 管理订阅/退款（跳网页）+ 账户信息 + 退出登录</li>
-      <li><b>BYOK 用户：</b>本页显示「当前引擎：自定义 Provider · 已连接」+「登录以开通云教练」</li>
+      <li><b>导航模式：</b>与训练历史页一致——点击左下角会员卡进入，顶部「← 返回」回对话</li>
+      <li><b>内容：</b>订阅横幅 + 深色余量大条（百分比）+ 管理订阅/退款（跳网页）+ 账户信息 + 退出登录</li>
       <li><b>零商业化：</b>无升级按钮、无价格——升级行为只发生在网页 /pay</li>
+      <li><b>BYOK/本地引擎用户：</b>进入的页面显示引擎信息 + 「登录以开通云教练」（无订阅内容）</li>
     </ul>
   </div>
 </div>
@@ -555,38 +592,66 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
-<h2><span class="no">⑪</span>账号中心网页（P2 · 线框级）</h2>
+<h2><span class="no">⑪</span>账号中心网页 · 完全重做（Open Design 左栏布局 · P2）</h2>
 <div class="screen-wrap">
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account</span></div>
-    <div class="body">
-      <div class="nav">
-        <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
-        <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px">u</span><b>u***@gmail.com ▾</b></span>
-      </div>
-      <div style="max-width:760px;margin:24px auto;padding:0 20px">
-        <div class="darkbar">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <b style="font-size:15px">基础档会员 · 生效中</b>
-            <span style="font-size:12px;opacity:.75">下期自动续费 10-20</span>
-          </div>
-          <div class="progress dark" style="margin:12px 0 8px"><i style="width:62%"></i></div>
-          <div style="display:flex;justify-content:space-between;font-size:13px">
-            <span style="font-size:20px;font-weight:700">余量 62%</span>
-            <span style="opacity:.75;align-self:center">额度每周期发放 · 连续包月</span>
+    <div class="body" style="flex-direction:row;min-height:540px">
+      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b><span class="muted">⇥</span></div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px;display:flex;justify-content:space-between"><span>概览</span><span>✓</span></div>
+        <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>用量</span><span class="muted">📊</span></div>
+        <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>账单</span><span class="muted">🧾</span></div>
+        <div style="padding:9px 12px;font-size:13px;display:flex;justify-content:space-between"><span>设置</span><span class="muted">⚙</span></div>
+        <div style="margin-top:auto">
+          <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">模型与价格</div>
+          <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div>
+          <div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant);display:flex;justify-content:space-between"><span>语言切换</span><span>文A</span></div>
+          <div class="card" style="margin-top:10px;padding:10px;font-size:12px;display:flex;gap:8px;align-items:center">
+            <span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;flex:none">u</span>
+            <span><b>u***@gmail.com</b><br><span class="muted">基础档</span></span>
           </div>
         </div>
-        <div class="card" style="margin-top:14px">
-          <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px"><span>套餐</span><span>基础档 · 连续包月 · ¥10/月</span></div>
-          <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px"><span>管理</span><span style="color:var(--primary)">管理订阅 / 申请退款</span></div>
+      </div>
+      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
+        <div style="font-weight:700;font-size:18px;margin-bottom:14px">概览</div>
+        <div style="background:linear-gradient(120deg,var(--primary),#8a2b00);border-radius:14px 14px 0 0;color:var(--on-primary);padding:22px 26px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div style="font-size:20px;font-weight:700">基础档</div>
+              <div style="font-size:12px;opacity:.85">订阅状态：连续包月 · 生效中</div>
+            </div>
+            <span style="background:#fff;color:var(--primary);padding:9px 16px;font-size:13px;border-radius:10px;font-weight:600">🔔 升级订阅</span>
+          </div>
+        </div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:0 0 14px 14px;padding:16px 26px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;opacity:.85">个人可用额度</span>
+          <span style="font-size:26px;font-weight:700">62% <span style="font-size:12px;opacity:.7">ⓘ</span></span>
+        </div>
+        <div class="card" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:14px">
+          <div>
+            <b style="font-size:13px">加速包</b>
+            <div class="muted" style="margin-top:3px">本期额度不够用？立即加购一份（约 120 轮，立即到账）。</div>
+          </div>
+          <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap">购买加速包 · ¥10</span>
+        </div>
+        <div class="card" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:14px">
+          <div>
+            <b style="font-size:13px">自动续费</b>
+            <div class="muted" style="margin-top:3px">下期自动续费 2026-10-20 · ¥10（基础档）。</div>
+          </div>
+          <span class="btn sec" style="margin:0;padding:9px 14px;font-size:13px;white-space:nowrap">管理自动续费</span>
         </div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">定位</span>
+    <span class="tag">布局（对标点点提供的 Open Design 截图）</span>
     <ul>
-      <li>网页端账号/订阅/用量一站（结构对齐 0918 学的 Open Design 账号中心：订阅横幅+余量大条）</li>
+      <li><b>左栏导航：</b>logo+折叠钮 · 概览（激活态）/用量/账单/设置 · 底部 模型与价格、帮助与文档、语言切换、账号卡（个人产品，无「成员」）</li>
+      <li><b>右主区：</b>品牌色订阅横幅（档位+状态+「升级订阅」）→ <b>黑色余量大条</b>（左「个人可用额度」右大字百分比，无金额）→ 加速包卡（✅ 已确认要做）→ 自动续费卡</li>
+      <li><b>子页：</b>用量=逐笔明细；账单=Stripe 收据列表；设置=邮箱/支付方式/注销</li>
+      <li><b>免费用户态：</b>横幅显示「免费版 · 正在使用 BYOK/本地引擎」，按钮「升级订阅」→ /pay</li>
     </ul>
   </div>
 </div>
