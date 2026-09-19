@@ -688,13 +688,14 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
         </div>
         <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
-          <b style="font-size:14px">申请退款</b>
+          <b style="font-size:14px">申请退款（自助 · 即时）</b>
           <div class="muted" style="margin:5px 0 10px">
             未使用（0 消耗）且购买 14 天内：退<b>实际到账金额</b>。<br>
-            已使用：按<b>剩余额度比例 × 实际到账金额</b>折算。<b>支付渠道手续费（约 ¥2.3/单）不返</b>；订阅与加油包一起清算、不留余额，退款后即恢复免费用户（BYOK）。<br>
+            已使用：按<b>剩余额度比例 × 实际到账金额</b>自动折算（订阅与加油包分别计算、一次清算）。<b>支付渠道手续费（约 ¥2.3/单）不返</b>；退款后订阅立即结束、恢复免费用户（BYOK），到卡 5~10 个工作日。<br>
             例：¥10 订阅（渠道费 ¥2.3 · 实收 ¥7.7）· 0 消耗 → 退 ¥7.70 · 用掉 40% → 退 ¥4.62。
           </div>
-          <div class="btn text">邮件申请 support@aimingcookie.com（自动附账号/订阅/用量摘要）· 人工审核 1~3 个工作日</div>
+          <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">申请退款</div>
+          <div class="muted" style="margin-top:8px">↑ 点击 → 确认弹层明示明细：「本次将退：订阅 ¥4.62 + 加油包 ¥0 = 合计 ¥4.62 · 订阅立即结束」→ 确认即退。有疑问联系 support@aimingcookie.com；每笔退款自动邮件通知站长（事后知情，非审批）</div>
         </div>
         <div class="card" style="margin-top:14px;max-width:560px;padding:0;overflow:hidden">
           <div style="padding:12px 16px 0"><b style="font-size:14px">付款记录</b></div>
@@ -744,7 +745,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
       <li><b>唯一的壳：</b>账号中心＝⑪ Open Design 左栏（概览/用量/账单）；本屏＝账单子页的两种状态，风格/导航与 ⑪ 完全一致</li>
       <li><b>取消：</b>cancel at period_end；<b>恢复：</b>同一订阅 resume（按钮双态，不新建订阅）</li>
       <li><b>升级：</b>立即切档 + proration 按比例折算差价（Stripe 原生）；<b>无降级</b>——想下去只有退款一条路</li>
-      <li><b>退款：</b>Refund API 部分退款（订阅、加油包两笔），MVP 人工 Dashboard 执行；退款后订阅立即取消+两池清零</li>
+      <li><b>退款：</b>Refund API 部分退款（订阅、加油包两笔），全自助 quote/confirm 两步即时执行；退款后订阅立即取消+两池清零；每笔退款邮件通知站长（事后知情）</li>
       <li><b>付款记录：</b>常驻账单子页页尾（时间/内容/金额/收据）——原 ⑪b 独立屏已并入本页，账号中心=一套左栏壳+概览/用量/账单三子页</li>
     </ul>
   </div>
@@ -1047,7 +1048,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
 <!-- ⑪b 独立账单页已删除（v3.3）：付款记录表并入 ⑦ 账单子页页尾，账号中心只有概览/用量/账单三个子页、一套左栏壳 -->
 
 <div class="divider" style="margin:36px 0"></div>
-<div class="muted"><b>异常覆盖（v3.3）</b>：Onboarding 未连通不放行（①铁律）· 登录未订阅/老会员直连/连通失败（①b 三态）· 网页未完成付款就关闭（①a 停留本步可重开/BYOK）· 已扣款未到账（⑥b）· 未完成付款（⑥c 订阅与加油包通用）· 未登录点支付（⑤置灰引导）· 扣款失败（⑧ Stripe 自带+轻提示，无提醒邮件）· 订阅失效+加油包有余额（⑨左续命态）/双池皆空（⑨右断开）· 升级（⑦自动折算差价退旧订新）· 取消后反悔（⑦/②c 恢复双态）· 退出登录（④b fallback BYOK/置灰，不打回 Onboarding）· 额度争议（⑪a 明细）· 退款（⑦订阅+加油包一起按比例清算，人工审核）· BYOK 用户全程不受会员体系影响。</div>
+<div class="muted"><b>异常覆盖（v3.3）</b>：Onboarding 未连通不放行（①铁律）· 登录未订阅/老会员直连/连通失败（①b 三态）· 网页未完成付款就关闭（①a 停留本步可重开/BYOK）· 已扣款未到账（⑥b）· 未完成付款（⑥c 订阅与加油包通用）· 未登录点支付（⑤置灰引导）· 扣款失败（⑧ Stripe 自带+轻提示，无提醒邮件）· 订阅失效+加油包有余额（⑨左续命态）/双池皆空（⑨右断开）· 升级（⑦自动折算差价退旧订新）· 取消后反悔（⑦/②c 恢复双态）· 退出登录（④b fallback BYOK/置灰，不打回 Onboarding）· 额度争议（⑪a 明细）· 退款（⑦全自助两步执行：机器按实收比例算、确认弹层明细、渠道费不返；站长事后收通知）· BYOK 用户全程不受会员体系影响。</div>
 
 </body>
 </html>

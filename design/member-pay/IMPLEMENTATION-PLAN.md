@@ -372,6 +372,6 @@ Worker 把 snapshots 写 usage_snapshots → /api/me 计算 pct=remaining/grant
 - 不做任何提醒邮件（到期/额度/续费全无；Resend 仅登录验证码）。
 - 不做客户端内登录/套餐/支付表单；主消费页零商业化。
 - 不做降级；不做额度 rollover（订阅池周期末清、加油包永不过期）。
-- 不做自动退款；退款=邮件申请+人工 Dashboard 执行。
+- 退款为**全自助**（quote/confirm 两步接口，机器按实收比例即时计算执行）；人工仅事后收通知邮件（NOTIFY_EMAIL），不审批。
 - 不动 BYOK 路径一行逻辑（回归必须全绿）。
 - 不动中转站渠道优先级（商汤→GOAT→OPC→官方）与 3000 收口（0914 拍板推迟）。
