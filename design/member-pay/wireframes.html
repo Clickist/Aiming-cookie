@@ -374,7 +374,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         </div>
         <div class="app-main" style="padding:0">
           <div class="pagehead">← 返回　用户中心</div>
-          <div style="padding:22px 26px;overflow:auto">
+          <div style="padding:22px 26px;overflow:auto;max-width:614px;margin:0 auto">
             <div class="darkbar">
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <b style="font-size:15px">Standard 会员 · 生效中</b>
@@ -403,10 +403,13 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
               <span class="btn sec" style="margin:0;padding:9px 14px;font-size:12px;white-space:nowrap;opacity:.45">当前加油包还有余量</span>
             </div>
             <div class="card">
-              <b style="font-size:13px">账户</b>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <b style="font-size:13px">账户</b>
+                <span style="padding:7px 12px;font-size:12px;border:1px solid var(--outline-variant);border-radius:8px;color:var(--error)">退出登录</span>
+              </div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 连续包月</span></div>
-              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（订阅额度停用，自动转用已配置的 BYOK）</div>
+              <div class="muted" style="margin-top:4px">退出后订阅额度停用，自动转用已配置的 BYOK（若有）</div>
             </div>
           </div>
         </div>
@@ -427,7 +430,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         </div>
         <div class="app-main" style="padding:0">
           <div class="pagehead">← 返回　用户中心</div>
-          <div style="padding:22px 26px;overflow:auto">
+          <div style="padding:22px 26px;overflow:auto;max-width:614px;margin:0 auto">
             <div class="darkbar">
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <b style="font-size:15px">Standard 会员 · 已取消</b>
@@ -449,10 +452,13 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
             </div>
             <div class="muted" style="margin:10px 0 6px">↑ 取消后同位置变「恢复自动续费」（⑦ 网页侧同双态）；恢复即回到态A</div>
             <div class="card">
-              <b style="font-size:13px">账户</b>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <b style="font-size:13px">账户</b>
+                <span style="padding:7px 12px;font-size:12px;border:1px solid var(--outline-variant);border-radius:8px;color:var(--error)">退出登录</span>
+              </div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>邮箱</span><span>u***@gmail.com</span></div>
               <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>套餐</span><span>Standard · 本期结束后终止</span></div>
-              <div style="font-size:13px;color:var(--error);padding:6px 0">退出登录（订阅额度停用，自动转用已配置的 BYOK）</div>
+              <div class="muted" style="margin-top:4px">退出后订阅额度停用，自动转用已配置的 BYOK（若有）</div>
             </div>
           </div>
         </div>
