@@ -384,7 +384,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
               <div class="btn dark" style="flex:1;margin-top:0">管理订阅 / 取消自动续费</div>
               <div class="btn sec" style="flex:1;margin-top:0">申请退款</div>
             </div>
-            <div class="muted" style="margin:10px 0 6px">↑ 两项在系统浏览器打开（accounts 网页 · 管理订阅页）</div>
+            <div class="muted" style="margin:10px 0 6px">↑ 两项在系统浏览器打开（账号中心 · 账单子页，见⑦）</div>
             <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
               <div>
                 <b style="font-size:13px">加油包 ¥10</b>
@@ -608,7 +608,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <div style="display:flex;justify-content:space-between;padding:4px 0"><span>下期自动续费</span><b>2026-10-20 · ¥10</b></div>
       </div>
       <div class="btn pri" style="max-width:460px;margin:0 auto 10px">回到 Aiming Cookie（自动完成连接）</div>
-      <div class="btn text" style="max-width:460px;margin:0 auto">管理订阅 / 查看额度明细</div>
+      <div class="btn text" style="max-width:460px;margin:0 auto">前往账号中心（管理订阅 · 额度明细）</div>
     </div>
   </div>
   <div class="frame browser">
@@ -657,13 +657,23 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
 </div>
 
-<h2><span class="no">⑦</span>管理订阅 / 升级（自动折差价）/ 取消·恢复双态 / 退款申请（accounts 网页）</h2>
+<h2><span class="no">⑦</span>账号中心 · 账单子页（管理订阅 / 升级 / 取消·恢复双态 / 退款）——同 ⑪ 一个壳</h2>
+<div class="note"><b>⑦ 不是独立页面</b>：就是 ⑪ 账号中心（Open Design 左栏布局）的「账单」子页。②c 的「管理订阅/取消续费」、⑥ 成功页的「前往账号中心」、⑨ 的「重新订阅」，全部跳到这里。v3.2 把它画成孤立页是错的，v3.3 归位。</div>
 <div class="screen-wrap">
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">accounts.gearclickist.com/account/billing</span></div>
-    <div class="body">
-      <div style="max-width:640px;margin:24px auto;padding:0 20px">
-        <div class="card">
+    <div class="body" style="flex-direction:row;min-height:540px">
+      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
+        <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
+        <div style="padding:9px 12px;font-size:13px">概览</div>
+        <div style="padding:9px 12px;font-size:13px">用量</div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px">账单</div>
+        <div style="margin-top:auto"><div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div></div>
+      </div>
+      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
+        <div style="font-weight:700;font-size:18px;margin-bottom:6px">账单</div>
+        <div class="muted" style="margin-bottom:14px">订阅管理与付款记录</div>
+        <div class="card" style="max-width:560px">
           <div style="display:flex;justify-content:space-between"><b>Standard · 连续包月</b><span class="badge">生效中</span></div>
           <div class="muted" style="margin-top:4px">下期自动续费 2026-10-20 · ¥10 · 支付方式 Visa •••• 4242</div>
           <div style="display:flex;gap:10px;margin-top:12px">
@@ -672,12 +682,12 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           </div>
           <div class="muted" style="margin-top:8px">↑ 升级＝自动退旧订新：没用完的额度按比例折成退款抵扣，只付差价、立即生效；确认弹层展示「抵扣后本单 ¥X · 下期起 ¥30/月」</div>
         </div>
-        <div class="card" style="margin-top:14px;border-style:dashed">
+        <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
           <b style="font-size:14px">取消自动续费</b>
           <div class="muted" style="margin:5px 0 10px">取消后本期额度仍可用至 2026-10-20，之后不再扣款、订阅额度失效（训练数据保留；加油包余额永不过期仍可用）。</div>
           <div class="btn sec" style="background:var(--error-container);color:var(--on-error-container)">取消自动续费</div>
         </div>
-        <div class="card" style="margin-top:14px;border-style:dashed">
+        <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
           <b style="font-size:14px">申请退款</b>
           <div class="muted" style="margin:5px 0 10px">
             未使用（0 消耗）且购买 14 天内：全额退。<br>
@@ -691,30 +701,47 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
   </div>
   <div class="frame browser">
     <div class="addrbar"><span class="dots"><i></i><i></i><i></i></span><span class="pill">…/account/billing（已取消态）</span></div>
-    <div class="body">
-      <div style="max-width:640px;margin:24px auto;padding:0 20px">
-        <div class="card">
+    <div class="body" style="flex-direction:row;min-height:540px">
+      <div style="width:216px;flex:none;background:var(--surface);border-right:1px solid var(--outline-variant);padding:16px 12px;display:flex;flex-direction:column">
+        <div style="margin-bottom:20px"><b style="font-size:14px">🍪 Aiming Cookie</b></div>
+        <div style="padding:9px 12px;font-size:13px">概览</div>
+        <div style="padding:9px 12px;font-size:13px">用量</div>
+        <div style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:6px">账单</div>
+        <div style="margin-top:auto"><div style="padding:9px 12px;font-size:13px;color:var(--on-surface-variant)">帮助与文档</div></div>
+      </div>
+      <div style="flex:1;background:var(--background);padding:20px 26px;overflow:auto">
+        <div style="font-weight:700;font-size:18px;margin-bottom:6px">账单</div>
+        <div class="muted" style="margin-bottom:14px">订阅管理与付款记录</div>
+        <div class="card" style="max-width:560px">
           <div style="display:flex;justify-content:space-between"><b>Standard · 连续包月</b><span class="badge gray">已取消 · 10-20 到期</span></div>
-          <div class="muted" style="margin-top:4px">本期货额度可用至 2026-10-20 · 到期后不再扣款、订阅额度失效</div>
+          <div class="muted" style="margin-top:4px">本期额度可用至 2026-10-20 · 到期后不再扣款、订阅额度失效</div>
           <div style="display:flex;gap:10px;margin-top:12px">
             <div class="btn pri" style="flex:1;margin-top:0">恢复自动续费</div>
             <div class="btn sec" style="flex:1;margin-top:0">更新支付方式</div>
           </div>
           <div class="muted" style="margin-top:8px">↑ 取消后同一位置变「恢复自动续费」——按钮双态，恢复即回到「生效中」，客户端②c同步</div>
         </div>
-        <div class="card" style="margin-top:14px;border-style:dashed">
+        <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
           <b style="font-size:14px">加油包</b>
           <div class="muted" style="margin:5px 0 10px">当前加油包余量 100% · 永不过期；取消订阅后仍可继续用完，烧完后须重新订阅才能再购买。</div>
+        </div>
+        <div class="card" style="margin-top:14px;border-style:dashed;max-width:560px">
+          <b style="font-size:14px">付款记录</b>
+          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--outline-variant)"><span>09-20 · Standard 首期</span><span>¥10.00</span></div>
+          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--outline-variant)"><span>09-20 · 加油包</span><span>¥10.00</span></div>
+          <div class="muted" style="margin-top:8px">含订阅扣款与加油包加购；退款记录以负数显示（收据=Stripe）</div>
         </div>
       </div>
     </div>
   </div>
   <div class="annot">
-    <span class="tag">Stripe 配合</span>
+    <span class="tag">归属与 Stripe 配合</span>
     <ul>
+      <li><b>唯一的壳：</b>账号中心＝⑪ Open Design 左栏（概览/用量/账单）；本屏＝账单子页的两种状态，风格/导航与 ⑪ 完全一致</li>
       <li><b>取消：</b>cancel at period_end；<b>恢复：</b>同一订阅 resume（按钮双态，不新建订阅）</li>
       <li><b>升级：</b>立即切档 + proration 按比例折算差价（Stripe 原生）；<b>无降级</b>——想下去只有退款一条路</li>
       <li><b>退款：</b>Refund API 部分退款（订阅、加油包两笔），MVP 人工 Dashboard 执行；退款后订阅立即取消+两池清零</li>
+      <li><b>付款记录：</b>账单子页底部列表（时间/内容/金额），与 ⑪b 详表同数据源</li>
     </ul>
   </div>
 </div>
@@ -802,7 +829,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <span class="tag">两态规则</span>
     <ul>
       <li><b>左（加油包有余额）：</b>服务不中断，Coach 照常可用；黄色条为<b>一次性提示、可关闭（✕）——非常驻</b>，关闭后不再出现，到期状态由左下角 chip 常驻承载（「订阅已到期 · 加油包 45%」）</li>
-      <li><b>右（双池皆空）：</b>页内提示条，零商业化；指路左下角账户（用户中心→管理订阅→重新订阅）或 BYOK</li>
+      <li><b>右（双池皆空）：</b>页内提示条，零商业化；指路左下角账户（用户中心 → 账号中心·账单 → 重新订阅）或 BYOK</li>
       <li>重新订阅成功后连接自动恢复、额度重新满上，无需重走 Onboarding；加油包若仍有余量继续保留（永不过期）</li>
       <li>此态＝退订用户的自然回流点（想再买加油包必须先续订）</li>
     </ul>
@@ -971,7 +998,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
     <ul>
       <li><b>左栏导航：</b>logo+折叠钮 · 概览（激活态）/用量/账单/设置 · 底部 模型与价格、帮助与文档、语言切换、账号卡（个人产品，无「成员」）</li>
       <li><b>右主区：</b>品牌色订阅横幅（档位+状态+「升级订阅」→ /pay）→ <b>黑色余量大条</b>（订阅池大字百分比 + 加油包小行＝两池全貌，无金额）→ 加油包卡（置灰态=余额未尽）→ 自动续费卡</li>
-      <li><b>子页：</b>用量=按天汇总明细；账单=Stripe 收据列表；子页无「设置」（账号中心只有概览/用量/账单）</li>
+      <li><b>子页：</b>用量=按天汇总明细；账单=订阅管理+付款记录（＝⑦，管理订阅/升级/取消/退款都在账单子页，无独立页面）；子页无「设置」（账号中心只有概览/用量/账单）</li>
       <li><b>免费用户态：</b>横幅显示「免费版 · 正在使用 BYOK」，按钮「升级订阅」→ /pay；无加油包行（未订阅不可购）</li>
     </ul>
   </div>
