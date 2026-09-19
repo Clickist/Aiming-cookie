@@ -251,7 +251,7 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct"><b>⚙ DeepSeek 官方 · 已连接</b><br><span style="color:var(--primary)">登录 / 注册 ›</span></div>
+            <div class="acct"><span style="color:var(--primary)">登录 / 注册 ›</span><br>⚙ DeepSeek 官方 · 已连接</div>
           </div>
           <div class="muted" style="margin-top:8px">引擎行＝用户所选 Provider；不显示模型名（输入框已有）</div>
         </div>
@@ -260,9 +260,9 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
           <div class="app-side" style="height:280px">
             <div class="side-new">+ 新建对话</div>
             <div class="side-item">8月基准跟枪局分析</div>
-            <div class="acct"><b>👤 u***@gmail.com</b><br>⚙ BYOK 模式 · 已连接</div>
+            <div class="acct"><b>👤 u***@gmail.com</b><br>⚙ DeepSeek 官方 · 已连接</div>
           </div>
-          <div class="muted" style="margin-top:8px">有账户归属、无会员内容；用户中心此态显示引擎信息</div>
+          <div class="muted" style="margin-top:8px">两卡对称：上行＝身份（邮箱/登录入口），下行＝引擎</div>
         </div>
       </div>
     </div>
@@ -580,23 +580,17 @@ h2 .no{background:var(--primary);color:var(--on-primary);border-radius:50%;min-w
         <span style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600">Bilibili 主页</span>
         <span style="display:flex;align-items:center;gap:6px;font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px">u</span><b>u***@gmail.com ▾</b></span>
       </div>
-      <div style="position:relative">
-      <div class="nav">
-        <b>🍪 Aiming Cookie</b><span style="flex:1"></span>
-        <span style="font-size:13px">对照</span><span style="font-size:13px">采集</span><span style="font-size:13px">指标</span><span style="font-size:13px">Coach</span>
-        <span style="border:1px solid var(--outline-variant);border-radius:99px;padding:4px 12px;font-size:12px">EN</span>
-        <span style="border:1px solid var(--outline-variant);border-radius:99px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center">🌙</span>
-        <span style="background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600">Bilibili 主页</span>
-        <span style="display:flex;align-items:center;gap:6px;font-size:13px;border:1.5px solid var(--primary);border-radius:99px;padding:5px 10px"><span style="width:24px;height:24px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:11px">u</span><b>u***@gmail.com ▾</b></span>
-      </div>
-      <div class="chip-pop" style="width:260px;position:absolute;top:100%;right:20px;margin-top:6px;z-index:5">
-          <div style="font-size:12px;color:var(--on-surface-variant)">u***@gmail.com · 基础档</div>
-          <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
-          <div style="font-size:13px;font-weight:700">余量 62% <span class="muted" style="font-weight:400">（绿）</span></div>
-          <div class="divider" style="margin:8px 0"></div>
-          <div style="font-size:13px;font-weight:600;color:var(--primary);padding:3px 0">前往账号中心 ›</div>
-          <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">管理订阅</div>
-          <div style="font-size:13px;color:var(--on-surface-variant);padding:3px 0">退出登录</div>
+      <div style="display:flex;justify-content:flex-end;padding:14px 20px 6px;background:var(--background)">
+        <div style="width:280px;border:1px solid var(--outline);border-radius:14px;background:var(--surface);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--surface-container-low);font-size:13px"><span style="width:26px;height:26px;border-radius:50%;background:var(--primary-container);display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none">u</span><b>u***@gmail.com</b><span style="margin-left:auto;color:var(--on-surface-variant)">▾</span></div>
+          <div style="padding:12px 14px;border-top:1px solid var(--outline-variant)">
+            <div style="font-size:12px;color:var(--on-surface-variant)">基础档 · 连续包月</div>
+            <div class="progress" style="margin:7px 0"><i style="width:62%"></i></div>
+            <div style="font-size:14px;font-weight:700">余量 62%</div>
+          </div>
+          <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;font-weight:600;color:var(--primary)">前往账号中心 ›</div>
+          <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;color:var(--on-surface-variant)">管理订阅</div>
+          <div style="border-top:1px solid var(--outline-variant);font-size:13px;padding:10px 14px;color:var(--on-surface-variant)">退出登录</div>
         </div>
       </div>
       <div class="muted" style="padding:10px 20px">页眉形式仍在讨论中——下拉为挂在导航右下的示意。</div>
