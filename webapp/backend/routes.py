@@ -179,6 +179,12 @@ def _error_detail(
         detail["args"] = args
     return detail
 
+
+def _request_locale(request: Request) -> str:
+    """B3：读侧投影按请求 locale 选目录（app.store_request_locale 已写入
+    request.state；直接调用本模块函数的测试路径缺 state 时回落 zh-CN）。"""
+    return getattr(request.state, "locale", "zh-CN")
+
 # user_id 经 auth.get_request_user_id 校验(路径安全字符集)。
 _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
@@ -244,9 +250,11 @@ def _assert_session_owner(s: dict, x_user_id: str) -> None:
         raise HTTPException(403, _error_detail("session.forbidden"))
 
 
-async def _get_owned_session(session_id: int, x_user_id: str) -> dict:
+async def _get_owned_session(
+    session_id: int, x_user_id: str, *, locale: str = "zh-CN",
+) -> dict:
     try:
-        s = await queue.get_session(session_id)
+        s = await queue.get_session(session_id, locale=locale)
     except UnsupportedContractVersion as exc:
         log.error(
             "unsupported analysis contract session_id=%s version=%s",
@@ -284,6 +292,7 @@ async def _abort_uploading_session(session_id: int) -> None:
 @router.post("/desktop/analyze-paths", response_model=AnalyzeResponse)
 async def analyze_paths(
     request: AnalyzePathsRequest,
+    http_request: Request,
     _: None = Depends(require_desktop_token),
 ):
     """Import desktop-selected local files into a managed session workspace."""
@@ -314,6 +323,7 @@ async def analyze_paths(
             manual_override=(request.manual_override.model_dump() if request.manual_override else None),
             status="uploading",
             require_no_active=True,
+            locale=_request_locale(http_request),
         )
     except queue.ActiveSessionExists as exc:
         raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
@@ -580,6 +590,7 @@ async def get_task(task_ref: str, x_user_id: str = Depends(get_request_user_id))
 
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
+    http_request: Request,
     video: UploadFile = File(...),
     csv: UploadFile = File(...),
     cm_per_360: Optional[float] = Form(default=None),
@@ -654,6 +665,7 @@ async def analyze(
             ),
             status="uploading",
             require_no_active=True,
+            locale=_request_locale(http_request),
         )
     except queue.ActiveSessionExists as exc:
         raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
@@ -706,12 +718,14 @@ async def analyze(
     return AnalyzeResponse(session_id=sid)
 
 
-def _session_status_response(s: dict, *, history: dict | None = None) -> SessionStatus:
+def _session_status_response(
+    s: dict, *, history: dict | None = None, locale: str = "zh-CN",
+) -> SessionStatus:
     return SessionStatus(
         id=s["id"],
         status=s["status"],
         result=(
-            project_analysis_result_metric_definitions(s["result"])
+            project_analysis_result_metric_definitions(s["result"], locale=locale)
             if isinstance(s.get("result"), dict)
             else s["result"]
         ),
@@ -765,10 +779,11 @@ def _raise_product_command_error(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
+    request: Request,
     x_user_id: str = Depends(get_request_user_id),
 ):
     """当前用户的分析列表(新→旧)。不返回完整 result。"""
-    rows = await analysis_service.list_history(x_user_id)
+    rows = await analysis_service.list_history(x_user_id, locale=_request_locale(request))
     return SessionListResponse(sessions=[SessionListItem(**row) for row in rows])
 
 
@@ -790,15 +805,17 @@ async def get_history_trend(
 
 @router.get("/current-training", response_model=CurrentTrainingResponse)
 async def get_current_training(
+    request: Request,
     x_user_id: str = Depends(get_request_user_id),
 ):
     """Return the bounded read-only current Training Plan for one owner."""
+    locale = _request_locale(request)
     plans = await training_plan_store.list_plans(x_user_id)
     current = next((plan for plan in plans if plan["status"] == "active"), None)
     if current is None:
         current = next((plan for plan in plans if plan["status"] == "paused"), None)
     if current is None:
-        projection = build_current_training_v1(plan=None, items=[])
+        projection = build_current_training_v1(plan=None, items=[], locale=locale)
     else:
         items = await training_plan_store.list_plan_items(x_user_id, current["plan_id"])
         if not items:
@@ -806,7 +823,7 @@ async def get_current_training(
             # 时回退投影 plan_payload.items（plan-builder 口语化契约），否则
             # 激活计划后顶栏训练卡会整个消失（幽灵 active 计划）。
             items = _coach_payload_items(current.get("plan_payload"))
-        projection = build_current_training_v1(plan=current, items=items)
+        projection = build_current_training_v1(plan=current, items=items, locale=locale)
     return CurrentTrainingResponse(**projection)
 
 
@@ -1139,6 +1156,7 @@ async def remove_kovaak_run_evidence(
 @router.post("/kovaak-runs/{run_id}/analyze", response_model=AnalyzeResponse)
 async def analyze_kovaak_run(
     request: KovaaKAnalysisRequest,
+    http_request: Request,
     run_id: int = Path(...),
     _: None = Depends(require_desktop_token),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -1160,6 +1178,7 @@ async def analyze_kovaak_run(
         managed_video_source=video_source,
         idempotency_key=idempotency_key,
         allow_parallel=request.allow_parallel,
+        locale=_request_locale(http_request),
     )
     _raise_product_command_error(
         result,
@@ -1178,13 +1197,15 @@ async def analyze_kovaak_run(
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)
 async def get_session(
+    request: Request,
     session_id: int = Path(...),
     x_user_id: str = Depends(get_request_user_id),
 ):
     """查询分析状态/结果(queued / running / done / failed)。"""
-    s = await _get_owned_session(session_id, x_user_id)
+    locale = _request_locale(request)
+    s = await _get_owned_session(session_id, x_user_id, locale=locale)
     history = await history_trends.analysis_history_detail(s)
-    return _session_status_response(s, history=history)
+    return _session_status_response(s, history=history, locale=locale)
 
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
@@ -1207,6 +1228,7 @@ async def delete_session(
 
 @router.post("/sessions/{session_id}/retry", response_model=SessionStatus)
 async def retry_session(
+    request: Request,
     session_id: int = Path(...),
     x_user_id: str = Depends(get_request_user_id),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -1220,10 +1242,13 @@ async def retry_session(
     _raise_product_command_error(result)
     retried = result.get("result") if isinstance(result, dict) else None
     returned_id = retried.get("id") if isinstance(retried, dict) else None
-    session = await queue.get_session(returned_id if isinstance(returned_id, int) else session_id)
+    locale = _request_locale(request)
+    session = await queue.get_session(
+        returned_id if isinstance(returned_id, int) else session_id, locale=locale,
+    )
     if session is None:  # Defensive: retry handler succeeded only for an existing session.
         raise HTTPException(404, _error_detail("session.not_found"))
-    return _session_status_response(session)
+    return _session_status_response(session, locale=locale)
 
 
 def _validate_public_body(model, payload: dict, message: str):
@@ -1785,13 +1810,32 @@ async def get_external_run(
 
 
 _PACK_PARITY_TIMEOUT_SECONDS = 5.0
-_SIDECAR_APPLIED_WARNING = "知识库切换已生效，下一次对话即使用新知识库口径"
-_SIDECAR_ACTIVATE_UNREACHABLE_WARNING = (
-    "知识库切换已保存，但 Coach 引擎暂时不可达；重启应用后生效"
-)
-_SIDECAR_UNREACHABLE_WARNING = (
-    "sidecar 校验器不可达，本次导入仅完成 Python 侧校验（TS parity 未执行）"
-)
+# B3 i18n：知识包 warnings 双目录（settings 页直显；键＝稳定语义 id，非错误码）。
+_PACK_WARNING_TEXTS = {
+    "sidecar_applied": {
+        "zh-CN": "知识库切换已生效，下一次对话即使用新知识库口径",
+        "en-US": "Knowledge base switched; the next conversation uses the new knowledge base",
+    },
+    "sidecar_activate_unreachable": {
+        "zh-CN": "知识库切换已保存，但 Coach 引擎暂时不可达；重启应用后生效",
+        "en-US": (
+            "Knowledge base switch saved, but the Coach engine is temporarily "
+            "unreachable; it takes effect after restarting the app"
+        ),
+    },
+    "sidecar_unreachable": {
+        "zh-CN": "sidecar 校验器不可达，本次导入仅完成 Python 侧校验（TS parity 未执行）",
+        "en-US": (
+            "Sidecar validator unreachable; this import completed Python-side "
+            "validation only (TS parity not executed)"
+        ),
+    },
+}
+
+
+def _pack_warning(key: str, locale: str) -> str:
+    entry = _PACK_WARNING_TEXTS[key]
+    return entry.get(locale) or entry["zh-CN"]
 
 
 def _pack_manifest_homepage(pack_dir: FilePath) -> Optional[str]:
@@ -1925,6 +1969,7 @@ async def list_knowledge_packs(_: None = Depends(require_desktop_token)):
 )
 async def import_knowledge_pack(
     request: KnowledgePackImportRequest,
+    http_request: Request,
     _: None = Depends(require_desktop_token),
 ):
     """Validate (Python + sidecar TS parity) then install a local pack."""
@@ -1946,7 +1991,7 @@ async def import_knowledge_pack(
     parity_valid, parity_errors = await _sidecar_parity_validate_registry(registry_doc)
     warnings: list[str] = []
     if parity_valid is None:
-        warnings.append(_SIDECAR_UNREACHABLE_WARNING)
+        warnings.append(_pack_warning("sidecar_unreachable", _request_locale(http_request)))
     elif parity_valid is False:
         return _pack_rejected_422("knowledge_pack_parity_rejected", parity_errors)
     try:
@@ -1970,6 +2015,7 @@ async def import_knowledge_pack(
 )
 async def activate_knowledge_pack(
     request: KnowledgePackActivateRequest,
+    http_request: Request,
     _: None = Depends(require_desktop_token),
 ):
     """Switch the active knowledge base (official or an installed pack_id)."""
@@ -1979,9 +2025,10 @@ async def activate_knowledge_pack(
         raise HTTPException(404, str(exc)) from exc
     payload = await asyncio.to_thread(_packs_list_payload)
     rematerialized = await _sidecar_rematerialize_knowledge()
+    locale = _request_locale(http_request)
     warnings = (
-        [_SIDECAR_APPLIED_WARNING] if rematerialized is not None
-        else [_SIDECAR_ACTIVATE_UNREACHABLE_WARNING]
+        [_pack_warning("sidecar_applied", locale)] if rematerialized is not None
+        else [_pack_warning("sidecar_activate_unreachable", locale)]
     )
     return KnowledgePackActivateResponse(
         **payload,

@@ -24,6 +24,8 @@ def _is_tracking_summary(summary) -> bool:
 def build_report(summary, reference_summary=None, meta=None) -> CoachReport:
     meta = meta or {}
     summary_type = meta.get("summary_type")
+    # B3 i18n：locale 经 meta 传入（worker 侧来自 job locale；缺省 zh-CN）。
+    locale = meta.get("locale") if isinstance(meta.get("locale"), str) else "zh-CN"
     # Route to tracking vs flicking advice (spec §5.2 — explicit > implicit).
     # Fallback when summary_type is unset: probe summary shape.
     if summary_type == "tracking" or (
@@ -33,6 +35,7 @@ def build_report(summary, reference_summary=None, meta=None) -> CoachReport:
             summary,
             cm_per_360=meta.get("cm_per_360"),
             ball_w=meta.get("ball_w"),
+            locale=locale,
         )
         # Normalize nested metrics.json shape so downstream (visualization)
         # sees a flat scalar dict, matching flicking summary's flatness.
@@ -40,7 +43,10 @@ def build_report(summary, reference_summary=None, meta=None) -> CoachReport:
         comparison = None  # v1 self-only (spec §8.3)
         diagnosis = build_diagnosis(findings, flat_summary, comparison, meta)
     else:
-        findings = advise(summary, reference_summary, cm_per_360=meta.get("cm_per_360"))
+        findings = advise(
+            summary, reference_summary,
+            cm_per_360=meta.get("cm_per_360"), locale=locale,
+        )
         comparison = compare_table(summary, reference_summary) if reference_summary else None
         diagnosis = build_diagnosis(findings, summary, comparison, meta)
 

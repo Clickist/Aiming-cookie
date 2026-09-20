@@ -88,6 +88,98 @@ _CURRENT_TRAINING_ZH_CN = {
     },
 }
 
+# B3 i18n：训练卡 en-US 平行目录。同一 knowledge_ref 键集（测试锁定），
+# 只翻译已审核公开投影的展示文案；scenario_profile_ref 稳定 ref 不动。
+_CURRENT_TRAINING_EN_US = {
+    "knowledge:static.flicking-terminal-control@3": {
+        "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+        "practice_condition": (
+            "Keep the static-scenario conditions exactly the same and test only one "
+            "terminal-control cue at a time."
+        ),
+        "cue": (
+            "Use a single movement cue: arrive at the target under control first, "
+            "then let the click follow the crosshair that has already settled."
+        ),
+        "dose_guardrail": (
+            "Use a difficulty version that lets you judge performance clearly, and change "
+            "only one task variable at a time; stop or scale down if discomfort appears, or "
+            "if performance quality drops in ways unrelated to the cue."
+        ),
+        "review_date": "Review after the next comparable training session.",
+    },
+    "knowledge:dynamic.click-error-and-acquisition@3": {
+        "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+        "practice_condition": (
+            "Keep the dynamic-scenario conditions exactly the same and change only one "
+            "clearly readable movement variable at a time."
+        ),
+        "cue": (
+            "Pick targets whose motion is clearly readable; first read the target's current "
+            "motion and complete the acquisition, then make one deliberate click—don't "
+            "chase the score."
+        ),
+        "dose_guardrail": (
+            "Lower one movement variable first and keep result quality stable; do not set a "
+            "uniform training duration or hit-rate target."
+        ),
+        "review_date": "Review after the next comparable training session.",
+    },
+    "knowledge:dynamic.speed-matching-and-reading@3": {
+        "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+        "practice_condition": (
+            "Keep the same dynamic-scenario conditions and change only one movement "
+            "characteristic per session."
+        ),
+        "cue": (
+            "In a long, clearly readable strafe, match direction and speed before clicking; "
+            "once the target changes its motion, re-read the new motion first."
+        ),
+        "dose_guardrail": (
+            "Change only one of speed, direction-change density, or target size per training "
+            "set, and keep the hardest variants as stress tests."
+        ),
+        "review_date": "Review after the next comparable training session.",
+    },
+    "knowledge:tracking.predictable-speed-matching@3": {
+        "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+        "practice_condition": (
+            "Keep the predictable-motion conditions exactly the same and test only steady "
+            "speed matching."
+        ),
+        "cue": (
+            "Hold relative speed steady while the motion is clearly readable, using small "
+            "corrections instead of repeatedly catching up with large ones."
+        ),
+        "dose_guardrail": (
+            "Start with scripts whose motion is clearly readable; when testing transfer, "
+            "change only one of speed or motion phase."
+        ),
+        "review_date": "Review after the next comparable training session.",
+    },
+    "knowledge:switching.transition-and-arrival@3": {
+        "scenario_profile_ref": "scenario:switching.beants_larger@1",
+        "practice_condition": (
+            "Keep the beanTS Larger scenario conditions exactly the same; each training set "
+            "focuses on either transition movement or arrival stability."
+        ),
+        "cue": (
+            "Practice transitions and arrivals separately: confirm the previous target, "
+            "leave it, move straight to the next target, and settle before the first shot."
+        ),
+        "dose_guardrail": (
+            "Change only one of layout distance, direction, or target count per training "
+            "set, and keep watching result quality."
+        ),
+        "review_date": "Review after the next comparable training session.",
+    },
+}
+
+_CURRENT_TRAINING_CATALOGS = {
+    "zh-CN": _CURRENT_TRAINING_ZH_CN,
+    "en-US": _CURRENT_TRAINING_EN_US,
+}
+
 _TASK_PHASE_LABELS = {
     "preparing_training_record": "Preparing training record",
     "aligning_input_events": "Aligning input events",
@@ -188,17 +280,42 @@ def _safe_presentation_timestamp(value: object) -> str | None:
     return value
 
 
+# B3 i18n：Run/Analysis 记录 presentation_label 兜底文案双目录（模板与占位
+# 顺序两侧一致；scenario/时间戳本身是数据不翻）。
+_PRESENTATION_LABEL_TEXTS = {
+    "zh-CN": {
+        "unnamed_scenario": "未命名场景",
+        "training_unknown": "训练时间未知",
+        "analysis_pending": "分析尚未完成",
+        "template": "{scenario} | 训练：{training} | 分析：{analysis}",
+    },
+    # en 侧与前端字典逐字对齐（analysis.record.* / analysis.scenario.unnamed）。
+    "en-US": {
+        "unnamed_scenario": "Unnamed scenario",
+        "training_unknown": "training time unknown",
+        "analysis_pending": "analysis not finished yet",
+        "template": "{scenario} | Trained: {training} | Analyzed: {analysis}",
+    },
+}
+
+
 def build_record_presentation_label(
     *,
     scenario: object,
     training_at: object,
     analysis_completed_at: object,
+    locale: str = "zh-CN",
 ) -> str:
     """Create the sole user-facing identity for a Run or Analysis record."""
-    safe_scenario = _safe_presentation_scenario(scenario) or "未命名场景"
-    safe_training_at = _safe_presentation_timestamp(training_at) or "训练时间未知"
-    safe_analysis_at = _safe_presentation_timestamp(analysis_completed_at) or "分析尚未完成"
-    return f"{safe_scenario} | 训练：{safe_training_at} | 分析：{safe_analysis_at}"
+    texts = _PRESENTATION_LABEL_TEXTS.get(locale, _PRESENTATION_LABEL_TEXTS["zh-CN"])
+    safe_scenario = _safe_presentation_scenario(scenario) or texts["unnamed_scenario"]
+    safe_training_at = _safe_presentation_timestamp(training_at) or texts["training_unknown"]
+    safe_analysis_at = (
+        _safe_presentation_timestamp(analysis_completed_at) or texts["analysis_pending"]
+    )
+    return texts["template"].format(
+        scenario=safe_scenario, training=safe_training_at, analysis=safe_analysis_at,
+    )
 
 
 def _project_event_rows(
@@ -1080,8 +1197,11 @@ def _safe_current_training_text(value: object, *, maximum: int = 240) -> str | N
     return text
 
 
-def _current_training_text(item: Mapping[str, object], field: str) -> str | None:
-    presentation = _CURRENT_TRAINING_ZH_CN.get(item.get("knowledge_ref"))
+def _current_training_text(
+    item: Mapping[str, object], field: str, locale: str = "zh-CN",
+) -> str | None:
+    catalog = _CURRENT_TRAINING_CATALOGS.get(locale, _CURRENT_TRAINING_ZH_CN)
+    presentation = catalog.get(item.get("knowledge_ref"))
     if (
         presentation is not None
         and presentation["scenario_profile_ref"] == item.get("scenario_profile_ref")
@@ -1205,6 +1325,7 @@ def build_current_training_v1(
     *,
     plan: Mapping[str, object] | None,
     items: Sequence[Mapping[str, object]],
+    locale: str = "zh-CN",
 ) -> dict[str, object]:
     """Project the current owner plan with only reviewed public scenario refs."""
     if plan is None:
@@ -1246,11 +1367,11 @@ def build_current_training_v1(
             # list is readable, None when it cannot be detected (no install).
             "local_match": _local_scenario_match(reviewed_name),
             "status": item["status"],
-            "practice_condition": _current_training_text(item, "practice_condition"),
-            "cue": _current_training_text(item, "cue"),
-            "dose_guardrail": _current_training_text(item, "dose_guardrail"),
+            "practice_condition": _current_training_text(item, "practice_condition", locale),
+            "cue": _current_training_text(item, "cue", locale),
+            "dose_guardrail": _current_training_text(item, "dose_guardrail", locale),
             "observation": None,
-            "retest": _current_training_text(item, "review_date"),
+            "retest": _current_training_text(item, "review_date", locale),
         })
     limitations = []
     if plan_status == "paused":

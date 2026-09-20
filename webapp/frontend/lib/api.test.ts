@@ -1134,3 +1134,25 @@ test("knowledge pack import posts the picker path and surfaces structured reject
       && error.details[0] === "registry.json: signal \"recoil control\" 不在官方词汇表内",
   );
 });
+
+test("presentErrorV1Message maps error.v1 codes to dictionary copy with message fallback", async () => {
+  const { presentErrorV1Message } = await import("../lib/api");
+  setLocale("en-US");
+  try {
+    // 已映射码：按字典出（api.error.<code 驼峰>）。
+    assert.equal(
+      presentErrorV1Message({ code: "source_unavailable", message: "分析输入源已不可用或已变更，请重新提交分析。" }),
+      translate("en-US", "api.error.sourceUnavailable"),
+    );
+    // 缺码：回落后端 message 原文（过渡期双保险）。
+    assert.equal(
+      presentErrorV1Message({ code: "unmapped_code", message: "raw backend copy" }),
+      "raw backend copy",
+    );
+    // 无码：message 原文；空错误：null。
+    assert.equal(presentErrorV1Message({ code: null, message: "plain" }), "plain");
+    assert.equal(presentErrorV1Message(null), null);
+  } finally {
+    setLocale("zh-CN");
+  }
+});

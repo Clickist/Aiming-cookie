@@ -733,7 +733,23 @@ def run_analysis(
     return summary, extras
 
 
-def _build_timeline(extras: dict) -> list[dict]:
+# B3 i18n：timeline 事件 label 双目录（type 是稳定枚举 peak/corrective/kill；
+# label 按 job locale 生成并随 result 落盘，读侧不回翻）。
+_TIMELINE_EVENT_LABELS = {
+    "peak": {"zh-CN": "速度峰值", "en-US": "Peak speed"},
+    "corrective": {"zh-CN": "修正", "en-US": "Correction"},
+    "kill": {"zh-CN": "击杀", "en-US": "Kill"},
+}
+
+
+def _timeline_label(kind: str, locale: str) -> str:
+    entry = _TIMELINE_EVENT_LABELS.get(kind)
+    if entry is None:
+        return kind
+    return entry.get(locale) or entry["zh-CN"]
+
+
+def _build_timeline(extras: dict, locale: str = "zh-CN") -> list[dict]:
     """把 analyze_flicking_fair_summary 的 extras 转成 timeline events 列表。
 
     schema(routes.get_session_timeline 消费):
@@ -761,22 +777,22 @@ def _build_timeline(extras: dict) -> list[dict]:
     for flick in extras.get("flicks") or []:
         peak_frame = flick.get("peak_frame")
         if peak_frame is not None:
-            _add(peak_frame, "peak", "速度峰值")
+            _add(peak_frame, "peak", _timeline_label("peak", locale))
     for frame in extras.get("corrective_frames") or []:
-        _add(frame, "corrective", "修正")
+        _add(frame, "corrective", _timeline_label("corrective", locale))
     for frame in extras.get("kill_frames") or []:
-        _add(frame, "kill", "击杀")
+        _add(frame, "kill", _timeline_label("kill", locale))
 
     # 按 frame 升序排,方便前端顺序渲染。
     events.sort(key=lambda e: e["frame"])
     return events
 
 
-def run_report(summary: dict) -> dict:
+def run_report(summary: dict, locale: str = "zh-CN") -> dict:
     """Build the deterministic local report without invoking a Provider."""
     from dataclasses import asdict, is_dataclass
     from kovaak_tracker.coach.report import build_report
-    report = build_report(summary)
+    report = build_report(summary, meta={"locale": locale})
     d = asdict(report) if is_dataclass(report) else {"_raw": str(report)}
     # plotly Figure 不可 JSON 序列化 → 转 dict
     figures = d.get("figures")
@@ -963,6 +979,7 @@ def _native_deterministic_v2(
     native_result: dict,
     *,
     input_mode: str | None = None,
+    locale: str = "zh-CN",
 ) -> dict:
     """Adapt the native payload to v2's path-safe public contract."""
     deterministic = native_result.get("deterministic") or {}
@@ -987,6 +1004,7 @@ def _native_deterministic_v2(
         metrics,
         input_mode=input_mode or native_result.get("input_mode") or "input_native",
         quality=quality,
+        locale=locale,
     )
     return {
         "status": native_result.get("status", "unavailable"),
@@ -1101,6 +1119,7 @@ def _native_diagnosis(
     *,
     input_mode: str = "input_native",
     quality: Mapping[str, object] | None = None,
+    locale: str = "zh-CN",
 ) -> dict:
     """Build deterministic Coach issues from available native distributions."""
     from dataclasses import asdict
@@ -1131,7 +1150,7 @@ def _native_diagnosis(
             "metric_version": metric.get("metric_version"),
         }
 
-    findings = mapping_rules.dispatch_static(summary)
+    findings = mapping_rules.dispatch_static(summary, locale=locale)
     for finding in findings:
         event_refs: list[str] = []
         for metric_key in finding.metric_refs:
@@ -1158,6 +1177,7 @@ def _native_diagnosis(
             "input_mode": input_mode,
             "quality_status": (quality or {}).get("status"),
             "quality_limitations": list((quality or {}).get("limitations") or []),
+            "locale": locale,
         },
     )
     projection = asdict(diagnosis)
@@ -1173,6 +1193,12 @@ def _native_diagnosis(
         if not issue.get("knowledge_entry_refs"):
             issue.pop("knowledge_entry_refs", None)
     return projection
+
+
+def _job_locale(job: Mapping[str, object]) -> str:
+    """B3 i18n：job 落盘 locale（queue.enqueue 写入；旧 job 缺字段回落 zh-CN）。"""
+    locale = job.get("locale")
+    return locale if locale in ("zh-CN", "en-US") else "zh-CN"
 
 
 def _result_owner(job: dict) -> tuple[str, str | None]:
@@ -2198,7 +2224,9 @@ def _build_native_result_v2(
     owner_id, local_profile = _result_owner(job)
     run_ref = f"run:{run_id}"
     input_mode = _execution_input_mode(job.get("input_mode"), default="input_native")
-    deterministic = _native_deterministic_v2(native_result, input_mode=input_mode)
+    deterministic = _native_deterministic_v2(
+        native_result, input_mode=input_mode, locale=_job_locale(job),
+    )
     resolution = snapshot.get("scenario_resolution")
     active_static = (
         isinstance(resolution, Mapping)
@@ -3628,7 +3656,7 @@ async def process_one() -> bool:
                         video_availability = "available"
                         visual_validation = {
                             "status": "available",
-                            "timeline": _build_timeline(visual_extras),
+                            "timeline": _build_timeline(visual_extras, _job_locale(job)),
                         }
                     except SourceSnapshotChangedError:
                         raise
@@ -3744,8 +3772,9 @@ async def process_one() -> bool:
                     **sparc_distribution,
                     "metric_version": _VIDEO_FALLBACK_SPARC_METRIC_VERSION,
                 }
-            timeline_events = _build_timeline(extras)
-            report_dict = await asyncio.to_thread(run_report, summary)
+            job_locale = _job_locale(job)
+            timeline_events = _build_timeline(extras, job_locale)
+            report_dict = await asyncio.to_thread(run_report, summary, job_locale)
             cost = 0.0
 
             result = _build_video_fallback_result_v2(

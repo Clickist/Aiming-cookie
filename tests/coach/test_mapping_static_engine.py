@@ -165,7 +165,8 @@ def test_official_mapping_covers_all_twelve_builtin_threshold_keys():
 
 def test_missing_mapping_falls_back_to_builtin(monkeypatch):
     monkeypatch.setattr(
-        knowledge_active, "load_active_mapping", lambda: (None, None),
+        knowledge_active, "load_active_mapping",
+        lambda *args, **kwargs: (None, None),
     )
     summary = {"decel_frac": {"med": 0.72}}
     assert mapping_rules.dispatch_static(summary) == advise(summary)
@@ -176,7 +177,7 @@ def test_broken_mapping_falls_back_to_builtin(monkeypatch):
     monkeypatch.setattr(
         knowledge_active,
         "load_active_mapping",
-        lambda: ({"schema_version": "nope"}, None),
+        lambda *args, **kwargs: ({"schema_version": "nope"}, None),
     )
     summary = {"decel_frac": {"med": 0.72}}
     assert mapping_rules.dispatch_static(summary) == advise(summary)

@@ -1,0 +1,788 @@
+{
+ "schema_version": "coach_mapping.v1",
+ "static_clicking": [
+  {
+   "signal": "decel_frac high",
+   "severity": "fix",
+   "text": "Deceleration takes {decel_frac_pct:.0f}% of the whole flick — a long time is spent decelerating after the peak speed; the threshold still needs calibration with real product data.",
+   "plain_language_meaning": "Deceleration takes a long time after the peak speed",
+   "expected_result": "decel_frac toward individually calibrated target",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "decel_frac"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "decel_frac",
+     "op": ">",
+     "value": 0.65
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Practice the full accelerate→decelerate arc and commit to the brake near the target",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "1w4ts Voltaic",
+     "reason": "Hold 90%+ accuracy and complete each flick's acceleration and deceleration",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "decel_frac low",
+   "severity": "watch",
+   "text": "Deceleration takes only {decel_frac_pct:.0f}% and the continuous deceleration time is short; whether this is a braking issue still needs settle/reverse and individual history to verify.",
+   "plain_language_meaning": "Little time is left for continuous deceleration after the peak speed",
+   "expected_result": "decel_frac toward individually calibrated target",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "decel_frac"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "decel_frac",
+     "op": "<",
+     "value": 0.4
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Practice even deceleration and treat the braking phase as its own action",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "linearity high",
+   "severity": "fix",
+   "text": "The deceleration-phase speed curve deviates {linearity_med:.2f} from a constant-deceleration line — the speed decline is not evenly paced. Note: this measures braking rhythm, not jitter; for jitter see SPARC.",
+   "plain_language_meaning": "The deceleration-phase speed decline is not evenly paced",
+   "expected_result": "linearity ↓",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "linearity"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "linearity",
+     "op": ">",
+     "value": 0.13
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Drill the deceleration phase into a clean, continuous brake",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "1w4ts 30% larger",
+     "reason": "Deceleration-phase precision work",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "sparc low",
+   "severity": "fix",
+   "text": "Deceleration smoothness SPARC={sparc_med:.1f} — the speed profile contains many fast fluctuations. SPARC describes the movement profile and does not directly measure grip tension; the absolute threshold still needs product calibration.",
+   "plain_language_meaning": "The deceleration-phase speed profile contains many fast fluctuations",
+   "expected_result": "sparc ↑",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "sparc"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "observation_ref": "metric.terminal_control",
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "sparc",
+     "op": "<",
+     "value": -5.0
+    },
+    {
+     "input": "self_summary",
+     "metric": "sparc",
+     "op": "metric_version_not_in",
+     "value": [
+      "native_flicking.sparc.v2",
+      "flicking_fair_summary.sparc.v2"
+     ]
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "clean lines — let deceleration speed fall continuously instead of hard-stopping",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "1w4ts 30% larger",
+     "reason": "Deceleration-phase precision work",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "reverse_ratio high",
+   "severity": "fix",
+   "text": "{reverse_ratio_pct:.0f}% of deceleration-phase frames re-accelerate in the opposite direction, showing as repeated corrections.",
+   "plain_language_meaning": "Many reverse corrections appear at the end of the movement",
+   "expected_result": "reverse_ratio ↓",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "reverse_ratio"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "observation_ref": "metric.terminal_control",
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "reverse_ratio",
+     "op": ">",
+     "value": 0.2
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Fold corrections into the deceleration instead of stopping and re-correcting",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "Multiclick",
+     "reason": "Landing precision with fewer second corrections",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "submovement two-stage",
+   "severity": "watch",
+   "text": "The primary movement and the following correction appear as two fairly separated stages.",
+   "plain_language_meaning": "The primary movement and the following correction look like two separate actions",
+   "expected_result": "submovement_overlap toward chosen technique",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "submovement_overlap"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "observation_ref": "metric.terminal_control",
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "submovement_overlap",
+     "op": "<",
+     "value": 0.3
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Keep the primary movement and the finishing correction connected instead of pausing between them",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "Multiclick",
+     "reason": "Landing precision with fewer second corrections",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "peak_position low",
+   "severity": "watch",
+   "text": "Peak position {peak_position_pct:.0f}% (early) — the peak speed occurs early; the specific movement cause is not directly measured by the input data.",
+   "plain_language_meaning": "The peak speed occurs early in the movement",
+   "expected_result": "peak_position_pct toward individual baseline",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "peak_position_pct"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "peak_position_pct",
+     "op": "in_band",
+     "value": [
+      -1e+308,
+      30.0
+     ]
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "pasu",
+     "reason": "Balance acceleration and deceleration and move the peak toward the middle",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "peak_position high",
+   "severity": "watch",
+   "text": "Peak position {peak_position_pct:.0f}% (late) — the peak speed occurs late; the specific movement cause is not directly measured by the input data.",
+   "plain_language_meaning": "The peak speed occurs late in the movement",
+   "expected_result": "peak_position_pct toward individual baseline",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "peak_position_pct"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "peak_position_pct",
+     "op": "in_band",
+     "value": [
+      60.0,
+      1e+308
+     ]
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "Tile Frenzy",
+     "reason": "Practice committing to acceleration and building speed",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "path_efficiency low",
+   "severity": "fix",
+   "text": "Flick path linearity {path_efficiency:.2f} — the actual path is noticeably less direct than the start-to-end straight line; the absolute threshold still needs product calibration.",
+   "plain_language_meaning": "The actual path is noticeably less direct than the start-to-end straight line",
+   "expected_result": "path_efficiency ↑",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "path_efficiency"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "path_efficiency",
+     "op": "<",
+     "value": 0.85
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "linetrace",
+     "reason": "Practice straight flicks along the shortest path",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "clean lines",
+     "reason": "Intent: the flick travels a straight line, not an arc",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "peak_speed below reference",
+   "severity": "fix",
+   "text": "Flick angular speed {self_peak:.0f}°/s is only {ratio_pct:.0f}% of the reference ({ref_peak:.0f}°/s); peak speed is below the current reference, and the physical cause is not directly measured by the input data.",
+   "plain_language_meaning": "Peak speed is below the current comparison reference",
+   "expected_result": "peak_speed_deg ↑ against comparable baseline",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "peak_speed_deg"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "peak_speed_deg",
+     "op": "ratio_to_ref_lt",
+     "value": 0.7
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "Tile Frenzy",
+     "reason": "Raise dynamic speed step by step under controllable accuracy",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "speed scenarios",
+     "reason": "Accelerate boldly — chase speed first, then reclaim accuracy",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "throughput below reference",
+   "severity": "fix",
+   "text": "Fitts throughput {self_throughput:.1f} bits/s is only {throughput_ratio_pct:.0f}% of the reference ({ref_throughput:.1f}); combined speed-and-accuracy efficiency is below the current reference, and the physical cause is not directly measured by the input data (throughput is normalized by target distance/width, §6.3).",
+   "plain_language_meaning": "Combined speed-and-accuracy efficiency is below the current comparison reference",
+   "expected_result": "throughput ↑ against comparable baseline",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "throughput"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "self_summary",
+     "metric": "throughput",
+     "op": "ratio_to_ref_lt",
+     "value": 0.7
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "Tile Frenzy",
+     "reason": "Raise dynamic speed step by step under controllable accuracy",
+     "target_metrics": [],
+     "expected_direction": []
+    },
+    {
+     "scenario": "speed scenarios",
+     "reason": "Chase speed first, then reclaim accuracy",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  },
+  {
+   "signal": "sensitivity high",
+   "severity": "watch",
+   "text": "Current sensitivity is {cm_per_360:.1f} cm/360. A smaller cm/360 may amplify control input, but a setting value alone cannot establish a movement problem; treat it only as a controlled-experiment hypothesis.",
+   "plain_language_meaning": "The current cm/360 is small; whether it affects control still needs an experiment",
+   "expected_result": "linearity/reverse_ratio improve after controlled setting experiment",
+   "claim_level": "deterministic_rule",
+   "metric_refs": [
+    "cm_per_360"
+   ],
+   "limitations": [
+    "threshold_requires_product_calibration"
+   ],
+   "conditions": [
+    {
+     "input": "settings",
+     "metric": "cm_per_360",
+     "op": "<",
+     "value": 25.0
+    }
+   ],
+   "prescriptions": [
+    {
+     "scenario": "lower sens 5-10% (cm/360 ↑)",
+     "reason": "Braking-assist experiment; re-test whether linearity/reverse drop, and revert if not",
+     "target_metrics": [],
+     "expected_direction": []
+    }
+   ]
+  }
+ ],
+ "families": {
+  "continuous_tracking": [
+   {
+    "signal": "tracking lag high",
+    "metric": "continuous_tracking.phase_lag_ms",
+    "row_field": "phase_lag_ms",
+    "direction": "absolute_higher",
+    "knowledge_metric_ref": "metric:phase_lag",
+    "expected_entry_ref": "knowledge:tracking.predictable-speed-matching@3",
+    "observation_ref": "episode.tracking"
+   },
+   {
+    "signal": "loss count high",
+    "metric": "continuous_tracking.loss_count",
+    "row_field": "loss_count",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:loss_count",
+    "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+    "observation_ref": "event.loss"
+   },
+   {
+    "signal": "off target long",
+    "metric": "continuous_tracking.reacquisition_latency_ms",
+    "row_field": "reacquisition_latency_ms",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:reacquisition_time",
+    "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+    "observation_ref": "event.reacquisition"
+   },
+   {
+    "signal": "accel mismatch high",
+    "metric": "continuous_tracking.observed_change_response_ms",
+    "row_field": "observed_change_response_ms",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:change_response",
+    "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+    "observation_ref": "event.target_change"
+   },
+   {
+    "signal": "correction burden high",
+    "metric": "continuous_tracking.correction_direction_reversal_count",
+    "row_field": "correction_burden",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:correction_burden",
+    "expected_entry_ref": "knowledge:tracking.control-smoothness@3",
+    "observation_ref": "metric.smoothness",
+    "guardrails": {
+     "all": [
+      {
+       "metric": "continuous_tracking.target_relative_error_px",
+       "op": "<=baseline"
+      },
+      {
+       "metric": "continuous_tracking.time_in_radius_ratio",
+       "op": ">=baseline"
+      }
+     ]
+    }
+   },
+   {
+    "signal": "sparc low",
+    "metric": "continuous_tracking.sparc",
+    "row_field": "sparc",
+    "direction": "lower",
+    "knowledge_metric_ref": "metric:sparc",
+    "expected_entry_ref": "knowledge:tracking.control-smoothness@3",
+    "observation_ref": "metric.smoothness",
+    "guardrails": {
+     "all": [
+      {
+       "metric": "continuous_tracking.target_relative_error_px",
+       "op": "<=baseline"
+      },
+      {
+       "metric": "continuous_tracking.time_in_radius_ratio",
+       "op": ">=baseline"
+      }
+     ]
+    }
+   }
+  ],
+  "dynamic_clicking": [
+   {
+    "signal": "dynamic click error high",
+    "metric": "dynamic_clicking.normalized_click_error",
+    "row_field": "normalized_click_error",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:normalized_click_error",
+    "observation_ref": "event.dynamic_click",
+    "blocking_limitations": [
+     "click_geometry_visible_radius_conditioned",
+     "target_identity_unresolved",
+     "identity_continuity_not_observed",
+     "outcome_association_unavailable",
+     "target_click_association_unavailable"
+    ]
+   },
+   {
+    "signal": "dynamic acquisition slow",
+    "metric": "dynamic_clicking.acquisition_time_ms",
+    "row_field": "acquisition_time_ms",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:acquisition_time_ms",
+    "observation_ref": "event.dynamic_click",
+    "blocking_limitations": [
+     "target_identity_unresolved",
+     "identity_continuity_not_observed",
+     "outcome_association_unavailable",
+     "target_click_association_unavailable"
+    ]
+   },
+   {
+    "signal": "relative velocity mismatch",
+    "metric": "dynamic_clicking.relative_velocity",
+    "row_field": "relative_velocity_magnitude",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:relative_velocity_magnitude",
+    "observation_ref": "field.relative_velocity",
+    "blocking_limitations": [
+     "target_identity_unresolved",
+     "identity_continuity_not_observed",
+     "target_click_association_unavailable"
+    ]
+   }
+  ],
+  "target_switching": [
+   {
+    "signal": "switch transition slow",
+    "metric": "target_switching.transition_time_ms",
+    "row_field": "transition_time_ms",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:inter_target_transition",
+    "expected_entry_ref": "knowledge:switching.transition-and-arrival@3",
+    "observation_ref": "event.switch_chain",
+    "row_filter": "observable_switch_chain",
+    "requested_knowledge_sections": [
+     "definition",
+     "mechanisms",
+     "alternative_explanations",
+     "cue",
+     "dose_guardrail",
+     "matched_retest",
+     "near_transfer_retest",
+     "stop_adjust_rule"
+    ]
+   },
+   {
+    "signal": "switch arrival error high",
+    "metric": "target_switching.settle_duration_ms",
+    "row_field": "settle_duration_ms",
+    "direction": "higher",
+    "knowledge_metric_ref": "metric:next_target_acquisition",
+    "expected_entry_ref": "knowledge:switching.transition-and-arrival@3",
+    "observation_ref": "event.switch_chain",
+    "row_filter": "observable_switch_chain",
+    "requested_knowledge_sections": [
+     "definition",
+     "mechanisms",
+     "alternative_explanations",
+     "cue",
+     "dose_guardrail",
+     "matched_retest",
+     "near_transfer_retest",
+     "stop_adjust_rule"
+    ]
+   }
+  ]
+ },
+ "archetypes": [
+  {
+   "id": "long_decel",
+   "label": "Hard-accel / long-decel profile",
+   "conditions": {
+    "decel_frac high": 1.0,
+    "peak_position low": 0.5
+   },
+   "positive": false
+  },
+  {
+   "id": "decel_jitter",
+   "label": "Deceleration-jitter profile",
+   "conditions": {
+    "sparc low": 1.0,
+    "reverse_ratio high": 0.7
+   },
+   "positive": false
+  },
+  {
+   "id": "two_stage",
+   "label": "Two-stage profile",
+   "conditions": {
+    "submovement two-stage": 1.0
+   },
+   "positive": false
+  },
+  {
+   "id": "underpowered",
+   "label": "Below-reference speed-efficiency profile",
+   "conditions": {
+    "peak_speed below reference": 1.0,
+    "throughput below reference": 1.0
+   },
+   "positive": false
+  },
+  {
+   "id": "inefficient_path",
+   "label": "Inefficient-path profile",
+   "conditions": {
+    "path_efficiency low": 1.0
+   },
+   "positive": false
+  },
+  {
+   "id": "fluid_precise",
+   "label": "Fluid-precision profile",
+   "conditions": {},
+   "positive": true
+  },
+  {
+   "id": "tension_locked",
+   "label": "High-PTC watch profile",
+   "conditions": {
+    "ptc high": 1.0,
+    "accuracy low": 0.5
+   },
+   "positive": false
+  },
+  {
+   "id": "reactive_loser",
+   "label": "Reactive-lag profile",
+   "conditions": {
+    "loss count high": 1.0,
+    "off target long": 0.7
+   },
+   "positive": false
+  },
+  {
+   "id": "precision_borderline",
+   "label": "Borderline-precision profile",
+   "conditions": {
+    "avg error high": 1.0
+   },
+   "positive": false
+  },
+  {
+   "id": "speed_overmatched",
+   "label": "Speed-overmatched profile",
+   "conditions": {
+    "speed mismatch high": 1.0,
+    "accel mismatch high": 0.7
+   },
+   "positive": false
+  },
+  {
+   "id": "fluid_tracker",
+   "label": "Fluid-tracking profile",
+   "conditions": {},
+   "positive": true
+  }
+ ],
+ "root_causes": {
+  "decel_frac high": [
+   "The deceleration phase is fairly long",
+   "The evidence only shows the deceleration phase is fairly long",
+   "Practice the full accelerate-decelerate arc and commit to the brake near the target"
+  ],
+  "decel_frac low": [
+   "The deceleration share is low, with wall-hitting braking",
+   "The input data shows a compressed deceleration phase but cannot alone establish insufficient or rough braking",
+   "Practice even deceleration and treat the braking phase as its own action"
+  ],
+  "sparc low": [
+   "The deceleration speed profile has many fast fluctuations",
+   "The input data supports a non-continuous deceleration profile but cannot alone establish grip tension or other physical causes",
+   "Deceleration-phase control stability"
+  ],
+  "reverse_ratio high": [
+   "Repeated corrections in the deceleration phase",
+   "The evidence only shows many reverse corrections",
+   "Fold corrections into the deceleration instead of stopping and re-correcting"
+  ],
+  "submovement two-stage": [
+   "The primary movement and the following correction form two fairly separated stages",
+   "The evidence only shows the primary movement and correction are fairly separated",
+   "Keep the primary movement and the finishing correction connected instead of pausing between them"
+  ],
+  "peak_speed below reference": [
+   "Peak speed is below the current reference",
+   "The specific movement cause is not directly measured by the input data",
+   "Raise speed step by step under controllable accuracy"
+  ],
+  "throughput below reference": [
+   "Combined speed-accuracy efficiency is below the current reference",
+   "The input data shows below-reference efficiency but cannot alone establish a specific movement cause",
+   "Practice speed-accuracy conversion in comparable scenarios"
+  ],
+  "linearity high": [
+   "Uneven braking",
+   "The input data shows uneven deceleration pacing but cannot alone establish a specific physical-control cause",
+   "Even-paced braking practice"
+  ],
+  "path_efficiency low": [
+   "The flick path wanders",
+   "The input data shows low flick path efficiency but cannot alone establish a physical cause for the non-straight movement",
+   "linetrace straight-line practice"
+  ],
+  "peak_position low": [
+   "Peak position is early",
+   "The input data shows the peak occurring early but cannot alone establish overly aggressive acceleration or a drawn-out deceleration",
+   "Balance acceleration and deceleration"
+  ],
+  "peak_position high": [
+   "Peak position is late",
+   "The input data shows the peak occurring late but cannot alone establish insufficient acceleration or a slow start",
+   "Commit to acceleration"
+  ],
+  "sensitivity high": [
+   "The current cm/360 is small",
+   "The input data records the current sensitivity but cannot alone establish it as the cause of a control problem",
+   "Run only reversible sens experiments and retest"
+  ],
+  "accuracy low": [
+   "Low hit rate",
+   "The input data shows a low hit rate but cannot alone establish speed matching or fine-aim precision as the cause",
+   "pasu + VT Multiclick landing work"
+  ],
+  "loss count high": [
+   "Frequent off-target",
+   "The input data shows many off-target events but cannot alone establish target-change reading or speed matching as the cause",
+   "VT reactive tracking"
+  ],
+  "off target long": [
+   "Slow return after going off target",
+   "The input data shows long off-target durations but cannot alone establish delayed visual re-lock",
+   "VT evasive + Clover Raw Control"
+  ],
+  "avg error high": [
+   "Large error",
+   "The input data shows a large average error but cannot alone establish a specific crosshair-control cause",
+   "VT precise tracking + crosshair-gap awareness"
+  ],
+  "speed mismatch high": [
+   "Misses on high-speed segments",
+   "The input data shows rising error on high-speed segments but cannot alone establish a physical or visual cause of speed matching",
+   "VT control tracking"
+  ],
+  "accel mismatch high": [
+   "Misses on direction-change segments",
+   "The input data shows rising error during acceleration changes but cannot alone establish a specific reactive-tracking cause",
+   "VT reactive tracking"
+  ],
+  "ptc high": [
+   "Possibly elevated tension",
+   "The input data only shows elevated PTC; force density or tension is an unverified hypothesis without EMG",
+   "Exposure therapy + lateral squeeze"
+  ]
+ }
+}

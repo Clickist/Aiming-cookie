@@ -706,3 +706,85 @@ test("diagnosis keeps available metrics descriptive when scenario resolution is 
     ["sparc"],
   );
 });
+
+/** Fixture 直取 diagnosis（v2 类型里 diagnosis 可选；fixture 恒带）。 */
+function diagnosisOf(value: AnalysisResultV2) {
+  const diagnosis = value.deterministic.diagnosis;
+  if (!diagnosis) throw new Error("fixture must carry a diagnosis");
+  return diagnosis;
+}
+
+test("B3: priority_reason boilerplate is hidden in both locales", () => {
+  const zhBoilerplate = result();
+  diagnosisOf(zhBoilerplate).issues[0].priority_reason = "本次优先观察项";
+  assert.equal(presentAnalysisWorkspace(session({ result: zhBoilerplate }))?.issues[0].priorityReason, null);
+
+  const enBoilerplate = result();
+  diagnosisOf(enBoilerplate).issues[0].priority_reason = "Priority watch item for this run";
+  assert.equal(presentAnalysisWorkspace(session({ result: enBoilerplate }))?.issues[0].priorityReason, null);
+});
+
+test("B3: two-stage profile description keys on stable archetype_id, zh label stays as legacy fallback", () => {
+  const enResult = result();
+  diagnosisOf(enResult).profile = {
+    archetype_id: "two_stage",
+    label: "Two-stage profile",
+    confidence: 0.8,
+    secondary_tags: [],
+  };
+  const enProfile = presentAnalysisWorkspace(session({ result: enResult }))?.profile;
+  assert.equal(enProfile?.label, "Two-stage profile");
+  assert.equal(enProfile?.description, translate("zh-CN", "analysis.profile.twoStageDescription"));
+
+  // 存量中文结果：archetype_id 不是 two_stage 时按 zh label 兜底匹配。
+  const legacyResult = result();
+  diagnosisOf(legacyResult).profile = {
+    archetype_id: "decel-wave",
+    label: "两段式型",
+    confidence: 0.8,
+    secondary_tags: [],
+  };
+  const legacyProfile = presentAnalysisWorkspace(session({ result: legacyResult }))?.profile;
+  assert.equal(legacyProfile?.description, translate("zh-CN", "analysis.profile.twoStageDescription"));
+});
+
+test("B3: target-relative claim detection is bilingual", () => {
+  const base = (): AnalysisResultV2 => {
+    const value = result();
+    const deterministic = value.deterministic;
+    const diagnosis = deterministic.diagnosis;
+    if (!diagnosis || diagnosis.issues.length === 0) {
+      throw new Error("fixture must carry a diagnosis issue");
+    }
+    deterministic.limitations = ["target_relative_facts_unavailable"];
+    diagnosis.issues[0] = {
+      ...diagnosis.issues[0],
+      signal: "decel_frac high",
+      observation_ref: "metric.terminal_control",
+      knowledge_registry_version: "2026-09-20.v13",
+      knowledge_entry_refs: ["knowledge:static.flicking-terminal-control@3"],
+      root_causes: [],
+      prescriptions: [],
+    };
+    return value;
+  };
+  const issueOf = (value: AnalysisResultV2) => {
+    const issues = value.deterministic.diagnosis?.issues;
+    if (!issues || issues.length === 0) throw new Error("fixture must carry an issue");
+    return issues[0];
+  };
+  // zh 旧数据：中文关键词命中 → candidateExplanation 换成 signal 展示。
+  const zh = base();
+  issueOf(zh).plain_language_meaning = "落点总是过冲";
+  assert.equal(
+    presentAnalysisWorkspace(session({ result: zh }))?.issues[0].candidateExplanation,
+    translate("zh-CN", "analysis.diagnosis.decelLong"),
+  );
+  // B3 en 数据：英文关键词命中。
+  const en = base();
+  issueOf(en).plain_language_meaning = "The crosshair overshoots the target";
+  assert.equal(
+    presentAnalysisWorkspace(session({ result: en }))?.issues[0].candidateExplanation,
+    translate("zh-CN", "analysis.diagnosis.decelLong"),
+  );
+});

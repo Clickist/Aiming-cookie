@@ -12,6 +12,7 @@ import {
   getCoachSession,
   getCurrentTraining,
   listSessions,
+  presentErrorV1Message,
   retryCoachAgentRun,
   stopCoachAgentRun,
 } from "@/lib/api";
@@ -668,7 +669,7 @@ export function CoachPanel({
   // （勿按 activeSessionKey 变化清除：首条发送的 sessionId 落地可以晚十几秒
   // ——列表刷新很慢——那次"键落地"不是用户切换，会把新失败卡误清掉。）
   const [failedCard, setFailedCard] = useState<
-    null | { sessionId: number; runRef: string; title: string; message: string; retryable: boolean }
+    null | { sessionId: number; runRef: string; title: string; message: string; code: string | null; retryable: boolean }
   >(null);
   useEffect(() => {
     if (run && ["queued", "running"].includes(run.status)) {
@@ -681,6 +682,7 @@ export function CoachPanel({
         runRef: run.run_ref,
         title: runErrorTitle(run.error),
         message: run.error.message,
+        code: run.error.code ?? null,
         retryable: run.error.retryable,
       });
     }
@@ -3112,9 +3114,9 @@ export function CoachPanel({
           // 必须等于当前生效会话）：切到其他会话不显示别处的错误卡，空首页
           // 与删除残留的僵尸 run 也不得泄漏（0912 晚点点截图实锤）。
           const cardSessionId = sessionId ?? handoverSessionId;
-          let error: null | { runRef: string; title: string; message: string; retryable: boolean } = null;
+          let error: null | { runRef: string; title: string; message: string; code: string | null; retryable: boolean } = null;
           if (run && run.status === "failed" && run.error && run.session_id === cardSessionId) {
-            error = { runRef: run.run_ref, title: runErrorTitle(run.error), message: run.error.message, retryable: run.error.retryable };
+            error = { runRef: run.run_ref, title: runErrorTitle(run.error), message: run.error.message, code: run.error.code ?? null, retryable: run.error.retryable };
           } else if (failedCard && cardSessionId != null && cardSessionId === failedCard.sessionId) {
             error = failedCard;
           }
@@ -3123,12 +3125,14 @@ export function CoachPanel({
           // member_required → 未订阅引导，jwt_expired → 重登录引导（静默降级未登录）。
           const gatewayCode = classifyMemberGatewayError(error.message);
           const gateway = gatewayCode ? gatewayErrorNotice(gatewayCode) : null;
+          // B3：error.v1 稳定 code 优先查字典（api.error.*），缺码回落 message 原文。
+          const presentedMessage = presentErrorV1Message({ code: error.code, message: error.message }) ?? error.message;
           return (
             <div className="task6-error-card" role="alert">
               <div className="task6-error-card-head">
                 <div className="task6-error-card-title">{error.title}</div>
                 <div className="task6-error-card-desc">
-                  {gateway ? gateway.text : t("coach.error.cardTail", { message: error.message })}
+                  {gateway ? gateway.text : t("coach.error.cardTail", { message: presentedMessage })}
                 </div>
               </div>
               <div className="task6-error-card-actions">

@@ -101,10 +101,121 @@ METRIC_DEFINITIONS: dict[str, dict[str, str]] = {
     "dynamic_clicking.predictive_lead": {"name": "有条件的领先/滞后", "description": "在可用运动可预测性证据条件下，点击误差相对目标运动方向的带符号偏移"},
 }
 
+# B3 i18n：en-US 平行目录。键集必须与 METRIC_DEFINITIONS 完全一致（测试锁定），
+# 只翻译 name/description 展示文案，不含任何指标语义。
+METRIC_DEFINITIONS_EN_US: dict[str, dict[str, str]] = {
+    # Canonical static-clicking metrics.
+    "static_clicking.path_length": {"name": "Path length", "description": "Total raw input distance accumulated over one mouse movement"},
+    "static_clicking.mean_speed": {"name": "Mean speed", "description": "Average mouse speed over the analysis window"},
+    "static_clicking.mean_acceleration": {"name": "Mean acceleration", "description": "Average mouse acceleration over the analysis window"},
+    "static_clicking.calibrated_path_length": {"name": "Calibrated path length", "description": "Mouse path length converted using the current calibration ratio"},
+    "static_clicking.flick_count": {"name": "Flick count", "description": "Number of flick events included in the summary"},
+    "static_clicking.movement_duration_ms": {"name": "Movement duration", "description": "Time from movement start to movement end"},
+    "static_clicking.time_to_peak_ms": {"name": "Time to peak speed", "description": "Time from movement start to peak speed"},
+    "static_clicking.accel_duration_ms": {"name": "Acceleration duration", "description": "Time from movement start to peak speed"},
+    "static_clicking.decel_duration_ms": {"name": "Deceleration duration", "description": "Time from peak speed to movement end"},
+    "static_clicking.settle_duration_ms": {"name": "Post-movement duration", "description": "Time from movement end to this flick's analysis anchor"},
+    "static_clicking.decel_frac": {"name": "Deceleration fraction", "description": "Fraction of this movement's duration spent decelerating"},
+    "static_clicking.peak_position_pct": {"name": "Peak speed position", "description": "Relative position of the peak speed within the whole movement"},
+    "static_clicking.peak_speed": {"name": "Peak speed", "description": "Maximum instantaneous speed within one movement"},
+    "static_clicking.flick_path_length": {"name": "Flick path length", "description": "Path length of the flick events included in the summary"},
+    "static_clicking.displacement": {"name": "Displacement", "description": "Straight-line distance from movement start to end"},
+    "static_clicking.path_efficiency": {"name": "Path efficiency", "description": "Ratio of straight-line displacement to actual path length"},
+    "static_clicking.straightness": {"name": "Straightness", "description": "Ratio of straight-line displacement to actual path length"},
+    "static_clicking.reverse_ratio": {"name": "Re-acceleration ratio", "description": "Share of post-peak samples where speed increases again"},
+    "static_clicking.direction_reverse_ratio": {"name": "Direction reversal ratio", "description": "Share of path distance where the direction sign reverses"},
+    "static_clicking.corrective_count": {"name": "Correction count", "description": "Number of correction segments identified by discrete direction changes"},
+    "static_clicking.submovement_count": {"name": "Submovement count", "description": "Number of submovements identified within one movement"},
+    "static_clicking.trough_depth_ratio": {"name": "Speed trough depth ratio", "description": "Trough speed relative to the peak speed"},
+    "static_clicking.submovement_overlap": {"name": "Submovement overlap proxy", "description": "Currently uses the speed trough depth ratio as the submovement overlap proxy"},
+    "static_clicking.sparc": {"name": "Movement smoothness (SPARC)", "description": "Smoothness metric computed from the spectral arc length of the speed profile"},
 
-def get_metric_definition(metric_key: str) -> Mapping[str, str] | None:
-    """Return the display definition for *metric_key*, or ``None`` if unknown."""
-    return METRIC_DEFINITIONS.get(metric_key)
+    # Legacy bare keys emitted by the input-native static analysis.
+    "flick_count": {"name": "Flick count", "description": "Number of flick events included in the summary"},
+    "mean_speed": {"name": "Mean speed", "description": "Average mouse speed over the analysis window"},
+    "mean_acceleration": {"name": "Mean acceleration", "description": "Average mouse acceleration over the analysis window"},
+    "movement_duration_ms": {"name": "Movement duration", "description": "Time from movement start to movement end"},
+    "time_to_peak_ms": {"name": "Time to peak speed", "description": "Time from movement start to peak speed"},
+    "accel_duration_ms": {"name": "Acceleration duration", "description": "Time from movement start to peak speed"},
+    "decel_duration_ms": {"name": "Deceleration duration", "description": "Time from peak speed to movement end"},
+    "settle_duration_ms": {"name": "Post-movement duration", "description": "Time from movement end to this flick's analysis anchor"},
+    "decel_frac": {"name": "Deceleration fraction", "description": "Fraction of this movement's duration spent decelerating"},
+    "peak_position_pct": {"name": "Peak speed position", "description": "Relative position of the peak speed within the whole movement"},
+    "peak_speed": {"name": "Peak speed", "description": "Maximum instantaneous speed within one movement"},
+    "path_length": {"name": "Path length", "description": "Total raw input distance accumulated over one mouse movement"},
+    "flick_path_length": {"name": "Flick path length", "description": "Path length of the flick events included in the summary"},
+    "displacement": {"name": "Displacement", "description": "Straight-line distance from movement start to end"},
+    "path_efficiency": {"name": "Path efficiency", "description": "Ratio of straight-line displacement to actual path length"},
+    "straightness": {"name": "Straightness", "description": "Ratio of straight-line displacement to actual path length"},
+    "reverse_ratio": {"name": "Re-acceleration ratio", "description": "Share of post-peak samples where speed increases again"},
+    "direction_reverse_ratio": {"name": "Direction reversal ratio", "description": "Share of path distance where the direction sign reverses"},
+    "corrective_count": {"name": "Correction count", "description": "Number of correction segments identified by discrete direction changes"},
+    "submovement_count": {"name": "Submovement count", "description": "Number of submovements identified within one movement"},
+    "trough_depth_ratio": {"name": "Speed trough depth ratio", "description": "Trough speed relative to the peak speed"},
+    "submovement_overlap": {"name": "Submovement overlap proxy", "description": "Currently uses the speed trough depth ratio as the submovement overlap proxy"},
+    "sparc": {"name": "Movement smoothness (SPARC)", "description": "Smoothness metric computed from the spectral arc length of the speed profile"},
+    "linearity": {"name": "Deceleration linearity", "description": "Deviation of the deceleration-phase speed profile from a linear change"},
+    "peak_speed_deg": {"name": "Peak angular speed", "description": "Maximum instantaneous angular speed within one movement"},
+    "throughput": {"name": "Throughput", "description": "Output metric computed from task difficulty and movement time"},
+    "endpoint_peak": {"name": "Endpoint speed ratio", "description": "Movement-end speed relative to this movement's peak speed"},
+    "path_length_deg": {"name": "Angular path length", "description": "Total angle accumulated along the movement path"},
+
+    "continuous_tracking.target_relative_error_px": {"name": "Target-relative error", "description": "Distance between the mouse position and the target center"},
+    "continuous_tracking.time_in_radius_ratio": {"name": "Time in radius", "description": "Share of time the mouse stays within the target radius"},
+    "continuous_tracking.loss_count": {"name": "Loss count", "description": "Number of times the mouse leaves the target radius"},
+    "continuous_tracking.loss_duration_ms": {"name": "Loss duration", "description": "Duration of each departure from the target radius"},
+    "continuous_tracking.reacquisition_latency_ms": {"name": "Reacquisition latency", "description": "Time from leaving the target to re-entering its radius"},
+    "continuous_tracking.correction_burden": {"name": "Correction burden", "description": "Number of corrective direction changes recorded while tracking"},
+    "continuous_tracking.correction_direction_reversal_count": {"name": "Correction reversal count", "description": "Number of times the correction direction reverses while tracking"},
+    "continuous_tracking.smoothness_acceleration_rms": {"name": "Acceleration RMS", "description": "Root mean square of acceleration while tracking"},
+    "continuous_tracking.sparc": {"name": "Movement smoothness (SPARC)", "description": "Smoothness metric computed from the spectral arc length of the tracking speed profile"},
+    "continuous_tracking.relative_lag_ms": {"name": "Relative lag", "description": "Time offset of the mouse motion relative to the target motion"},
+    "continuous_tracking.phase_lag_ms": {"name": "Phase lag", "description": "Phase time offset between the mouse motion and the target motion"},
+    "continuous_tracking.coherence": {"name": "Tracking coherence", "description": "Frequency-domain coherence between the mouse and target motions"},
+    "continuous_tracking.velocity_gain": {"name": "Velocity gain", "description": "Ratio of mouse speed to target speed"},
+    "continuous_tracking.alignment_latency_ms": {"name": "Capture alignment latency", "description": "Time-alignment offset estimated between captured data; not a human reaction time"},
+    "continuous_tracking.observed_change_response_ms": {"name": "Observed change response time", "description": "Time from a target direction change until a mouse response is recorded"},
+    "continuous_tracking.human_response_latency_ms": {"name": "Human response latency", "description": "The current analysis does not infer this metric from tracking samples or capture alignment"},
+    "continuous_tracking.predictive_lead_ms": {"name": "Conditional lead/lag time", "description": "Mouse-vs-target time offset measured conditional on available motion-predictability evidence"},
+
+    "target_switching.transition_time_ms": {"name": "Switch movement duration", "description": "Time from the previous target's Stats kill to acquiring the next target"},
+    "target_switching.transition_distance_px": {"name": "Switch displacement", "description": "Change in target-relative error vector between leaving and acquiring"},
+    "target_switching.path_efficiency": {"name": "Switch path efficiency", "description": "Ratio of target-relative error change to relative path length during the switch"},
+    "target_switching.settle_duration_ms": {"name": "Acquisition confirmation duration", "description": "Time from first contact with the next target to meeting the minimum continuous-contact condition"},
+    "target_switching.first_shot_latency_ms": {"name": "First shot latency", "description": "Time from acquiring the next target to the first shot event"},
+    "target_switching.first_damage_latency_ms": {"name": "First damage latency", "description": "Time from acquiring the next target to the first damage event"},
+    "target_switching.carry_over_overshoot_ratio": {"name": "Carry-over overshoot ratio", "description": "Share of switch chains flagged as carry-over overshoot"},
+    "target_switching.terminal_correction_ratio": {"name": "Terminal correction ratio", "description": "Share of switch chains flagged as terminal correction"},
+
+    "dynamic_clicking.normalized_click_error": {"name": "Normalized click error", "description": "Distance between the click position and the associated target center, normalized by the target's visible radius"},
+    "dynamic_clicking.acquisition_time_ms": {"name": "Acquisition duration", "description": "Time from the recorded acquisition start until the crosshair first enters the target's visible radius"},
+    "dynamic_clicking.relative_velocity": {"name": "Relative speed", "description": "Magnitude of the relative velocity vector between the mouse and the target"},
+    "dynamic_clicking.target_state_accuracy": {"name": "Associated-target success rate", "description": "Share of associated clicks with a recorded outcome that are recorded as successful"},
+    "dynamic_clicking.predictive_lead": {"name": "Conditional lead/lag", "description": "Signed offset of the click error relative to the target's motion direction, conditional on available motion-predictability evidence"},
+}
+
+_METRIC_CATALOGS: dict[str, dict[str, dict[str, str]]] = {
+    "zh-CN": METRIC_DEFINITIONS,
+    "en-US": METRIC_DEFINITIONS_EN_US,
+}
 
 
-__all__ = ["METRIC_DEFINITIONS", "get_metric_definition"]
+def get_metric_definition(
+    metric_key: str, locale: str = "zh-CN",
+) -> Mapping[str, str] | None:
+    """Return the display definition for *metric_key*, or ``None`` if unknown.
+
+    ``locale`` selects the display catalog (B3 i18n); an unknown locale falls
+    back to the zh-CN catalog, and en-US falls back per-key to zh-CN when the
+    parallel catalog has not covered the key yet.
+    """
+    catalog = _METRIC_CATALOGS.get(locale, METRIC_DEFINITIONS)
+    definition = catalog.get(metric_key)
+    if definition is None and catalog is not METRIC_DEFINITIONS:
+        definition = METRIC_DEFINITIONS.get(metric_key)
+    return definition
+
+
+__all__ = [
+    "METRIC_DEFINITIONS", "METRIC_DEFINITIONS_EN_US", "get_metric_definition",
+]

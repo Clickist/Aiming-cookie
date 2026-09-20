@@ -119,13 +119,15 @@ def test_structure_follows_c7_contract():
 
 
 def test_signals_cover_analyzer_and_registry_domains():
-    from kovaak_tracker import advice, advice_tracking
+    from kovaak_tracker import advice
+    from kovaak_tracker.coach.labels import zh as zh_labels
     from kovaak_tracker.coach import profiles
 
     doc = _load_doc()
     signals = set(doc["signals"])
 
-    expected = set(advice._SIGNAL_METRICS) | set(advice_tracking._PLAIN_MEANINGS)
+    # B3 i18n：advice_tracking 的 signal→白话表迁入 coach/labels（TRACKING_*）。
+    expected = set(advice._SIGNAL_METRICS) | set(zh_labels.TRACKING_PLAIN_MEANINGS)
     for archetype in profiles.ARCHETYPES:
         expected.update(archetype["conditions"])
     expected.update(profiles.ROOT_CAUSES)

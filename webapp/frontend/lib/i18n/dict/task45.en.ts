@@ -311,4 +311,9 @@ export const task45En = {
   "analysis.video.speedDockAria": "Loop pace (synced with global speed)",
   "analysis.video.speedStepAria": "Loop pace {step}×",
   "analysis.video.speedStepTitle": "Slow-motion review at {step}× (same source as global speed)",
+  // ---- B3 backend catalog companion (own block; backend codes/enums -> dict) ----
+  // /api/coach/runtime-status code (ready/warming_up, backend health.py);
+  // backend message is locale-cataloged per request, keys map code -> copy.
+  "coachRuntime.status.ready": "Coach engine is ready",
+  "coachRuntime.status.warmingUp": "Coach engine is warming up; the first reply may be slower (it will connect to the resident sidecar or take a cold-start path)",
 } as const;

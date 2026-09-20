@@ -25,12 +25,30 @@ from . import knowledge_registry
 CONFIG_SCHEMA_VERSION = "knowledge_config.v1"
 ACTIVE_OFFICIAL = "official"
 
+# B3 i18n：官方 mapping 的 locale 平行变体（official.v1.en.json）。只翻译 copy
+# 字段；schema/规则/阈值/ref 不动（coach_mapping.v1 冻结合同不变）。
 _RESOURCE_ROOT = os.environ.get("AIMING_COOKIE_RESOURCE_ROOT", "").strip()
 _OFFICIAL_MAPPING_PATH = (
     Path(_RESOURCE_ROOT) / "knowledge" / "mapping" / "official.v1.json"
     if _RESOURCE_ROOT
     else Path(__file__).resolve().parents[2] / "knowledge" / "mapping" / "official.v1.json"
 )
+_OFFICIAL_MAPPING_LOCALE_SUFFIXES = {
+    "zh-CN": "",
+    "en-US": ".en",
+}
+
+
+def _official_mapping_path(locale: str) -> Path:
+    """Official mapping file for *locale*; missing locale-variant files fall
+    back to the base zh file (a missing en variant is not an error)."""
+    suffix = _OFFICIAL_MAPPING_LOCALE_SUFFIXES.get(locale, "")
+    if not suffix:
+        return _OFFICIAL_MAPPING_PATH
+    variant = _OFFICIAL_MAPPING_PATH.with_name(
+        _OFFICIAL_MAPPING_PATH.name.replace(".json", f"{suffix}.json"),
+    )
+    return variant if variant.is_file() else _OFFICIAL_MAPPING_PATH
 
 
 @dataclass
@@ -65,13 +83,13 @@ def _config_path() -> Path | None:
     return root / "config" / "knowledge.json" if root else None
 
 
-def _official() -> ActiveKnowledge:
+def _official(locale: str = "zh-CN") -> ActiveKnowledge:
     return ActiveKnowledge(
         mode="official",
         pack_id=None,
         pack_version=None,
         registry_path=None,
-        mapping_path=_OFFICIAL_MAPPING_PATH,
+        mapping_path=_official_mapping_path(locale),
     )
 
 
@@ -102,28 +120,30 @@ def _installed_entry(config: dict[str, Any], pack_id: str) -> dict[str, Any] | N
     return None
 
 
-def _resolve() -> ActiveKnowledge:
+def _resolve(locale: str = "zh-CN") -> ActiveKnowledge:
     config_path = _config_path()
     if config_path is None:
-        return _official()
+        return _official(locale)
     config = _load_config(config_path)
     if config is None:
-        return _official()
+        return _official(locale)
     active = config.get("active")
     if not isinstance(active, str) or not active:
         _record_fallback("knowledge config active field is invalid")
-        return _official()
+        return _official(locale)
     if active == ACTIVE_OFFICIAL:
-        return _official()
+        return _official(locale)
     entry = _installed_entry(config, active)
     pack_dir = _data_root() / "knowledge-packs" / active
     if entry is None or not pack_dir.is_dir():
         _record_fallback(f"active knowledge pack is not installed: {active}")
-        return _official()
+        return _official(locale)
     registry_path = pack_dir / "knowledge" / "registry.json"
     if not registry_path.is_file():
         _record_fallback(f"active knowledge pack registry is missing: {active}")
-        return _official()
+        return _official(locale)
+    # Pack 模式：mapping 是包作者的内容（zh 语料，与 registry 同一拍板不翻译）；
+    # en 请求读 pack mapping 原文，由前端缺省透传显示。
     mapping_path = pack_dir / "mapping.json"
     pack_version = entry.get("pack_version")
     return ActiveKnowledge(
@@ -135,11 +155,11 @@ def _resolve() -> ActiveKnowledge:
     )
 
 
-def resolve_active() -> ActiveKnowledge:
+def resolve_active(locale: str = "zh-CN") -> ActiveKnowledge:
     """Resolve the current active knowledge base; degraded states fall back to official."""
     global _last_fallback_reason
     _last_fallback_reason = None
-    return _resolve()
+    return _resolve(locale)
 
 
 def load_active_registry() -> dict[str, Any]:
@@ -156,12 +176,16 @@ def load_active_registry() -> dict[str, Any]:
         return knowledge_registry.load_registry()
 
 
-def load_active_mapping() -> tuple[dict[str, Any] | None, str | None]:
+def load_active_mapping(locale: str = "zh-CN") -> tuple[dict[str, Any] | None, str | None]:
     """(mapping doc, fallback reason). A missing file -> (None, None): the
-    built-in frozen rules are the normal fallback, not a degradation."""
+    built-in frozen rules are the normal fallback, not a degradation.
+
+    B3 i18n：official 模式按 *locale* 选平行变体文件（en 缺文件回落 zh）；
+    pack 模式的 mapping 是包内容，不按 locale 切换。
+    """
     global _last_fallback_reason
     _last_fallback_reason = None
-    active = _resolve()
+    active = _resolve(locale)
     path = active.mapping_path
     if path is None:
         return (None, None)

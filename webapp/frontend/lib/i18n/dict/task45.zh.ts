@@ -312,4 +312,9 @@ export const task45Zh = {
   "analysis.video.speedDockAria": "循环节奏（与全局变速同步）",
   "analysis.video.speedStepAria": "循环节奏 {step}×",
   "analysis.video.speedStepTitle": "慢放精读 {step}×（与全局变速同源）",
+  // ---- B3 后端目录化配套（独立区块；后端码/枚举 → 前端字典映射） ----
+  // /api/coach/runtime-status 的 code（ready/warming_up，backend health.py）；
+  // 后端 message 已按请求 locale 目录化，此处按键映射供消费点使用。
+  "coachRuntime.status.ready": "教练引擎已就绪",
+  "coachRuntime.status.warmingUp": "教练引擎准备中；首次回复可能较慢（将连接常驻 sidecar 或走冷启动/较慢路径）",
 } as const;

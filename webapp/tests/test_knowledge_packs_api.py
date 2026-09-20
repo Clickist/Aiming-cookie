@@ -503,10 +503,10 @@ async def test_activate_switches_active_and_reports_rematerialization(
     # activate 写完 config 后即时调用 sidecar 重物化，切换立刻生效；
     # 两次成功激活各调用一次，404 的未知 pack 不调用。
     assert len(rematerialize_calls) == 2
-    assert activated_body["warnings"] == [routes._SIDECAR_APPLIED_WARNING]
+    assert activated_body["warnings"] == [routes._pack_warning("sidecar_applied", "zh-CN")]
     assert back.status_code == 200
     assert back.json()["active"] == "official"
-    assert back.json()["warnings"] == [routes._SIDECAR_APPLIED_WARNING]
+    assert back.json()["warnings"] == [routes._pack_warning("sidecar_applied", "zh-CN")]
 
     assert missing.status_code == 404
 
@@ -534,7 +534,7 @@ async def test_activate_degrades_to_restart_warning_when_sidecar_unreachable(
     assert activated.status_code == 200, activated.text
     body = activated.json()
     assert body["active"] == PACK_ID
-    assert body["warnings"] == [routes._SIDECAR_ACTIVATE_UNREACHABLE_WARNING]
+    assert body["warnings"] == [routes._pack_warning("sidecar_activate_unreachable", "zh-CN")]
 
 
 @pytest.mark.asyncio

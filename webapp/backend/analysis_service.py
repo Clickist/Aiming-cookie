@@ -97,8 +97,8 @@ def _public_run_projection(run: dict[str, Any], owner_id: str) -> dict[str, Any]
     return _safe_run(projected)
 
 
-async def list_history(owner_id: str) -> list[dict[str, Any]]:
-    return await queue.list_sessions(owner_id)
+async def list_history(owner_id: str, *, locale: str = "zh-CN") -> list[dict[str, Any]]:
+    return await queue.list_sessions(owner_id, locale=locale)
 
 
 async def history_trend(owner_id: str, metric_key: str) -> dict[str, Any]:
@@ -597,6 +597,7 @@ async def create_analysis_from_run(
     manual_override: Mapping[str, object] | None = None,
     managed_video_source: Path | None = None,
     managed_video_fingerprint: Mapping[str, object] | None = None,
+    locale: str = "zh-CN",
 ) -> dict[str, Any]:
     """Freeze a Run and enqueue its highest valid automatic evidence tier.
 
@@ -746,6 +747,7 @@ async def create_analysis_from_run(
             status="uploading",
             require_no_active=not allow_parallel,
             video_receipt=run.get("video_receipt"),
+            locale=locale,
         )
     except queue.ActiveSessionExists as exc:
         active = await queue.get_active_session(owner_id)
@@ -936,6 +938,7 @@ async def execute_trusted_analysis_create(
     managed_video_source: Path | None = None,
     idempotency_key: str | None = None,
     allow_parallel: bool = False,
+    locale: str = "zh-CN",
 ) -> dict[str, Any]:
     """Execute the validated desktop Analysis write and return the canonical result."""
     command_id = "analysis.create_from_run"
@@ -959,6 +962,7 @@ async def execute_trusted_analysis_create(
             managed_video_source=managed_video_source,
             managed_video_fingerprint=video_fingerprint,
             allow_parallel=allow_parallel,
+            locale=locale,
         )
     except ProductCommandError as exc:
         return _failure_result(

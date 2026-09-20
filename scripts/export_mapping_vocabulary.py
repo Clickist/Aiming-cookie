@@ -56,6 +56,7 @@ from kovaak_tracker import (  # noqa: E402
 )
 from kovaak_tracker.coach import diagnosis, profiles  # noqa: E402
 from kovaak_tracker.coach.knowledge_registry import load_registry  # noqa: E402
+from kovaak_tracker.coach.labels import zh as zh_labels  # noqa: E402
 
 SCHEMA_VERSION = "coach_mapping_vocabulary.v1"
 OUTPUT_PATH = REPO_ROOT / "knowledge" / "mapping" / "vocabulary.v1.json"
@@ -408,7 +409,8 @@ def build_vocabulary() -> dict:
     candidates = _candidate_facts()
     registry_signals, registry_tokens = _registry_facts()
 
-    signals = set(advice._SIGNAL_METRICS) | set(advice_tracking._PLAIN_MEANINGS)
+    # B3 i18n：advice_tracking 的 signal→白话表迁入 coach/labels（TRACKING_*）。
+    signals = set(advice._SIGNAL_METRICS) | set(zh_labels.TRACKING_PLAIN_MEANINGS)
     signals.update(_finding_signal_literals("kovaak_tracker/advice.py"))
     signals.update(_finding_signal_literals("kovaak_tracker/advice_tracking.py"))
     signals.update(candidates["signals"])

@@ -89,6 +89,9 @@ const DIAGNOSIS_PRESENTATION_KEYS: Record<string, MessageKey> = {
   "练完整的加速→减速，减速果断一次到位": "analysis.diagnosis.decelFullPractice",
   "acc 90%+，逼你把单次 flick 加减速打完整": "analysis.diagnosis.flickComplete",
   "减速段反复修正": "analysis.diagnosis.decelRepeatedFix",
+  // B3 en 对照（现行产出的 root-cause/处方 reason；kovaak_tracker/coach/labels 同值）。
+  "Repeated corrections in the deceleration phase": "analysis.diagnosis.decelRepeatedFix",
+  "Landing precision with fewer second corrections": "analysis.diagnosis.precisionLanding",
   "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因": "analysis.diagnosis.reverseManyEvidenceOnly",
   "单次制动 + 流体修正": "analysis.diagnosis.singleBrakeFluid",
   "转流体派：减速段即微调，别 readjust": "analysis.diagnosis.fluidStyleDecel",
@@ -195,15 +198,26 @@ function hasChineseDisplayText(value: string): boolean {
 function presentDisplayText(value: string, fallback: MessageKey | string): string {
   const key = SWITCHING_PRESENTATION_KEYS[value] ?? DIAGNOSIS_PRESENTATION_KEYS[value];
   if (key !== undefined) return t(key);
-  return hasChineseDisplayText(value) ? value : t(fallback as MessageKey);
+  // B3：zh 数据（存量/中文语料）原样透出；en locale 下后端已是英文目录文案，
+  // 同样原样透出。zh UI 读到未入表的英文串仍走 fallback（现行行为不变）。
+  if (hasChineseDisplayText(value) || getLocale() === "en-US") return value;
+  return t(fallback as MessageKey);
 }
+
+// B3：后端 en 目录的 priority_reason 样板串（kovaak_tracker/coach/labels/en.py
+// 同值维护）；zh 串/正则兜住存量中文结果。
+const PRIORITY_REASON_BOILERPLATE = new Set([
+  "本次优先观察项",
+  "本次优先处理项",
+  "Priority watch item for this run",
+  "Priority fix item for this run",
+]);
 
 function presentPriorityReason(value: string): string | null {
   const withoutClaimLevel = value.replace(/^\[experimental\]\s*/i, "");
   if (
     /^观察项排序第\s*\d+$/.test(withoutClaimLevel)
-    || withoutClaimLevel === "本次优先观察项"
-    || withoutClaimLevel === "本次优先处理项"
+    || PRIORITY_REASON_BOILERPLATE.has(withoutClaimLevel)
   ) {
     return null;
   }
@@ -354,7 +368,9 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
 }
 
 function containsTargetRelativeClaim(value: string): boolean {
-  return /接近落点|过冲|欠冲|是否到位|没有到位|冲过目标|没到目标|对准目标/.test(value);
+  // B3：en 目录文案按英文关键词命中（overshoot/undershoot/landing…）；
+  // zh 分支兜住存量中文结果（labels/en.py 的 ROOT_CAUSES 措辞对齐）。
+  return /接近落点|过冲|欠冲|是否到位|没有到位|冲过目标|没到目标|对准目标|overshoot|undershoot|landing|arrive on target|reach the target/.test(value);
 }
 
 function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean): AnalysisIssuePresentation[] {
@@ -558,7 +574,10 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
       : t("analysis.headline.none"),
     profile: profileLabel ? {
       label: profileLabel,
-      ...(profileLabel === "两段式型" ? {
+      // B3：优先稳定 archetype_id（新结果两种语言都带）；zh label 等值兜住
+      // 存量中文结果（contracts.ts:547 的历史耦合）。
+      ...(safeString(profileRaw.archetype_id) === "two_stage"
+        || profileLabel === "两段式型" ? {
         description: t("analysis.profile.twoStageDescription"),
       } : {}),
       confidence: safeNumber(profileRaw.confidence),

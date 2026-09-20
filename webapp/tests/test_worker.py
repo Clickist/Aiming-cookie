@@ -802,7 +802,7 @@ async def test_process_one_happy_path():
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
     assert result["narration"]["status"] == "not_requested"
     assert result["narration"]["text"] is None
-    assert len(mock_report.call_args.args) == 1
+    assert len(mock_report.call_args.args) == 2  # (summary, locale)
     report_summary = mock_report.call_args.args[0]
     assert report_summary["sparc"]["metric_version"] == (
         "flicking_fair_summary.sparc.v2"
@@ -874,7 +874,7 @@ async def test_video_fallback_does_not_read_or_load_selected_provider():
     ) as run_report:
         assert await worker.process_one() is True
 
-    assert len(run_report.call_args.args) == 1
+    assert len(run_report.call_args.args) == 2  # (summary, locale)
     session = await queue.get_session(sid)
     assert session["result"]["narration"]["status"] == "not_requested"
     assert session["result"]["narration"]["text"] is None
@@ -994,7 +994,7 @@ async def test_process_one_calls_local_report_without_backend():
     assert s["result"]["deterministic"]["timeline"] == []
     assert s["result"]["narration"]["status"] == "not_requested"
     assert mock_report.call_args.args
-    assert len(mock_report.call_args.args) == 1
+    assert len(mock_report.call_args.args) == 2  # (summary, locale)
     assert mock_report.call_args.kwargs == {}
 
 
@@ -1173,7 +1173,7 @@ async def test_process_one_never_loads_narration_backend():
     assert s["status"] == "done"
     assert s["result"]["narration"]["status"] == "not_requested"
     assert s["result"]["narration"]["text"] is None
-    assert len(mock_report.call_args.args) == 1
+    assert len(mock_report.call_args.args) == 2  # (summary, locale)
 
 
 def test_build_timeline_combines_peaks_correctives_kills():

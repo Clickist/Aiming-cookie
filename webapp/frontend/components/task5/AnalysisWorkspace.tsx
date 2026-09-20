@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getSession, retrySession } from "@/lib/api";
+import { getSession, presentErrorV1Message, retrySession } from "@/lib/api";
 import {
   ANALYSIS_AUTO_TEACH_EVENT,
   COACH_PENDING_INTENT_KEY,
@@ -305,7 +305,7 @@ export function AnalysisWorkspace() {
           <Badge tone={stateTone(viewState)}>{stateLabel(viewState)}</Badge>
         </header>
         <ErrorState title={t("analysis.error.failedTitle")}>
-          <p>{session?.error?.message ?? t("analysis.error.noFailureDetail")}</p>
+          <p>{presentErrorV1Message(session?.error) ?? t("analysis.error.noFailureDetail")}</p>
           {viewState === "retryable" ? (
             <Button disabled={retrying} onClick={() => void retry()}>{retrying ? t("analysis.error.creatingAttempt") : t("analysis.error.retry")}</Button>
           ) : null}

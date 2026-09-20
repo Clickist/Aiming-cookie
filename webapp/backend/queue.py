@@ -277,9 +277,12 @@ async def enqueue(
     manual_override: dict | None = None,
     require_no_active: bool = False,
     video_receipt: dict | None = None,
+    locale: str = "zh-CN",
 ) -> int:
     if input_mode not in _INPUT_MODES:
         raise ValueError(f"unsupported input_mode: {input_mode}")
+    if locale not in ("zh-CN", "en-US"):
+        locale = "zh-CN"
     if kovaak_run_id is not None:
         from . import kovaak_run_store
         run = await kovaak_run_store.get_kovaak_run(kovaak_run_id, user_id)
@@ -335,6 +338,9 @@ async def enqueue(
             "partial_outcome": None,
             "calibration_request": calibration_request,
             "calibration_snapshot": None,
+            # B3 i18n：提交时 locale 随 job 落盘；worker 生成诊断/时间轴文案
+            # 按此 locale（结果语言 = 生成时语言，读侧不回翻）。
+            "locale": locale,
         }
         _save_session(session)
     return session_id
@@ -522,6 +528,8 @@ async def requeue_for_retry(session_id: int) -> dict:
             "partial_outcome": None,
             "calibration_request": source.get("calibration_request"),
             "calibration_snapshot": None,
+            # B3 i18n：重试沿用原尝试的 locale（结果语言与首试一致）。
+            "locale": source.get("locale") or "zh-CN",
         }
         _save_session(new_session)
 
@@ -751,7 +759,7 @@ async def list_storage_sessions(user_id: str) -> list[dict]:
     ]
 
 
-async def list_sessions(user_id: str) -> list[dict]:
+async def list_sessions(user_id: str, *, locale: str = "zh-CN") -> list[dict]:
     out: list[dict] = []
     for session in _all_sessions(user_id):
         item = dict(session)
@@ -771,6 +779,7 @@ async def list_sessions(user_id: str) -> list[dict]:
             scenario=projected.get("scenario"),
             training_at=projected["training_at"],
             analysis_completed_at=projected["analysis_completed_at"],
+            locale=locale,
         )
         out.append(projected)
     return out
@@ -1040,7 +1049,7 @@ async def set_onboarding_state(
     return await get_product_state(user_id)
 
 
-async def get_session(session_id: int) -> Optional[dict]:
+async def get_session(session_id: int, *, locale: str = "zh-CN") -> Optional[dict]:
     session = _load_session(session_id)
     if session is None:
         return None
@@ -1060,6 +1069,7 @@ async def get_session(session_id: int) -> Optional[dict]:
         scenario=d.get("scenario"),
         training_at=d.get("training_at"),
         analysis_completed_at=d.get("analysis_completed_at"),
+        locale=locale,
     )
 
     raw_result = d.get("result")

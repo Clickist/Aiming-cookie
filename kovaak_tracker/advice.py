@@ -84,20 +84,8 @@ _SIGNAL_METRICS = {
     "sensitivity high": ["cm_per_360"],
 }
 
-_PLAIN_MEANINGS = {
-    "decel_frac high": "速度峰值后用了较长时间完成减速",
-    "decel_frac low": "速度峰值后留给连续减速的时间较短",
-    "linearity high": "减速阶段的速度下降节奏不够均匀",
-    "sparc low": "减速阶段的速度轮廓含较多快速波动",
-    "reverse_ratio high": "移动收尾时出现了较多反向修正",
-    "submovement two-stage": "主要移动与后续修正更像两个分离动作",
-    "peak_position low": "速度峰值出现得较早",
-    "peak_position high": "速度峰值出现得较晚",
-    "path_efficiency low": "实际移动路径比起终点直线距离更绕",
-    "peak_speed below reference": "峰值速度低于当前比较参考",
-    "throughput below reference": "速度与精度综合效率低于当前比较参考",
-    "sensitivity high": "当前 cm/360 较小，是否影响控制仍需实验验证",
-}
+# B3 i18n：_PLAIN_MEANINGS 与各 Finding 的中文模板/处方文案已迁移到
+# ``coach/labels`` 目录（zh 侧逐字搬运，en 侧平行变体；advise 按 locale 取）。
 
 _EXPECTED_DIRECTIONS = {
     "decel_frac high": ["decel_frac toward individually calibrated target"],
@@ -115,8 +103,17 @@ _EXPECTED_DIRECTIONS = {
 }
 
 
-def _finalize_uncalibrated_findings(findings: list[Finding]) -> list[Finding]:
-    """Attach an actionable explanation while keeping initial thresholds honest."""
+def _finalize_uncalibrated_findings(
+    findings: list[Finding], locale: str = "zh-CN",
+) -> list[Finding]:
+    """Attach an actionable explanation while keeping initial thresholds honest.
+
+    B3 i18n：填充文案按 *locale* 从 ``coach/labels`` 目录取；zh-CN 与迁移前
+    逐字节一致（golden 契约）。
+    """
+    from .coach.labels import catalog
+
+    cat = catalog(locale)
     for finding in findings:
         metrics = list(_SIGNAL_METRICS.get(finding.signal, []))
         directions = list(_EXPECTED_DIRECTIONS.get(finding.signal, []))
@@ -124,14 +121,16 @@ def _finalize_uncalibrated_findings(findings: list[Finding]) -> list[Finding]:
         finding.claim_level = "experimental"
         finding.metric_refs = metrics
         finding.limitations = ["threshold_requires_product_calibration"]
-        finding.plain_language_meaning = _PLAIN_MEANINGS.get(
+        finding.plain_language_meaning = cat.PLAIN_MEANINGS.get(
             finding.signal, finding.diagnosis
         )
         finding.expected_result = "；".join(directions)
         finding.verification = {
-            "comparable_requirements": ["相同场景", "相同设置", "相同证据质量"],
+            "comparable_requirements": list(cat.VERIFICATION["comparable_requirements"]),
             "success_signals": directions,
-            "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步",
+            "insufficient_evidence_behavior": cat.VERIFICATION[
+                "insufficient_evidence_behavior"
+            ],
         }
         for prescription in finding.prescriptions:
             if not prescription.cue:
@@ -143,11 +142,11 @@ def _finalize_uncalibrated_findings(findings: list[Finding]) -> list[Finding]:
             if not prescription.expected_direction:
                 prescription.expected_direction = list(directions)
             if not prescription.retest_after:
-                prescription.retest_after = "在相同场景、设置和证据质量下复测"
+                prescription.retest_after = cat.VERIFICATION["retest_after"]
             if not prescription.stop_or_adjust_rule:
-                prescription.stop_or_adjust_rule = (
-                    "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法"
-                )
+                prescription.stop_or_adjust_rule = cat.VERIFICATION[
+                    "stop_or_adjust_rule"
+                ]
     return findings
 
 
@@ -176,15 +175,27 @@ def advise(
     self_summary: dict,
     reference_summary: dict | None = None,
     cm_per_360: float | None = None,
+    locale: str = "zh-CN",
 ) -> list[Finding]:
     """Rule engine: fair-metric summary -> diagnosis + prescriptions.
 
     ``self_summary`` is your fair-metric summary (from
-    :func:`analyze_flicking_reference` or equivalent). ``reference_summary`` is
-    an optional high-level player's summary for relative comparison.
+    :func:`analyze_flicking_reference` or equivalent). ``reference_summary`` is an
+    optional high-level player's summary for relative comparison.
     ``cm_per_360`` enables an experimental sensitivity note. The trigger is not
     a calibrated health band and cannot establish sensitivity as a root cause.
+    B3 i18n: finding copy comes from the ``coach/labels`` catalog for *locale*.
     """
+    from .coach.labels import catalog
+
+    cat = catalog(locale)
+
+    def _copy_prescriptions(signal: str) -> list[Prescription]:
+        return [
+            Prescription(scenario, reason)
+            for scenario, reason in cat.FINDING_PRESCRIPTIONS.get(signal, ())
+        ]
+
     f: list[Finding] = []
 
     decfrac = _med(self_summary, "decel_frac")
@@ -192,28 +203,26 @@ def advise(
         if decfrac > THRESHOLDS["decel_frac_high"]:
             f.append(Finding(
                 "decel_frac high", "fix",
-                f"减速段占整个 flick 的 {decfrac*100:.0f}%——"
-                "速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
-                [Prescription("pasu", "练完整的加速→减速，接近目标时果断完成制动"),
-                 Prescription("1w4ts Voltaic", "保持 90%+ 准确率，练完整 flick 的加减速")],
+                cat.FINDING_DIAGNOSES["decel_frac high"].format(
+                    decel_frac_pct=decfrac * 100,
+                ),
+                _copy_prescriptions("decel_frac high"),
             ))
         elif decfrac < THRESHOLDS["decel_frac_low"]:
             f.append(Finding(
                 "decel_frac low", "watch",
-                f"减速段只占 {decfrac*100:.0f}%，连续减速时间较短；"
-                "是否属于制动问题仍需结合 settle/reverse 和个体历史验证。",
-                [Prescription("pasu", "练匀减速，把减速段当一次独立动作")],
+                cat.FINDING_DIAGNOSES["decel_frac low"].format(
+                    decel_frac_pct=decfrac * 100,
+                ),
+                _copy_prescriptions("decel_frac low"),
             ))
 
     linearity = _med(self_summary, "linearity")
     if linearity is not None and linearity > THRESHOLDS["linearity_high"]:
         f.append(Finding(
             "linearity high", "fix",
-            f"减速段速度曲线偏离匀减速直线 {linearity:.2f}——"
-            "速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；"
-            "抖动看 SPARC。",
-             [Prescription("pasu", "把减速段练成干净、连贯的制动"),
-             Prescription("1w4ts 30% larger", "减速段精度专项")],
+            cat.FINDING_DIAGNOSES["linearity high"].format(linearity=linearity),
+            _copy_prescriptions("linearity high"),
         ))
 
     sparc = _med(self_summary, "sparc")
@@ -225,28 +234,26 @@ def advise(
     ):
         f.append(Finding(
             "sparc low", "fix",
-            f"减速段平滑度 SPARC={sparc:.1f}——速度轮廓中的快速波动较多。"
-            "SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
-            [Prescription("pasu", "clean lines，让减速速度连续下降，避免突然硬停"),
-             Prescription("1w4ts 30% larger", "减速段精度专项")],
+            cat.FINDING_DIAGNOSES["sparc low"].format(sparc=sparc),
+            _copy_prescriptions("sparc low"),
         ))
 
     reverse = _med(self_summary, "reverse_ratio")
     if reverse is not None and reverse > THRESHOLDS["reverse_high"]:
         f.append(Finding(
             "reverse_ratio high", "fix",
-            f"减速段有 {reverse*100:.0f}% 的帧在反向加速，表现为反复修正。",
-            [Prescription("pasu", "把修正并入减速过程，避免停住后再二次修正"),
-             Prescription("Multiclick", "落点精度，减少二次修正")],
+            cat.FINDING_DIAGNOSES["reverse_ratio high"].format(
+                reverse_pct=reverse * 100,
+            ),
+            _copy_prescriptions("reverse_ratio high"),
         ))
 
     overlap = _med(self_summary, "submovement_overlap")
     if overlap is not None and overlap < THRESHOLDS["two_stage_overlap"]:
         f.append(Finding(
             "submovement two-stage", "watch",
-            "主要移动和后续修正呈较分离的两个阶段。",
-            [Prescription("pasu", "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正"),
-             Prescription("Multiclick", "落点精度，减少二次修正")],
+            cat.FINDING_DIAGNOSES["submovement two-stage"],
+            _copy_prescriptions("submovement two-stage"),
         ))
 
     peak_pos = _med(self_summary, "peak_position_pct")
@@ -254,26 +261,22 @@ def advise(
         if peak_pos < THRESHOLDS["peak_pos_low"]:
             f.append(Finding(
                 "peak_position low", "watch",
-                f"峰位 {peak_pos:.0f}%（偏前），速度峰值较早出现；"
-                "具体动作原因未被输入数据直接测量。",
-                [Prescription("pasu", "平衡加减速，把峰往中段靠")],
+                cat.FINDING_DIAGNOSES["peak_position low"].format(peak_pos=peak_pos),
+                _copy_prescriptions("peak_position low"),
             ))
         elif peak_pos > THRESHOLDS["peak_pos_high"]:
             f.append(Finding(
                 "peak_position high", "watch",
-                f"峰位 {peak_pos:.0f}%（偏后），速度峰值较晚出现；"
-                "具体动作原因未被输入数据直接测量。",
-                [Prescription("Tile Frenzy", "练果断加速、提速")],
+                cat.FINDING_DIAGNOSES["peak_position high"].format(peak_pos=peak_pos),
+                _copy_prescriptions("peak_position high"),
             ))
 
     path_eff = _med(self_summary, "path_efficiency")
     if path_eff is not None and path_eff < THRESHOLDS["path_eff_low"]:
         f.append(Finding(
             "path_efficiency low", "fix",
-            f"flick 路径直线效率 {path_eff:.2f}，实际路径相对终点直线距离更绕；"
-            "绝对阈值仍需产品校准。",
-            [Prescription("linetrace", "练直线 flick，走最短路径"),
-             Prescription("clean lines", "意识：flick 走直线，不画弧")],
+            cat.FINDING_DIAGNOSES["path_efficiency low"].format(path_eff=path_eff),
+            _copy_prescriptions("path_efficiency low"),
         ))
 
     if reference_summary is not None:
@@ -284,10 +287,10 @@ def advise(
             if ratio < THRESHOLDS["peak_below_ref"]:
                 f.append(Finding(
                     "peak_speed below reference", "fix",
-                    f"甩枪角速度 {self_peak:.0f}°/s 只有参考的 {ratio*100:.0f}%"
-                    f"（{ref_peak:.0f}°/s）；峰值速度低于当前参考，身体原因未被输入数据直接测量。",
-                    [Prescription("Tile Frenzy", "在可控精度下逐步提高动态速度"),
-                     Prescription("speed 类场景", "大胆加速，先求速度再收精度")],
+                    cat.FINDING_DIAGNOSES["peak_speed below reference"].format(
+                        self_peak=self_peak, ratio_pct=ratio * 100, ref_peak=ref_peak,
+                    ),
+                    _copy_prescriptions("peak_speed below reference"),
                 ))
 
         self_tp = _med(self_summary, "throughput")
@@ -297,22 +300,20 @@ def advise(
             if tp_ratio < THRESHOLDS["throughput_below_ref"]:
                 f.append(Finding(
                     "throughput below reference", "fix",
-                    f"Fitts throughput {self_tp:.1f} bits/s 只有参考的 {tp_ratio*100:.0f}%"
-                    f"（{ref_tp:.1f}）；速度-精度综合效率低于当前参考，身体原因未被输入数据"
-                    "直接测量（throughput 已按目标距离/宽度归一化，§6.3）。",
-                    [Prescription("Tile Frenzy", "在可控精度下逐步提高动态速度"),
-                     Prescription("speed 类场景", "先求速度再收精度")],
+                    cat.FINDING_DIAGNOSES["throughput below reference"].format(
+                        self_tp=self_tp, tp_ratio_pct=tp_ratio * 100, ref_tp=ref_tp,
+                    ),
+                    _copy_prescriptions("throughput below reference"),
                 ))
 
     if cm_per_360 is not None and cm_per_360 < THRESHOLDS["sens_high_cm360"]:
         f.append(Finding(
             "sensitivity high", "watch",
-            f"当前灵敏度为 {cm_per_360:.1f} cm/360。较小 cm/360 可能放大控制输入，"
-            "但不能单凭设置值判定动作问题，只能作为受控实验假设。",
-            [Prescription("降 sens 5-10%（cm/360 ↑）", "制动辅助实验；复测 linearity/reverse 是否下降，没降就调回")],
+            cat.FINDING_DIAGNOSES["sensitivity high"].format(cm_per_360=cm_per_360),
+            _copy_prescriptions("sensitivity high"),
         ))
 
-    return _finalize_uncalibrated_findings(f)
+    return _finalize_uncalibrated_findings(f, locale)
 
 
 # metrics where lower is better (cleaner / more stopped / shorter decel);

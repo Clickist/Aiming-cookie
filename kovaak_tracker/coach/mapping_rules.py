@@ -1127,6 +1127,7 @@ def evaluate_static(
     summary,
     reference=None,
     settings=None,
+    locale: str = "zh-CN",
 ) -> list[advice.Finding]:
     """Evaluate compiled static rules into built-in-shape ``Finding`` objects.
 
@@ -1136,7 +1137,8 @@ def evaluate_static(
     exactly as on the built-in output, so severity/claim_level/metric_refs/
     limitations/meanings/prescription completion stay single-sourced there.
     A rule-level error drops that rule and records a diagnostic; the rest of
-    the analysis continues (plan C1).
+    the analysis continues (plan C1). B3 i18n: *locale* only picks the
+    finalizer's copy catalog (rule copy comes from the compiled mapping).
     """
     findings: list[advice.Finding] = []
     for rule in compiled.static_rules:
@@ -1155,7 +1157,7 @@ def evaluate_static(
                 )
         except Exception as exc:
             _static_diagnostics.append(f"static rule dropped: {rule.signal}: {exc}")
-    advice._finalize_uncalibrated_findings(findings)
+    advice._finalize_uncalibrated_findings(findings, locale)
     return findings
 
 
@@ -1168,7 +1170,7 @@ def _fallback_cm_per_360(settings) -> float | None:
     return None
 
 
-def dispatch_static(summary, reference=None, settings=None):
+def dispatch_static(summary, reference=None, settings=None, locale="zh-CN"):
     """Production static diagnosis path (plan C5).
 
     Loads the active mapping (``knowledge_active.load_active_mapping``),
@@ -1178,12 +1180,16 @@ def dispatch_static(summary, reference=None, settings=None):
     compilation, evaluation, active resolution) fails closed to the frozen
     built-in ``advice.advise`` with a recorded diagnostic. Diagnostics of the
     latest call are readable via :func:`last_static_diagnostics`.
+    B3 i18n: *locale* picks the official mapping variant file and the
+    built-in fallback catalog (pack mapping keeps pack-authored copy).
     """
     _static_diagnostics.clear()
     try:
-        doc, _reason = knowledge_active.load_active_mapping()
+        doc, _reason = knowledge_active.load_active_mapping(locale)
         if doc is None:
-            return advice.advise(summary, reference, _fallback_cm_per_360(settings))
+            return advice.advise(
+                summary, reference, _fallback_cm_per_360(settings), locale=locale,
+            )
         validate_mapping(
             doc,
             vocabulary=_load_vocabulary(),
@@ -1191,11 +1197,13 @@ def dispatch_static(summary, reference=None, settings=None):
         )
         compiled = compile_mapping(doc)
         return evaluate_static(
-            compiled, summary, reference=reference, settings=settings,
+            compiled, summary, reference=reference, settings=settings, locale=locale,
         )
     except Exception as exc:  # fail-closed to the frozen built-in rules
         _static_diagnostics.append(f"active mapping unusable, built-in fallback: {exc}")
-        return advice.advise(summary, reference, _fallback_cm_per_360(settings))
+        return advice.advise(
+            summary, reference, _fallback_cm_per_360(settings), locale=locale,
+        )
 
 
 def make_family_advice_fn(family: str):

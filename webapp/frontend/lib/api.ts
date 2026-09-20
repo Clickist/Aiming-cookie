@@ -533,6 +533,23 @@ function localizeApiErrorCode(code: string, args: TranslateParams | undefined, f
   return interpolate(template, args);
 }
 
+/**
+ * B3：error.v1 / run.error 消费点共用的展示文案——按稳定 code 查字典
+ * （api.error.<code 驼峰>），缺码回落后端 message 原文（过渡期双保险）。
+ * 与 apiError() 的转换口径完全一致。
+ */
+export function presentErrorV1Message(
+  error: { code?: string | null; message?: string | null } | null | undefined,
+): string | null {
+  if (!error) return null;
+  const fallback = typeof error.message === "string" && error.message.trim()
+    ? error.message
+    : null;
+  const code = typeof error.code === "string" && error.code.trim() ? error.code : null;
+  if (!code) return fallback;
+  return localizeApiErrorCode(code, undefined, fallback ?? code);
+}
+
 async function apiError(res: Response): Promise<Error> {
   let detail = `${res.status} ${res.statusText}`;
   let code: string | undefined;

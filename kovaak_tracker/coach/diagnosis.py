@@ -3,6 +3,7 @@ structured diagnosis that visualization and agent both consume."""
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -103,6 +104,7 @@ def resolve_candidate_knowledge_refs(
 
 
 from . import profiles
+from .labels import catalog as _labels_catalog
 
 _MATCH_THRESHOLD = 0.5
 _SEVERITY_WEIGHT = {"fix": 3, "watch": 2, "info": 1}
@@ -111,9 +113,21 @@ _STATIC_OBSERVATION_REFS = {
     "submovement two-stage": "metric.terminal_control",
     "sparc low": "metric.terminal_control",
 }
+# B3 i18n：en 请求读到 zh 语料（pack mapping / 旧数据）时按稳定 id/signal
+# 换成 labels 目录的 en 文案；zh 语料与 en 变体原样透传（单一事实源）。
+_HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
-def _active_archetypes() -> list[dict]:
+def _localize_copy(locale: str) -> object:
+    """Return the labels catalog for *locale* when localization is needed.
+
+    zh-CN returns ``None`` (copy stays as loaded); other locales get the
+    catalog used to swap CJK copy by stable key.
+    """
+    return None if locale == "zh-CN" else _labels_catalog(locale)
+
+
+def _active_archetypes(locale: str = "zh-CN") -> list[dict]:
     """Archetypes from the active mapping's ``archetypes`` section, shaped
     exactly like ``profiles.ARCHETYPES`` (WP-06: the data source moved to the
     mapping; the weighted-match algorithm below is unchanged). A missing
@@ -122,40 +136,56 @@ def _active_archetypes() -> list[dict]:
     from .knowledge_active import load_active_mapping
 
     try:
-        doc, _reason = load_active_mapping()
+        doc, _reason = load_active_mapping(locale)
         if doc is None:
-            return profiles.ARCHETYPES
-        raw = doc["archetypes"]
-        if isinstance(raw, (str, bytes)) or not isinstance(raw, list) or not raw:
-            return profiles.ARCHETYPES
-        archetypes = []
-        for entry in raw:
-            conditions_raw = entry["conditions"]
-            if isinstance(conditions_raw, (str, bytes)) or not isinstance(conditions_raw, dict):
-                raise ValueError("archetype conditions must be an object")
-            conditions: dict[str, float] = {}
-            for signal, weight in conditions_raw.items():
-                if (
-                    not isinstance(signal, str)
-                    or isinstance(weight, bool)
-                    or not isinstance(weight, (int, float))
-                    or not math.isfinite(weight)
-                ):
-                    raise ValueError("archetype weight must be a finite number")
-                conditions[signal] = float(weight)
-            if not isinstance(entry["id"], str) or not isinstance(entry["label"], str):
-                raise ValueError("archetype id/label must be text")
-            archetypes.append({
-                "id": entry["id"],
-                "label": entry["label"],
-                "conditions": conditions,
-            })
-        return archetypes
+            archetypes = [
+                {"id": entry["id"], "label": entry["label"], "conditions": entry["conditions"]}
+                for entry in profiles.ARCHETYPES
+            ]
+        else:
+            raw = doc["archetypes"]
+            if isinstance(raw, (str, bytes)) or not isinstance(raw, list) or not raw:
+                archetypes = [
+                    {"id": entry["id"], "label": entry["label"], "conditions": entry["conditions"]}
+                    for entry in profiles.ARCHETYPES
+                ]
+            else:
+                archetypes = []
+                for entry in raw:
+                    conditions_raw = entry["conditions"]
+                    if isinstance(conditions_raw, (str, bytes)) or not isinstance(conditions_raw, dict):
+                        raise ValueError("archetype conditions must be an object")
+                    conditions: dict[str, float] = {}
+                    for signal, weight in conditions_raw.items():
+                        if (
+                            not isinstance(signal, str)
+                            or isinstance(weight, bool)
+                            or not isinstance(weight, (int, float))
+                            or not math.isfinite(weight)
+                        ):
+                            raise ValueError("archetype weight must be a finite number")
+                        conditions[signal] = float(weight)
+                    if not isinstance(entry["id"], str) or not isinstance(entry["label"], str):
+                        raise ValueError("archetype id/label must be text")
+                    archetypes.append({
+                        "id": entry["id"],
+                        "label": entry["label"],
+                        "conditions": conditions,
+                    })
     except Exception:
-        return profiles.ARCHETYPES
+        archetypes = [
+            {"id": entry["id"], "label": entry["label"], "conditions": entry["conditions"]}
+            for entry in profiles.ARCHETYPES
+        ]
+    localize = _localize_copy(locale)
+    if localize is not None:
+        for arch in archetypes:
+            if _HAS_CJK.search(arch["label"]):
+                arch["label"] = localize.ARCHETYPE_LABELS.get(arch["id"], arch["label"])
+    return archetypes
 
 
-def _active_root_causes() -> dict[str, tuple[str, str, str]]:
+def _active_root_causes(locale: str = "zh-CN") -> dict[str, tuple[str, str, str]]:
     """Root-cause copy from the active mapping's ``root_causes`` section
     (signal -> symptom/physical/training). Same fallback semantics as
     :func:`_active_archetypes`: a missing mapping/section or unusable data
@@ -163,44 +193,54 @@ def _active_root_causes() -> dict[str, tuple[str, str, str]]:
     from .knowledge_active import load_active_mapping
 
     try:
-        doc, _reason = load_active_mapping()
+        doc, _reason = load_active_mapping(locale)
         if doc is None:
-            return profiles.ROOT_CAUSES
-        raw = doc["root_causes"]
-        if not isinstance(raw, dict) or not raw:
-            return profiles.ROOT_CAUSES
-        causes: dict[str, tuple[str, str, str]] = {}
-        for signal, triple in raw.items():
-            if (
-                not isinstance(signal, str)
-                or isinstance(triple, (str, bytes))
-                or not isinstance(triple, list)
-                or len(triple) != 3
-                or any(not isinstance(layer, str) for layer in triple)
-            ):
-                raise ValueError("root cause entry must be three copy strings")
-            causes[signal] = (triple[0], triple[1], triple[2])
-        return causes
+            causes = dict(profiles.ROOT_CAUSES)
+        else:
+            raw = doc["root_causes"]
+            if not isinstance(raw, dict) or not raw:
+                causes = dict(profiles.ROOT_CAUSES)
+            else:
+                causes = {}
+                for signal, triple in raw.items():
+                    if (
+                        not isinstance(signal, str)
+                        or isinstance(triple, (str, bytes))
+                        or not isinstance(triple, list)
+                        or len(triple) != 3
+                        or any(not isinstance(layer, str) for layer in triple)
+                    ):
+                        raise ValueError("root cause entry must be three copy strings")
+                    causes[signal] = (triple[0], triple[1], triple[2])
     except Exception:
-        return profiles.ROOT_CAUSES
+        causes = dict(profiles.ROOT_CAUSES)
+    localize = _localize_copy(locale)
+    if localize is not None:
+        for signal, triple in causes.items():
+            if any(_HAS_CJK.search(layer) for layer in triple):
+                causes[signal] = localize.ROOT_CAUSES.get(signal, triple)
+    return causes
 
 
 def build_diagnosis(findings, summary, comparison, meta):
+    meta = meta or {}
     return CoachDiagnosis(
         profile=_match_profile(findings, meta),
-        issues=_build_issues(findings),
+        issues=_build_issues(findings, meta.get("locale")),
         summary=summary,
         comparison=comparison,
-        meta=meta or {},
+        meta=meta,
     )
 
 
 def _match_profile(findings, meta=None):
     meta = meta or {}
+    locale = meta.get("locale") if isinstance(meta.get("locale"), str) else "zh-CN"
+    copy = _labels_catalog(locale)
     summary_type = meta.get("summary_type")
     quality_status = meta.get("quality_status")
     signals = {f.signal for f in findings}
-    archetypes = _active_archetypes()
+    archetypes = _active_archetypes(locale)
     best, best_score = None, 0.0
     for arch in archetypes:
         conds = arch["conditions"]
@@ -220,7 +260,7 @@ def _match_profile(findings, meta=None):
     # signals fire. Pick by summary_type (flicking vs tracking).
     if (best is None or best_score < _MATCH_THRESHOLD) and not signals:
         if quality_status not in {None, "available", "accepted"}:
-            return ProfileMatch("unclassified", "未分类", 0.0, [])
+            return ProfileMatch("unclassified", copy.UNCLASSIFIED, 0.0, [])
         if summary_type == "tracking":
             fluid = next(
                 (a for a in archetypes if a["id"] == "fluid_tracker"),
@@ -234,12 +274,16 @@ def _match_profile(findings, meta=None):
         if fluid is not None:
             return ProfileMatch(fluid["id"], fluid["label"], 1.0, [])
     if best is None or best_score < _MATCH_THRESHOLD:
-        return ProfileMatch("unclassified", "未分类", round(best_score, 2), secondary)
+        return ProfileMatch(
+            "unclassified", copy.UNCLASSIFIED, round(best_score, 2), secondary,
+        )
     return ProfileMatch(best["id"], best["label"], round(best_score, 2), secondary)
 
 
-def _build_issues(findings):
-    enriched = [(f, _root_causes_for(f)) for f in findings]
+def _build_issues(findings, locale=None):
+    locale = locale if isinstance(locale, str) else "zh-CN"
+    copy = _labels_catalog(locale)
+    enriched = [(f, _root_causes_for(f, locale)) for f in findings]
     # priority by severity weight (deviation left to advice thresholds; YAGNI this version)
     enriched.sort(key=lambda x: (-_SEVERITY_WEIGHT.get(x[0].severity, 1),))
     issues = []
@@ -266,9 +310,9 @@ def _build_issues(findings):
             else:
                 observation_ref = None
         if f.claim_level == "experimental" or f.severity == "info":
-            priority_reason = "本次优先观察项"
+            priority_reason = copy.PRIORITY_REASONS["watch"]
         else:
-            priority_reason = "本次优先处理项"
+            priority_reason = copy.PRIORITY_REASONS["fix"]
         issues.append(DiagnosisIssue(
             signal=f.signal,
             severity=f.severity,
@@ -290,8 +334,8 @@ def _build_issues(findings):
     return issues
 
 
-def _root_causes_for(finding):
-    triple = _active_root_causes().get(finding.signal)
+def _root_causes_for(finding, locale="zh-CN"):
+    triple = _active_root_causes(locale).get(finding.signal)
     if not triple:
         return [RootCause("symptom", finding.diagnosis)]
     return [
