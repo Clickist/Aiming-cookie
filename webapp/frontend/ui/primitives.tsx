@@ -15,6 +15,7 @@ import {
 } from "react";
 import Link from "next/link";
 
+import { useT } from "@/lib/i18n";
 import { IconClose } from "./icons";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "error";
@@ -330,7 +331,10 @@ export interface ToastProps extends Omit<HTMLAttributes<HTMLDivElement>, "onClos
   onClose?: () => void;
 }
 
-export function Toast({ tone = "neutral", live = "polite", closeLabel = "关闭通知", onClose, className, children, ...props }: ToastProps) {
+export function Toast({ tone = "neutral", live = "polite", closeLabel, onClose, className, children, ...props }: ToastProps) {
+  // 关闭钮 aria 默认值走字典（i18n 批 5）；显式传入 closeLabel 的调用方不受影响。
+  const t = useT();
+  const resolvedCloseLabel = closeLabel ?? t("ui.toast.closeLabel");
   const onCloseRef = useRef(onClose);
   const closeTimerRef = useRef<number | undefined>(undefined);
   const dismissingRef = useRef(false);
@@ -374,7 +378,7 @@ export function Toast({ tone = "neutral", live = "polite", closeLabel = "关闭�
       role={live === "assertive" ? "alert" : "status"}
     >
       <div className="ac-toast__body">{children}</div>
-      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={requestClose} size="compact"><IconClose /></IconButton> : null}
+      {onClose ? <IconButton className="ac-toast__close" label={resolvedCloseLabel} onClick={requestClose} size="compact"><IconClose /></IconButton> : null}
     </div>
   );
 }

@@ -128,3 +128,25 @@ test("样板组件 UpdatePrompt 已接字典：无裸中文字面量（注释除
   assert.doesNotMatch(withoutComments, /[\u4e00-\u9fff]/, "UpdatePrompt 存在裸中文（应进 lib/i18n/zh-CN.ts 字典）");
   assert.match(source, /useT\(\)/);
 });
+
+test("批 5（task7 + app + ui）已接字典：无裸中文字面量（注释与哨兵常量除外）", async () => {
+  const stripComments = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const files = [
+    "components/task7/CoachVideoPane.tsx",
+    "app/error.tsx",
+    "app/global-error.tsx",
+    "app/layout.tsx",
+    "ui/primitives.tsx",
+  ];
+  for (const file of files) {
+    const source = await readFile(path.join(frontendRoot, file), "utf8");
+    assert.doesNotMatch(stripComments(source), /[\u4e00-\u9fff]/, `${file} 存在裸中文（应进 lib/i18n/dict/task7.zh.ts 分片）`);
+  }
+  // SessionRail 特例：NEW_SESSION_TITLE 哨兵是跨层标识符（批 1 拍板保留中文字面量
+  // 本体，正体由 tests/task7-session-rail.test.tsx 的哨兵锁把守），剥掉该行后再断言。
+  const rail = await readFile(path.join(frontendRoot, "components/task7/SessionRail.tsx"), "utf8");
+  const railWithoutSentinel = stripComments(rail).replace(/export const NEW_SESSION_TITLE = "[^"]*";/, "");
+  assert.doesNotMatch(railWithoutSentinel, /[\u4e00-\u9fff]/, "SessionRail 存在裸中文（应进 lib/i18n/dict/task7.zh.ts 分片；哨兵常量除外）");
+  assert.match(rail, /useT\(\)/);
+});

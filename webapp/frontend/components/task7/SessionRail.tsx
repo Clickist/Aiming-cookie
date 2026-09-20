@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
+import { t, useT } from "@/lib/i18n";
 import { IconArchive, IconCheck, IconClose, IconHistory, IconPlus, IconSearch, IconSettings, IconTrash } from "@/ui/icons";
 import { Button } from "@/ui/primitives";
 import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
@@ -83,7 +84,7 @@ function sessionTitle(session: SessionRailSession): string {
   const preview = session.lastMessagePreview?.trim() || session.last_message_preview?.trim();
   if (title === NEW_SESSION_TITLE && !preview) return NEW_SESSION_TITLE; // 草稿态：还没有消息，保持"新对话"
   return session.label?.trim() || session.name?.trim() || session.summary?.trim()
-    || preview || "未命名对话";
+    || preview || t("coach.rail.untitledSession");
 }
 
 function isArchived(session: SessionRailSession): boolean {
@@ -101,11 +102,13 @@ function sessionOrderStamp(session: SessionRailSession): number {
   return sessionTimestamp(session) || Number.MAX_SAFE_INTEGER;
 }
 
+// i18n 批 5：时间桶标签是字典键（MessageKey），渲染时经 t() 解析（§2c——不在模块
+// 加载期固化 t() 结果，保证切语言即时生效）。
 const SESSION_GROUP_DEFS = [
-  { key: "today", label: "今天" },
-  { key: "yesterday", label: "昨天" },
-  { key: "week", label: "近 7 天" },
-  { key: "older", label: "更早" },
+  { key: "today", labelKey: "coach.rail.group.today" },
+  { key: "yesterday", labelKey: "coach.rail.group.yesterday" },
+  { key: "week", labelKey: "coach.rail.group.week" },
+  { key: "older", labelKey: "coach.rail.group.older" },
 ] as const;
 
 // 组内默认只渲染前 N 条（0827 拍板）：超出的部分收进组尾「显示全部」开关，
@@ -152,6 +155,7 @@ export function SessionRail({
   accountSelected = false,
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
+  const t = useT();
   const [pendingDeleteId, setPendingDeleteId] = useState<SessionRailId | null>(null);
   // 每组一个独立开关，用一个 record 统一管理：缺省（false）＝只显示前
   // SESSION_GROUP_PREVIEW_COUNT 条；纯 UI 状态，不参与数据获取。
@@ -201,7 +205,7 @@ export function SessionRail({
       bucketed.get(sessionGroupKey(sessionTimestamp(session), dayBounds))!.push(session);
     }
     return SESSION_GROUP_DEFS
-      .map(({ key, label }) => ({ key, label, items: bucketed.get(key)! }))
+      .map(({ key, labelKey }) => ({ key, labelKey, items: bucketed.get(key)! }))
       .filter((group) => group.items.length > 0);
   }, [visible]);
 
@@ -213,7 +217,7 @@ export function SessionRail({
 
   const railClassName = ["task7-session-rail", className].filter(Boolean).join(" ");
   return (
-    <aside aria-label="会话" className={railClassName} ref={railRef}>
+    <aside aria-label={t("coach.rail.regionLabel")} className={railClassName} ref={railRef}>
       {/* v6（0910 拍板）：横跨顶栏拆除后 logo 归左栏；与下方一体、无分界线。
           品牌行兼作窗口拖拽区（左键空白处），补上被拆掉的顶栏拖拽。 */}
       <div className="task7-session-rail__brand" onMouseDown={startWindowDraggingOnBackground}>
@@ -227,20 +231,20 @@ export function SessionRail({
               本类只保留 rail 内的布局伸缩。 */}
           <Button className="task7-session-rail__new" onClick={onNewSession} variant="primary">
             <IconPlus />
-            <span>新建对话</span>
+            <span>{t("coach.rail.newSessionButton")}</span>
           </Button>
         </div>
       </div>
 
       <label className="task7-session-rail__search">
         <span aria-hidden="true" className="task7-session-rail__search-icon"><IconSearch /></span>
-        <span className="task7-session-rail__sr-only">搜索会话</span>
-        <input onChange={handleSearch} placeholder="搜索会话" ref={searchRef} type="search" value={query} />
-        {query ? <button aria-label="清除搜索" className="task7-session-rail__search-clear" onClick={() => { setQuery(""); onSearchChange?.(""); }} type="button"><IconClose /></button> : null}
+        <span className="task7-session-rail__sr-only">{t("coach.rail.search")}</span>
+        <input onChange={handleSearch} placeholder={t("coach.rail.search")} ref={searchRef} type="search" value={query} />
+        {query ? <button aria-label={t("coach.rail.searchClear")} className="task7-session-rail__search-clear" onClick={() => { setQuery(""); onSearchChange?.(""); }} type="button"><IconClose /></button> : null}
       </label>
 
       <nav
-        aria-label="会话列表"
+        aria-label={t("coach.rail.listLabel")}
         className="task7-session-rail__list"
         data-fade-bottom={edgeFade.bottom || undefined}
         data-fade-top={edgeFade.top || undefined}
@@ -255,12 +259,15 @@ export function SessionRail({
       return (
       <section className="task7-session-rail__group" key={group.key}>
         <div className="task7-session-rail__group-summary">
-          <span className="task7-session-rail__group-label">{group.label}</span>
+          <span className="task7-session-rail__group-label">{t(group.labelKey)}</span>
           <span className="task7-session-rail__count">{group.items.length}</span>
         </div>
         <div className="task7-session-rail__group-items">
     {shownItems.map((session) => {
       const title = sessionTitle(session);
+      // 哨兵「新对话」是标识符不是文案：展示名（标题 span 与条目操作 aria）走
+      // 字典展示键；逻辑比较（summary !== title 等）继续用原始哨兵值。
+      const displayTitle = title === NEW_SESSION_TITLE ? t("coach.rail.newSessionDisplay") : title;
       const date = sessionDate(session);
       const summaryLine = session.summary && session.summary !== title
         ? session.summary
@@ -276,18 +283,18 @@ export function SessionRail({
             onClick={() => onSelectSession?.(session)}
             type="button"
           >
-            <span className="task7-session-rail__session-title">{title}</span>
+            <span className="task7-session-rail__session-title">{displayTitle}</span>
             <span aria-hidden={!summaryLine ? true : undefined} className="task7-session-rail__session-summary">{summaryLine}</span>
             <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date ?? ""}</time>
           </button>
           {session.id !== "draft" && (onArchiveSession || onSoftDeleteSession) ? (
             <span className="task7-session-rail__item-actions">
-              {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} title="归档" type="button"><IconArchive /></button> : null}
+              {onArchiveSession ? <button aria-label={t("coach.rail.archiveAria", { title: displayTitle })} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} title={t("coach.rail.archiveTitle")} type="button"><IconArchive /></button> : null}
               {onSoftDeleteSession ? (
                 pendingDeleteId === session.id ? (
-                  <button aria-label={`确认删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger task7-session-rail__item-action--confirm" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(null); onSoftDeleteSession(session); }} title="再次点击确认删除" type="button"><IconCheck /></button>
+                  <button aria-label={t("coach.rail.deleteConfirmAria", { title: displayTitle })} className="task7-session-rail__item-action task7-session-rail__item-action--danger task7-session-rail__item-action--confirm" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(null); onSoftDeleteSession(session); }} title={t("coach.rail.deleteConfirmTitle")} type="button"><IconCheck /></button>
                 ) : (
-                  <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(session.id); }} title="删除" type="button"><IconTrash /></button>
+                  <button aria-label={t("coach.rail.deleteAria", { title: displayTitle })} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(session.id); }} title={t("coach.rail.deleteTitle")} type="button"><IconTrash /></button>
                 )
               ) : null}
             </span>
@@ -302,17 +309,19 @@ export function SessionRail({
         onClick={() => setExpandedGroups((current) => ({ ...current, [group.key]: !expanded }))}
         type="button"
       >
-        {expanded ? `显示前 ${SESSION_GROUP_PREVIEW_COUNT} 条` : `显示全部 ${group.items.length} 条`}
+        {expanded
+          ? t("coach.rail.groupShowPreview", { count: SESSION_GROUP_PREVIEW_COUNT })
+          : t("coach.rail.groupShowAll", { count: group.items.length })}
       </button>
     ) : null}
         </div>
       </section>
       );
-    }) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
+    }) : <p className="task7-session-rail__empty">{query ? t("coach.rail.emptyFiltered") : t("coach.rail.empty")}</p>}
       </nav>
       <footer className="task7-session-rail__footer">
-        <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>
-        <button aria-label="系统设置" className="task7-session-rail__footer-row" onClick={onSettings} type="button"><span className="task7-session-rail__footer-label"><IconSettings /><span>系统设置</span></span></button>
+        <button aria-label={t("coach.rail.history")} className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>{t("coach.rail.history")}</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>
+        <button aria-label={t("coach.rail.settings")} className="task7-session-rail__footer-row" onClick={onSettings} type="button"><span className="task7-session-rail__footer-label"><IconSettings /><span>{t("coach.rail.settings")}</span></span></button>
       </footer>
       {/* 账号卡（②/②b）：侧栏最末元素、在「训练历史 / 系统设置」之下。
           站长 0919 修订：与页脚两行同一视觉语言（无边框、无填充、同字号、
@@ -327,12 +336,12 @@ export function SessionRail({
           type="button"
         >
           <span className="task7-session-rail__account-identity">
-            {account?.email ? <span>👤 {account.email}</span> : <span className="task7-session-rail__account-login">登录 / 注册 ›</span>}
+            {account?.email ? <span>👤 {account.email}</span> : <span className="task7-session-rail__account-login">{t("coach.rail.loginEntry")}</span>}
           </span>
           <span className="task7-session-rail__account-engine">
-            {account?.relink ? <span className="task7-session-rail__account-relink">重新订阅 ›</span> : null}
+            {account?.relink ? <span className="task7-session-rail__account-relink">{t("coach.rail.resubscribe")}</span> : null}
             <span className="task7-session-rail__account-status">
-              {account?.status ?? account?.engine ?? "未连接模型服务"}
+              {account?.status ?? account?.engine ?? t("member.noProvider.short")}
             </span>
           </span>
         </button>

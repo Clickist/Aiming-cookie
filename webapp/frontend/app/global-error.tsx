@@ -4,9 +4,11 @@ import "../ui/theme.css";
 
 import { useEffect } from "react";
 
+import { useT } from "@/lib/i18n";
 import { Button, ErrorState } from "@/ui/primitives";
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const t = useT();
   useEffect(() => {
     // Next 约定：记录错误与栈，方便用户截图报障。
     console.error(error);
@@ -28,11 +30,11 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             placeItems: "center",
           }}
         >
-          <ErrorState title="应用遇到问题">
-            <p style={{ margin: "0 0 var(--space-2)" }}>应用遇到了意外问题，可以重试一下。</p>
-            <p style={{ margin: "0 0 var(--space-4)" }}>若重试无效请重启应用。</p>
+          <ErrorState title={t("app.globalError.title")}>
+            <p style={{ margin: "0 0 var(--space-2)" }}>{t("app.globalError.bodyPrimary")}</p>
+            <p style={{ margin: "0 0 var(--space-4)" }}>{t("app.globalError.bodySecondary")}</p>
             <Button onClick={reset} variant="secondary">
-              重试
+              {t("common.retry")}
             </Button>
           </ErrorState>
         </div>

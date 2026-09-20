@@ -37,11 +37,12 @@ test("SessionRail groups sessions into 今天/昨天/近 7 天/更早 with stati
   // 分桶仍基于既有时间戳字段（updated_at 优先），组内保持倒序
   assert.match(component, /sessionTimestamp/);
   assert.match(component, /\.sort\(/);
-  // 四个时间分组文案与数量角标
-  assert.match(component, /"今天"/);
-  assert.match(component, /"昨天"/);
-  assert.match(component, /"近 7 天"/);
-  assert.match(component, /"更早"/);
+  // 四个时间分组文案与数量角标（i18n 批 5：组头标签是字典键，渲染时经 t() 解析）
+  assert.match(component, /labelKey: "coach\.rail\.group\.today"/);
+  assert.match(component, /labelKey: "coach\.rail\.group\.yesterday"/);
+  assert.match(component, /labelKey: "coach\.rail\.group\.week"/);
+  assert.match(component, /labelKey: "coach\.rail\.group\.older"/);
+  assert.match(component, /\{t\(group\.labelKey\)\}/);
   assert.match(component, /task7-session-rail__count/);
   // 组头复用既有分组样式类；第一版静态组头，无 <details> 折叠
   assert.match(component, /task7-session-rail__group-summary/);
@@ -57,10 +58,11 @@ test("SessionRail includes search and keyboard semantics", async () => {
   const styles = await source("components/task7/session-rail.css");
   assert.match(component, /type="search"/);
   assert.match(component, /aria-current=\{current \? "page"/);
-  assert.match(component, /aria-label="训练历史"/);
-  assert.match(component, /aria-label="系统设置"/);
-  assert.match(component, /aria-label=\{`归档/);
-  assert.match(component, /aria-label=\{`删除/);
+  // i18n 批 5：页脚与条目操作 aria 走字典（断言与键同源）
+  assert.match(component, /aria-label=\{t\("coach\.rail\.history"\)\}/);
+  assert.match(component, /aria-label=\{t\("coach\.rail\.settings"\)\}/);
+  assert.match(component, /aria-label=\{t\("coach\.rail\.archiveAria"/);
+  assert.match(component, /aria-label=\{t\("coach\.rail\.deleteAria"/);
   assert.match(styles, /:focus-visible/);
   assert.match(styles, /prefers-reduced-motion/);
 });
@@ -71,9 +73,9 @@ test("SessionRail deletes only after an inline two-step confirmation", async () 
   // aria-label 与 title 承载"确认删除"语义），第二次点击才触发软删回调
   assert.match(component, /pendingDeleteId/);
   assert.match(component, /setPendingDeleteId\(session\.id\)/);
-  assert.match(component, /aria-label=\{`确认删除 /);
+  assert.match(component, /aria-label=\{t\("coach\.rail\.deleteConfirmAria"/);
   assert.match(component, /item-action--confirm/);
-  assert.match(component, /title="再次点击确认删除"/);
+  assert.match(component, /title=\{t\("coach\.rail\.deleteConfirmTitle"\)\}/);
   // 文案必须是删除而非归档；禁止浏览器原生 confirm 与全屏对话框
   assert.doesNotMatch(component, /window\.confirm/);
   assert.doesNotMatch(component, /<dialog/i);
@@ -102,8 +104,9 @@ test("SessionRail stays expanded with a persistent footer", async () => {
   assert.match(component, /task7-session-rail__footer/);
   assert.match(component, /providerStatus/);
   assert.match(component, /task7-session-rail__footer-label/);
-  assert.match(component, /训练历史/);
-  assert.match(component, /系统设置/);
+  // i18n 批 5：页脚两行文案走字典键（与字典同源，改词不碎）
+  assert.match(component, /t\("coach\.rail\.history"\)/);
+  assert.match(component, /t\("coach\.rail\.settings"\)/);
   // 展开态保证：header 始终渲染新建对话，列表与 footer 恒定存在
   assert.match(component, /task7-session-rail__new/);
   // 无任何折叠/收起残留

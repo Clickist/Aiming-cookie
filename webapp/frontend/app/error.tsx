@@ -2,9 +2,11 @@
 
 import { useEffect } from "react";
 
+import { useT } from "@/lib/i18n";
 import { Button, ErrorState } from "@/ui/primitives";
 
 export default function PageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const t = useT();
   useEffect(() => {
     // Next 约定：记录错误与栈，方便用户截图报障。
     console.error(error);
@@ -20,10 +22,10 @@ export default function PageError({ error, reset }: { error: Error & { digest?: 
         placeItems: "center",
       }}
     >
-      <ErrorState title="页面出错了">
-        <p style={{ margin: "0 0 var(--space-4)" }}>这个页面出了点问题，重试即可恢复；若反复出现请重启应用。</p>
+      <ErrorState title={t("app.error.title")}>
+        <p style={{ margin: "0 0 var(--space-4)" }}>{t("app.error.body")}</p>
         <Button onClick={reset} variant="secondary">
-          重试
+          {t("common.retry")}
         </Button>
       </ErrorState>
     </div>

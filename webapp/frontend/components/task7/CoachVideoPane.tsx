@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { VideoView } from "@/components/task5/VideoView";
 import { getSession } from "@/lib/api";
 import { presentAnalysisWorkspace, type AnalysisWorkspacePresentation } from "@/lib/contracts";
+import { useT } from "@/lib/i18n";
 import { IconClose } from "@/ui/icons";
 import { Button, ErrorState, Loading } from "@/ui/primitives";
 
@@ -60,6 +61,7 @@ export function CoachVideoPane({
   const [jumpTarget, setJumpTarget] = useState<{ seq: number; ms: number } | null>(null);
   const jumpSeqRef = useRef(0);
   const [revision, setRevision] = useState(0);
+  const t = useT();
 
   const load = useCallback(async (signal: AbortSignal) => {
     const analysisId = analysisIdFromRef(analysisRef);
@@ -110,22 +112,22 @@ export function CoachVideoPane({
   }, [initialTimeMs, jumpSeq, load, revision]);
 
   return (
-    <section aria-label="Coach 视频讲解" className="task7-coach-video-pane">
+    <section aria-label={t("coach.video.paneLabel")} className="task7-coach-video-pane">
       <header className="task7-coach-video-pane__header">
         <div>
-          <span>视频讲解</span>
+          <span>{t("coach.video.eyebrow")}</span>
           <h2>
-            {presentation?.scenario ?? "训练视频"}
-            {runId != null ? ` · run ${runId}` : ""}
+            {presentation?.scenario ?? t("coach.video.fallbackTitle")}
+            {runId != null ? t("coach.discussion.runSuffix", { runId }) : ""}
           </h2>
         </div>
-        <button aria-label="关闭视频讲解" className="task7-coach-video-pane__close" onClick={onClose} title="关闭视频讲解" type="button"><IconClose /></button>
+        <button aria-label={t("coach.video.close")} className="task7-coach-video-pane__close" onClick={onClose} title={t("coach.video.close")} type="button"><IconClose /></button>
       </header>
       <div className="task7-coach-video-pane__body">
-        {loading ? <Loading>正在读取本地视频与证据</Loading> : null}
+        {loading ? <Loading>{t("coach.video.loading")}</Loading> : null}
         {!loading && failed ? (
-          <ErrorState title="视频讲解暂时不可用">
-            <Button onClick={() => setRevision((value) => value + 1)} variant="secondary">重试</Button>
+          <ErrorState title={t("coach.video.unavailableTitle")}>
+            <Button onClick={() => setRevision((value) => value + 1)} variant="secondary">{t("common.retry")}</Button>
           </ErrorState>
         ) : null}
         {!loading && presentation ? (
