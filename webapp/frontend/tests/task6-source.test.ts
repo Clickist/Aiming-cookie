@@ -55,17 +55,30 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
   const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
   const combined = `${settings}\n${providerSection}`;
   assert.match(page, /SettingsWorkspace/);
-  for (const label of ["Provider", "配置档", "自动采集", "主题", "存储"]) {
-    assert.match(settings, new RegExp(label));
+  // i18n 批 4：分区标签是字典键，改断言键引用。
+  for (const sectionKey of [
+    "settings.nav.llmProvider",
+    "settings.feedback.profileSaved",
+    "settings.nav.capture",
+    "settings.theme.title",
+    "settings.nav.storage",
+  ]) {
+    assert.match(settings, new RegExp(sectionKey));
   }
   assert.match(settings, /useTheme/);
-  assert.match(settings, /读取失败时才使用的默认值/);
-  assert.match(settings, /总占用/);
+  assert.match(settings, /settings\.profile\.defaultsDesc/);
+  assert.match(settings, /settings\.storage\.total/);
   // Provider 的 OAuth 授权动作与其状态文案随主从式重做搬进分区组件。
   assert.match(providerSection, /getProviderAuthOperation/);
   assert.match(providerSection, /cancelProviderAuthOperation/);
-  for (const status of ["等待认证输入", "授权成功", "已取消", "已超时", "授权失败"]) {
-    assert.match(providerSection, new RegExp(status));
+  for (const statusKey of [
+    "settings.provider.authAwaitingInput",
+    "settings.provider.authSucceeded",
+    "settings.provider.authCancelled",
+    "settings.provider.authTimedOut",
+    "settings.provider.authFailed",
+  ]) {
+    assert.match(providerSection, new RegExp(statusKey));
   }
   assert.doesNotMatch(combined, />\s*一键清空\s*</);
   assert.doesNotMatch(combined, /\{profile\.status\}|\{capture\.raw_input_permission\}/);
@@ -114,7 +127,7 @@ test("Settings keeps the Profile override as a single three-state card action", 
   // →「删除」（已覆盖，点击退回 Stats 读取值）。
   assert.match(settings, /profileOverrideActive \? \(/);
   assert.match(settings, /disabled=\{!profileDirty \|\| !profileHasInput\}/);
-  assert.match(settings, /variant="primary">删除<\/Button>/);
+  assert.match(settings, /variant="primary">\{t\("settings\.profile\.delete"\)\}<\/Button>/);
   assert.doesNotMatch(settings, /aria-describedby="task6-profile-help"/);
   assert.doesNotMatch(settings, /<p className="task6-muted">Stats 自动读取优先/);
   assert.doesNotMatch(settings, /profile_default/);
@@ -148,7 +161,7 @@ test("Settings auto-detects custom Provider protocols and keeps a fallback choic
   assert.match(providerSection, /discoverCustomProviderModels/);
   // 协议识别失败的回退：hook 保留 needsProtocolChoice，向导留手动 Model ID。
   assert.match(helpers, /needsProtocolChoice/);
-  assert.match(providerSection, /列表中没有需要的 Model ID/);
+  assert.match(providerSection, /settings\.provider\.wizardModelIdManual/);
   assert.match(providerSection, /customProtocolConfirmed/);
   assert.match(settings, /getProviderCatalog\(\)\.catch\(\(\) => null\)/);
   // capture 首载 3s 竞速与 OAuth 授权轮询的异步形态各自保留。
@@ -354,13 +367,13 @@ test("Coach shows the empty home only when there are no messages or runs, with n
 
 test("Coach composer has an explicit accessible name", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /<textarea[\s\S]*?aria-label="向 Coach 提问"/);
+  assert.match(panel, /<textarea[\s\S]*?aria-label=\{t\("coach\.composer\.ariaLabel"\)\}/);
 });
 
 test("Coach training actions distinguish plan context from a reviewed KovaaK launch", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const desktop = await source("lib/desktop.ts");
-  assert.match(coach, /当前训练计划/);
+  assert.match(coach, /coach\.training\.planAria/);
   // 0918 拍板（点点）：浮层标题「当前训练」下再标「当前训练项目」信息重复，
   // 标签退役，项目名 display_name 直接顶到浮层首行。
   assert.doesNotMatch(coach, /当前训练项目/);
@@ -368,13 +381,13 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.doesNotMatch(coach, /task6-training-actions/);
   // 0913 拍板：展开时头部行泛称化去重名；按钮行右对齐；删除训练计划直删不弹窗。
   assert.match(coach, /trainingHeaderLabel/);
-  assert.match(coach, /删除训练计划/);
+  assert.match(coach, /coach\.training\.deletePlan/);
   assert.match(coach, /deleteCurrentTraining/);
-  assert.match(coach, /在 KovaaK 中开始/);
+  assert.match(coach, /coach\.training\.startInKovaak/);
   assert.match(coach, /display_name/);
   assert.match(coach, /kind === "scenario"/);
-  assert.match(coach, /正在理解问题和分析上下文/);
-  assert.match(coach, /读取已附加分析/);
+  assert.match(coach, /coach\.step\.understanding/);
+  assert.match(coach, /coach\.tool\.getAnalysisSummary/);
   // 1.0.0 内测拍板：不可一键开始时保持安静，「项目暂不可用/尚未绑定」是噪音。
   assert.doesNotMatch(coach, /尚未绑定可启动的 KovaaK 场景/);
   assert.doesNotMatch(coach, /项目暂不可用/);
@@ -462,7 +475,7 @@ test("Coach training chip morphs as one container instead of growing a card unde
   // 空态不再用蓝框 Notice：面板内文案 + 一键让 Coach 排计划（只填不发）。
   assert.doesNotMatch(coach, /<Notice/);
   assert.match(coach, /className="task6-training-pop-empty"/);
-  assert.match(coach, /setDraft\("帮我安排一个训练计划"\)/);
+  assert.match(coach, /setDraft\(t\("coach\.training\.requestPlanDraft"\)\)/);
   assert.match(coach, /requestAnimationFrame\(\(\) => textareaRef\.current\?\.focus\(\)\)/);
   // 键盘可达才画环（鼠标点击展开不该常驻橙圈）。
   assert.match(styles, /\.task6-training-pop:has\(:focus-visible\)\s*\{[^}]*outline:\s*2px solid var\(--primary\)/);
@@ -530,7 +543,7 @@ test("Coach tool steps collapse done steps, show analysis ETA, and mark stopped 
   assert.match(activity, /task6-tool-eta/);
   // 停止态渲染「回答已停止」收尾行。
   assert.match(coach, /stopped=\{run\.status === "stopped"\}/);
-  assert.match(activity, /回答已停止，可重新提问/);
+  assert.match(activity, /coach\.activity\.stoppedRow/);
   // 0828 视觉：行首语义图标槽 + 行尾折叠箭头，无点线时间线。
   assert.match(activity, /task6-tool-glyph/);
   assert.match(styles, /\.task6-tool-glyph/);
@@ -545,8 +558,9 @@ test("Coach pins the discussion analysis bar above the scrolling conversation an
   const coach = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
   // 常驻条在滚动区之前渲染（不在对话流里被滚走）
-  const discussionAt = coach.indexOf('aria-label="本次讨论的分析"');
-  const messagesAt = coach.indexOf('aria-label="Coach 消息"');
+  // i18n 批 4：锚点换代码结构（aria-label 走字典键）。
+  const discussionAt = coach.indexOf('className="task6-discussion-bar task6-suggestions"');
+  const messagesAt = coach.indexOf('aria-label={t("coach.messages.label")}');
   assert.ok(discussionAt !== -1 && messagesAt !== -1, "discussion bar and messages section must exist");
   assert.ok(discussionAt < messagesAt, "discussion bar must render before the scrolling messages section");
   assert.match(coach, /task6-discussion-bar task6-suggestions/);
@@ -577,7 +591,7 @@ test("Discussion bar pins at most three finished chips and folds the rest behind
   // 箭头按钮：discussion-chip 状态标签档 + aria-expanded + 计数 aria-label。
   assert.match(coach, /className="task6-discussion-chip task6-discussion-toggle"/);
   assert.match(coach, /aria-expanded=\{discussionOverflowOpen\}/);
-  assert.match(coach, /aria-label=\{`展开其余 \$\{overflowDiscussionChips\.length\} 个讨论过的分析`\}/);
+  assert.match(coach, /aria-label=\{t\("coach\.discussion\.expandOthers", \{ n: overflowDiscussionChips\.length \}\)\}/);
   // 菜单项点击＝关菜单并打开视频（与平铺 chip 同一行为）。
   assert.match(coach, /setDiscussionOverflowOpen\(false\);\s*onOpenVideo\?\.\(`analysis:\$\{chip\.id\}`, 0\);/);
   // 关闭路径（CoachModelMenu 同款惯例）：外点 mousedown + IME 守卫的 Escape。
@@ -617,6 +631,6 @@ test("settings keeps 应用更新 reachable as a 通用 subsection (0911 审计 
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   // 分区切换化后应用更新不再是独立分区/导航项：收进置顶「通用」屏三小节
   // 之一，通用永远在导航里，审计要求的「可达」继续成立。
-  assert.match(settings, /\{ id: "general", label: "通用" \}/);
-  assert.match(settings, /task6-profile-group-title">应用更新/);
+  assert.match(settings, /\{ id: "general", label: "settings\.nav\.general" \}/);
+  assert.match(settings, /task6-profile-group-title">\{t\("settings\.update\.title"\)\}/);
 });

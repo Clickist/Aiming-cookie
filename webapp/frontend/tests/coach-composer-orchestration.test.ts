@@ -18,13 +18,13 @@ test("running-send lands in visible queue chips with a 96-char preview and three
   // 预览必须走统一截断助手（纯逻辑单测锁 96+省略号，这里锁渲染消费）。
   assert.match(panel, /truncateQueuePreview\(chip\.text\)/);
   // 三操作（0911 点点拍板）：立即＝打断并立刻发 / 回填编辑（排队条消失）/
-  // 逐条取消（Cline #12226 丢消息教训）。
+  // 逐条取消（Cline #12226 丢消息教训）。i18n 批 4：label/title 走字典键。
   assert.match(panel, /promoteChipToSendNow = async \(chip: QueuedChip\)/);
   assert.match(panel, /sendText\(chip\.text, \{ force: true, refs: chip\.refs \}\)/);
-  assert.match(panel, /label="立即打断发送"/);
-  assert.match(panel, /task6-queue-chip-now">立即</);
+  assert.match(panel, /label=\{t\("coach\.queue\.sendNowLabel"\)\}/);
+  assert.match(panel, /task6-queue-chip-now">\{t\("coach\.queue\.sendNow"\)\}</);
   assert.match(panel, /backfillChipToDraft = \(chip: QueuedChip\)/);
-  assert.match(panel, /label="取消发送"[\s\S]*?removeQueuedChip\(chips, chip\.id\)/);
+  assert.match(panel, /label=\{t\("coach\.queue\.cancelLabel"\)\}[\s\S]*?removeQueuedChip\(chips, chip\.id\)/);
   // 回填编辑后焦点回输入框：编辑目标可直接续写。
   assert.match(panel, /backfillChipToDraft[\s\S]*?textareaRef\.current\?\.focus\(\)/s);
 });
@@ -36,17 +36,17 @@ test("send key morphs by run/draft state; running actions live beside it in a ca
   // （IconStop、点击＝stop）；运行中且已输入＝发送（submitComposer＝入队）。
   assert.match(
     panel,
-    /composerBusy && !draft\.trim\(\) && quotes\.length === 0 \? \(\s*<button\s+aria-label="停止生成"\s+className="task6-composer-send task6-composer-send--stop"\s+onClick=\{\(\) => void stop\(\)\}/s,
+    /composerBusy && !draft\.trim\(\) && quotes\.length === 0 \? \(\s*<button\s+aria-label=\{t\("coach\.composer\.stopLabel"\)\}\s+className="task6-composer-send task6-composer-send--stop"\s+onClick=\{\(\) => void stop\(\)\}/s,
   );
   assert.match(panel, /<IconStop \/><\/button>/);
-  const sendAt = panel.indexOf('aria-label="发送"');
+  const sendAt = panel.indexOf('aria-label={t("coach.composer.sendLabel")}');
   assert.ok(sendAt !== -1, "send button must exist");
   const clickAt = panel.indexOf("onClick={submitComposer}", sendAt);
   assert.ok(clickAt > sendAt, "send button must submit directly");
   // Esc 与终止键同功能（0912 点点拍板：旁挂发送选项菜单废弃，无菜单抢占 Esc）。
   assert.match(panel, /event\.key === "Escape" && composerBusy && !draft\.trim\(\) && quotes\.length === 0\)/);
   // 运行中占位提示随态切换。
-  assert.match(panel, /composerBusy\s*\?\s*"继续输入以排队后续修改"/);
+  assert.match(panel, /composerBusy\s*\?\s*t\("coach\.composer\.placeholderBusy"\)/);
   // 终止形态样式：同形正圆换 error 底。
   assert.match(styles, /\.task6-composer-send--stop\s*\{[^}]*background:\s*var\(--error\)/);
   // 0912 点点拍板：运行中不再旁挂 caret 选项菜单——排队由运行中发送自动入队
@@ -147,7 +147,9 @@ test("model selector stays usable during runs and takes effect next turn", async
   assert.doesNotMatch(menu, /disabled: boolean/);
   assert.doesNotMatch(panel, /<CoachModelMenu[^>]*disabled/s);
   assert.match(menu, /disabled=\{switching\}/);
-  assert.match(menu, /对下一段回复生效/);
+  // i18n 批 4：切换/力度按钮 title 走字典键（含「对下一段回复生效」语义）。
+  assert.match(menu, /coach\.model\.switchTitle/);
+  assert.match(menu, /coach\.model\.effortTitle/);
 });
 
 // 编辑重发（截断派）已按点点 0827 拍板整体移除：小时钟入口、横幅、sendText 截断分支与本锁定测试一并删除。

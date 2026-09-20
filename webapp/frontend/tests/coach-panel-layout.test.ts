@@ -113,8 +113,9 @@ test("header training card folds into a single header chip; discussion bar stays
   const styles = await source("components/task6/task6.css");
   // 折叠态并入 header 行的单 chip（替换掉常驻训练卡 section）
   assert.match(coach, /className="task6-training-chip"/);
-  assert.match(coach, /aria-label="当前训练计划"/);
-  assert.doesNotMatch(coach, /<section aria-label="当前训练计划" className="task6-current-training"/);
+  // i18n 批 4：aria-label 走字典键 coach.training.planAria。
+  assert.match(coach, /aria-label=\{t\("coach\.training\.planAria"\)\}/);
+  assert.doesNotMatch(coach, /<section aria-label=\{t\("coach\.training\.planAria"\)\} className="task6-current-training"/);
   assert.doesNotMatch(coach, /const trainingSection = \(/);
   assert.doesNotMatch(coach, /\{trainingSection\}/);
   // 展开细节沿用 training-reveal 动画合同
@@ -128,7 +129,7 @@ test("header training card folds into a single header chip; discussion bar stays
   // AppShell 的 task3-coach-topbar-slot，标题之后），槽位缺失时不渲染。
   assert.match(
     coach,
-    /\{\s*\(!homeShell && \(pendingAnalyses\.length > 0 \|\| discussionAnalysisIds\.length > 0\) && discussionBarHost != null\) \? \(\s*createPortal\(\s*<div aria-label="本次讨论的分析" className="task6-discussion-bar/,
+    /\{\s*\(!homeShell && \(pendingAnalyses\.length > 0 \|\| discussionAnalysisIds\.length > 0\) && discussionBarHost != null\) \? \(\s*createPortal\(\s*<div aria-label=\{t\("coach\.discussion\.barLabel"\)\} className="task6-discussion-bar/,
   );
   assert.match(coach, /document\.getElementById\("task3-coach-topbar-slot"\)/);
   const shell = await source("components/task3/AppShell.tsx");

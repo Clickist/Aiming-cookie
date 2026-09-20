@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
+import { t, useT, type MessageKey } from "@/lib/i18n";
 import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
@@ -80,6 +81,7 @@ type AppUpdateCheckState =
 // 设置页的「应用更新」：与启动静默检查共用 lib/updater 的同一端点与验签；
 // 安装期间锁住按钮，成功时进程直接重启（不会回到 idle）。
 function AppUpdatePanel() {
+  const t = useT();
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [checkState, setCheckState] = useState<AppUpdateCheckState>({ phase: "idle" });
   const [installing, setInstalling] = useState(false);
@@ -120,29 +122,29 @@ function AppUpdatePanel() {
   }, [checkState]);
 
   if (!isDesktopRuntime()) {
-    return <p className="task6-muted">浏览器预览不提供应用更新检查。</p>;
+    return <p className="task6-muted">{t("settings.update.browserOnly")}</p>;
   }
   // 线框形态（0912 完美复刻）：第一行 = 「应用更新」+ 状态 chip；
   // 第二行 = 当前版本（居左）+ 行尾「检查更新」。chip 状态词与面板状态
   // 一一对应：未检查/检查中/已是最新/有新版本/检查失败。
   const chip =
-    checkState.phase === "latest" ? { tone: "ok", label: "已是最新" }
-    : checkState.phase === "available" ? { tone: "new", label: "有新版本" }
-    : checkState.phase === "checking" ? { tone: "idle", label: "检查中…" }
-    : checkState.phase === "error" ? { tone: "idle", label: "检查失败" }
-    : { tone: "idle", label: "未检查" };
+    checkState.phase === "latest" ? { tone: "ok", label: t("settings.update.chipLatest") }
+    : checkState.phase === "available" ? { tone: "new", label: t("settings.update.chipAvailable") }
+    : checkState.phase === "checking" ? { tone: "idle", label: t("settings.update.chipChecking") }
+    : checkState.phase === "error" ? { tone: "idle", label: t("settings.update.chipError") }
+    : { tone: "idle", label: t("settings.update.chipIdle") };
   return (
     <div className="task6-app-update">
       <div className="task6-app-update-head">
-        <h3 className="task6-profile-group-title">应用更新</h3>
+        <h3 className="task6-profile-group-title">{t("settings.update.title")}</h3>
         <span className="task6-update-chip" data-tone={chip.tone}>{chip.label}</span>
       </div>
       <div className="task6-app-update-row">
         <p className="task6-muted">
-          当前版本{appVersion ? ` v${appVersion}` : ""}
-          {checkState.phase === "checking" ? " · 正在检查更新…" : null}
-          {checkState.phase === "error" ? " · 检查失败，请稍后再试" : null}
-          {installing ? " · 正在下载并安装，完成后应用会自动重启" : null}
+          {t("settings.update.currentVersion")}{appVersion ? t("settings.update.versionSuffix", { version: appVersion }) : ""}
+          {checkState.phase === "checking" ? t("settings.update.checkingSuffix") : null}
+          {checkState.phase === "error" ? t("settings.update.errorSuffix") : null}
+          {installing ? t("settings.update.installingSuffix") : null}
         </p>
         <div className="task6-inline-actions">
           <Button
@@ -151,11 +153,11 @@ function AppUpdatePanel() {
             size="compact"
             variant="secondary"
           >
-            检查更新
+            {t("settings.update.checkButton")}
           </Button>
           {checkState.phase === "available" && !installing ? (
             <Button onClick={() => void installNow()} size="compact">
-              更新到 {checkState.update.version}
+              {t("settings.update.updateTo", { version: checkState.update.version })}
             </Button>
           ) : null}
         </div>
@@ -180,24 +182,25 @@ function formatDay(iso: string | null | undefined): string | null {
 }
 
 function captureLabel(value: boolean | null | undefined, yes: string, no: string): string {
-  if (value == null) return "未知";
+  if (value == null) return t("settings.capture.unknown");
   return value ? yes : no;
 }
 
 function incompleteReasonLabel(value: IncompleteCaptureItemV1["reason"]): string {
-  return value === "interrupted_finalization" ? "整理过程被中断" : "未归类的采集产物";
+  return value === "interrupted_finalization" ? t("settings.storage.reasonInterrupted") : t("settings.storage.reasonUncategorized");
 }
 
 // 分区切换化（点点拍板线框）：左栏切换项，点击只显示对应屏。
 // 0912 点点拍板：高级屏取消——诊断包挪回自动采集，外部遥测导入界面下线。
+// i18n 批 4（§2c）：label 是字典键（MessageKey），渲染时经 t() 解析。
 const NAV_ITEMS = [
-  { id: "general", label: "通用" },
-  { id: "llm-provider", label: "LLM Provider" },
-  { id: "knowledge", label: "知识库" },
-  { id: "capture", label: "自动采集" },
-  { id: "kovaak", label: "KovaaK" },
-  { id: "storage", label: "数据与存储" },
-] as const;
+  { id: "general", label: "settings.nav.general" },
+  { id: "llm-provider", label: "settings.nav.llmProvider" },
+  { id: "knowledge", label: "settings.nav.knowledge" },
+  { id: "capture", label: "settings.nav.capture" },
+  { id: "kovaak", label: "settings.nav.kovaak" },
+  { id: "storage", label: "settings.nav.storage" },
+] as const satisfies ReadonlyArray<{ id: string; label: MessageKey }>;
 
 type SettingsSectionId = (typeof NAV_ITEMS)[number]["id"];
 
@@ -239,11 +242,13 @@ type SettingsSnapshot = {
 let settingsSnapshot: SettingsSnapshot | null = null;
 
 function SettingsExit({ onExit }: { onExit: () => void }) {
-  return <IconButton className="task6-settings-back" label="退出设置" onClick={onExit} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>;
+  const t = useT();
+  return <IconButton className="task6-settings-back" label={t("settings.exit.label")} onClick={onExit} size="compact" title={t("history.page.backToCoach")}><IconChevronLeft /></IconButton>;
 }
 
 export function SettingsWorkspace() {
   const router = useRouter();
+  const t = useT();
   const { preference, setPreference } = useTheme();
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
@@ -273,10 +278,10 @@ export function SettingsWorkspace() {
     setDiagnosticExporting(true);
     try {
       const path = await exportDesktopCaptureDiagnostics();
-      if (path) setFeedback(`运行日志已导出：${path}`);
+      if (path) setFeedback(t("settings.feedback.logsExported", { path }));
     } catch (error) {
       logFrontendError("capture-diagnostics-export", error instanceof Error ? error.message : String(error));
-      setFeedback("运行日志导出失败，请重试。");
+      setFeedback(t("settings.feedback.logsExportFailed"));
     } finally {
       setDiagnosticExporting(false);
     }
@@ -291,18 +296,18 @@ export function SettingsWorkspace() {
     try {
       const id = await uploadDesktopCaptureDiagnostics();
       setDiagnosticUploadId(id);
-      setFeedback(`诊断包已上传，编号 ${id}：把这个编号发给开发者即可。`);
+      setFeedback(t("settings.feedback.uploadDone", { id }));
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
       logFrontendError("capture-diagnostics-upload", code || String(error));
       if (code === DIAGNOSTICS_UPLOAD_NOT_CONFIGURED) {
-        setFeedback("当前版本没有内置上传配置（构建缺 token），重试不会成功；请改用「导出运行日志」手动发送文件，并把这条提示告诉开发者。");
+        setFeedback(t("settings.feedback.uploadNotConfigured"));
       } else if (code === "UPLOAD_RATE_LIMITED") {
-        setFeedback("上传太频繁（每小时最多 10 次），请稍后再试；紧急时可改用「导出运行日志」手动发送文件。");
+        setFeedback(t("settings.feedback.uploadRateLimited"));
       } else if (code === "UPLOAD_QUOTA_EXCEEDED") {
-        setFeedback("今天的上传额度已用完，请明天再试；紧急时可改用「导出运行日志」手动发送文件。");
+        setFeedback(t("settings.feedback.uploadQuotaExceeded"));
       } else {
-        setFeedback("诊断包上传失败（网络或服务不可用），可改用「导出运行日志」后手动发送文件。");
+        setFeedback(t("settings.feedback.uploadFailed"));
       }
     } finally {
       setDiagnosticUploading(false);
@@ -314,7 +319,7 @@ export function SettingsWorkspace() {
     try {
       await revealStorageItem(request);
     } catch {
-      setFeedback("无法打开文件位置：文件可能已被移动、删除或文件管理器不可用。");
+      setFeedback(t("settings.feedback.revealFailed"));
     }
   };
 
@@ -457,7 +462,7 @@ export function SettingsWorkspace() {
       setConfirmAction(null);
       await refresh(true);
     } catch {
-      setFeedback("操作未完成，未伪造成功状态，请重试。");
+      setFeedback(t("settings.feedback.opIncomplete"));
     }
   };
 
@@ -467,7 +472,7 @@ export function SettingsWorkspace() {
       fov: fov ? Number(fov) : null,
     });
     setCalibration(result);
-    setFeedback("配置档默认值已保存");
+    setFeedback(t("settings.feedback.profileSaved"));
   };
 
   const deleteProfileCalibration = async () => {
@@ -475,13 +480,13 @@ export function SettingsWorkspace() {
     setCalibration(result);
     setCmPer360(result.values.cm_per_360?.toString() ?? "");
     setFov(result.values.fov?.toString() ?? "");
-    setFeedback("配置档默认值已删除，退回读取值");
+    setFeedback(t("settings.feedback.profileDeleted"));
   };
 
   const latestStatsCalibration = runs.find((run) => run.stats_calibration)?.stats_calibration ?? null;
   // Profile 卡输入框的灰字占位 = Stats 已读取值；没有读取值才是「未设置」。
-  const statsCm360Placeholder = latestStatsCalibration?.cm_per_360 != null ? String(latestStatsCalibration.cm_per_360) : "未设置";
-  const statsFovPlaceholder = latestStatsCalibration?.fov != null ? String(latestStatsCalibration.fov) : "未设置";
+  const statsCm360Placeholder = latestStatsCalibration?.cm_per_360 != null ? String(latestStatsCalibration.cm_per_360) : t("settings.profile.unsetPlaceholder");
+  const statsFovPlaceholder = latestStatsCalibration?.fov != null ? String(latestStatsCalibration.fov) : t("settings.profile.unsetPlaceholder");
   // 三态按钮判定：与已存值不一致=有未保存输入（橙「保存」）；一致且存在覆盖=「删除」。
   const profileDirty = cmPer360 !== (calibration?.values.cm_per_360?.toString() ?? "") || fov !== (calibration?.values.fov?.toString() ?? "");
   const profileHasInput = Boolean(cmPer360 || fov);
@@ -530,28 +535,28 @@ export function SettingsWorkspace() {
 
   // 线框顺序：浅色 / 深色 / 跟随系统。
   const themeOptions = [
-    { value: "light", label: "浅色" },
-    { value: "dark", label: "深色" },
-    { value: "system", label: "跟随系统" },
+    { value: "light", label: t("settings.theme.light") },
+    { value: "dark", label: t("settings.theme.dark") },
+    { value: "system", label: t("settings.theme.system") },
   ] as const;
 
   // 渐进渲染：页面框架常驻，不再整页 return Loading。各分区（Provider /
   // 采集 / 存储）在各自数据到达前显示局部 skeleton，数据先到先显示。
   if (loadError && !catalog && profiles.length === 0) {
-    return <div className="task6-settings-page"><div className="task6-settings-state-header" onMouseDown={startWindowDraggingOnBackground}><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh(true)} variant="secondary">重试</Button></ErrorState></div>;
+    return <div className="task6-settings-page"><div className="task6-settings-state-header" onMouseDown={startWindowDraggingOnBackground}><SettingsExit onExit={() => router.push("/")} /><span>{t("settings.page.title")}</span></div><ErrorState title={t("settings.error.title")}><Button onClick={() => void refresh(true)} variant="secondary">{t("common.retry")}</Button></ErrorState></div>;
   }
 
   return (
     <div className="task6-settings-page">
-      <aside className="task6-settings-nav" aria-label="设置分区">
+      <aside className="task6-settings-nav" aria-label={t("settings.page.navAria")}>
         {/* 背景随内容拉满整高；sticky 放内层，滚动时导航仍跟随。 */}
         <div className="task6-settings-nav-inner">
           {/* 标题行兼作窗口拖拽区（左键空白处）：横跨顶栏拆除后的拖拽补偿。 */}
           <div className="task6-settings-nav-title-row" onMouseDown={startWindowDraggingOnBackground}>
             <SettingsExit onExit={() => router.push("/")} />
-            <div className="task6-settings-nav-title">设置</div>
+            <div className="task6-settings-nav-title">{t("settings.page.title")}</div>
           </div>
-          <nav aria-label="设置导航">
+          <nav aria-label={t("settings.page.navLabel")}>
             {NAV_ITEMS.map((item) => (
               <button
                 aria-current={item.id === activeNav ? "true" : undefined}
@@ -561,7 +566,7 @@ export function SettingsWorkspace() {
                 onClick={() => selectSection(item.id)}
                 type="button"
               >
-                {item.label}
+                {t(item.label)}
               </button>
             ))}
           </nav>
@@ -573,21 +578,21 @@ export function SettingsWorkspace() {
       <div className="task6-settings-main">
         <div className="task6-settings-topband" onMouseDown={startWindowDraggingOnBackground} />
         <div className="task6-settings-content" ref={contentRef}>
-        {loadError ? <Notice className="task6-settings-notice" tone="warning" title="部分设置未能刷新">已保留当前可用内容。请检查本地服务后重试。</Notice> : null}
+        {loadError ? <Notice className="task6-settings-notice" tone="warning" title={t("settings.notice.partialRefreshTitle")}>{t("settings.notice.partialRefreshBody")}</Notice> : null}
 
         {/* 通用（置顶）：主题 / Profile 默认值 / 应用更新 三小节合一屏。 */}
         <section className="task6-settings-section" hidden={activeNav !== "general"} id="general" tabIndex={-1}>
           <div className="task6-settings-section-header">
-            <span className="task6-settings-section-title">通用</span>
-            <span className="task6-settings-section-note">主题、Profile 默认值与应用更新。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.general")}</span>
+            <span className="task6-settings-section-note">{t("settings.section.generalNote")}</span>
           </div>
           <div className="task6-settings-subsection">
             <Panel>
-              <h3 className="task6-profile-group-title">主题</h3>
-              <p className="task6-card-desc">跟随系统或手动指定。</p>
+              <h3 className="task6-profile-group-title">{t("settings.theme.title")}</h3>
+              <p className="task6-card-desc">{t("settings.theme.desc")}</p>
               {/* 线框形态：三张横排主题预览卡——上半是目标主题配色预览块，
                   下方是名称；选中卡描边 accent。预览块用字面色表达目标主题。 */}
-              <div className="task6-theme-cards" role="radiogroup" aria-label="外观模式">
+              <div className="task6-theme-cards" role="radiogroup" aria-label={t("settings.theme.modeAria")}>
                 {themeOptions.map((mode) => (
                   <label className="task6-theme-card" data-selected={preference === mode.value || undefined} key={mode.value}>
                     <input checked={preference === mode.value} name="theme" onChange={() => setPreference(mode.value)} type="radio" value={mode.value} />
@@ -600,8 +605,8 @@ export function SettingsWorkspace() {
           </div>
           <div className="task6-settings-subsection">
             <Panel>
-              <h3 className="task6-profile-group-title">Profile 默认值</h3>
-              <p className="task6-card-desc">读取失败时才使用的默认值；不影响已完成分析。</p>
+              <h3 className="task6-profile-group-title">{t("settings.profile.defaultsTitle")}</h3>
+              <p className="task6-card-desc">{t("settings.profile.defaultsDesc")}</p>
               <div className="task6-profile-fields">
                 <div className="task6-form-row">
                   <label className="task6-form-row-label" htmlFor="task6-profile-cm360">cm/360</label>
@@ -616,9 +621,9 @@ export function SettingsWorkspace() {
                   （有未保存输入，点击写入覆盖）→ 「删除」（已覆盖，点击退回 Stats 读取值）。 */}
               <div className="task6-card-actions">
                 {profileOverrideActive ? (
-                  <Button onClick={() => void deleteProfileCalibration().catch(() => setFeedback("未能删除配置档默认值，请重试。"))} size="compact" variant="primary">删除</Button>
+                  <Button onClick={() => void deleteProfileCalibration().catch(() => setFeedback(t("settings.feedback.profileDeleteFailed")))} size="compact" variant="primary">{t("settings.profile.delete")}</Button>
                 ) : (
-                  <Button disabled={!profileDirty || !profileHasInput} onClick={() => void saveProfileCalibration().catch(() => setFeedback("配置档未能保存，请检查数值。"))} size="compact" variant="primary">保存</Button>
+                  <Button disabled={!profileDirty || !profileHasInput} onClick={() => void saveProfileCalibration().catch(() => setFeedback(t("settings.feedback.profileSaveFailed")))} size="compact" variant="primary">{t("settings.profile.save")}</Button>
                 )}
               </div>
             </Panel>
@@ -632,8 +637,8 @@ export function SettingsWorkspace() {
 
         <section className="task6-settings-section" data-guidance-target="settings.provider_auth" hidden={activeNav !== "llm-provider"} id="llm-provider" tabIndex={-1}>
           <div className="task6-settings-section-header task6-settings-section-header-stacked">
-            <span className="task6-settings-section-title">LLM Provider</span>
-            <span className="task6-settings-section-note">管理 Coach 使用的模型服务。列表行尾绿点＝连接正常，红点＝探测不通（自动测活）。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.llmProvider")}</span>
+            <span className="task6-settings-section-note">{t("settings.providerSection.note")}</span>
           </div>
           <ProviderSettingsSection
             catalog={catalog}
@@ -648,40 +653,40 @@ export function SettingsWorkspace() {
             与 Provider 相邻——两者同属「Coach 回答的来源」（Provider 定模型、知识库定口径）。 */}
         <section className="task6-settings-section" hidden={activeNav !== "knowledge"} id="knowledge" tabIndex={-1}>
           <div className="task6-settings-section-header">
-            <span className="task6-settings-section-title">知识库</span>
-            <span className="task6-settings-section-note">Coach 分析与讲解所依据的训练知识来源。同一时刻只有一个生效；切换后下一次对话即使用新口径，历史分析保持当时口径。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.knowledge")}</span>
+            <span className="task6-settings-section-note">{t("settings.knowledgeSection.note")}</span>
           </div>
           <KnowledgeSettingsSection notify={setFeedback} />
         </section>
 
         <section className="task6-settings-section" data-guidance-target="desktop.capture_control" hidden={activeNav !== "capture"} id="capture" tabIndex={-1}>
           <div className="task6-settings-section-header">
-            <span className="task6-settings-section-title">自动采集</span>
-            <span className="task6-settings-section-note">发现 KovaaK 训练并自动记录证据。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.capture")}</span>
+            <span className="task6-settings-section-note">{t("settings.capture.note")}</span>
           </div>
           {/* 0912 点点拍板：只留开关行（合并 KovaaK 状态）与最近采集事件；细节行退役。 */}
           <div className="task6-settings-subsection">
             <Panel>
               <div className="task6-settings-section-header">
-                <h3 className="task6-profile-group-title">自动采集</h3>
+                <h3 className="task6-profile-group-title">{t("settings.capture.title")}</h3>
                 <span
                   aria-hidden="true"
                   className="task6-capture-status-dot"
                   data-issue={captureIssue || undefined}
-                  title={captureIssue ? "采集服务不正常" : undefined}
+                  title={captureIssue ? t("settings.capture.dotIssue") : undefined}
                 />
               </div>
-              <p className="task6-card-desc">检测到 KovaaK 对局时自动录制画面与相对鼠标输入，只保存在本机。</p>
-              {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="浏览器模式">自动采集仅在 Desktop 可用。</Notice> : null}
-              {desktop && capture === null ? <Loading>正在读取采集状态</Loading> : null}
-              {capture?.availability === "unavailable" ? <Notice className="task6-settings-notice" tone="error" title="采集状态不可用">{capture.error?.message ?? "本地采集服务暂时不可用。"}</Notice> : null}
+              <p className="task6-card-desc">{t("settings.capture.desc")}</p>
+              {!desktop ? <Notice className="task6-settings-notice" tone="warning" title={t("settings.capture.browserTitle")}>{t("settings.capture.browserBody")}</Notice> : null}
+              {desktop && capture === null ? <Loading>{t("settings.capture.loading")}</Loading> : null}
+              {capture?.availability === "unavailable" ? <Notice className="task6-settings-notice" tone="error" title={t("settings.capture.unavailableTitle")}>{capture.error?.message ?? t("settings.capture.unavailableBody")}</Notice> : null}
               {capture ? (
                 <div className="task6-toggle-rows">
                   <div className="task6-toggle-row">
                     <div className="task6-toggle-row-text">
                       <span className="task6-muted">
-                        检测到 KovaaK 进程后开始采集{capture.capture_enabled == null ? "" : capture.capture_enabled ? "，当前待命" : "，当前已关闭"}
-                        {" · "}{captureLabel(capture.kovaak_process_present, "KovaaK 已检测到", "KovaaK 未运行")}
+                        {t("settings.capture.togglePrefix")}{capture.capture_enabled == null ? "" : capture.capture_enabled ? t("settings.capture.standbySuffix") : t("settings.capture.offSuffix")}
+                        {" · "}{captureLabel(capture.kovaak_process_present, t("settings.capture.processPresent"), t("settings.capture.processAbsent"))}
                       </span>
                     </div>
                     <div className="task6-toggle-row-side">
@@ -691,17 +696,17 @@ export function SettingsWorkspace() {
                           onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh(true))}
                           variant="secondary"
                         >
-                          {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}
+                          {capture.capture_enabled ? t("settings.capture.turnOff") : t("settings.capture.enable")}
                         </Button>
                       ) : (
-                        <span className={capture.capture_enabled ? "task6-ok" : undefined}>{captureLabel(capture.capture_enabled, "待命", "已关闭")}</span>
+                        <span className={capture.capture_enabled ? "task6-ok" : undefined}>{captureLabel(capture.capture_enabled, t("settings.capture.standby"), t("settings.capture.off"))}</span>
                       )}
                     </div>
                   </div>
                   {desktop && capture.capture_enabled === false ? (
                     <label className="task6-consent">
                       <input checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} type="checkbox" />
-                      <span>我同意采集 Raw Input 和 KovaaK 窗口回放，用于本机训练分析。</span>
+                      <span>{t("settings.capture.consent")}</span>
                     </label>
                   ) : null}
                 </div>
@@ -711,7 +716,7 @@ export function SettingsWorkspace() {
           {desktop && recentRuns.length > 0 ? (
             <div className="task6-settings-subsection">
               <Panel>
-                <h3 className="task6-profile-group-title">最近采集事件</h3>
+                <h3 className="task6-profile-group-title">{t("settings.capture.recentTitle")}</h3>
                 <ul className="task6-capture-event-list">
                   {recentRuns.map((run) => {
                     const described = describeCaptureRunEvent({
@@ -731,7 +736,7 @@ export function SettingsWorkspace() {
                         className="task6-capture-event"
                         data-tone={status.tone}
                         key={run.run_ref}
-                        title={`视频 ${described.videoLabel} · 轨迹 ${described.traceLabel}`}
+                        title={t("settings.capture.runHoverTitle", { video: described.videoLabel, trace: described.traceLabel })}
                       >
                         <span aria-hidden="true" className="task6-capture-event-dot" />
                         <span className="task6-capture-event-scenario">{described.scenario}</span>
@@ -746,15 +751,15 @@ export function SettingsWorkspace() {
           {desktop ? (
             <div className="task6-capture-diagnostics">
               <Button disabled={diagnosticUploading} onClick={() => void uploadCaptureDiagnostics()} variant="primary">
-                {diagnosticUploading ? "正在上传诊断包…" : "上传诊断包"}
+                {diagnosticUploading ? t("settings.capture.uploading") : t("settings.capture.uploadButton")}
               </Button>
               <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
-                {diagnosticExporting ? "正在打包运行日志…" : "导出运行日志"}
+                {diagnosticExporting ? t("settings.capture.packingLogs") : t("settings.capture.exportLogs")}
               </Button>
               {diagnosticUploadId ? (
-                <span className="task6-settings-section-hint">最近上传编号：{diagnosticUploadId}</span>
+                <span className="task6-settings-section-hint">{t("settings.capture.lastUploadId", { id: diagnosticUploadId })}</span>
               ) : null}
-              <span className="task6-settings-section-hint">给开发者排障用的：复现问题后立即上传，把编号发给开发者即可；上传失败可改用「导出运行日志」手动发送。包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
+              <span className="task6-settings-section-hint">{t("settings.capture.diagnosticsHint")}</span>
             </div>
           ) : null}
         </section>
@@ -762,8 +767,8 @@ export function SettingsWorkspace() {
         {/* KovaaK：本地目录 + KovaaKs 在线成绩 两张自包含卡（0912 去嵌套拍板）。 */}
         <section className="task6-settings-section" hidden={activeNav !== "kovaak"} id="kovaak" tabIndex={-1}>
           <div className="task6-settings-section-header">
-            <span className="task6-settings-section-title">KovaaK</span>
-            <span className="task6-settings-section-note">本地目录与 KovaaKs 在线成绩。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.kovaak")}</span>
+            <span className="task6-settings-section-note">{t("settings.kovaakSection.note")}</span>
           </div>
           <div className="task6-settings-subsection">
             <Panel>
@@ -779,19 +784,19 @@ export function SettingsWorkspace() {
 
         <section className="task6-settings-section" data-guidance-target="storage.incomplete" hidden={activeNav !== "storage"} id="storage" tabIndex={-1}>
           <div className="task6-settings-section-header">
-            <span className="task6-settings-section-title">数据与存储</span>
-            <span className="task6-settings-section-note">本机分析产物、录像与遥测的占用与清理。</span>
+            <span className="task6-settings-section-title">{t("settings.nav.storage")}</span>
+            <span className="task6-settings-section-note">{t("settings.storage.note")}</span>
           </div>
           {/* 0912 线框拍板：总占用与按条目清理拆成两张自包含卡。 */}
           <div className="task6-settings-subsection">
             <Panel>
-            {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="Desktop 能力不可用">浏览器不会伪造本地占用或删除操作。</Notice> : null}
-            {desktop && storage === null ? <Loading>正在读取存储占用</Loading> : null}
+            {!desktop ? <Notice className="task6-settings-notice" tone="warning" title={t("settings.storage.desktopOnlyTitle")}>{t("settings.storage.desktopOnlyBody")}</Notice> : null}
+            {desktop && storage === null ? <Loading>{t("settings.storage.loading")}</Loading> : null}
             {storage ? (
               <>
                 <div className="task6-storage-total">
                   <span className="task6-storage-total-number">{formatBytes(totalBytes)}</span>
-                  <span className="task6-muted">总占用</span>
+                  <span className="task6-muted">{t("settings.storage.total")}</span>
                 </div>
                 <div className="task6-storage-bar">
                   {storageBar.map((width, index) => (
@@ -814,26 +819,26 @@ export function SettingsWorkspace() {
           <div className="task6-settings-subsection">
             <Panel>
               <div className="task6-storage-cleanup">
-                <h3 className="task6-profile-group-title">按条目清理</h3>
+                <h3 className="task6-profile-group-title">{t("settings.storage.cleanupTitle")}</h3>
                 {cleanupRows.map(({ run, kinds, sizeBytes }) => {
                   const evidenceLabel =
-                    kinds.length === 2 ? "录像 + Raw" : kinds[0] === "video" ? "录像" : "Raw trace";
+                    kinds.length === 2 ? t("settings.storage.evidenceVideoRaw") : kinds[0] === "video" ? t("settings.storage.evidenceVideo") : t("settings.storage.evidenceRaw");
                   const facts = [evidenceLabel];
                   if (sizeBytes != null) facts.push(formatBytes(sizeBytes));
                   const dateText = formatDay(run.training_at ?? run.created_at);
                   if (dateText) facts.push(dateText);
                   const removalTitle =
-                    kinds.length === 2 ? "移除录像与 Raw trace" : kinds[0] === "video" ? "移除 Run 录像" : "移除 Raw trace";
+                    kinds.length === 2 ? t("settings.storage.removeVideoRaw") : kinds[0] === "video" ? t("settings.storage.removeVideo") : t("settings.storage.removeRaw");
                   const removalImpact =
                     kinds.length === 2
-                      ? "录像与 Raw trace 将从本机移除：依赖它们的证据引用变为 unavailable；Run metadata、Analysis 与你的源文件保留。"
+                      ? t("settings.storage.impactVideoRaw")
                       : kinds[0] === "video"
-                        ? "录像引用将变为 unavailable；Run metadata、Analysis 与用户源文件保留。"
-                        : "依赖 Raw 的证据引用将变为 unavailable；Run metadata 与用户源文件保留。";
+                        ? t("settings.storage.impactVideo")
+                        : t("settings.storage.impactRaw");
                   return (
                     <article className="task6-storage-row" key={run.run_ref}>
                       <div>
-                        <strong>{run.scenario ?? "未知场景"}</strong>
+                        <strong>{run.scenario ?? t("settings.storage.unknownScenario")}</strong>
                         <p>{facts.join(" · ")}</p>
                       </div>
                       <div className="task6-inline-actions">
@@ -846,7 +851,7 @@ export function SettingsWorkspace() {
                           size="compact"
                           variant="ghost"
                         >
-                          打开文件位置
+                          {t("settings.storage.openLocation")}
                         </Button>
                         <Button
                           className="task6-btn-danger-ghost"
@@ -856,7 +861,7 @@ export function SettingsWorkspace() {
                           size="compact"
                           variant="ghost"
                         >
-                          移除…
+                          {t("settings.storage.remove")}
                         </Button>
                       </div>
                     </article>
@@ -870,7 +875,7 @@ export function SettingsWorkspace() {
                   return (
                     <article className="task6-storage-row" key={item.item_ref}>
                       <div>
-                        <strong>未完成采集</strong>
+                        <strong>{t("settings.storage.incomplete")}</strong>
                         <p>{facts.join(" · ")}</p>
                       </div>
                       <div className="task6-inline-actions">
@@ -879,23 +884,23 @@ export function SettingsWorkspace() {
                           size="compact"
                           variant="ghost"
                         >
-                          打开文件位置
+                          {t("settings.storage.openLocation")}
                         </Button>
                         <Button
                           className="task6-btn-danger-ghost"
                           disabled={!item.removable}
-                          onClick={() => ask("移除未完成采集", item.impact.message, async () => { await removeIncompleteCapture(item.item_ref); })}
+                          onClick={() => ask(t("settings.storage.removeIncompleteTitle"), item.impact.message, async () => { await removeIncompleteCapture(item.item_ref); })}
                           size="compact"
                           variant="ghost"
                         >
-                          移除…
+                          {t("settings.storage.remove")}
                         </Button>
                       </div>
                     </article>
                   );
                 })}
                 {desktop && cleanupRows.length === 0 && incomplete.length === 0 ? (
-                  <p className="task6-muted">没有可清理的录像、Raw trace 或未完成采集。</p>
+                  <p className="task6-muted">{t("settings.storage.emptyCleanup")}</p>
                 ) : null}
               </div>
             </Panel>
@@ -905,10 +910,10 @@ export function SettingsWorkspace() {
       </div>
 
       <Dialog
-        footer={<><Button onClick={() => setConfirmAction(null)} variant="secondary">取消</Button><Button onClick={() => void confirm()} variant="danger">确认</Button></>}
+        footer={<><Button onClick={() => setConfirmAction(null)} variant="secondary">{t("settings.dialog.cancel")}</Button><Button onClick={() => void confirm()} variant="danger">{t("settings.dialog.confirm")}</Button></>}
         onClose={() => setConfirmAction(null)}
         open={Boolean(confirmAction)}
-        title={confirmAction?.title ?? "确认操作"}
+        title={confirmAction?.title ?? t("settings.dialog.confirmTitle")}
       >
         <p>{confirmAction?.impact}</p>
       </Dialog>

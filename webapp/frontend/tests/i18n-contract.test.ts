@@ -166,3 +166,23 @@ test("批 5（task7 + app + ui）已接字典：无裸中文字面量（注释�
   assert.doesNotMatch(railWithoutSentinel, /[\u4e00-\u9fff]/, "SessionRail 存在裸中文（应进 lib/i18n/dict/task7.zh.ts 分片；哨兵常量除外）");
   assert.match(rail, /useT\(\)/);
 });
+
+test("批 4（CoachPanel + task6 设置面）已接字典：无裸中文字面量（注释除外）", async () => {
+  const stripComments = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const files = [
+    "components/task6/CoachPanel.tsx",
+    "components/task6/CoachModelMenu.tsx",
+    "components/task6/CoachRunActivity.tsx",
+    "components/task6/KnowledgeSettingsSection.tsx",
+    "components/task6/ProviderSettingsSection.tsx",
+    "components/task6/SettingsWorkspace.tsx",
+  ];
+  for (const file of files) {
+    const source = await readFile(path.join(frontendRoot, file), "utf8");
+    assert.doesNotMatch(stripComments(source), /[\u4e00-\u9fff]/, `${file} 存在裸中文（应进 lib/i18n/dict/task6.zh.ts 分片）`);
+  }
+  // 组件确实经 useT()/t() 取文案（切语言随订阅重渲染 / 模块级事件回调走 t()）。
+  const panel = await readFile(path.join(frontendRoot, "components/task6/CoachPanel.tsx"), "utf8");
+  assert.match(panel, /useT\(\)/);
+});

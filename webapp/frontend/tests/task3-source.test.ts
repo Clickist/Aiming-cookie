@@ -251,8 +251,9 @@ test("Settings route hides the SessionRail and exposes a Coach return action", a
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   assert.match(shell, /const settingsRoute = pathname\.startsWith\("\/settings"\)/);
   assert.match(shell, /const showSessionRail = !shellHidden && !settingsRoute/);
-  assert.match(settings, /label="退出设置"/);
-  assert.match(settings, /title="返回 Coach"/);
+  // i18n 批 4：退出按钮 label/title 走字典键（返回 Coach 与 history.page.backToCoach 共键）。
+  assert.match(settings, /label=\{t\("settings\.exit\.label"\)\}/);
+  assert.match(settings, /title=\{t\("history\.page\.backToCoach"\)\}/);
   assert.match(settings, /router\.push\("\/"\)/);
 });
 

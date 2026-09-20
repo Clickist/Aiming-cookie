@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
+import { t } from "@/lib/i18n";
 import {
   IconChart,
   IconChevronDown,
@@ -113,7 +114,7 @@ function formatClock(totalSeconds: number): string {
 }
 
 function formatDuration(ms: number): string {
-  return ms >= 10_000 ? formatClock(ms / 1000) : `${(ms / 1000).toFixed(1)} 秒`;
+  return ms >= 10_000 ? formatClock(ms / 1000) : t("coach.activity.durationSeconds", { n: (ms / 1000).toFixed(1) });
 }
 
 /** 每秒跳动的经过时间；sinceMs 为 null 时退化为静态 ETA 文案。 */
@@ -132,13 +133,13 @@ export function ElapsedTicker({
   }, [sinceMs]);
 
   if (sinceMs === null) {
-    return etaSeconds != null ? <span className="task6-tool-eta">预计约 {etaSeconds} 秒</span> : null;
+    return etaSeconds != null ? <span className="task6-tool-eta">{t("coach.activity.eta", { n: etaSeconds })}</span> : null;
   }
   return (
     // aria-live off：每秒变化不进读屏播报队列，状态由整行文本表达。
     <span className="task6-tool-eta" aria-live="off">
       {formatClock((now - sinceMs) / 1000)}
-      {etaSeconds != null ? <> · 预计约 {etaSeconds} 秒</> : null}
+      {etaSeconds != null ? <> {t("coach.activity.etaSuffix", { n: etaSeconds })}</> : null}
     </span>
   );
 }
@@ -212,13 +213,13 @@ export function CoachThinkingBlock({
         <IconSpark className="task6-think-glyph" data-live={streaming || undefined} />
         {streaming ? (
           <>
-            <span className="task6-shimmer-text">思考中</span>
+            <span className="task6-shimmer-text">{t("coach.activity.thinking")}</span>
             <ElapsedTicker sinceMs={startedAtMs} />
           </>
         ) : (
           <span className="task6-tool-meta">
             {/* 完成态文案对齐 ZCode 参照（0827 拍板）：持续时长进标题行，不再用「已思考」 */}
-            {frozenSeconds != null ? `思考过程 · 持续了 ${Math.max(1, Math.round(frozenSeconds / 1000))} 秒` : "思考过程"}
+            {frozenSeconds != null ? t("coach.activity.thinkingDuration", { n: Math.max(1, Math.round(frozenSeconds / 1000)) }) : t("coach.activity.thinkingDone")}
           </span>
         )}
         <IconChevronDown aria-hidden="true" className="task6-caret" data-open={open} />
@@ -286,7 +287,7 @@ function CaretToggle({ open, onToggle, label }: { open: boolean; onToggle: () =>
   return (
     <button
       aria-expanded={open}
-      aria-label={`${open ? "收起" : "展开"}${label}明细`}
+      aria-label={open ? t("coach.activity.collapseDetail", { label }) : t("coach.activity.expandDetail", { label })}
       className="task6-caret-toggle"
       onClick={onToggle}
       type="button"
@@ -361,8 +362,12 @@ function WorkGroupLine({ label, steps }: { label: string; steps: CoachToolStep[]
   // 组可展开＝组内至少一行有可读的差异化摘要——展开后只有纯路径列表，
   // 没有任何可显示内容的组不套可展开壳。
   const expandable = steps.some((step) => (stepBrief(step) ?? step.meta)?.trim().length ? true : false);
-  const totalTail = totalMs >= 1000 ? ` · 共 ${formatDuration(totalMs)}` : "";
-  const summary = count > 1 ? `${label} · ${count} 次${totalTail}` : label;
+  // 复合模板整句入字典（i18n 批 4）：计数与总耗时是占位符，不做中文拼接。
+  const summary = count > 1
+    ? (totalMs >= 1000
+        ? t("coach.activity.groupSummaryTotal", { label, count, duration: formatDuration(totalMs) })
+        : t("coach.activity.groupSummary", { label, count }))
+    : label;
   const toggle = () => setOpen(!open);
   return (
     <li className="task6-tool-step" data-state="done">
@@ -459,7 +464,7 @@ export function CoachWorkStream({
     if (row.kind === "thinking") {
       if (row.segment.streaming) {
         hasLive = true;
-        activityLabel = activityLabel ?? "思考中";
+        activityLabel = activityLabel ?? t("coach.activity.thinking");
       }
       if (row.segment.startedAtMs != null) {
         startMs = startMs === null ? row.segment.startedAtMs : Math.min(startMs, row.segment.startedAtMs);
@@ -474,7 +479,7 @@ export function CoachWorkStream({
   }
 
   return (
-    <div aria-label="工作过程" className="task6-work-stream" role="list" data-summarized="true">
+    <div aria-label={t("coach.activity.process")} className="task6-work-stream" role="list" data-summarized="true">
       <button
         aria-expanded={expanded}
         className="task6-work-summary"
@@ -485,15 +490,15 @@ export function CoachWorkStream({
         {startMs != null ? (
           hasLive ? (
             <span className="task6-work-summary-label">
-              已工作&nbsp;<ElapsedTicker sinceMs={startMs} />
+              {t("coach.activity.worked")}&nbsp;<ElapsedTicker sinceMs={startMs} />
             </span>
           ) : endMs != null && endMs > startMs ? (
-            <span className="task6-work-summary-label">已工作 {formatDuration(endMs - startMs)}</span>
+            <span className="task6-work-summary-label">{t("coach.activity.workedFor", { duration: formatDuration(endMs - startMs) })}</span>
           ) : (
-            <span className="task6-work-summary-label">工作过程</span>
+            <span className="task6-work-summary-label">{t("coach.activity.process")}</span>
           )
         ) : (
-          <span className="task6-work-summary-label">工作过程</span>
+          <span className="task6-work-summary-label">{t("coach.activity.process")}</span>
         )}
         {activityLabel ? <span className="task6-work-summary-activity">{activityLabel}</span> : null}
       </button>
@@ -521,7 +526,7 @@ export function CoachWorkStream({
             <div className="task6-tool-step" data-state="stopped" role="listitem">
               <CommandGlyph command={null} />
               <span className="task6-tool-body">
-                <span className="task6-tool-label">回答已停止，可重新提问</span>
+                <span className="task6-tool-label">{t("coach.activity.stoppedRow")}</span>
               </span>
             </div>
           ) : null}

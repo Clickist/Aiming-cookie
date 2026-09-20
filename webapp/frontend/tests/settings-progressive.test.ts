@@ -23,11 +23,11 @@ test("Settings shows per-section skeletons while each part is pending", async ()
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
   // Provider 分区：轻数据未到前局部 skeleton（主从式重做后 skeleton 随
-  // 分区组件渲染，语义不变）。
-  assert.match(providerSection, /\{loading \? \(\s*<Loading>正在读取设置<\/Loading>\s*\)/);
+  // 分区组件渲染，语义不变）。i18n 批 4：Loading 文案走字典键。
+  assert.match(providerSection, /\{loading \? \(\s*<Loading>\{t\("settings\.provider\.loadingSettings"\)\}<\/Loading>\s*\)/);
   // 采集 / 存储分区：重数据各自等待，不阻塞其它分区。
-  assert.match(settings, /desktop && capture === null \? <Loading>正在读取采集状态<\/Loading> : null/);
-  assert.match(settings, /desktop && storage === null \? <Loading>正在读取存储占用<\/Loading> : null/);
+  assert.match(settings, /desktop && capture === null \? <Loading>\{t\("settings\.capture\.loading"\)\}<\/Loading> : null/);
+  assert.match(settings, /desktop && storage === null \? <Loading>\{t\("settings\.storage\.loading"\)\}<\/Loading> : null/);
 });
 
 test("Settings issues light and heavy requests in one parallel batch", async () => {

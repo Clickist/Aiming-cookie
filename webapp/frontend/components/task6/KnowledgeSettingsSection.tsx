@@ -13,6 +13,7 @@ import {
   type KnowledgePacksResponseV1,
 } from "@/lib/api";
 import { isDesktopRuntime, pickDesktopDirectory } from "@/lib/desktop";
+import { t, useT, type MessageKey } from "@/lib/i18n";
 import { Badge, Button, Dialog, FieldControl, Loading, Notice, Panel } from "@/ui/primitives";
 
 type ConfirmAction = {
@@ -31,13 +32,14 @@ type SourceKind = "folder" | "zip";
 // task6-settings.css 现成类，kb 专属细节（回退条动作、错误明细、摘要框）
 // 用 token 内联，双主题自然跟随。
 
-const WIZARD_STEP_LABELS = ["选路径", "校验结果", "激活确认"] as const;
+// i18n 批 4（§2c）：label/sub 是字典键，渲染时经 t() 解析。
+const WIZARD_STEP_LABELS = ["settings.knowledge.wizardStepPick", "settings.knowledge.wizardStepVerify", "settings.knowledge.wizardStepActivate"] as const satisfies readonly MessageKey[];
 
-const OFFICIAL_ROW_SUB = "内置 · 随产品更新 · 官方训练知识与判定规则";
+const OFFICIAL_ROW_SUB_KEY: MessageKey = "settings.knowledge.officialSub";
 
-const SOURCE_KIND_DETAILS: Record<SourceKind, { label: string; sub: string }> = {
-  folder: { label: "本地文件夹", sub: "manifest.json + knowledge/ + mapping.json（可选）" },
-  zip: { label: "zip 压缩包", sub: "安全解包（防路径穿越、大小上限）后同上校验" },
+const SOURCE_KIND_KEYS: Record<SourceKind, { label: MessageKey; sub: MessageKey }> = {
+  folder: { label: "settings.knowledge.sourceFolder", sub: "settings.knowledge.sourceFolderSub" },
+  zip: { label: "settings.knowledge.sourceZip", sub: "settings.knowledge.sourceZipSub" },
 };
 
 /** 「9月18日」短日期；解析失败不硬造（不渲染该片段）。 */
@@ -59,6 +61,7 @@ function CheckRow({ mark, tone, children }: { mark: string; tone: "ok" | "warn" 
 }
 
 export function KnowledgeSettingsSection({ notify }: { notify: (message: string) => void }) {
+  const t = useT();
   const [desktop, setDesktop] = useState(false);
   const [listing, setListing] = useState<KnowledgePacksResponseV1 | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,7 +98,7 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
       // sidecar 不可达=重启应用后生效。warnings 为空时退回本地文案。
       notify(response.warnings[0] ?? successMessage);
     } catch {
-      notify("知识库切换未完成，未伪造成功状态，请重试。");
+      notify(t("settings.knowledge.switchFailed"));
     }
   };
 
@@ -103,9 +106,9 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
   const requestActivateOfficial = () => {
     if (!listing || listing.active === "official") return;
     setConfirmAction({
-      title: "停用第三方知识库",
-      impact: "将切回 Aiming Cookie 官方知识库，切换后立即生效（下一次对话使用官方口径）；若 Coach 引擎不可达，则重启应用后生效。历史分析保持各自当时使用的知识库口径，不受影响。",
-      run: () => activate("official", "已切回官方知识库，下一次对话即使用官方口径。"),
+      title: t("settings.knowledge.deactivateTitle"),
+      impact: t("settings.knowledge.deactivateImpact"),
+      run: () => activate("official", t("settings.knowledge.deactivated")),
     });
   };
 
@@ -113,13 +116,13 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
   const requestActivatePack = (pack: KnowledgePackItemV1) => {
     if (!listing || listing.active === pack.pack_id) return;
     if (!pack.valid) {
-      notify("该包校验失败，无法激活；请修复后重新导入。");
+      notify(t("settings.knowledge.invalidPack"));
       return;
     }
     setConfirmAction({
-      title: "切换知识库",
-      impact: `激活后 Coach 将改用《${pack.display_name}》的口径分析与讲解，切换后立即生效（下一次对话使用新知识库口径）；若 Coach 引擎不可达，则重启应用后生效。当前进行中的分析不受影响。`,
-      run: () => activate(pack.pack_id, `已激活《${pack.display_name}》，下一次对话即使用新知识库口径。`),
+      title: t("settings.knowledge.switchTitle"),
+      impact: t("settings.knowledge.switchImpact", { name: pack.display_name }),
+      run: () => activate(pack.pack_id, t("settings.knowledge.activated", { name: pack.display_name })),
     });
   };
 
@@ -128,17 +131,17 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
   const requestUninstall = (pack: KnowledgePackItemV1) => {
     const isActive = listing?.active === pack.pack_id;
     setConfirmAction({
-      title: isActive ? `卸载使用中的《${pack.display_name}》` : `卸载《${pack.display_name}》`,
+      title: isActive ? t("settings.knowledge.uninstallActiveTitle", { name: pack.display_name }) : t("settings.knowledge.uninstallTitle", { name: pack.display_name }),
       impact: isActive
-        ? "该包当前使用中：卸载后将自动回退 Aiming Cookie 官方知识库（完全生效需重启应用）。包文件将从本机移除；历史分析仍可打开，其中引用该包的知识条目将显示「来自已移除的知识库」。"
-        : "此包将从本机移除。历史分析仍可打开，其中引用该包的知识条目将显示「来自已移除的知识库」。",
+        ? t("settings.knowledge.uninstallActiveImpact")
+        : t("settings.knowledge.uninstallImpact"),
       run: async () => {
         try {
           setListing(await uninstallKnowledgePack(pack.pack_id));
           setFallbackDismissed(false);
-          notify(isActive ? `已卸载《${pack.display_name}》并回退官方知识库。` : `已卸载《${pack.display_name}》。`);
+          notify(isActive ? t("settings.knowledge.uninstalledActive", { name: pack.display_name }) : t("settings.knowledge.uninstalled", { name: pack.display_name }));
         } catch {
-          notify("卸载未完成，未伪造成功状态，请重试。");
+          notify(t("settings.knowledge.uninstallFailed"));
         }
       },
     });
@@ -173,10 +176,10 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
     // 文件夹走系统原生选择器（同 KovaaK 本地目录先例）；zip 暂无文件
     // 选择器导出（v1 文本输入，见交付说明）。
     try {
-      const path = await pickDesktopDirectory("选择知识包文件夹");
+      const path = await pickDesktopDirectory(t("settings.knowledge.browseDialogTitle"));
       if (path) setSourcePath(path);
     } catch {
-      notify("无法打开文件夹选择器，请直接粘贴完整路径。");
+      notify(t("settings.knowledge.pickerFailed"));
     }
   };
 
@@ -206,7 +209,7 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
         setWizardStep(2);
         return;
       }
-      notify("导入未完成：本地服务不可用或路径无法读取，请重试。");
+      notify(t("settings.knowledge.importFailed"));
     } finally {
       setImporting(false);
     }
@@ -224,10 +227,10 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
       // 重启应用后生效），warnings 为空时退回本地文案。
       notify(
         response.warnings[0]
-        ?? `已安装并激活《${importResult.pack?.display_name ?? importResult.response.pack_id}》，下一次对话即使用新知识库口径。`,
+        ?? t("settings.knowledge.installedActivated", { name: importResult.pack?.display_name ?? importResult.response.pack_id }),
       );
     } catch {
-      notify("激活未完成，未伪造成功状态，请重试。");
+      notify(t("settings.knowledge.activateFailed"));
     } finally {
       setActivating(false);
     }
@@ -253,8 +256,8 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
 
   if (!desktop) {
     return (
-      <Notice className="task6-settings-notice" tone="warning" title="仅限桌面版">
-        知识包导入与切换依赖本机服务与系统文件夹选择器；浏览器预览不提供。
+      <Notice className="task6-settings-notice" tone="warning" title={t("settings.knowledge.desktopOnlyTitle")}>
+        {t("settings.knowledge.desktopOnlyBody")}
       </Notice>
     );
   }
@@ -263,30 +266,30 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
     <>
       <div className="task6-settings-subsection">
         <Panel>
-          {loading ? <Loading>正在读取知识包</Loading> : null}
+          {loading ? <Loading>{t("settings.knowledge.loading")}</Loading> : null}
           {loadError && !loading ? (
-            <Notice className="task6-settings-notice" tone="error" title="知识包列表暂时无法读取">
-              请检查本地服务后重试；已保留上次读取到的内容。
+            <Notice className="task6-settings-notice" tone="error" title={t("settings.knowledge.listErrorTitle")}>
+              {t("settings.knowledge.listErrorBody")}
               <div className="task6-inline-actions">
-                <Button onClick={() => void reload()} size="compact" variant="secondary">重试</Button>
+                <Button onClick={() => void reload()} size="compact" variant="secondary">{t("common.retry")}</Button>
               </div>
             </Notice>
           ) : null}
           {showFallbackBar && invalidPack ? (
-            <Notice className="task6-settings-notice" tone="error" title="已自动回退官方知识库">
+            <Notice className="task6-settings-notice" tone="error" title={t("settings.knowledge.fallbackTitle")}>
               {activePackInvalid
-                ? "当前激活的知识包校验未通过，已自动改用官方知识库口径；可重新导入或卸载该包。"
-                : `《${invalidPack.display_name}》当前校验未通过；本次分析与 Coach 会话使用官方知识库口径。修复后重新导入，或卸载该包。`}
+                ? t("settings.knowledge.fallbackActiveInvalid")
+                : t("settings.knowledge.fallbackInvalid", { name: invalidPack.display_name })}
               <div className="task6-inline-actions">
-                <Button onClick={openWizard} size="compact" variant="ghost">重新导入…</Button>
-                <Button onClick={() => requestUninstall(invalidPack)} size="compact" variant="ghost">卸载该包…</Button>
-                <Button onClick={() => setFallbackDismissed(true)} size="compact" variant="ghost">知道了</Button>
+                <Button onClick={openWizard} size="compact" variant="ghost">{t("settings.knowledge.reimport")}</Button>
+                <Button onClick={() => requestUninstall(invalidPack)} size="compact" variant="ghost">{t("settings.knowledge.uninstallThis")}</Button>
+                <Button onClick={() => setFallbackDismissed(true)} size="compact" variant="ghost">{t("settings.knowledge.gotIt")}</Button>
               </div>
             </Notice>
           ) : null}
           {listing ? (
             <>
-              <div aria-label="知识包列表" className="task6-provider-list">
+              <div aria-label={t("settings.knowledge.listAria")} className="task6-provider-list">
                 {/* 官方档常驻置顶：点按=切回官方（停用第三方），行尾绿点=有效。 */}
                 <div
                   aria-current={listing.active === "official" || undefined}
@@ -297,14 +300,14 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
                   onKeyDown={(event) => { if (event.key === "Enter") requestActivateOfficial(); }}
                   role="button"
                   tabIndex={0}
-                  title={listing.active === "official" ? "当前使用中" : "点击切回官方知识库（停用第三方）"}
+                  title={listing.active === "official" ? t("settings.knowledge.inUse") : t("settings.knowledge.backToOfficial")}
                 >
                   <span className="task6-provider-list-text">
                     <span className="task6-provider-head">
-                      <span className="task6-provider-list-name">Aiming Cookie 官方</span>
-                      {listing.active === "official" ? <Badge tone="neutral">使用中</Badge> : null}
+                      <span className="task6-provider-list-name">{t("settings.knowledge.officialName")}</span>
+                      {listing.active === "official" ? <Badge tone="neutral">{t("settings.knowledge.inUse")}</Badge> : null}
                     </span>
-                    <span className="task6-provider-list-type">{OFFICIAL_ROW_SUB}</span>
+                    <span className="task6-provider-list-type">{t(OFFICIAL_ROW_SUB_KEY)}</span>
                   </span>
                   <span className="task6-toggle-row-side">
                     <span aria-hidden="true" className="task6-provider-dot" data-ready="true" />
@@ -325,19 +328,19 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
                       onKeyDown={(event) => { if (event.key === "Enter") requestActivatePack(pack); }}
                       role="button"
                       tabIndex={0}
-                      title={isActive ? "当前使用中" : pack.valid ? "点击切换到此知识包" : "校验失败，不可激活"}
+                      title={isActive ? t("settings.knowledge.inUse") : pack.valid ? t("settings.knowledge.switchToPack") : t("settings.knowledge.invalidTitle")}
                     >
                       <span className="task6-provider-list-text">
                         <span className="task6-provider-head">
                           <span className="task6-provider-list-name">{pack.display_name}</span>
                           {pack.has_mapping ? (
-                            <Badge title="含 mapping 判定规则引擎数据：诊断判定与讲解口径都来自此包" tone="info">判定规则</Badge>
+                            <Badge title={t("settings.knowledge.mappingBadgeTitle")} tone="info">{t("settings.knowledge.mappingBadge")}</Badge>
                           ) : null}
-                          {isActive ? <Badge tone="neutral">使用中</Badge> : null}
+                          {isActive ? <Badge tone="neutral">{t("settings.knowledge.inUse")}</Badge> : null}
                         </span>
                         <span className="task6-provider-list-type">
                           {pack.author ? `${pack.author} · ` : ""}v{pack.pack_version}
-                          {installedDay ? ` · ${installedDay}安装` : ""} · {pack.pack_id}
+                          {installedDay ? t("settings.knowledge.installedOn", { day: installedDay }) : ""} · {pack.pack_id}
                         </span>
                       </span>
                       <span className="task6-toggle-row-side">
@@ -346,7 +349,7 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
                         ) : (
                           <>
                             <span aria-hidden="true" className="task6-provider-dot" />
-                            <span style={{ color: "var(--error)", fontSize: "var(--text-caption)", whiteSpace: "nowrap" }}>校验失败</span>
+                            <span style={{ color: "var(--error)", fontSize: "var(--text-caption)", whiteSpace: "nowrap" }}>{t("settings.knowledge.invalidBadge")}</span>
                           </>
                         )}
                         <Button
@@ -355,20 +358,20 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
                           size="compact"
                           variant="ghost"
                         >
-                          卸载
+                          {t("settings.knowledge.uninstall")}
                         </Button>
                       </span>
                     </div>
                   );
                 })}
                 {packs.length === 0 ? (
-                  <p className="task6-muted">还没有安装第三方知识包；导入后点按包行即可切换。</p>
+                  <p className="task6-muted">{t("settings.knowledge.emptyPacks")}</p>
                 ) : null}
               </div>
               <div style={{ alignItems: "flex-start", display: "flex", flexWrap: "wrap", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
-                <Button onClick={openWizard} variant="primary">＋ 导入知识包</Button>
+                <Button onClick={openWizard} variant="primary">{t("settings.knowledge.importButton")}</Button>
                 <p className="task6-muted" style={{ flex: 1, minWidth: 0 }}>
-                  v1 仅支持本地导入（本地文件夹或 .zip），安装时整包校验、失败不写入任何文件；场景库始终使用官方版本，不随包替换。含「判定规则」徽标的包带有 mapping 判定规则引擎数据，除知识讲解外也接管诊断判定口径。
+                  {t("settings.knowledge.importHint")}
                 </p>
               </div>
             </>
@@ -379,22 +382,22 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
       <Dialog
         footer={
           <>
-            <Button onClick={() => setConfirmAction(null)} variant="secondary">取消</Button>
+            <Button onClick={() => setConfirmAction(null)} variant="secondary">{t("settings.dialog.cancel")}</Button>
             <Button
               onClick={() => {
                 const action = confirmAction;
                 setConfirmAction(null);
-                void action?.run().catch(() => notify("操作未完成，未伪造成功状态，请重试。"));
+                void action?.run().catch(() => notify(t("settings.feedback.opIncomplete")));
               }}
               variant="danger"
             >
-              确认
+              {t("settings.dialog.confirm")}
             </Button>
           </>
         }
         onClose={() => setConfirmAction(null)}
         open={Boolean(confirmAction)}
-        title={confirmAction?.title ?? "确认操作"}
+        title={confirmAction?.title ?? t("settings.dialog.confirmTitle")}
       >
         <p>{confirmAction?.impact}</p>
       </Dialog>
@@ -403,43 +406,43 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
         footer={
           <>
             {wizardStep > 1 ? (
-              <Button disabled={importing} onClick={wizardBack} variant="secondary">上一步</Button>
+              <Button disabled={importing} onClick={wizardBack} variant="secondary">{t("settings.provider.wizardPrev")}</Button>
             ) : null}
             <span style={{ flex: 1 }} />
-            <Button onClick={() => setWizardOpen(false)} variant="secondary">取消</Button>
+            <Button onClick={() => setWizardOpen(false)} variant="secondary">{t("settings.dialog.cancel")}</Button>
             {wizardStep === 1 ? (
               <Button disabled={!sourcePath.trim() || importing} onClick={() => void runImport()} variant="primary">
-                {importing ? "校验并安装中…" : "下一步"}
+                {importing ? t("settings.knowledge.checkingInstalling") : t("settings.provider.wizardNext")}
               </Button>
             ) : wizardStep === 2 ? (
-              <Button disabled={!importResult} onClick={() => setWizardStep(3)} variant="primary">下一步</Button>
+              <Button disabled={!importResult} onClick={() => setWizardStep(3)} variant="primary">{t("settings.provider.wizardNext")}</Button>
             ) : (
               <Button disabled={!importResult || activating} onClick={() => void finishWizard()} variant="primary">
-                {activating ? "正在激活…" : "完成并激活"}
+                {activating ? t("settings.knowledge.activating") : t("settings.knowledge.finishAndActivate")}
               </Button>
             )}
           </>
         }
         onClose={() => setWizardOpen(false)}
         open={wizardOpen}
-        title={`导入知识包 · 第 ${wizardStep}/3 步`}
+        title={t("settings.knowledge.wizardTitle", { step: wizardStep, total: 3 })}
       >
-        <ol aria-label="导入向导步骤" className="task6-wizard-steps">
+        <ol aria-label={t("settings.knowledge.wizardStepsAria")} className="task6-wizard-steps">
           {WIZARD_STEP_LABELS.map((label, index) => (
             <li
               aria-current={wizardStep === index + 1 ? "step" : undefined}
               data-state={wizardStep > index + 1 ? "done" : wizardStep === index + 1 ? "current" : "todo"}
               key={label}
             >
-              {index + 1}. {label}
+              {index + 1}. {t(label)}
             </li>
           ))}
         </ol>
 
         {wizardStep === 1 ? (
           <div className="task6-wizard-step-body">
-            <div role="radiogroup" aria-label="来源类型" style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-              {(Object.keys(SOURCE_KIND_DETAILS) as SourceKind[]).map((kind) => (
+            <div role="radiogroup" aria-label={t("settings.knowledge.sourceAria")} style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+              {(Object.keys(SOURCE_KIND_KEYS) as SourceKind[]).map((kind) => (
                 <label
                   className="task6-mode-card"
                   data-selected={sourceKind === kind || undefined}
@@ -447,28 +450,28 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
                   style={{ alignItems: "flex-start", flex: "1 1 200px", flexDirection: "column", gap: "2px" }}
                 >
                   <input checked={sourceKind === kind} name="kb-source-kind" onChange={() => setSourceKind(kind)} type="radio" value={kind} />
-                  <span className="task6-mode-card-name">{SOURCE_KIND_DETAILS[kind].label}</span>
-                  <span className="task6-muted">{SOURCE_KIND_DETAILS[kind].sub}</span>
+                  <span className="task6-mode-card-name">{t(SOURCE_KIND_KEYS[kind].label)}</span>
+                  <span className="task6-muted">{t(SOURCE_KIND_KEYS[kind].sub)}</span>
                 </label>
               ))}
             </div>
             <div className="task6-form-row">
-              <span className="task6-form-row-label">包路径</span>
+              <span className="task6-form-row-label">{t("settings.knowledge.pathLabel")}</span>
               <FieldControl
-                aria-label="知识包路径"
+                aria-label={t("settings.knowledge.pathAria")}
                 autoComplete="off"
                 onChange={(event) => setSourcePath(event.target.value)}
-                placeholder="选择或粘贴本地文件夹 / .zip 的完整路径"
+                placeholder={t("settings.knowledge.pathPlaceholder")}
                 value={sourcePath}
               />
               {desktop ? (
-                <Button disabled={importing} onClick={() => void browse()} size="compact" variant="secondary">浏览…</Button>
+                <Button disabled={importing} onClick={() => void browse()} size="compact" variant="secondary">{t("settings.knowledge.browse")}</Button>
               ) : null}
             </div>
             <p className="task6-muted">
               {sourceKind === "folder"
-                ? "点「浏览…」用系统选择器选择包文件夹；也可以直接粘贴完整路径。"
-                : "粘贴 .zip 压缩包的完整路径；安装前会做防路径穿越与大小上限的安全解包校验。"}
+                ? t("settings.knowledge.folderHint")
+                : t("settings.knowledge.zipHint")}
             </p>
           </div>
         ) : null}
@@ -476,8 +479,8 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
         {wizardStep === 2 ? (
           importRejection ? (
             <div className="task6-wizard-step-body">
-              <Notice tone="error" title="校验未通过，未安装任何文件">
-                {importRejection.details.length} 处错误。修复后重新导入即可；本次导入不写入任何文件（校验在安装前完成）。
+              <Notice tone="error" title={t("settings.knowledge.verifyFailedTitle")}>
+                {t("settings.knowledge.verifyFailedBody", { n: importRejection.details.length })}
               </Notice>
               <div style={{ display: "grid", gap: "var(--space-2)" }}>
                 {importRejection.details.map((detail, index) => (
@@ -487,21 +490,21 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
             </div>
           ) : importResult ? (
             <div className="task6-wizard-step-body">
-              <p className="task6-ok" aria-live="polite">✓ 校验通过，可以激活</p>
+              <p className="task6-ok" aria-live="polite">{t("settings.knowledge.verifyPassed")}</p>
               <div style={{ display: "grid", gap: "var(--space-2)" }}>
                 <CheckRow mark="✓" tone="ok">
                   manifest.json · coach_knowledge_pack.v1 · {importResult.response.pack_id}@{importResult.response.pack_version}
                 </CheckRow>
                 <CheckRow mark="✓" tone="ok">
                   {importResult.pack?.has_mapping
-                    ? "判定规则 · 包含 mapping 判定规则数据，诊断判定口径随包生效"
-                    : "纯知识口径包（不含 mapping 判定规则）"}
+                    ? t("settings.knowledge.mappingIncluded")
+                    : t("settings.knowledge.knowledgeOnly")}
                 </CheckRow>
                 {importResult.response.warnings.map((warning) => (
                   <CheckRow key={warning} mark="⚠" tone="warn">{warning}</CheckRow>
                 ))}
               </div>
-              <p className="task6-muted">包已安装登记但尚未激活；下一步确认后启用。</p>
+              <p className="task6-muted">{t("settings.knowledge.installedNotActive")}</p>
             </div>
           ) : null
         ) : null}
@@ -510,39 +513,39 @@ export function KnowledgeSettingsSection({ notify }: { notify: (message: string)
           <div className="task6-wizard-step-body">
             <div style={{ background: "var(--surface-container-low)", border: "1px solid var(--outline-variant)", borderRadius: "var(--radius-md)", display: "grid", gap: "var(--space-1)", padding: "var(--space-3) var(--space-4)" }}>
               <div className="task6-form-row">
-                <span className="task6-form-row-label">名称</span>
+                <span className="task6-form-row-label">{t("settings.knowledge.nameLabel")}</span>
                 <span style={{ fontSize: "var(--text-caption)", fontWeight: 600, minWidth: 0, overflowWrap: "anywhere" }}>
                   {importResult.pack?.display_name ?? importResult.response.pack_id}
                 </span>
               </div>
               {importResult.pack?.author ? (
                 <div className="task6-form-row">
-                  <span className="task6-form-row-label">作者</span>
+                  <span className="task6-form-row-label">{t("settings.knowledge.authorLabel")}</span>
                   <span style={{ fontSize: "var(--text-caption)", minWidth: 0, overflowWrap: "anywhere" }}>{importResult.pack.author}</span>
                 </div>
               ) : null}
               <div className="task6-form-row">
-                <span className="task6-form-row-label">版本</span>
+                <span className="task6-form-row-label">{t("settings.knowledge.versionLabel")}</span>
                 <span style={{ fontSize: "var(--text-caption)", minWidth: 0, overflowWrap: "anywhere" }}>
-                  {importResult.response.pack_version}（{importResult.response.pack_id}）
+                  {t("settings.knowledge.versionWithId", { version: importResult.response.pack_version, id: importResult.response.pack_id })}
                 </span>
               </div>
               <div className="task6-form-row">
-                <span className="task6-form-row-label">判定规则</span>
+                <span className="task6-form-row-label">{t("settings.knowledge.mappingLabel")}</span>
                 <span style={{ fontSize: "var(--text-caption)" }}>
-                  {importResult.pack?.has_mapping ? "含 mapping 判定规则数据" : "不含 mapping"}
+                  {importResult.pack?.has_mapping ? t("settings.knowledge.mappingPresent") : t("settings.knowledge.mappingAbsent")}
                 </span>
               </div>
               <div className="task6-form-row">
-                <span className="task6-form-row-label">来源</span>
+                <span className="task6-form-row-label">{t("settings.knowledge.sourceLabel")}</span>
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-micro)", minWidth: 0, overflowWrap: "anywhere" }}>{sourcePath.trim()}</span>
               </div>
             </div>
             <p style={{ fontSize: "var(--text-caption)", lineHeight: 1.6, margin: 0 }}>
-              激活后，Coach 的诊断与讲解将改用《{importResult.pack?.display_name ?? importResult.response.pack_id}》的口径。历史分析按各自当时使用的知识库保留，不受影响。
+              {t("settings.knowledge.activateSummary", { name: importResult.pack?.display_name ?? importResult.response.pack_id })}
             </p>
-            <Notice tone="warning" title="切换生效说明">
-              切换后立即生效，下一次对话即使用新知识库口径；若 Coach 引擎不可达，则重启应用后生效。进行中的分析保持其当时的口径。
+            <Notice tone="warning" title={t("settings.knowledge.effectiveNoteTitle")}>
+              {t("settings.knowledge.effectiveNoteBody")}
             </Notice>
           </div>
         ) : null}

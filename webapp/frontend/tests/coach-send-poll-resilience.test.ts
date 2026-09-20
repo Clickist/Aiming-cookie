@@ -75,7 +75,7 @@ test("Coach marks interrupted runs terminal on 404 or exhausted polls", async ()
   assert.match(panel, /status: "failed",/);
   assert.match(panel, /code: "run_interrupted"/);
   assert.match(panel, /retryable: true,/);
-  assert.match(panel, /notify\("回复已中断"\)/);
+  assert.match(panel, /notify\(t\("coach\.run\.interruptedToast"\)\)/);
   // 终态确认失败也要回落到轮询兜底，不能一次失败即丢。
   assert.match(panel, /finalizeRun = async \(\) => \{[\s\S]*?catch \(error\) \{[\s\S]*?isMissingRunError\(error\)[\s\S]*?schedulePoll\(\);/);
 });
@@ -114,7 +114,8 @@ test("Coach discussion bar mounts only topic refs, never deep-read refs", async 
   assert.ok(memo, "discussionAnalysisIds memo must exist");
   assert.doesNotMatch(memo[0], /deep_read/i);
   // 源码顺序上挂载条在前、@time 链接渲染在后；二者之间不得出现深读消费或 defaultAnalysisRef。
-  const barAt = panel.indexOf('aria-label="本次讨论的分析"');
+  // i18n 批 4：锚点换代码结构（aria-label 走字典键）。
+  const barAt = panel.indexOf('className="task6-discussion-bar task6-suggestions"');
   const linkAt = panel.indexOf("analysisRef={defaultAnalysisRef}");
   assert.ok(barAt !== -1 && linkAt !== -1 && linkAt > barAt, "bar precedes @time-link rendering");
   const barChunk = panel.slice(barAt, linkAt);

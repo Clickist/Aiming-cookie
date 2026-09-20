@@ -35,7 +35,7 @@ test("selection evaluation is anchored to a single non-streaming assistant artic
 test("selection toolbar appears with one Quote action and every close path is wired", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const toolbarChunk = chunkBetween(panel, 'className="task6-selection-toolbar"', "</section>");
-  assert.match(toolbarChunk, /<button onClick=\{addQuoteFromSelection\} type="button">引用<\/button>/);
+  assert.match(toolbarChunk, /<button onClick=\{addQuoteFromSelection\} type="button">\{t\("coach\.selection\.quote"\)\}<\/button>/);
   // 工具条自身的 mousedown/mouseup 不冒泡也不折叠原生选区
   assert.match(toolbarChunk, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(toolbarChunk, /onMouseUp=\{\(event\) => event\.stopPropagation\(\)\}/);
@@ -85,12 +85,12 @@ test("outbound composition funnels enqueue and submit through one gate", async (
 test("quote-only sends are blocked with a visible hint at both gates (拍板①)", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const gate = chunkBetween(panel, "const composeOutgoing", "const submitComposer");
-  assert.match(gate, /只有引用、没有正文时不能发送，请补充你的问题或要求。/);
-  const idleSend = chunkBetween(panel, 'aria-label="发送"', "<IconSend /></button>");
+  assert.match(gate, /notify\(t\("coach\.send\.quoteOnly"\)\)/);
+  const idleSend = chunkBetween(panel, 'aria-label={t("coach.composer.sendLabel")}', "<IconSend /></button>");
   // 发送门：空草稿恒禁用（拍板①）；WP-C 追加会员双池皆空禁用（④），
   // 两者是同一条 disabled 表达式，语义不叠加成别的门槛。
   assert.match(idleSend, /disabled=\{!draft\.trim\(\)(?: \|\| sendBlockedByMember)?\}/);
-  assert.match(idleSend, /只有引用、没有正文时不能发送，请补充你的问题或要求/);
+  assert.match(idleSend, /t\("coach\.send\.quoteOnly"\)/);
 });
 
 test("quotes are consumed optimistically on send and restored when the send fails", async () => {
@@ -122,7 +122,7 @@ test("composer renders removable locked quote blocks in the slot above the texta
   // i18n 批 1：引文段头部经 quoteHeader() 取字典值（zh=[引用 Coach]）。
   assert.match(listChunk, /\{quoteHeader\(\)\}<\/span>/);
   assert.match(listChunk, /title=\{quote\.text\}\>\{quote\.text\}/);
-  assert.match(listChunk, /label="删除这条引用" onClick=\{\(\) => removeQuote\(quote\.id\)\}/);
+  assert.match(listChunk, /label=\{t\("coach\.quote\.removeLabel"\)\} onClick=\{\(\) => removeQuote\(quote\.id\)\}/);
 });
 
 test("quote blocks and mention chips animate in on mount and out before removal", async () => {
@@ -139,7 +139,8 @@ test("quote blocks and mention chips animate in on mount and out before removal"
   assert.match(quoteChunk, /data-exiting=\{exitingQuoteIds\.includes\(quote\.id\) \|\| undefined\}/);
   assert.match(quoteChunk, /event\.animationName === "task6-quote-out"\) finalizeQuoteRemoval\(quote\.id\)/);
   // @ 引用 chips 同槽同语言：容器带定位标记，chip 带退场标记与 finalize。
-  const mentionAt = panel.indexOf('aria-label="已引用的分析"');
+  // i18n 批 4：锚点换代码结构（aria-label 走字典键）。
+  const mentionAt = panel.indexOf('data-mention-refs="true"');
   const mentionChunk = panel.slice(mentionAt, listAt);
   assert.match(mentionChunk, /data-mention-refs="true"/);
   assert.match(mentionChunk, /data-exiting=\{exitingMentionTokens\.includes\(ref\.token\) \|\| undefined\}/);

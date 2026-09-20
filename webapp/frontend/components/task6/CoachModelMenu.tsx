@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { getProviderCatalog, listProviderProfiles, listStoredCustomProviderModels, switchProviderModel } from "@/lib/api";
+import { useT, type MessageKey } from "@/lib/i18n";
 import { IconCheck, IconChevronDown, IconSpark } from "@/ui/icons";
 import type { ProviderCatalogV1, ProviderProfile, ProviderReasoningEffort } from "@/lib/types";
 
@@ -19,13 +20,14 @@ function displayName(model: { model_id: string; model_name?: string } | null | u
 // 思考力度档位：value 为空串表示「默认」（未设置 → 运行时对推理模型回落
 // 高档）。「关闭」是显式 off，与「默认」语义不同。写回默认档，对下一段
 // 回复生效（与切模型同语义）。
-const EFFORT_OPTIONS: Array<{ value: ProviderReasoningEffort | ""; label: string }> = [
-  { value: "", label: "默认" },
-  { value: "off", label: "关闭" },
-  { value: "minimal", label: "极简" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
+// i18n 批 4（§2c）：label 是字典键，渲染时经 t() 解析。
+const EFFORT_OPTIONS: Array<{ value: ProviderReasoningEffort | ""; label: MessageKey }> = [
+  { value: "", label: "coach.effort.default" },
+  { value: "off", label: "coach.effort.off" },
+  { value: "minimal", label: "coach.effort.minimal" },
+  { value: "low", label: "coach.effort.low" },
+  { value: "medium", label: "coach.effort.medium" },
+  { value: "high", label: "coach.effort.high" },
 ];
 
 /** 菜单开合的统一关闭路径：点击外部 mousedown 关闭 + Escape 关闭（IME
@@ -62,6 +64,7 @@ function useMenuDismiss(ref: RefObject<HTMLElement | null>, open: boolean, onClo
  * 选择对下一段回复（下一轮 provider 请求）生效。
  */
 export function CoachModelMenu({ onError }: CoachModelMenuProps) {
+  const t = useT();
   const [profile, setProfile] = useState<ProviderProfile | null>(null);
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
@@ -163,7 +166,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
       setProfile((current) => (current ? { ...current, model_id: resolvedId } : current));
       closeModel();
     } catch (error) {
-      onError(error instanceof Error && error.message.trim() ? error.message : "模型切换失败，请重试。");
+      onError(error instanceof Error && error.message.trim() ? error.message : t("coach.model.switchFailed"));
     } finally {
       setSwitching(false);
     }
@@ -171,7 +174,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
 
   // 力度挂在默认档上：model_id 传当前值即「只改力度」。null 表示清回默认。
   const activeEffort = profile.reasoning_effort ?? "";
-  const currentEffortLabel = EFFORT_OPTIONS.find((option) => option.value === activeEffort)?.label ?? "默认";
+  const currentEffortLabel = t(EFFORT_OPTIONS.find((option) => option.value === activeEffort)?.label ?? "coach.effort.default");
   const handleEffortSelect = async (effort: ProviderReasoningEffort | "") => {
     if (switching) return;
     const nextEffort: ProviderReasoningEffort | null = effort === "" ? null : effort;
@@ -182,7 +185,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
       setProfile((current) => (current ? { ...current, reasoning_effort: nextEffort } : current));
       closeEffort();
     } catch (error) {
-      onError(error instanceof Error && error.message.trim() ? error.message : "思考力度调整失败，请重试。");
+      onError(error instanceof Error && error.message.trim() ? error.message : t("coach.model.effortFailed"));
     } finally {
       setSwitching(false);
     }
@@ -202,14 +205,14 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
           className="task6-composer-model"
           disabled={switching}
           onClick={toggleModel}
-          title="切换模型（对下一段回复生效）"
+          title={t("coach.model.switchTitle")}
           type="button"
         >
           <span className="task6-composer-model-label">{currentName}</span>
           <IconChevronDown className="task6-composer-model-caret" />
         </button>
         {modelOpen ? (
-          <div aria-label="当前 Provider 的模型" className="task6-composer-model-menu" role="menu">
+          <div aria-label={t("coach.model.menuLabel")} className="task6-composer-model-menu" role="menu">
             {models.map((model) => {
               const selected = model.model_id === activeModelId;
               return (
@@ -236,11 +239,11 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
           <button
             aria-expanded={effortOpen}
             aria-haspopup="menu"
-            aria-label="思考力度"
+            aria-label={t("coach.model.effortLabel")}
             className="task6-composer-effort"
             disabled={switching}
             onClick={toggleEffort}
-            title={`思考力度：${currentEffortLabel}（对下一段回复生效）`}
+            title={t("coach.model.effortTitle", { label: currentEffortLabel })}
             type="button"
           >
             <span className="task6-composer-effort-label">{currentEffortLabel}</span>
@@ -248,7 +251,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
             <IconChevronDown className="task6-composer-model-caret" />
           </button>
           {effortOpen ? (
-            <div aria-label="思考力度（对下一段回复生效）" className="task6-composer-effort-menu" role="menu">
+            <div aria-label={t("coach.model.effortMenuLabel")} className="task6-composer-effort-menu" role="menu">
               {EFFORT_OPTIONS.map((option) => {
                 const selected = activeEffort === option.value;
                 return (
@@ -260,7 +263,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
                     role="menuitemradio"
                     type="button"
                   >
-                    <span>{option.label}</span>
+                    <span>{t(option.label)}</span>
                     {selected ? <IconCheck className="task6-composer-model-check" /> : null}
                   </button>
                 );

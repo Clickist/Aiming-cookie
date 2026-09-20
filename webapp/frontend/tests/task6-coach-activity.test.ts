@@ -83,8 +83,9 @@ test("streaming answer renders through the same text pipeline as final answers",
   assert.match(activity, /export type CoachWorkSegment/);
   assert.match(activity, /export function CoachWorkStream/);
   // 思考块标题状态机：流式「思考中」扫光 → 完成后冻结秒数（0828 拍板改文案）
-  assert.match(activity, /思考中/);
-  assert.match(activity, /思考过程 · 持续了 \$\{Math\.max\(1, Math\.round\(frozenSeconds \/ 1000\)\)\} 秒/);
+  // i18n 批 4：复合模板「思考过程 · 持续了 {n} 秒」整句入字典。
+  assert.match(activity, /coach\.activity\.thinking/);
+  assert.match(activity, /coach\.activity\.thinkingDuration", \{ n: Math\.max\(1, Math\.round\(frozenSeconds \/ 1000\)\)/);
 });
 
 test("tool steps surface duration and detail previews from existing contract fields", async () => {
@@ -113,7 +114,7 @@ test("long analysis steps tick elapsed time next to the local ETA", async () => 
   // pending chip 计时基准：started_at 优先，否则入队时间
   assert.match(panel, /Date\.parse\(item\.started_at \?\? item\.created_at\)/);
   const activity = await source("components/task6/CoachRunActivity.tsx");
-  assert.match(activity, /预计约 \{etaSeconds\} 秒/);
+  assert.match(activity, /coach\.activity\.eta", \{ n: etaSeconds \}/);
 });
 
 test("working-state motion loops are disabled under reduced motion", async () => {
