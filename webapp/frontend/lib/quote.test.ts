@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  QUOTE_HEADER,
   QUOTE_MAX_CHARS,
   SEND_BUDGET_CHARS,
   composeQuotedContent,
   evaluateAssistantSelection,
   isWithinSendBudget,
   parseQuotedContent,
+  quoteHeader,
   snapshotQuote,
   stripQuoteMarkers,
   type CoachQuote,
@@ -59,14 +59,15 @@ const q2: CoachQuote = { id: 2, text: "另一段引文" };
 test("composed content matches the research §3.4 shape exactly", () => {
   const composed = composeQuotedContent({ quotes: [q1, q2], text: "帮我解释这句话为什么对。" });
   assert.ok(composed !== null);
+  const header = quoteHeader();
   assert.equal(
     composed,
     [
-      "[引用 Coach]",
+      header,
       "> 第一段引文第一行",
       "> 第二行…",
       "",
-      "[引用 Coach]",
+      header,
       "> 另一段引文",
       "",
       "帮我解释这句话为什么对。",
@@ -92,10 +93,10 @@ test("parse walks consecutive header chains at index 0 only", () => {
 test("parse falls back to verbatim passthrough for legacy or edited content", () => {
   assert.deepEqual(parseQuotedContent("普通历史消息"), { quotes: [], text: "普通历史消息" });
   // 正文里的 header 不是开头链的一部分，保持原样
-  const midHeader = `开场白\n${QUOTE_HEADER}\n> 被混进正文的假引用`;
+  const midHeader = `开场白\n${quoteHeader()}\n> 被混进正文的假引用`;
   assert.deepEqual(parseQuotedContent(midHeader), { quotes: [], text: midHeader });
   // 头后没有 blockquote 行＝不是我们的产出形状，整体保守回退
-  const orphan = `${QUOTE_HEADER}\n随便什么`;
+  const orphan = `${quoteHeader()}\n随便什么`;
   assert.deepEqual(parseQuotedContent(orphan), { quotes: [], text: orphan });
 });
 

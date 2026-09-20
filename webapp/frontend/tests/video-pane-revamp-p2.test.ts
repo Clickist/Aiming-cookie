@@ -24,9 +24,10 @@ test("P2 data contract: segment buttons come from evidence-segments projection w
   assert.match(formats, /startMs: number;/);
   assert.match(formats, /endMs: number;/);
   assert.match(formats, /kindLabel: string;/);
-  assert.match(formats, /worst: "修正最多",/);
-  assert.match(formats, /typical: "参照",/);
-  assert.match(formats, /improved: "改善",/);
+  // i18n 批 1：segment_kind 映射值是字典键（zh 值=修正最多/参照/改善）。
+  assert.match(formats, /worst: "metric\.segment\.worst",/);
+  assert.match(formats, /typical: "metric\.segment\.typical",/);
+  assert.match(formats, /improved: "metric\.segment\.improved",/);
   assert.match(formats, /if \(playback\?\.availability !== "available"\) continue;/);
   assert.match(formats, /startMs < 0 \|\| endMs <= startMs/);
   assert.match(formats, /const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 750;/);

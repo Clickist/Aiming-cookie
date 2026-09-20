@@ -40,12 +40,12 @@ import {
   type QueuedChip,
 } from "@/lib/composer";
 import {
-  QUOTE_HEADER,
   QUOTE_MAX_CHARS,
   SEND_BUDGET_CHARS,
   composeQuotedContent,
   evaluateAssistantSelection,
   isWithinSendBudget,
+  quoteHeader,
   messageArticleFromNode,
   parseQuotedContent,
   selectionAnchorRect,
@@ -421,7 +421,7 @@ function UserMessageBody({ content }: { content: string }): ReactNode {
     <>
       {parsed.quotes.map((text, index) => (
         <blockquote className="task6-quote-block" key={index}>
-          <span className="task6-quote-head">{QUOTE_HEADER}</span>
+          <span className="task6-quote-head">{quoteHeader()}</span>
           <p className="task6-quote-body">{text}</p>
         </blockquote>
       ))}
@@ -2700,7 +2700,7 @@ export function CoachPanel({
               }}
               role="listitem"
             >
-              <span className="task6-quote-head">引用 Coach</span>
+              <span className="task6-quote-head">{quoteHeader()}</span>
               <p className="task6-quote-body" title={quote.text}>{quote.text}</p>
               <IconButton label="删除这条引用" onClick={() => removeQuote(quote.id)} size="compact" title="删除整块引用（文字不可编辑）">
                 <IconClose />

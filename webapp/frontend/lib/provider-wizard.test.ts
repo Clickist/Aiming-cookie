@@ -20,6 +20,7 @@ import {
   type WizardBuildContext,
   type WizardDraft,
 } from "./provider-wizard";
+import { translate } from "./i18n/core";
 import type { ProviderCatalogV1 } from "./types";
 
 const catalog: ProviderCatalogV1 = {
@@ -66,7 +67,7 @@ test("wizard derives the full vendor catalog with the member tier pinned first",
   // 「自定义 OpenAI 兼容」恒兜底在末尾。
   const options = wizardTypeOptions(catalog);
   assert.deepEqual(options.map((type) => type.id), ["deepseek", "openai", "custom"]);
-  assert.equal(options[options.length - 1].label, "自定义 OpenAI 兼容");
+  assert.equal(options[options.length - 1].label, translate("zh-CN", "settings.provider.wizard.customType"));
   assert.equal(options.filter((type) => type.custom).length, 1);
   // 会员档（WP-C 升级，线框 ①）：出现在「添加服务」列表且**置顶为推荐**，
   // 显示名照线框文案，不是目录里的旧名。
@@ -79,7 +80,7 @@ test("wizard derives the full vendor catalog with the member tier pinned first",
   };
   const memberOptions = wizardTypeOptions(withRelay);
   assert.equal(memberOptions[0].id, "aiming-cookie-relay");
-  assert.equal(memberOptions[0].label, "Aiming Cookie（推荐）");
+  assert.equal(memberOptions[0].label, translate("zh-CN", "member.provider.relayLabel"));
   assert.equal(memberOptions[0].custom, false);
   assert.equal(isMemberWizardType("aiming-cookie-relay"), true);
   assert.equal(isMemberWizardType("deepseek"), false);
@@ -93,7 +94,7 @@ test("wizard resolves builtin entries from the catalog and flags availability", 
   assert.equal(wizardCatalogProvider(catalog, "deepseek")?.provider_name, "DeepSeek");
   assert.equal(wizardCatalogProvider(catalog, "anthropic"), undefined);
   assert.equal(wizardDefaultName(catalog, "deepseek"), "DeepSeek");
-  assert.equal(wizardDefaultName(catalog, "custom"), "自定义 Provider");
+  assert.equal(wizardDefaultName(catalog, "custom"), translate("zh-CN", "settings.provider.wizard.customProviderName"));
   assert.equal(isWizardCustom("custom"), true);
   assert.equal(isWizardCustom("deepseek"), false);
   // 打开向导无预选类型（线框）：选卡后「下一步」才解锁。

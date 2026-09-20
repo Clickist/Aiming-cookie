@@ -11,6 +11,8 @@
  * 合同：未知码显示原始码，不编造解释。
  */
 
+import { t, type MessageKey } from "./i18n/core";
+
 /** 等待整理态：run 还在 finalization 流程里，不算失败。 */
 export const CAPTURE_PENDING_VIDEO_ERRORS = new Set([
   "video_waiting_artifact",
@@ -26,59 +28,60 @@ export const CAPTURE_PENDING_TRACE_ERRORS = new Set([
  * 但历史行上按 limitations 派生只会得到「Raw 来源不可用」——事实相反。
  * 未知码返回 null，由调用方回退到原有 limitations 派生，不编造解释。
  */
-export const FINALIZATION_PENDING_LABELS: Record<string, string> = {
-  trace_waiting_snapshot: "正在等待输入数据落盘",
-  waiting_for_sources: "正在等待训练数据落盘",
+const FINALIZATION_PENDING_KEYS: Record<string, MessageKey> = {
+  trace_waiting_snapshot: "capture.finalization.waitingInputData",
+  waiting_for_sources: "capture.finalization.waitingTrainingData",
 };
 
 export function finalizationPendingText(error: string | null | undefined): string | null {
   if (!error) return null;
-  return FINALIZATION_PENDING_LABELS[error] ?? null;
+  const key = FINALIZATION_PENDING_KEYS[error];
+  return key === undefined ? null : t(key);
 }
 
-export const VIDEO_ERROR_LABELS: Record<string, string> = {
+export const VIDEO_ERROR_KEYS: Record<string, MessageKey> = {
   // 打这局时应用未在录制（无 capture 会话 / 采集服务不可用）。
-  video_capture_unavailable: "打这局时应用未在录制",
+  video_capture_unavailable: "capture.error.notRecording",
   // 无有效 capture 会话（含窗口/控制通道无效）：同上一个人话归因。
-  video_window_invalid: "打这局时应用未在录制",
+  video_window_invalid: "capture.error.notRecording",
   // AC 在这局之后重启过，回放缓冲已丢失，无法补录。
-  video_capture_session_mismatch: "AC 在这局之后重启过，回放画面没有保留",
+  video_capture_session_mismatch: "capture.videoError.sessionMismatch",
   // 这一时间窗没有完整画面数据。
-  video_coverage_gap: "这一时间窗没有完整画面数据",
+  video_coverage_gap: "capture.videoError.coverageGap",
   // 暂停局 fail-closed：不生成永久录像。
-  video_pause_unsupported: "暂停的对局不生成录像",
+  video_pause_unsupported: "capture.videoError.pauseUnsupported",
   // 时间对齐不可用，录像无法与输入对齐。
-  video_time_alignment_unavailable: "时间对齐失败，录像无法与输入对齐",
+  video_time_alignment_unavailable: "capture.videoError.timeAlignmentUnavailable",
   // 采集硬件 / 协议错误。
-  video_hardware_invalid: "采集硬件初始化失败",
-  video_capture_protocol_invalid: "采集协议错误",
+  video_hardware_invalid: "capture.videoError.hardwareInvalid",
+  video_capture_protocol_invalid: "capture.videoError.protocolInvalid",
   // 本地录像文件校验失败（reconcile 清理时发现托管路径/回执无效）。
-  video_pending_state_invalid: "本地录像文件校验失败",
-  video_managed_path_invalid: "本地录像文件校验失败",
-  video_receipt_invalid: "本地录像文件校验失败",
+  video_pending_state_invalid: "capture.videoError.fileInvalid",
+  video_managed_path_invalid: "capture.videoError.fileInvalid",
+  video_receipt_invalid: "capture.videoError.fileInvalid",
   // 等待整理态：describe 会归一为「整理中」，表内短语仅兜底。
-  video_waiting_artifact: "正在等待录像整理",
+  video_waiting_artifact: "capture.videoError.waitingArtifact",
   // 用户主动移除。
-  removed_by_user: "已由你移除",
+  removed_by_user: "capture.error.removedByUser",
 };
 
-export const TRACE_ERROR_LABELS: Record<string, string> = {
+export const TRACE_ERROR_KEYS: Record<string, MessageKey> = {
   // 这一时间窗没有输入数据（覆盖缺口）。
-  trace_raw_window_coverage_gap: "这一时间窗没有输入数据",
+  trace_raw_window_coverage_gap: "capture.traceError.coverageGap",
   // 采集队列丢点 / 缓冲环过期：输入数据不完整。
-  trace_raw_queue_dropped: "采集队列丢点，输入数据不完整",
-  trace_raw_ring_expired: "采集缓冲过期，输入数据不完整",
+  trace_raw_queue_dropped: "capture.traceError.queueDropped",
+  trace_raw_ring_expired: "capture.traceError.ringExpired",
   // 快照过保留期 / 采集不可用。
-  trace_snapshot_stale: "输入快照已过保留期",
-  trace_capture_unavailable: "打这局时应用未在录制",
-  trace_snapshot_failed: "输入快照解析失败",
-  trace_quality_insufficient: "输入数据质量不足",
-  trace_attach_failed: "输入轨迹写入失败",
-  trace_legacy_quality_unknown: "输入数据质量无法判定",
+  trace_snapshot_stale: "capture.traceError.snapshotStale",
+  trace_capture_unavailable: "capture.error.notRecording",
+  trace_snapshot_failed: "capture.traceError.snapshotFailed",
+  trace_quality_insufficient: "capture.traceError.qualityInsufficient",
+  trace_attach_failed: "capture.traceError.attachFailed",
+  trace_legacy_quality_unknown: "capture.traceError.qualityUnknown",
   // 等待整理态：describe 会归一为「整理中」，表内短语仅兜底。
-  trace_waiting_snapshot: "正在等待输入轨迹整理",
+  trace_waiting_snapshot: "capture.traceError.waitingSnapshot",
   // 用户主动移除。
-  removed_by_user: "已由你移除",
+  removed_by_user: "capture.error.removedByUser",
 };
 
 export interface CaptureRunEventInput {
@@ -90,12 +93,22 @@ export interface CaptureRunEventInput {
   finalization_state?: string | null;
 }
 
+/**
+ * 采集证据的结构化状态（i18n 批 1 解耦）：状态归并只比较这个枚举，
+ * 显示词（videoLabel/traceLabel/status.word）只做显示——翻译后逻辑不碎。
+ */
+export type CaptureEvidenceStatus = "attached" | "pending" | "not_recorded" | "missing";
+
 export interface CaptureRunEventDescription {
   scenario: string;
   /** 例：`已录制` / `未录制（打这局时应用未在录制）` / `整理中`。 */
   videoLabel: string;
   /** 例：`已记录` / `缺失（这一时间窗没有输入数据）` / `整理中`。 */
   traceLabel: string;
+  /** 与 videoLabel 同源的结构化状态（供 summarizeCaptureRunStatus 归并）。 */
+  videoStatus: CaptureEvidenceStatus;
+  /** 与 traceLabel 同源的结构化状态。 */
+  traceStatus: CaptureEvidenceStatus;
   /** 双证齐 = 正常局。 */
   healthy: boolean;
 }
@@ -106,24 +119,14 @@ function finalizationInProgress(state: string | null | undefined): boolean {
 
 /** 错误码 → 人话短语；未知码原样透传（不编造）。 */
 export function videoErrorCodeLabel(code: string): string {
-  return VIDEO_ERROR_LABELS[code] ?? code;
+  const key = VIDEO_ERROR_KEYS[code];
+  return key === undefined ? code : t(key);
 }
 
 /** 错误码 → 人话短语；未知码原样透传（不编造）。 */
 export function traceErrorCodeLabel(code: string): string {
-  return TRACE_ERROR_LABELS[code] ?? code;
-}
-
-/**
- * 「未录制（打这局时应用未在录制）」→ 状态词 + 括号内细节。
- * 设置页「最近采集事件」用状态词上屏、细节收进悬停 title；无括号时细节为 null。
- */
-export function splitStatusLabel(label: string): { word: string; detail: string | null } {
-  const start = label.indexOf("（");
-  if (start < 0) return { word: label, detail: null };
-  const end = label.lastIndexOf("）");
-  if (end <= start) return { word: label, detail: null };
-  return { word: label.slice(0, start), detail: label.slice(start + 1, end) };
+  const key = TRACE_ERROR_KEYS[code];
+  return key === undefined ? code : t(key);
 }
 
 export type CaptureRunStatusTone = "ready" | "working" | "missing";
@@ -132,45 +135,65 @@ export type CaptureRunStatusTone = "ready" | "working" | "missing";
  * 行级状态归并（设置页「最近采集事件」每行一个圆点 + 一个状态词）：
  * 任一证整理中 → 整理中（橙）；双证齐 → 已就绪（绿）；
  * 视频未录制 → 未录制（橙）；其余（视频在、轨迹缺失）→ 缺失（灰）。
+ * 归并依据是 describeCaptureRunEvent 的结构化状态枚举，不是显示词。
  */
-export function summarizeCaptureRunStatus(videoLabel: string, traceLabel: string): { word: string; tone: CaptureRunStatusTone } {
-  const video = splitStatusLabel(videoLabel).word;
-  const trace = splitStatusLabel(traceLabel).word;
-  if (video === "整理中" || trace === "整理中") return { word: "整理中", tone: "working" };
-  if (video === "已录制" && trace === "已记录") return { word: "已就绪", tone: "ready" };
-  if (video === "未录制") return { word: "未录制", tone: "working" };
-  return { word: "缺失", tone: "missing" };
+export function summarizeCaptureRunStatus(
+  videoStatus: CaptureEvidenceStatus,
+  traceStatus: CaptureEvidenceStatus,
+): { word: string; tone: CaptureRunStatusTone } {
+  if (videoStatus === "pending" || traceStatus === "pending") {
+    return { word: t("capture.status.organizing"), tone: "working" };
+  }
+  if (videoStatus === "attached" && traceStatus === "attached") {
+    return { word: t("capture.status.ready"), tone: "ready" };
+  }
+  if (videoStatus === "not_recorded") {
+    return { word: t("capture.status.notRecorded"), tone: "working" };
+  }
+  return { word: t("capture.status.missing"), tone: "missing" };
 }
 
 export function describeCaptureRunEvent(run: CaptureRunEventInput): CaptureRunEventDescription {
   const pending = finalizationInProgress(run.finalization_state);
 
+  let videoStatus: CaptureEvidenceStatus;
   let videoLabel: string;
   if (run.video_attached) {
-    videoLabel = "已录制";
+    videoStatus = "attached";
+    videoLabel = t("capture.evidence.videoRecorded");
   } else if (run.video_error && !CAPTURE_PENDING_VIDEO_ERRORS.has(run.video_error)) {
-    videoLabel = `未录制（${videoErrorCodeLabel(run.video_error)}）`;
+    videoStatus = "not_recorded";
+    videoLabel = t("capture.evidence.videoMissingDetail", { detail: videoErrorCodeLabel(run.video_error) });
   } else if (run.video_error || pending) {
-    videoLabel = "整理中";
+    videoStatus = "pending";
+    videoLabel = t("capture.evidence.organizing");
   } else {
-    videoLabel = "未录制";
+    videoStatus = "not_recorded";
+    videoLabel = t("capture.evidence.videoMissing");
   }
 
+  let traceStatus: CaptureEvidenceStatus;
   let traceLabel: string;
   if (run.raw_attached) {
-    traceLabel = "已记录";
+    traceStatus = "attached";
+    traceLabel = t("capture.evidence.traceRecorded");
   } else if (run.trace_error && !CAPTURE_PENDING_TRACE_ERRORS.has(run.trace_error)) {
-    traceLabel = `缺失（${traceErrorCodeLabel(run.trace_error)}）`;
+    traceStatus = "missing";
+    traceLabel = t("capture.evidence.traceMissingDetail", { detail: traceErrorCodeLabel(run.trace_error) });
   } else if (run.trace_error || pending) {
-    traceLabel = "整理中";
+    traceStatus = "pending";
+    traceLabel = t("capture.evidence.organizing");
   } else {
-    traceLabel = "缺失";
+    traceStatus = "missing";
+    traceLabel = t("capture.evidence.traceMissing");
   }
 
   return {
-    scenario: run.scenario?.trim() || "未知场景",
+    scenario: run.scenario?.trim() || t("capture.evidence.unknownScenario"),
     videoLabel,
     traceLabel,
+    videoStatus,
+    traceStatus,
     healthy: Boolean(run.video_attached) && Boolean(run.raw_attached),
   };
 }

@@ -379,7 +379,8 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.doesNotMatch(coach, /尚未绑定可启动的 KovaaK 场景/);
   assert.doesNotMatch(coach, /项目暂不可用/);
   assert.match(desktop, /scenario_open/);
-  assert.match(desktop, /当前网页预览不能启动 KovaaK/);
+  // i18n 批 1：文案入字典（desktop.kovaak.webPreviewBlocked），源码引用字典键。
+  assert.match(desktop, /desktop\.kovaak\.webPreviewBlocked/);
   assert.doesNotMatch(coach, /steam:\/\//);
 });
 

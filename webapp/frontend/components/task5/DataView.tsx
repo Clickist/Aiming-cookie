@@ -6,7 +6,7 @@ import { getAnalysisData, getAnalysisFamilyData } from "@/lib/api";
 import type { AnalysisMetricPresentation, AnalysisWorkspacePresentation } from "@/lib/contracts";
 import {
   availabilityLabel,
-  EVENT_KIND_LABELS,
+  eventKindLabel,
   limitationLabel,
   metricDescription,
   metricLabel,
@@ -684,7 +684,7 @@ function GenericDataView({
                       onClick={() => relativeMs !== undefined && onSelectTime(relativeMs)}
                       type="button"
                     >
-                      <span>{EVENT_KIND_LABELS[kind] ?? kind}</span>
+                      <span>{eventKindLabel(kind)}</span>
                       <i style={{ width: `${(count / maxEventCount) * 100}%` }} />
                       <strong>{count}</strong>
                     </button>

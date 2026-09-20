@@ -1,3 +1,4 @@
+import { getLocale, t, type MessageKey } from "./i18n/core";
 import type {
   AnalysisFamilySupportState,
   AnalysisMetricV2,
@@ -44,86 +45,89 @@ export function getAnalysisViewState(input: {
   return "unavailable";
 }
 
-const FAMILY_LABELS: Record<string, string> = {
-  static_clicking: "静态点击",
-  dynamic_clicking: "动态点击",
-  continuous_tracking: "连续跟枪",
-  target_switching: "目标切换",
-  movement_aiming: "移动瞄准",
-  unknown: "未确认分类",
+// i18n 批 1：下列映射表的表键是后端码/后端原句（不动），表值改为字典键，
+// 查找函数在调用时经 t() 解析——zh-CN 字典值是现行文案的逐字搬运。
+
+const FAMILY_LABEL_KEYS: Record<string, MessageKey> = {
+  static_clicking: "analysis.family.staticClicking",
+  dynamic_clicking: "analysis.family.dynamicClicking",
+  continuous_tracking: "analysis.family.continuousTracking",
+  target_switching: "analysis.family.targetSwitching",
+  movement_aiming: "analysis.family.movementAiming",
+  unknown: "analysis.family.unknown",
 };
 
-const SWITCHING_PRESENTATION_TEXT: Record<string, string> = {
-  "target_switching.transition_time_ms": "切换耗时",
-  "target_switching.transition_distance_px": "切换距离",
-  "target_switching.path_efficiency": "路径效率",
-  "target_switching.settle_duration_ms": "稳定耗时",
-  "switch transition slow": "切换耗时高于可比基线",
-  "switch arrival error high": "到达后稳定耗时高于可比基线",
+const SWITCHING_PRESENTATION_KEYS: Record<string, MessageKey> = {
+  "target_switching.transition_time_ms": "analysis.switching.transitionTime",
+  "target_switching.transition_distance_px": "analysis.switching.transitionDistance",
+  "target_switching.path_efficiency": "analysis.switching.pathEfficiency",
+  "target_switching.settle_duration_ms": "analysis.switching.settleDuration",
+  "switch transition slow": "analysis.switching.slowBaseline",
+  "switch arrival error high": "analysis.switching.arrivalBaseline",
 };
 
-const DIAGNOSIS_PRESENTATION_TEXT: Record<string, string> = {
-  "decel_frac high": "减速阶段偏长",
-  "linearity high": "制动节奏不够均匀",
-  "reverse_ratio high": "反向修正偏多",
-  "submovement two-stage": "主要移动与后续修正较分离",
-  sparc: "运动平滑度（SPARC）",
-  decel_frac: "减速占比",
-  reverse_ratio: "反向修正比例",
-  submovement_overlap: "主动作与修正重叠程度",
-  "reverse_ratio ↓": "反向修正比例下降",
-  "decel_frac toward individually calibrated target": "减速占比向个人基准靠近",
-  "submovement_overlap toward chosen technique": "动作衔接更接近所选技术方式",
-  target_relative_facts_unavailable: "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
-  alignment_partial: "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
-  "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.": "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
-  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于已审核的精确场景、1920x1080 分辨率和单个目标。",
-  "Input-native metrics do not establish target-relative error, overshoot, or undershoot.": "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
-  "减速段占比过高，在「蹭」": "速度达到峰值后，减速阶段持续得较久。",
-  "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断": "证据只能说明减速阶段偏长。",
-  "减速一次到位的意识": "减速尽量一次完成。",
-  "练完整的加速→减速，减速果断一次到位": "练习完整的加速和减速，减速尽量一次完成。",
-  "acc 90%+，逼你把单次 flick 加减速打完整": "完成单次 Flick 的加速和减速。",
-  "减速段反复修正": "减速阶段出现较多反向修正。",
-  "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因": "证据只能说明反向修正偏多。",
-  "单次制动 + 流体修正": "单次制动后做连续微调。",
-  "转流体派：减速段即微调，别 readjust": "在减速阶段微调，减少来回修正。",
-  "落点精度，减少二次修正": "练习落点控制，减少二次修正。",
-  "flick→急停→独立 micro": "主要移动后出现一次相对独立的微调。",
-  "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成": "证据只能说明主要移动和后续修正较分离。",
-  "转流体派（overlapping submovements）": "主要移动和后续微调重叠衔接。",
-  "转流体派：corrective 与 primary 重叠，减速段即微调": "让修正与主动作更连贯地衔接，在减速阶段微调。",
+const DIAGNOSIS_PRESENTATION_KEYS: Record<string, MessageKey> = {
+  "decel_frac high": "analysis.diagnosis.decelLong",
+  "linearity high": "analysis.diagnosis.brakingUneven",
+  "reverse_ratio high": "analysis.diagnosis.reverseMany",
+  "submovement two-stage": "analysis.diagnosis.twoStageSeparation",
+  sparc: "analysis.diagnosis.sparc",
+  decel_frac: "analysis.diagnosis.decelFrac",
+  reverse_ratio: "analysis.diagnosis.reverseRatio",
+  submovement_overlap: "analysis.diagnosis.submovementOverlap",
+  "reverse_ratio ↓": "analysis.diagnosis.reverseRatioDown",
+  "decel_frac toward individually calibrated target": "analysis.diagnosis.decelTowardTarget",
+  "submovement_overlap toward chosen technique": "analysis.diagnosis.overlapTowardTechnique",
+  target_relative_facts_unavailable: "analysis.diagnosis.targetRelativeUnavailable",
+  alignment_partial: "analysis.diagnosis.alignmentPartial",
+  "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.": "analysis.diagnosis.exactReviewedOnly",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "analysis.diagnosis.exactReviewedSingleTarget",
+  "Input-native metrics do not establish target-relative error, overshoot, or undershoot.": "analysis.diagnosis.targetRelativeUnavailable",
+  "减速段占比过高，在「蹭」": "analysis.diagnosis.decelTooLong",
+  "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断": "analysis.diagnosis.decelLongEvidenceOnly",
+  "减速一次到位的意识": "analysis.diagnosis.decelOneShot",
+  "练完整的加速→减速，减速果断一次到位": "analysis.diagnosis.decelFullPractice",
+  "acc 90%+，逼你把单次 flick 加减速打完整": "analysis.diagnosis.flickComplete",
+  "减速段反复修正": "analysis.diagnosis.decelRepeatedFix",
+  "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因": "analysis.diagnosis.reverseManyEvidenceOnly",
+  "单次制动 + 流体修正": "analysis.diagnosis.singleBrakeFluid",
+  "转流体派：减速段即微调，别 readjust": "analysis.diagnosis.fluidStyleDecel",
+  "落点精度，减少二次修正": "analysis.diagnosis.precisionLanding",
+  "flick→急停→独立 micro": "analysis.diagnosis.flickStopMicro",
+  "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成": "analysis.diagnosis.separationEvidenceOnly",
+  "转流体派（overlapping submovements）": "analysis.diagnosis.fluidOverlap",
+  "转流体派：corrective 与 primary 重叠，减速段即微调": "analysis.diagnosis.fluidCoherent",
 };
 
-const LIMITATION_PRESENTATION_TEXT: Record<string, string> = {
-  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
-  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
-  "Unknown or multi-target scenarios remain fail-closed.": "未知场景或多目标布局不生成此类结论。",
-  "Unknown hashes and concurrent target layouts are not classified by this entry.": "未知场景或多目标布局不生成此类结论。",
-  alignment_latency_reported_separately: "对齐延迟单独报告，不等同于跟随滞后。",
-  scenario_name_is_a_candidate_not_an_identity: "场景名称只是识别候选，不构成场景身份。",
-  challenge_shape_is_a_statistical_candidate_not_an_identity: "按击杀密度识别训练大类，只是统计候选，不构成场景身份。",
-  scenario_override_is_a_user_confirmed_family_not_an_identity: "训练大类由用户确认，不构成场景身份。",
-  scenario_family_unresolved: "未能识别训练大类；按 static clicking 基础运动学分析处理。",
-  exact_manifest_gate_inactive_visual_claims_unavailable: "精确场景审核门未激活，不提供视觉测量结论。",
-  exact_visual_profile_unavailable: "缺少精确视觉档案，不做目标相对测量。",
-  target_relative_facts_unavailable: "缺少目标相对事实（误差、目标身份或速度）。",
-  outcome_association_unavailable: "命中关联不可用。",
-  scenario_prescription_unavailable: "场景专属训练处方不可用。",
-  static_clicking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
-  dynamic_clicking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
-  continuous_tracking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
-  target_switching_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
+const LIMITATION_PRESENTATION_KEYS: Record<string, MessageKey> = {
+  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "metric.limitation.exactScenarioGate",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "metric.limitation.exactScenarioGate",
+  "Unknown or multi-target scenarios remain fail-closed.": "metric.limitation.unknownMultiTargetFailClosed",
+  "Unknown hashes and concurrent target layouts are not classified by this entry.": "metric.limitation.unknownMultiTargetFailClosed",
+  alignment_latency_reported_separately: "metric.limitation.alignmentLatencySeparate",
+  scenario_name_is_a_candidate_not_an_identity: "metric.limitation.scenarioNameCandidate",
+  challenge_shape_is_a_statistical_candidate_not_an_identity: "metric.limitation.killDensityCandidate",
+  scenario_override_is_a_user_confirmed_family_not_an_identity: "metric.limitation.userConfirmedFamily",
+  scenario_family_unresolved: "metric.limitation.familyUnresolved",
+  exact_manifest_gate_inactive_visual_claims_unavailable: "metric.limitation.manifestGateInactive",
+  exact_visual_profile_unavailable: "metric.limitation.exactVisualProfileUnavailable",
+  target_relative_facts_unavailable: "metric.limitation.targetRelativeFactsMissing",
+  outcome_association_unavailable: "metric.limitation.outcomeAssociationUnavailable",
+  scenario_prescription_unavailable: "metric.limitation.scenarioPrescriptionUnavailable",
+  static_clicking_baseline_without_exact_visual_profile: "metric.limitation.baselineWithoutExactProfile",
+  dynamic_clicking_baseline_without_exact_visual_profile: "metric.limitation.baselineWithoutExactProfile",
+  continuous_tracking_baseline_without_exact_visual_profile: "metric.limitation.baselineWithoutExactProfile",
+  target_switching_baseline_without_exact_visual_profile: "metric.limitation.baselineWithoutExactProfile",
 };
 
 const OBSERVATION_REF_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const KNOWLEDGE_REGISTRY_VERSION_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.v[1-9][0-9]*$/;
 const KNOWLEDGE_ENTRY_REF_RE = /^knowledge:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$/;
-const CLAIM_LEVEL_LABELS: Record<string, string> = {
-  deterministic_rule: "规则化观察",
-  experimental: "待验证",
-  research_supported: "研究支持",
-  community_consensus: "社区经验",
+const CLAIM_LEVEL_KEYS: Record<string, MessageKey> = {
+  deterministic_rule: "analysis.claim.deterministicRule",
+  experimental: "analysis.claim.experimental",
+  research_supported: "analysis.claim.researchSupported",
+  community_consensus: "analysis.claim.communityConsensus",
 };
 
 function record(value: unknown): Record<string, unknown> {
@@ -183,10 +187,15 @@ function hasChineseDisplayText(value: string): boolean {
   return /[\u3400-\u9fff]/.test(value);
 }
 
-function presentDisplayText(value: string, fallback: string): string {
-  return SWITCHING_PRESENTATION_TEXT[value]
-    ?? DIAGNOSIS_PRESENTATION_TEXT[value]
-    ?? (hasChineseDisplayText(value) ? value : fallback);
+/**
+ * 后端原句 → 展示文案：命中映射表走字典；后端已是中文原样透出；否则回落
+ * fallback——通常是字典键，也可以是调用方已翻译好的展示串（查表未命中时
+ * translate 原样返回，见 i18n/core.ts 的缺 key 语义）。
+ */
+function presentDisplayText(value: string, fallback: MessageKey | string): string {
+  const key = SWITCHING_PRESENTATION_KEYS[value] ?? DIAGNOSIS_PRESENTATION_KEYS[value];
+  if (key !== undefined) return t(key);
+  return hasChineseDisplayText(value) ? value : t(fallback as MessageKey);
 }
 
 function presentPriorityReason(value: string): string | null {
@@ -200,7 +209,7 @@ function presentPriorityReason(value: string): string | null {
   }
   return presentDisplayText(
     withoutClaimLevel,
-    "当前合同未提供可展示的优先级理由",
+    "analysis.fallback.priorityReasonDisplay",
   );
 }
 
@@ -208,15 +217,16 @@ function presentLimitation(value: string): string {
   const fireMode = /^challenge_shape_fire_mode_kills_(\d+)_button_samples_held_(\d+)_button_samples_per_kill_(inf|[0-9.]+)$/.exec(value);
   if (fireMode) {
     const perKill = fireMode[3] === "inf" ? "∞" : fireMode[3];
-    return `形态判定依据（开火模式）：${fireMode[1]} 次击杀 / 按住采样 ${fireMode[2]} 点（每杀 ${perKill}）。`;
+    return t("metric.limitation.fireModeBasis", { kills: fireMode[1], samples: fireMode[2], perKill });
   }
   const densityFallback = /^challenge_shape_kill_density_kills_(\d+)_duration_ms_(\d+)$/.exec(value);
   if (densityFallback) {
     const seconds = Math.round(Number(densityFallback[2]) / 1000);
-    return `形态判定依据（无 Raw 弱判据）：${densityFallback[1]} 次击杀 / ${seconds} 秒。`;
+    return t("metric.limitation.densityBasis", { kills: densityFallback[1], seconds });
   }
-  return LIMITATION_PRESENTATION_TEXT[value]
-    ?? presentDisplayText(value, "当前合同未提供可展示的限制说明");
+  const key = LIMITATION_PRESENTATION_KEYS[value];
+  if (key !== undefined) return t(key);
+  return presentDisplayText(value, "analysis.fallback.limitation");
 }
 
 function familyStatus(result: AnalysisResultV2): AnalysisFamilySupportState {
@@ -321,7 +331,7 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
       classification: "legacy",
       coverage: null,
       sources: [],
-      limitations: ["历史指标缺少完整元数据"],
+      limitations: [t("metric.limitation.legacyNoMetadata")],
     };
   }
   const referenceKey = safeString(value.key) ?? key;
@@ -353,7 +363,7 @@ function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean):
     const issue = record(raw);
     const signalRaw = safeString(issue.signal);
     if (!signalRaw) return [];
-    const signal = presentDisplayText(signalRaw, "当前合同未提供可展示的观察");
+    const signal = presentDisplayText(signalRaw, "analysis.fallback.observation");
     const severity: AnalysisIssuePresentation["severity"] = issue.severity === "fix" || issue.severity === "watch"
       ? issue.severity
       : "info";
@@ -361,7 +371,7 @@ function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean):
       const cause = record(item);
       const level = safeString(cause.level);
       const text = safeString(cause.text);
-      return level && text ? [{ level, text: presentDisplayText(text, "当前合同未提供可展示的候选说明") }] : [];
+      return level && text ? [{ level, text: presentDisplayText(text, "analysis.fallback.candidateExplanation") }] : [];
     });
     const prescriptions = (Array.isArray(issue.prescriptions) ? issue.prescriptions : []).flatMap((item) => {
       const prescription = record(item);
@@ -370,7 +380,7 @@ function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean):
       if (!scenario || !reason) return [];
       return [{
         scenario,
-        reason: presentDisplayText(reason, "当前合同未提供可展示的训练说明"),
+        reason: presentDisplayText(reason, "analysis.fallback.prescription"),
         cue: safeString(prescription.cue),
       }];
     });
@@ -392,12 +402,16 @@ function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean):
       severity,
       priority: safeNumber(issue.priority) ?? 999,
       priorityReason: presentPriorityReason(
-        safeString(issue.priority_reason) ?? "当前合同未提供优先级理由",
+        safeString(issue.priority_reason) ?? t("analysis.fallback.priorityReasonRaw"),
       ),
       presentationKind,
       claimLevel,
-      claimLabel: CLAIM_LEVEL_LABELS[claimLevel ?? ""]
-        ?? (presentationKind === "registry-backed" ? "未标注" : null),
+      claimLabel: (() => {
+        const claimKey = CLAIM_LEVEL_KEYS[claimLevel ?? ""];
+        return claimKey !== undefined
+          ? t(claimKey)
+          : (presentationKind === "registry-backed" ? t("analysis.claim.unlabeled") : null);
+      })(),
       candidateExplanation: presentationKind === "registry-backed"
         ? (() => {
           const explanation = safeString(issue.plain_language_meaning);
@@ -407,7 +421,7 @@ function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean):
         })()
         : null,
       expectedResult: presentationKind === "registry-backed"
-        ? expectedResult && presentDisplayText(expectedResult, "当前 Analysis 未提供可展示的验证目标。")
+        ? expectedResult && presentDisplayText(expectedResult, "analysis.fallback.expectedResult")
         : null,
       observationRef,
       knowledgeRegistryVersion: hasKnowledgePair ? knowledgeRegistryVersion : null,
@@ -502,11 +516,11 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     ...safeStrings(resolution?.limitations),
   ].map(presentLimitation)));
   const partial = result.input_mode === "multimodal" && videoKind === "unavailable";
-  const inputLabels = {
-    input_native: "输入原生",
-    multimodal: "多源模式",
-    video_fallback: "视频兼容",
-  } as const;
+  const inputLabelKeys: Record<string, MessageKey> = {
+    input_native: "analysis.input.native",
+    multimodal: "analysis.input.multimodal",
+    video_fallback: "analysis.input.videoFallback",
+  };
   const rawScenario = safeString(result.input_snapshot.scenario)
     ?? safeString(session.history?.scenario);
   const recordLabel = presentRecordLabel({
@@ -516,18 +530,18 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
   });
   return {
     analysisId: session.id,
-    scenario: recordLabel.split(" | ")[0] ?? "未命名场景",
+    scenario: recordLabel.split(" | ")[0] ?? t("analysis.scenario.unnamed"),
     recordLabel,
-    createdAt: safeString(result.completed_at) ?? safeString(session.created_at) ?? "时间不可用",
+    createdAt: safeString(result.completed_at) ?? safeString(session.created_at) ?? t("analysis.record.timeUnavailable"),
     status: safeString(session.status) ?? "unavailable",
     input: {
       mode: result.input_mode,
-      label: inputLabels[result.input_mode],
+      label: t(inputLabelKeys[result.input_mode] ?? "analysis.input.videoFallback"),
       preview: result.input_mode === "input_native",
     },
     family: {
       code: familyCode,
-      label: FAMILY_LABELS[familyCode] ?? FAMILY_LABELS.unknown,
+      label: t(FAMILY_LABEL_KEYS[familyCode] ?? FAMILY_LABEL_KEYS.unknown),
       status: familySupport,
     },
     evidence,
@@ -540,12 +554,12 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     },
     partial,
     headline: issues[0]
-      ? `本轮最值得关注：${issues[0].signal}`
-      : "当前证据不足以形成明确发现",
+      ? t("analysis.headline.topIssue", { signal: issues[0].signal })
+      : t("analysis.headline.none"),
     profile: profileLabel ? {
       label: profileLabel,
       ...(profileLabel === "两段式型" ? {
-        description: "主要移动和后续修正看起来分为两段。",
+        description: t("analysis.profile.twoStageDescription"),
       } : {}),
       confidence: safeNumber(profileRaw.confidence),
       tags: safeStrings(profileRaw.secondary_tags),
@@ -562,31 +576,31 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
   };
 }
 
-const TASK_STATE_TEXT: Record<TaskState, string> = {
-  importing: "正在导入",
-  queued: "等待分析",
-  running: "分析中",
-  done: "已完成",
-  failed: "失败",
-  retrying: "正在重试",
+const TASK_STATE_KEYS: Record<TaskState, MessageKey> = {
+  importing: "history.taskState.importing",
+  queued: "history.taskState.queued",
+  running: "history.taskState.running",
+  done: "history.taskState.done",
+  failed: "history.taskState.failed",
+  retrying: "history.taskState.retrying",
 };
 
-const TASK_PHASE_TEXT: Record<TaskPhase, string> = {
-  preparing_training_record: "准备训练记录",
-  aligning_input_events: "对齐输入事件",
-  computing_kinematics: "计算运动学指标",
-  analyzing_video: "分析视频",
-  generating_diagnostics: "生成诊断",
+const TASK_PHASE_KEYS: Record<TaskPhase, MessageKey> = {
+  preparing_training_record: "history.taskPhase.preparing",
+  aligning_input_events: "history.taskPhase.aligning",
+  computing_kinematics: "history.taskPhase.kinematics",
+  analyzing_video: "history.taskPhase.video",
+  generating_diagnostics: "history.taskPhase.diagnostics",
 };
 
-const FAILURE_DOMAIN_TEXT: Record<TaskFailureDomain, string> = {
-  source_file: "源文件",
-  alignment: "输入对齐",
-  kinematics: "运动学计算",
-  video: "视频分析",
-  provider: "Provider",
-  coach: "Coach",
-  network: "网络",
+const FAILURE_DOMAIN_KEYS: Record<TaskFailureDomain, MessageKey> = {
+  source_file: "history.failureDomain.sourceFile",
+  alignment: "history.failureDomain.alignment",
+  kinematics: "history.failureDomain.kinematics",
+  video: "history.failureDomain.video",
+  provider: "history.failureDomain.provider",
+  coach: "history.failureDomain.coach",
+  network: "history.failureDomain.network",
 };
 
 export interface TaskPresentation {
@@ -622,18 +636,18 @@ export function presentRecordLabel(input: {
       时间戳。默认 false 保持旧行为（Coach 话术、任务卡等调用方不受影响）。 */
   titleOnly?: boolean;
 }): string {
-  const scenario = safePresentationScenario(input.scenario) ?? "未命名场景";
+  const scenario = safePresentationScenario(input.scenario) ?? t("analysis.scenario.unnamed");
   if (input.titleOnly) return scenario;
-  const trainingAt = safePresentationTimestamp(input.trainingAt) ?? "训练时间未知";
-  const analysisText = safePresentationTimestamp(input.analysisCompletedAt) ?? "分析尚未完成";
-  return `${scenario} | 训练：${trainingAt} | 分析：${analysisText}`;
+  const trainingAt = safePresentationTimestamp(input.trainingAt) ?? t("analysis.record.trainingUnknown");
+  const analysisText = safePresentationTimestamp(input.analysisCompletedAt) ?? t("analysis.record.analysisPending");
+  return t("analysis.record.label", { scenario, trainingAt, analysisAt: analysisText });
 }
 
 export function presentTask(task: TaskDetailV1): TaskPresentation {
   return {
-    state: task.state ? TASK_STATE_TEXT[task.state] : "状态不可用",
-    phase: task.phase ? TASK_PHASE_TEXT[task.phase] : null,
-    failureDomain: task.failure ? FAILURE_DOMAIN_TEXT[task.failure.domain] : null,
+    state: task.state ? t(TASK_STATE_KEYS[task.state]) : t("history.status.unavailableFallback"),
+    phase: task.phase ? t(TASK_PHASE_KEYS[task.phase]) : null,
+    failureDomain: task.failure ? t(FAILURE_DOMAIN_KEYS[task.failure.domain]) : null,
     presentationLabel: presentRecordLabel({
       scenario: task.presentation_label?.split(" | ")[0],
       trainingAt: task.training_at,
@@ -686,19 +700,21 @@ export function buildRunAnalysisRequest(input: {
 
 /** 历史时间展示：今天/昨天/M月d日 + HH:mm。 */
 export function formatHistoryDate(iso: string | null | undefined): string {
-  if (!iso) return "时间未知";
+  if (!iso) return t("history.time.unknown");
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   const now = new Date();
   const isSameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
-  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  if (isSameDay(date, now)) return `今天 ${time}`;
-  if (isSameDay(date, yesterday)) return `昨天 ${time}`;
+  // 时间格式跟随当前 locale（zh-CN 14:30 风格，en-US 走本地惯例）。
+  const timeLocale = getLocale() === "en-US" ? "en-US" : "zh-CN";
+  const time = date.toLocaleTimeString(timeLocale, { hour: "2-digit", minute: "2-digit" });
+  if (isSameDay(date, now)) return t("history.time.today", { time });
+  if (isSameDay(date, yesterday)) return t("history.time.yesterday", { time });
   const month = date.getMonth() + 1;
   const day = date.getDate();
-  return `${month}月${day}日 ${time}`;
+  return t("history.time.monthDay", { month, day, time });
 }
 
 /** Coach 分析话术里单条场景名的长度上限；超长截断，run_ref 始终完整保留。 */
@@ -734,33 +750,35 @@ export function buildCoachAnalysisDraft(input: {
       : scenario;
     const when = formatHistoryDate(item.created_at);
     return withScenario && name
-      ? `${name}，${when}（${ref}）`
-      : `${when}（${ref}）`;
+      ? t("coach.draft.itemWithScenario", { name, when, ref })
+      : t("coach.draft.itemTimeOnly", { when, ref });
   };
+  const itemSep = t("coach.draft.itemSeparator");
+  const partSep = t("coach.draft.partSeparator");
+  const tail = t("coach.draft.tail");
   const runRefs = runs.map((run) => run.run_ref);
   const analysisRefs = analyses.map((analysis) => analysis.run_ref);
   const parts: string[] = [];
   if (runs.length > 0) {
-    const lead = runs.length === 1 ? "请分析我这局训练：" : "请分析我这几局训练：";
-    parts.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], true)).join("；")}`);
+    const lead = t(runs.length === 1 ? "coach.draft.analyzeOne" : "coach.draft.analyzeMany");
+    parts.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], true)).join(itemSep)}`);
   }
   if (analyses.length > 0) {
-    const lead = analyses.length === 1 ? "请结合这份分析：" : "请结合这几份分析：";
-    parts.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], true)).join("；")}`);
+    const lead = t(analyses.length === 1 ? "coach.draft.referenceOne" : "coach.draft.referenceMany");
+    parts.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], true)).join(itemSep)}`);
   }
-  const tail = "，讲讲主要问题和改进方向。";
-  const draft = `${parts.join("，")}${tail}`;
+  const draft = `${parts.join(partSep)}${tail}`;
   if (draft.length <= COACH_DRAFT_MAX_LENGTH) return draft;
   const degraded: string[] = [];
   if (runs.length > 0) {
-    const lead = runs.length === 1 ? "请分析我这局训练：" : "请分析我这几局训练：";
-    degraded.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], false)).join("；")}`);
+    const lead = t(runs.length === 1 ? "coach.draft.analyzeOne" : "coach.draft.analyzeMany");
+    degraded.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], false)).join(itemSep)}`);
   }
   if (analyses.length > 0) {
-    const lead = analyses.length === 1 ? "请结合这份分析：" : "请结合这几份分析：";
-    degraded.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], false)).join("；")}`);
+    const lead = t(analyses.length === 1 ? "coach.draft.referenceOne" : "coach.draft.referenceMany");
+    degraded.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], false)).join(itemSep)}`);
   }
-  return `${degraded.join("，")}${tail}`;
+  return `${degraded.join(partSep)}${tail}`;
 }
 
 /**
@@ -769,7 +787,7 @@ export function buildCoachAnalysisDraft(input: {
  * 「让 Coach 分析」话术同构，不承载分析结论本身。
  */
 export function buildAnalysisAutoTeachContent(analysisRef: string): string {
-  return `请结合这份分析：${analysisRef}，讲讲主要问题和改进方向。`;
+  return t("coach.draft.autoTeach", { ref: analysisRef });
 }
 
 /**
@@ -902,25 +920,26 @@ export function buildHistorySections(input: {
   };
 }
 
-const HISTORY_STATUS_TEXT: Record<string, string> = {
-  completed: "\u5df2\u5b8c\u6210",
-  finalized: "\u5df2\u5b8c\u6210",
-  available: "可用",
-  attached: "已关联",
-  partial: "部分结果",
-  not_present: "未提供",
-  source_unavailable: "来源不可用",
-  unavailable: "来源不可用",
-  unsupported: "不支持",
-  offline: "离线",
-  permission_denied: "权限被拒绝",
-  deleted: "引用已删除",
-  missing: "缺失",
-  failed: "失败",
+const HISTORY_STATUS_KEYS: Record<string, MessageKey> = {
+  completed: "history.status.completed",
+  finalized: "history.status.completed",
+  available: "history.status.available",
+  attached: "history.status.attached",
+  partial: "history.status.partial",
+  not_present: "history.status.notPresent",
+  source_unavailable: "history.status.sourceUnavailable",
+  unavailable: "history.status.sourceUnavailable",
+  unsupported: "history.status.unsupported",
+  offline: "history.status.offline",
+  permission_denied: "history.status.permissionDenied",
+  deleted: "history.status.deleted",
+  missing: "history.status.missing",
+  failed: "history.status.failed",
 };
 
 export function getHistoryStatusText(status: string | null | undefined): string {
-  return HISTORY_STATUS_TEXT[status ?? ""] ?? "状态不可用";
+  const key = HISTORY_STATUS_KEYS[status ?? ""];
+  return key === undefined ? t("history.status.unavailableFallback") : t(key);
 }
 
 export interface TrendPresentation {
@@ -929,20 +948,21 @@ export interface TrendPresentation {
   value: number | null;
 }
 
-const TREND_REASON_TEXT: Record<string, string> = {
-  scenario_mismatch: "场景不一致",
-  mode_mismatch: "分析模式不一致",
-  metric_mismatch: "指标不一致",
-  unit_mismatch: "单位不一致",
-  calibration_mismatch: "校准不一致",
-  quality_insufficient: "质量不足",
-  insufficient_history: "可比较记录不足",
+const TREND_REASON_KEYS: Record<string, MessageKey> = {
+  scenario_mismatch: "history.trend.scenarioMismatch",
+  mode_mismatch: "history.trend.modeMismatch",
+  metric_mismatch: "history.trend.metricMismatch",
+  unit_mismatch: "history.trend.unitMismatch",
+  calibration_mismatch: "history.trend.calibrationMismatch",
+  quality_insufficient: "history.trend.qualityInsufficient",
+  insufficient_history: "history.trend.insufficientHistory",
 };
 
 export function getTrendPresentation(trend: HistoryTrend): TrendPresentation {
   if (!trend.comparable || typeof trend.current !== "number") {
-    const reason = TREND_REASON_TEXT[trend.reason ?? ""] ?? "记录不满足比较条件";
-    return { comparable: false, summary: `暂不可比较：${reason}`, value: null };
+    const reasonKey = TREND_REASON_KEYS[trend.reason ?? ""];
+    const reason = reasonKey === undefined ? t("history.trend.notComparableReason") : t(reasonKey);
+    return { comparable: false, summary: t("history.trend.notComparable", { reason }), value: null };
   }
   const unit = trend.unit ? `${trend.unit}` : "";
   const current = `${trend.current}${unit}`;
@@ -950,9 +970,13 @@ export function getTrendPresentation(trend: HistoryTrend): TrendPresentation {
   const delta = typeof trend.delta === "number"
     ? `${trend.delta >= 0 ? "+" : ""}${trend.delta}${unit}`
     : null;
+  // 摘要由三段可整句翻译的片段拼接（当前/· 基线/· 差异），缺段不出现。
+  const summary = t("history.trend.current", { value: current })
+    + (baseline ? t("history.trend.baseline", { value: baseline }) : "")
+    + (delta ? t("history.trend.delta", { value: delta }) : "");
   return {
     comparable: true,
-    summary: `当前 ${current}${baseline ? ` · 基线 ${baseline}` : ""}${delta ? ` · 差异 ${delta}` : ""}`,
+    summary,
     value: trend.current,
   };
 }
@@ -991,18 +1015,19 @@ export interface CoachContextPresentation {
 export function presentCoachContext(
   context: CoachContextRefV1,
 ): CoachContextPresentation {
-  const kindLabels: Record<string, string> = {
-    analysis: "分析记录",
-    comparison: "对比分析",
-    issue: "问题定位",
-    time_range: "时间区间",
-    metric: "指标",
-    evidence_segment: "证据片段",
+  const kindLabelKeys: Record<string, MessageKey> = {
+    analysis: "coach.context.analysis",
+    comparison: "coach.context.comparison",
+    issue: "coach.context.issue",
+    time_range: "coach.context.timeRange",
+    metric: "coach.context.metric",
+    evidence_segment: "coach.context.evidenceSegment",
   };
+  const fallbackKindKey = kindLabelKeys[context.kind];
   return {
     contextRef: context.context_ref,
     kind: context.kind,
-    label: context.label ?? context.analysis_ref ?? kindLabels[context.kind] ?? context.context_ref,
+    label: context.label ?? context.analysis_ref ?? (fallbackKindKey !== undefined ? t(fallbackKindKey) : context.context_ref),
     status: context.status,
     locator: context.locator ?? null,
   };
@@ -1012,9 +1037,9 @@ export function presentStorageCategories(
   categories: StorageCategoryTotals,
 ): Array<[string, number]> {
   return [
-    ["分析产物", categories.analysis_artifacts_bytes],
-    ["Run 录像", categories.run_video_bytes],
-    ["Raw trace", categories.run_raw_bytes],
-    ["未完成采集", categories.incomplete_recovery_bytes],
+    [t("settings.storage.analysisArtifacts"), categories.analysis_artifacts_bytes],
+    [t("settings.storage.runVideo"), categories.run_video_bytes],
+    [t("settings.storage.runRaw"), categories.run_raw_bytes],
+    [t("settings.storage.incomplete"), categories.incomplete_recovery_bytes],
   ];
 }

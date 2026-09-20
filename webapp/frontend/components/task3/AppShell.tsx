@@ -37,7 +37,7 @@ import { ErrorBoundary } from "@/components/task3/ErrorBoundary";
 import { MemberCenter } from "@/components/task3/MemberCenter";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane, invalidateAnalysisPresentationCache } from "@/components/task7/CoachVideoPane";
-import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
+import SessionRail, { NEW_SESSION_TITLE, type SessionRailSession } from "@/components/task7/SessionRail";
 import { startWindowDragging, startWindowDraggingOnBackground, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 import { UpdatePrompt } from "@/components/task3/UpdatePrompt";
 import { Toast, useAnimatedPresence } from "@/ui/primitives";
@@ -690,9 +690,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             providerStatus={capability === "ready" ? "ready" : capability === "loading" ? "loading" : capability === "unavailable" ? "unavailable" : "waiting"}
                     sessions={
                       draftSession
-                        ? [{ id: "draft", title: "新对话", kind: "conversation" }, ...coachSessions]
+                        ? [{ id: "draft", title: NEW_SESSION_TITLE, kind: "conversation" }, ...coachSessions]
                         : handoverSessionId !== null && !coachSessions.some((session) => Number(session.id) === handoverSessionId)
-                          ? [{ id: handoverSessionId, title: "新对话", kind: "conversation" }, ...coachSessions]
+                          ? [{ id: handoverSessionId, title: NEW_SESSION_TITLE, kind: "conversation" }, ...coachSessions]
                           : coachSessions
                     }
           />

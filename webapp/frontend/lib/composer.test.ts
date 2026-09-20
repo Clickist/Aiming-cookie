@@ -15,6 +15,7 @@ import {
   writeCoachDraft,
   writeCoachDraftEnvelope,
 } from "./composer";
+import { translate } from "./i18n/core";
 
 // frontend-parity 批 5（输入框编排）纯助手行为锁定。
 // 规格出处：docs/frontend-parity-research-digests.md §11。
@@ -112,10 +113,10 @@ test("mention candidates dedupe tokens, carry human labels and type hints (0911 
     // 分析候选主标签＝场景 · 对局时间（人话，绝不出现 analysis:N 机器码），
     // 无需类型说明（label 自明）；无元数据回退「分析 #N」。
     { token: "analysis:3", label: "1wall6targets_small · 9月8日 02:58", hint: "" },
-    { token: "analysis:5", label: "分析 #5", hint: "" },
+    { token: "analysis:5", label: translate("zh-CN", "coach.analysis.fallbackLabel", { id: 5 }), hint: "" },
     // 场景候选与分析候选是两种引用（挂载 vs 聊成绩），同名不再互相吞。
-    { token: "1wall6targets_small", label: "1wall6targets_small", hint: "训练场景 · 聊成绩与计划" },
-    { token: "Gridshot", label: "Gridshot", hint: "训练场景 · 聊成绩与计划" },
+    { token: "1wall6targets_small", label: "1wall6targets_small", hint: translate("zh-CN", "coach.mention.scenarioHint") },
+    { token: "Gridshot", label: "Gridshot", hint: translate("zh-CN", "coach.mention.scenarioHint") },
   ]);
 });
 
@@ -145,8 +146,8 @@ test("mention filtering matches token or label case-insensitively", () => {
     analysisIds: [9],
     scenarioNames: ["Gridshot"],
   });
-  assert.deepEqual(filterMentionCandidates(candidates, "grid"), [{ token: "Gridshot", label: "Gridshot", hint: "训练场景 · 聊成绩与计划" }]);
-  assert.deepEqual(filterMentionCandidates(candidates, "ANALYSIS"), [{ token: "analysis:9", label: "分析 #9", hint: "" }]);
+  assert.deepEqual(filterMentionCandidates(candidates, "grid"), [{ token: "Gridshot", label: "Gridshot", hint: translate("zh-CN", "coach.mention.scenarioHint") }]);
+  assert.deepEqual(filterMentionCandidates(candidates, "ANALYSIS"), [{ token: "analysis:9", label: translate("zh-CN", "coach.analysis.fallbackLabel", { id: 9 }), hint: "" }]);
   assert.deepEqual(filterMentionCandidates(candidates, ""), candidates);
 });
 

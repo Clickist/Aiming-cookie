@@ -6,6 +6,7 @@
  * CoachPanel；这里不 import React，便于 node:test 直接覆盖。
  */
 
+import { t } from "./i18n/core";
 import type { CoachQuote } from "./quote";
 
 // ── 运行中队列 chips（item 1）────────────────────────────────────────────
@@ -178,7 +179,7 @@ export function buildMentionCandidates(input: {
     if (!Number.isInteger(id) || id <= 0 || seenTokens.has(`analysis:${id}`)) continue;
     seenTokens.add(`analysis:${id}`);
     const composed = input.analysisLabels?.[id];
-    const label = composed && composed.trim() ? composed.trim() : `分析 #${id}`;
+    const label = composed && composed.trim() ? composed.trim() : t("coach.analysis.fallbackLabel", { id });
     candidates.push({ token: `analysis:${id}`, label, hint: "" });
   }
   for (const name of input.scenarioNames ?? []) {
@@ -186,7 +187,7 @@ export function buildMentionCandidates(input: {
     if (!trimmed || seenTokens.has(trimmed) || seenLabels.has(trimmed)) continue;
     seenTokens.add(trimmed);
     seenLabels.add(trimmed);
-    candidates.push({ token: trimmed, label: trimmed, hint: "训练场景 · 聊成绩与计划" });
+    candidates.push({ token: trimmed, label: trimmed, hint: t("coach.mention.scenarioHint") });
   }
   return candidates;
 }

@@ -176,11 +176,12 @@ test("Capture section hosts the aggregate status dot and the diagnostics export 
 test("Recent capture events translate backend error codes with a pure lib mapping", async () => {
   const lib = await source("lib/capture-events.ts");
   // 典型拍板映射：未在录制 / 覆盖缺口；未知码透传原始码。
-  assert.match(lib, /video_capture_unavailable: "打这局时应用未在录制"/);
-  assert.match(lib, /video_window_invalid: "打这局时应用未在录制"/);
-  assert.match(lib, /trace_raw_window_coverage_gap: "这一时间窗没有输入数据"/);
-  assert.match(lib, /return VIDEO_ERROR_LABELS\[code\] \?\? code;/);
-  assert.match(lib, /return TRACE_ERROR_LABELS\[code\] \?\? code;/);
+  // i18n 批 1：映射值是字典键，查找函数调用时经 t() 解析（zh 默认不变）。
+  assert.match(lib, /video_capture_unavailable: "capture\.error\.notRecording"/);
+  assert.match(lib, /video_window_invalid: "capture\.error\.notRecording"/);
+  assert.match(lib, /trace_raw_window_coverage_gap: "capture\.traceError\.coverageGap"/);
+  assert.match(lib, /const key = VIDEO_ERROR_KEYS\[code\];\s*return key === undefined \? code : t\(key\);/);
+  assert.match(lib, /const key = TRACE_ERROR_KEYS\[code\];\s*return key === undefined \? code : t\(key\);/);
 });
 
 test("Theme, Profile, and Storage sections follow the agreed one-line or grouped layouts", async () => {
@@ -254,9 +255,11 @@ test("Recent capture events render plain rows with a semantic dot and hover deta
   const styles = await source("components/task6/task6-settings.css");
   const lib = await source("lib/capture-events.ts");
   // 状态词上屏、括号里的人话归因收进悬停 title（纯函数拆分，未知不硬造）。
-  assert.match(lib, /export function splitStatusLabel/);
+  // i18n 批 1 解耦：行状态归并吃结构化状态枚举（CaptureEvidenceStatus），
+  // 不再按显示词切全角括号比较。
+  assert.match(lib, /export type CaptureEvidenceStatus/);
   assert.match(lib, /export function summarizeCaptureRunStatus/);
-  assert.match(settings, /summarizeCaptureRunStatus\(described\.videoLabel, described\.traceLabel\)/);
+  assert.match(settings, /summarizeCaptureRunStatus\(described\.videoStatus, described\.traceStatus\)/);
   // 纯行样式：语义色圆点 + 场景名 + 行尾精简状态词；无边框壳。
   assert.match(settings, /className="task6-capture-event-dot"/);
   assert.match(settings, /className="task6-capture-event-status"\>\{status\.word\}/);

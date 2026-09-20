@@ -11,6 +11,7 @@
  * - 余量只出百分比，分档阈值绿 #16875b / 橙 #e8930c / 红 #c53442（<10% 红，10~30% 橙）。
  */
 
+import { t } from "./i18n/core";
 import type { MemberMe, MemberPool } from "./types";
 
 /** deep-link scheme（契约 §3.1，固定小写）。 */
@@ -127,87 +128,90 @@ export function subscriptionEnded(me: MemberMe | null): boolean {
 //
 // 用词红线：全表禁用「云教练」（教练跑在用户本地，订阅卖的是模型额度）；
 // 金额只出现在加油包固定标价「加油包 ¥10」（线框原文），其余一律只出百分比。
+//
+// i18n 批 1：文案本体已入 lib/i18n/zh-CN.ts（member.* 命名空间）。本对象保留
+// 原属性名做兼容门面——纯文本属性用 getter、模板属性保持函数，取值时经 t()
+// 解析当前 locale，不在模块加载期固化。
 
 export const MEMBER_COPY = {
   /** ① 下拉里的会员档条目（线框 ① 的菜单项文案拆成主名 + 副行）。 */
-  providerDropdownLabel: "Aiming Cookie（推荐）",
-  providerDropdownHint: "账号订阅，登录即用",
+  get providerDropdownLabel() { return t("member.provider.relayLabel"); },
+  get providerDropdownHint() { return t("member.dropdown.hint"); },
   /** ①a 等待页。 */
-  waitingTitle: "正在浏览器中打开登录与订阅页面…",
-  waitingBody: "在网页里完成登录和套餐订阅后，本页会自动继续。",
-  waitingReopenHint: "没有自动跳转？",
-  reopenBrowser: "重新打开浏览器页面",
+  get waitingTitle() { return t("member.waiting.title"); },
+  get waitingBody() { return t("member.waiting.body"); },
+  get waitingReopenHint() { return t("member.waiting.reopenHint"); },
+  get reopenBrowser() { return t("member.waiting.reopenBrowser"); },
   /** ①a 连通成功行（模型名固定，来自模型锁）。 */
-  connected: "订阅完成 · 已连接 Aiming Cookie · deepseek-v4-flash",
+  get connected() { return t("member.waiting.connected"); },
   /** ①b 态1 未订阅。 */
-  notSubscribedPrefix: "已登录",
-  notSubscribedSuffix: "还差订阅",
-  notSubscribedBody: "检测到账号暂无有效订阅。",
-  notSubscribedBodyLine2: "完成订阅后本页自动继续。",
-  openSubscribePage: "打开订阅页面（Standard / Plus）",
+  get notSubscribedPrefix() { return t("member.notSubscribed.prefix"); },
+  get notSubscribedSuffix() { return t("member.notSubscribed.suffix"); },
+  get notSubscribedBody() { return t("member.notSubscribed.body"); },
+  get notSubscribedBodyLine2() { return t("member.notSubscribed.bodyLine2"); },
+  get openSubscribePage() { return t("member.notSubscribed.openPage"); },
   /** ①b 态2 老会员直连。 */
-  alreadyMember: "已是 Standard 会员 · 直接连接",
-  alreadyMemberBody: "检测到有效订阅，跳过购买步骤。",
-  alreadyMemberBodyLine2: "换机 / 重装同样走这里。",
+  get alreadyMember() { return t("member.already.headline"); },
+  get alreadyMemberBody() { return t("member.already.body"); },
+  get alreadyMemberBodyLine2() { return t("member.already.bodyLine2"); },
   /** ①b 态3 连通失败。 */
-  testFailed: "登录成功，但连接测试未通过",
-  testFailedBody: "网络异常或服务暂不可用。",
-  testFailedBodyLine2: "账号与订阅不受影响，稍后重试即可。",
-  retryConnect: "重试连接",
+  get testFailed() { return t("member.testFailed.headline"); },
+  get testFailedBody() { return t("member.testFailed.body"); },
+  get testFailedBodyLine2() { return t("member.testFailed.bodyLine2"); },
+  get retryConnect() { return t("member.testFailed.retry"); },
   /** 通用。 */
-  continueLabel: "继续 →",
-  useByok: "改用自定义 Provider（BYOK）",
+  get continueLabel() { return t("member.common.continue"); },
+  get useByok() { return t("member.common.useByok"); },
   /** ⑨ 两态。 */
-  boosterActive: (date: string, pct: number) => `订阅已于 ${date} 到期。正在使用加油包余量（${pct}%）；重新订阅后自动回到订阅额度。`,
-  connectionLost: (date: string) =>
-    `Aiming Cookie 连接已断开：订阅已结束且加油包已用完（${date}）。历史与设置全部保留。点击左下角账户可重新订阅；也可以在设置中改用 BYOK。`,
+  boosterActive: (date: string, pct: number) => t("member.notice.boosterActive", { date, pct }),
+  connectionLost: (date: string) => t("member.notice.connectionLost", { date }),
   /** ⑧ 扣款失败黄条。 */
-  dunning: (date: string) => `本次自动续费未成功（${date}）：7 天内会自动重试，期间一切照常。可更新支付方式。`,
+  dunning: (date: string) => t("member.notice.dunning", { date }),
   /** ④ 双池皆空。 */
-  quotaExhausted: "本期额度已用完。点击左下角账户可充值或管理订阅；也可以在设置中改用 BYOK。",
+  get quotaExhausted() { return t("member.quota.exhausted"); },
   /** ④b 没配过 BYOK：与④同一模式的指路。 */
-  noProvider: "未连接模型服务。在 设置 → 模型服务 中连接 Aiming Cookie 或自定义 Provider 后即可使用 Coach。",
+  get noProvider() { return t("member.noProvider.full"); },
   /** chip 行的短形（②b 尺寸内）。 */
-  noProviderShort: "未连接模型服务",
-  remainPrefix: "余量",
-  endedChipLabel: "订阅已到期",
-  endedChip: "订阅已结束 · 余量 0%",
+  get noProviderShort() { return t("member.noProvider.short"); },
+  get remainPrefix() { return t("member.chip.remain"); },
+  get endedChipLabel() { return t("member.chip.endedLabel"); },
+  get endedChip() { return t("member.chip.ended"); },
   /** ②c 用户中心（线框照抄）。 */
-  centerTitle: "用户中心",
-  memberActive: (plan: string) => `${plan} 会员 · 生效中`,
-  memberCanceled: (plan: string) => `${plan} 会员 · 已取消`,
-  autoRenew: (date: string) => `下期自动续费 ${date}`,
-  usableUntil: (date: string) => `额度可用至 ${date}`,
-  quotaPerCycle: "额度每周期发放 · 连续包月",
-  cycleStillUsable: (date: string) => `本期仍可正常使用 · ${date} 后不再续费`,
-  boosterRow: "🍪 加油包 · 永不过期",
-  boosterRemain: (pct: number) => `余量 ${pct}%`,
-  manageSubscription: "管理订阅 / 取消自动续费",
-  resumeSubscription: "恢复自动续费",
-  requestRefund: "申请退款",
-  boosterBuy: "加油包 ¥10",
-  boosterBuyBody: "订阅额度不够时加购；烧完才可买下一包，买过的永不过期。",
-  boosterBuyDisabled: "当前加油包还有余量",
-  accountCard: "账户",
-  accountEmail: "邮箱",
-  accountPlan: "套餐",
-  planOngoing: (plan: string) => `${plan} · 连续包月`,
-  planEndingHere: (plan: string) => `${plan} · 本期结束后终止`,
+  get centerTitle() { return t("member.center.title"); },
+  memberActive: (plan: string) => t("member.center.memberActive", { plan }),
+  memberCanceled: (plan: string) => t("member.center.memberCanceled", { plan }),
+  autoRenew: (date: string) => t("member.center.autoRenew", { date }),
+  usableUntil: (date: string) => t("member.center.usableUntil", { date }),
+  get quotaPerCycle() { return t("member.center.quotaPerCycle"); },
+  cycleStillUsable: (date: string) => t("member.center.cycleStillUsable", { date }),
+  get boosterRow() { return t("member.center.boosterRow"); },
+  boosterRemain: (pct: number) => t("member.center.boosterRemain", { pct }),
+  get manageSubscription() { return t("member.center.manageSubscription"); },
+  get resumeSubscription() { return t("member.center.resumeSubscription"); },
+  get requestRefund() { return t("member.center.requestRefund"); },
+  get boosterBuy() { return t("member.center.boosterBuy"); },
+  get boosterBuyBody() { return t("member.center.boosterBuyBody"); },
+  get boosterBuyDisabled() { return t("member.center.boosterBuyDisabled"); },
+  get accountCard() { return t("member.center.accountCard"); },
+  get accountEmail() { return t("member.center.accountEmail"); },
+  get accountPlan() { return t("member.center.accountPlan"); },
+  planOngoing: (plan: string) => t("member.center.planOngoing", { plan }),
+  planEndingHere: (plan: string) => t("member.center.planEndingHere", { plan }),
   /** ④b 退出登录：按钮 + 下方说明小字（订阅额度停用，BYOK 自动接管）。 */
-  logoutButton: "退出登录",
-  logoutNote: "订阅额度停用，自动转用已配置的 BYOK",
+  get logoutButton() { return t("member.logout.button"); },
+  get logoutNote() { return t("member.logout.note"); },
   /** JWT 失效（契约 §5.3：401 jwt_expired → 静默降级未登录 + Coach 引导重登）。 */
-  jwtExpired: "登录状态已过期，请在左下角账户重新登录后继续使用 Coach。",
+  get jwtExpired() { return t("member.jwt.expired"); },
   /** ②c 失效态（⑨ 同源：订阅已结束，加油包仍可烧完）与未订阅态。 */
-  memberEnded: (plan: string) => `${plan} 会员 · 已结束`,
-  endedAt: (date: string) => `结束于 ${date}`,
-  cycleEnded: "订阅额度已停用 · 加油包余额仍可用",
-  resubscribe: "重新订阅",
-  resubscribeHint: "↑ 在系统浏览器打开订阅页（重新订阅后自动回到订阅额度）",
-  webHint: "↑ 两项在系统浏览器打开（账号中心 · 账单子页）",
-  planEnded: (plan: string) => `${plan} · 已结束`,
-  notSubscribedTitle: "已登录 · 未订阅",
-  notSubscribedCenterBody: "完成订阅后本客户端自动接入教练额度；也可以继续用自定义 Provider（BYOK）。",
+  memberEnded: (plan: string) => t("member.ended.headline", { plan }),
+  endedAt: (date: string) => t("member.ended.at", { date }),
+  get cycleEnded() { return t("member.ended.cycleEnded"); },
+  get resubscribe() { return t("member.ended.resubscribe"); },
+  get resubscribeHint() { return t("member.ended.resubscribeHint"); },
+  get webHint() { return t("member.ended.webHint"); },
+  planEnded: (plan: string) => t("member.ended.planEnded", { plan }),
+  get notSubscribedTitle() { return t("member.center.notSubscribedTitle"); },
+  get notSubscribedCenterBody() { return t("member.center.notSubscribedBody"); },
 } as const;
 
 /** 邮箱掩码（线框 `u***@gmail.com`）：保留首字符与域名。 */
@@ -298,6 +302,11 @@ export interface MemberChipView {
  * - BYOK：`⚙ <所选 Provider 名> · 已连接`（不显示模型名）；未登录 → `登录 / 注册 ›`；
  * - 都没配：`未连接模型服务`（④b 右态）。
  */
+/** BYOK 引擎行整句进字典（两形态：已连接 / 未连接），不做后缀拼接手术。 */
+function byokEngineLine(byok: { providerName: string; connected: boolean }): string {
+  return t(byok.connected ? "member.chip.byokConnected" : "member.chip.byok", { provider: byok.providerName });
+}
+
 export function memberChipView(
   me: MemberMe | null,
   byok: { providerName: string; connected: boolean } | null,
@@ -318,7 +327,7 @@ export function memberChipView(
       const boostPct = me.pools.boost?.pct ?? 0;
       return {
         email: maskEmail(me.user.email),
-        status: `${MEMBER_COPY.endedChipLabel} · 加油包 ${boostPct}%`,
+        status: t("member.chip.endedBooster", { pct: boostPct }),
         tone: "warn",
         relink: false,
         kind: "member",
@@ -328,7 +337,7 @@ export function memberChipView(
       // 已登录但从未订阅（①b 态1 之后没有再买）：与 BYOK 同样只显示身份。
       return {
         email: maskEmail(me.user.email),
-        status: byok ? `⚙ ${byok.providerName}${byok.connected ? " · 已连接" : ""}` : MEMBER_COPY.noProviderShort,
+        status: byok ? byokEngineLine(byok) : MEMBER_COPY.noProviderShort,
         tone: "default",
         relink: false,
         kind: "byok",
@@ -336,7 +345,7 @@ export function memberChipView(
     }
     return {
       email: maskEmail(me.user.email),
-      status: `${planLabel(me.plan)} · ${MEMBER_COPY.remainPrefix} ${pct}%`,
+      status: t("member.chip.planRemain", { plan: planLabel(me.plan), pct }),
       tone: poolTier(pct) === "low" ? "error" : poolTier(pct) === "warn" ? "warn" : "default",
       relink: false,
       kind: "member",
@@ -345,7 +354,7 @@ export function memberChipView(
   if (byok) {
     return {
       email: null,
-      status: `⚙ ${byok.providerName}${byok.connected ? " · 已连接" : ""}`,
+      status: byokEngineLine(byok),
       tone: "default",
       relink: false,
       kind: "byok",

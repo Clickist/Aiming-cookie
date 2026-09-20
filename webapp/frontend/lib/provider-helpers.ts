@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { t } from "./i18n/core";
 import type {
   CustomProviderKind,
   CustomProviderModel,
@@ -16,8 +17,13 @@ export function isCustomProviderKind(kind: string): kind is CustomProviderKind {
 /** Aiming Cookie 会员档（sidecar 注入的托管内置 Provider，账号订阅制，WP-C 升级）。 */
 export const OFFICIAL_RELAY_PROVIDER_ID = "aiming-cookie-relay";
 
-/** 会员档显示名（线框 ①：置顶推荐、账号订阅，登录即用）。 */
-export const OFFICIAL_RELAY_PROVIDER_LABEL = "Aiming Cookie（推荐）";
+/** 会员档显示名的字典键（线框 ①：置顶推荐、账号订阅，登录即用）；经 officialRelayProviderLabel() 解析。 */
+export const OFFICIAL_RELAY_PROVIDER_LABEL_KEY = "member.provider.relayLabel";
+
+/** 会员档显示名（调用时经 t() 解析当前 locale）。 */
+export function officialRelayProviderLabel(): string {
+  return t(OFFICIAL_RELAY_PROVIDER_LABEL_KEY);
+}
 
 /** 会员档识别：详情走会员专属模板（套餐/余量/管理按钮），无 Base URL / API key 行。 */
 export function isOfficialRelayProfile(profile: { provider_id?: string | null; kind: string }): boolean {
@@ -79,7 +85,7 @@ export function useCustomModelDiscovery(options: {
             setState("loaded");
           } else {
             setState("manual");
-            setMessage("这个 Provider 没有返回可选 Model ID，请手动填写。");
+            setMessage(t("settings.provider.discovery.emptyModels"));
           }
         })
         .catch(() => {
@@ -88,7 +94,7 @@ export function useCustomModelDiscovery(options: {
           setNeedsProtocolChoice(true);
           setProtocolConfirmed(false);
           setState("manual");
-          setMessage("无法自动识别接口协议或读取模型列表，请选择协议后手动填写 Model ID。");
+          setMessage(t("settings.provider.discovery.protocolFailed"));
           setError(true);
         });
     }, 500);

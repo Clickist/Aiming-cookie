@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
+import { t } from "./i18n/core";
+
 import type { DesktopCaptureCoordinatorStatus, ScenarioOpenResultV1 } from "./types";
 
 export interface DesktopRuntimeConnection {
@@ -57,7 +59,7 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
     throw new Error("Capture diagnostics are only available in the desktop app");
   }
   const path = await save({
-    title: "导出运行日志",
+    title: t("desktop.dialog.exportLogs"),
     defaultPath: "aiming-cookie-capture-diagnostics.json",
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
@@ -113,7 +115,7 @@ export async function openKovaakScenario(
       status: "scenario_unmapped",
       scenario_name: null,
       display_name: null,
-      message: "本机 KovaaK 没有这个场景，需要先订阅/下载。",
+      message: t("desktop.kovaak.scenarioUnmapped"),
     };
   }
   if (!isDesktopRuntime()) {
@@ -121,7 +123,7 @@ export async function openKovaakScenario(
       status: "desktop_unavailable",
       scenario_name: trimmed,
       display_name: null,
-      message: "当前网页预览不能启动 KovaaK，请在桌面版中操作",
+      message: t("desktop.kovaak.webPreviewBlocked"),
     };
   }
   return invoke<ScenarioOpenResultV1>("scenario_open", {
@@ -147,11 +149,11 @@ async function pickSinglePath(
 }
 
 export function pickDesktopVideoPath(): Promise<string | null> {
-  return pickSinglePath("选择 MP4 录像", "mp4");
+  return pickSinglePath(t("desktop.dialog.pickVideo"), "mp4");
 }
 
 export function pickDesktopCsvPath(): Promise<string | null> {
-  return pickSinglePath("选择 KovaaK Stats CSV", "csv");
+  return pickSinglePath(t("desktop.dialog.pickCsv"), "csv");
 }
 
 /** Native folder selection for local KovaaK Stats and Performance locations. */

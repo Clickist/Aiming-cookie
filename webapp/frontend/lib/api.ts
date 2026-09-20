@@ -11,6 +11,7 @@ import {
   isDesktopRuntime,
   resetDesktopRuntimeConnection,
 } from "./desktop";
+import { t } from "./i18n/core";
 import type { IntroSessionCreated, IntroSessionStatus } from "./intro-session";
 import type {
   AnalyzeResponse,
@@ -1530,7 +1531,7 @@ export class KnowledgePackImportError extends Error {
   readonly details: string[];
 
   constructor(errorCode: string, details: string[]) {
-    super(details[0] ?? "知识包校验未通过");
+    super(details[0] ?? t("knowledge.import.defaultError"));
     this.name = "KnowledgePackImportError";
     this.errorCode = errorCode;
     this.details = details;

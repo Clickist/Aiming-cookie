@@ -11,10 +11,30 @@
  * ③ 引用块随草稿持久化（draft envelope v2，见 lib/composer.ts）。
  */
 
+import { DICTIONARIES, t, type MessageKey } from "./i18n/core";
+
 // ── 常量 ────────────────────────────────────────────────────────────────
 
-/** 引文段头部。刻意不用 `#` 标题——批 7 归一化会剥除标题记号（调研 §3.4）。 */
-export const QUOTE_HEADER = "[引用 Coach]";
+/** 引文段头部字典键（i18n 批 1）：compose 按当前 locale 生成，渲染经 quoteHeader()。 */
+export const QUOTE_HEADER_KEY: MessageKey = "coach.quote.header";
+
+/**
+ * 引文段头部的全部已知变体（各 locale 的字典值；静态字典在模块加载期读取
+ * 不算固化 locale 状态）。parse 对它们全部放行，保证历史消息跨 locale 回显。
+ */
+const QUOTE_HEADER_VARIANTS: readonly string[] = Object.values(DICTIONARIES).map(
+  (dict) => dict[QUOTE_HEADER_KEY],
+);
+
+/** 当前 locale 的引文段头部（渲染与拼装用）。刻意不用 `#` 标题——批 7
+    归一化会剥除标题记号（调研 §3.4）。 */
+export function quoteHeader(): string {
+  return t(QUOTE_HEADER_KEY);
+}
+
+function isQuoteHeaderLine(line: string): boolean {
+  return QUOTE_HEADER_VARIANTS.includes(line);
+}
 /** blockquote 逐行前缀；模型的母语标记，边界清晰。 */
 export const QUOTE_PREFIX = "> ";
 /** 单条引文长度上限（UTF-16 码元，与 sidecar slice 语义一致）；超长拒收并提示。 */
@@ -90,7 +110,7 @@ export function composeQuotedContent(input: { quotes: readonly CoachQuote[]; tex
   if (quotes.length === 0) return body;
   const sections = quotes.map((quote) =>
     [
-      QUOTE_HEADER,
+      quoteHeader(),
       ...quote.text.split("\n").map((line) => (line.length > 0 ? `${QUOTE_PREFIX}${line}` : ">")),
     ].join("\n"),
   );
@@ -107,11 +127,11 @@ const MALFORMED: ParsedQuotedContent = { quotes: [], text: "" };
  * 文本天然不匹配开头链，原样透出向后兼容。
  */
 export function parseQuotedContent(content: string): ParsedQuotedContent {
-  if (!content.startsWith(QUOTE_HEADER)) return { quotes: [], text: content };
+  if (!QUOTE_HEADER_VARIANTS.some((header) => content.startsWith(header))) return { quotes: [], text: content };
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const quotes: string[] = [];
   let i = 0;
-  while (i < lines.length && lines[i] === QUOTE_HEADER) {
+  while (i < lines.length && isQuoteHeaderLine(lines[i]!)) {
     i += 1;
     const quoteLines: string[] = [];
     while (i < lines.length && (lines[i] === ">" || lines[i].startsWith(QUOTE_PREFIX))) {

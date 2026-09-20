@@ -7,6 +7,8 @@
  * 无 React 依赖；顺序语义与输入数组一致（前 3 个平铺，其余按原顺序进菜单）。
  */
 
+import { t } from "./i18n/core";
+
 /** 已完成 chip 的平铺上限；超出部分折叠进下拉菜单。 */
 export const DISCUSSION_BAR_MAX_PINNED = 3;
 
@@ -19,12 +21,15 @@ export interface DiscussionChip {
 /**
  * chip 文案与既有 chip 完全一致：场景名缺失回落「分析 #id」，run 号存在时
  * 以「 · run N」缀在场景名后（CoachPanel 讨论条的原拼装规则原样收口）。
+ * i18n 批 1：回落标签与 run 后缀走字典（coach.analysis/discussion 命名空间）。
  */
 export function discussionChipLabel(
   id: number,
   info: { scenario: string | null; runId: number | null } | undefined,
 ): string {
-  return `${info?.scenario ?? `分析 #${id}`}${info?.runId != null ? ` · run ${info.runId}` : ""}`;
+  const base = info?.scenario ?? t("coach.analysis.fallbackLabel", { id });
+  const suffix = info?.runId != null ? t("coach.discussion.runSuffix", { runId: info.runId }) : "";
+  return `${base}${suffix}`;
 }
 
 /**

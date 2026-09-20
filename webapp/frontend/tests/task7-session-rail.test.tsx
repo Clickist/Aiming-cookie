@@ -19,6 +19,18 @@ test("SessionRail stays a prop-driven, client-only surface", async () => {
   assert.doesNotMatch(component, /fetch\(/);
 });
 
+test("draft sessions are recognized via the shared NEW_SESSION_TITLE sentinel, not bare literals (i18n 批 1 解耦)", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  const shell = await source("components/task3/AppShell.tsx");
+  // 哨兵只有一个事实源：SessionRail 导出常量，AppShell 造草稿 title 引用它；
+  // 批 5 抽串时把展示接字典，也不得回退成字面量匹配。
+  assert.match(component, /export const NEW_SESSION_TITLE = "新对话";/);
+  assert.match(component, /title !== NEW_SESSION_TITLE/);
+  assert.match(component, /title === NEW_SESSION_TITLE && !preview/);
+  assert.match(shell, /title: NEW_SESSION_TITLE/);
+  assert.doesNotMatch(shell, /title: "新对话"/);
+});
+
 test("SessionRail groups sessions into 今天/昨天/近 7 天/更早 with static headers", async () => {
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");

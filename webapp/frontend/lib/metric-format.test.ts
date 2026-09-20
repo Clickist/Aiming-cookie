@@ -5,9 +5,9 @@ import {
   projectEvidenceSegmentButtons,
   projectPeakFallbackButtons,
   projectTimelineMarkers,
-  SEGMENT_KIND_LABELS,
   SIGNAL_SEGMENT_FALLBACK_LIMIT,
 } from "./metric-format";
+import { translate } from "./i18n/core";
 import type { TimelineEvent } from "./types";
 
 // P1 事件上轴：标记数据契约 { timeMs, type, label } 的投影行为锁定。
@@ -132,7 +132,7 @@ test("P2 authoritative windows map evidence-segments into ordered segment button
   );
   assert.deepEqual(
     buttons.map((button) => [button.startMs, button.endMs, button.kindLabel]),
-    [[750, 2250, SEGMENT_KIND_LABELS.improved], [8882, 10382, SEGMENT_KIND_LABELS.worst]],
+    [[750, 2250, translate("zh-CN", "metric.segment.improved")], [8882, 10382, translate("zh-CN", "metric.segment.worst")]],
   );
 });
 
@@ -279,7 +279,7 @@ test("P2 segment mapping fails closed on unusable playback windows and unknown k
   ]));
   assert.deepEqual(
     buttons.map((button) => [button.id, button.kindLabel]),
-    [["analysis:42:segment:z:7", "exotic"], ["analysis:42:segment:w:6", "片段"]],
+    [["analysis:42:segment:z:7", "exotic"], ["analysis:42:segment:w:6", translate("zh-CN", "metric.segment.fallback")]],
   );
 });
 

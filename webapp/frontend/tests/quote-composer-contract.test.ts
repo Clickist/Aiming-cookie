@@ -119,7 +119,8 @@ test("composer renders removable locked quote blocks in the slot above the texta
   const listChunk = panel.slice(listAt, inputAt);
   // 多条并存、来源标注 + 锁定文本体 + 整块删除
   assert.match(listChunk, /quotes\.map\(\(quote\) => \(/);
-  assert.match(listChunk, /引用 Coach<\/span>/);
+  // i18n 批 1：引文段头部经 quoteHeader() 取字典值（zh=[引用 Coach]）。
+  assert.match(listChunk, /\{quoteHeader\(\)\}<\/span>/);
   assert.match(listChunk, /title=\{quote\.text\}\>\{quote\.text\}/);
   assert.match(listChunk, /label="删除这条引用" onClick=\{\(\) => removeQuote\(quote\.id\)\}/);
 });

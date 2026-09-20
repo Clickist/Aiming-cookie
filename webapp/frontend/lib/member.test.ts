@@ -19,6 +19,8 @@ import {
   poolTier,
   subscriptionEnded,
 } from "./member";
+import { translate } from "./i18n/core";
+import { zhCN } from "./i18n/zh-CN";
 import type { MemberMe } from "./types";
 
 function me(overrides: Partial<MemberMe> = {}): MemberMe {
@@ -140,7 +142,7 @@ test("bothPoolsEmpty only fires when both pools are truly drained (④ trigger)"
 test("member chip shows plan + current pool percentage and colors by tier", () => {
   assert.deepEqual(memberChipView(me(), null), {
     email: "u***@gmail.com",
-    status: "Standard · 余量 62%",
+    status: translate("zh-CN", "member.chip.planRemain", { plan: "Standard", pct: 62 }),
     tone: "default",
     relink: false,
     kind: "member",
@@ -156,7 +158,7 @@ test("member chip switches to the booster line when the subscription ended but t
     current_pool: "boost",
     pools: { sub: { remaining: 0, grant: 6_250_000, pct: 0 }, boost: { remaining: 2_812_500, grant: 6_250_000, pct: 45 } },
   }), null);
-  assert.equal(view.status, "订阅已到期 · 加油包 45%");
+  assert.equal(view.status, translate("zh-CN", "member.chip.endedBooster", { pct: 45 }));
   assert.equal(view.tone, "warn");
   assert.equal(view.relink, false);
 });
@@ -175,7 +177,7 @@ test("member chip shows the disconnected line and a re-subscribe entry when ever
 
 test("BYOK chip shows the selected provider name and never a model name", () => {
   const view = memberChipView(null, { providerName: "DeepSeek 官方", connected: true });
-  assert.equal(view.status, "⚙ DeepSeek 官方 · 已连接");
+  assert.equal(view.status, translate("zh-CN", "member.chip.byokConnected", { provider: "DeepSeek 官方" }));
   assert.equal(view.kind, "byok");
   assert.equal(view.email, null);
   assert.doesNotMatch(view.status ?? "", /deepseek-v4|模型|model/i);
@@ -210,11 +212,16 @@ test("gateway notice copy stays inside the zero-commercialization rule", () => {
 // ── 文案与格式化 ─────────────────────────────────────────────────────────
 
 test("member copy never says 云教练 and never quotes a price", () => {
-  const flat = JSON.stringify(MEMBER_COPY);
+  // i18n 批 1：文案本体入字典（member.* 命名空间），零商业化红线跟着字典走；
+  // MEMBER_COPY 门面经 getter 引用同一事实源。
+  const flat = JSON.stringify(Object.fromEntries(
+    Object.entries(zhCN).filter(([key]) => key.startsWith("member.")),
+  ));
   assert.doesNotMatch(flat, /云教练/);
   // ②c 里唯一的金额型文案是加油包固定 ¥10 标价（线框原文），其余不出现价格。
   const withoutBoosterLabel = flat.replace(/加油包 ¥10/g, "");
   assert.doesNotMatch(withoutBoosterLabel, /¥/);
+  assert.equal(MEMBER_COPY.boosterBuy, translate("zh-CN", "member.center.boosterBuy"));
 });
 
 test("email masking and date formatting match the wireframe shapes", () => {

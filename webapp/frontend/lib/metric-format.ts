@@ -6,47 +6,55 @@
  * and limitation copy render identically everywhere.
  */
 
+import { t, type MessageKey } from "./i18n/core";
 import type { AnalysisMetricPresentation } from "./contracts";
 import type { FrontendEvidenceSegmentsV1, TimelineEvent } from "./types";
 
-/* 事件与行类型的自然语言命名（原稿「事件命名」面板 + 分布图） */
-export const EVENT_KIND_LABELS: Record<string, string> = {
-  kill: "击杀",
-  miss: "未命中",
-  peak: "速度峰值",
-  corrective: "修正动作",
-  transition: "开始切换",
-  next_target_acquired: "到达下一目标",
-  settle: "稳定完成",
-  switch_chain: "目标切换链",
-  static_flick: "单次 Flick",
-  tracking_fixed_window: "固定跟踪窗口",
-  tracking_episode: "跟踪片段",
-  tracking_change_response: "观测到的变向响应",
-  tracking_loss: "偏离",
-  tracking_reacquisition: "重新捕获",
-  low_confidence: "低可信度观测",
+/* 事件与行类型的自然语言命名（原稿「事件命名」面板 + 分布图）。
+   i18n 批 1：表值是字典键，经 eventKindLabel() 在调用时解析。 */
+const EVENT_KIND_KEYS: Record<string, MessageKey> = {
+  kill: "metric.eventKind.kill",
+  miss: "metric.eventKind.miss",
+  peak: "metric.eventKind.peak",
+  corrective: "metric.eventKind.corrective",
+  transition: "metric.eventKind.transition",
+  next_target_acquired: "metric.eventKind.nextTargetAcquired",
+  settle: "metric.eventKind.settle",
+  switch_chain: "metric.eventKind.switchChain",
+  static_flick: "metric.eventKind.staticFlick",
+  tracking_fixed_window: "metric.eventKind.trackingFixedWindow",
+  tracking_episode: "metric.eventKind.trackingEpisode",
+  tracking_change_response: "metric.eventKind.trackingChangeResponse",
+  tracking_loss: "metric.eventKind.trackingLoss",
+  tracking_reacquisition: "metric.eventKind.trackingReacquisition",
+  low_confidence: "metric.eventKind.lowConfidence",
 };
 
-export const LIMITATION_LABELS: Record<string, string> = {
-  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
-  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
-  "Unknown or multi-target scenarios remain fail-closed.": "未知场景或多目标布局不生成此类结论。",
-  "Unknown hashes and concurrent target layouts are not classified by this entry.": "未知场景或多目标布局不生成此类结论。",
-  alignment_latency_reported_separately: "对齐延迟单独报告，不等同于跟随滞后。",
-  capture_alignment_descriptor_not_human_response: "这是采集对齐描述，不能分离具体响应来源。",
-  descriptive_correction_burden: "仅描述修正负担，不作为机制结论。",
-  descriptive_smoothness_not_a_mechanism: "平滑度只作描述，不解释成因。",
-  not_inferred_from_capture_alignment_or_tracking_samples: "当前证据不足以分离具体响应来源。",
-  player_aim_motion_unavailable_fixed_viewport_center: "固定视口录制无法分离玩家视角运动。",
-  tracking_sparc_requires_uniform_window_and_accuracy_guardrail: "该平滑度指标需要均匀时间窗与准确度门槛。",
-  visual_quality_limited: "视觉质量受限",
-  visual_quality_profile_unavailable: "视觉质量验证不可用",
-  visual_quality_below_threshold: "视觉质量未达到分析门槛",
-  target_relative_channels_unavailable: "缺少安全的目标相对误差通道",
-  target_relative_target_ambiguous: "目标身份无法可靠确定",
-  target_relative_samples_unavailable: "目标相对误差样本不可用",
-  no_target_visible: "个别帧未检测到目标",
+/** 事件类型 → 展示词；未知类型原样透传（不编造）。 */
+export function eventKindLabel(kind: string): string {
+  const key = EVENT_KIND_KEYS[kind];
+  return key === undefined ? kind : t(key);
+}
+
+const LIMITATION_KEYS: Record<string, MessageKey> = {
+  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "metric.limitation.exactScenarioGate",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "metric.limitation.exactScenarioGate",
+  "Unknown or multi-target scenarios remain fail-closed.": "metric.limitation.unknownMultiTargetFailClosed",
+  "Unknown hashes and concurrent target layouts are not classified by this entry.": "metric.limitation.unknownMultiTargetFailClosed",
+  alignment_latency_reported_separately: "metric.limitation.alignmentLatencySeparate",
+  capture_alignment_descriptor_not_human_response: "metric.limitation.captureAlignmentNotResponse",
+  descriptive_correction_burden: "metric.limitation.descriptiveCorrectionBurden",
+  descriptive_smoothness_not_a_mechanism: "metric.limitation.descriptiveSmoothness",
+  not_inferred_from_capture_alignment_or_tracking_samples: "metric.limitation.notInferredFromAlignment",
+  player_aim_motion_unavailable_fixed_viewport_center: "metric.limitation.fixedViewportCenter",
+  tracking_sparc_requires_uniform_window_and_accuracy_guardrail: "metric.limitation.sparcGuardrail",
+  visual_quality_limited: "metric.limitation.visualQualityLimited",
+  visual_quality_profile_unavailable: "metric.limitation.visualQualityProfileUnavailable",
+  visual_quality_below_threshold: "metric.limitation.visualQualityBelowThreshold",
+  target_relative_channels_unavailable: "metric.limitation.targetRelativeChannelsUnavailable",
+  target_relative_target_ambiguous: "metric.limitation.targetRelativeAmbiguous",
+  target_relative_samples_unavailable: "metric.limitation.targetRelativeSamplesUnavailable",
+  no_target_visible: "metric.limitation.noTargetVisible",
 };
 
 export function metricReference(metric: AnalysisMetricPresentation): string {
@@ -63,11 +71,11 @@ export function metricDescription(metric: AnalysisMetricPresentation): string | 
 
 export function metricSourceText(metric: AnalysisMetricPresentation): string {
   if (metric.sources.some((source) => source.includes("tracking-analysis"))) return "tracking-analysis";
-  return metric.sources.join("、") || "未标注来源";
+  return metric.sources.join(t("metric.source.joinSeparator")) || t("metric.source.unlabeled");
 }
 
 export function valueText(metric: AnalysisMetricPresentation): string {
-  if (metric.value === null) return "不可用";
+  if (metric.value === null) return t("metric.value.unavailable");
   const value = typeof metric.value === "number" ? Number(metric.value.toFixed(3)) : metric.value;
   const referenceKey = metricReference(metric);
   if (
@@ -76,23 +84,26 @@ export function valueText(metric: AnalysisMetricPresentation): string {
   ) {
     return `${Number((value * 100).toFixed(1))}%`;
   }
-  const unit = {
-    count: " 次",
-    ms: " ms",
-    px: " px",
-    px_per_ms2: " px/ms²",
-  }[metric.unit ?? ""] ?? "";
+  const unitKeys: Record<string, MessageKey> = {
+    count: "metric.unit.count",
+    ms: "metric.unit.ms",
+    px: "metric.unit.px",
+    px_per_ms2: "metric.unit.pxPerMs2",
+  };
+  const unitKey = metric.unit ? unitKeys[metric.unit] : undefined;
+  const unit = unitKey === undefined ? "" : t(unitKey);
   return `${value}${unit}`;
 }
 
 export function availabilityLabel(availability: string): string {
-  if (availability === "available") return "可用";
-  if (availability === "limited") return "受限";
-  return "暂不可用";
+  if (availability === "available") return t("metric.availability.available");
+  if (availability === "limited") return t("metric.availability.limited");
+  return t("metric.availability.unavailable");
 }
 
 export function limitationLabel(limitation: string): string {
-  return LIMITATION_LABELS[limitation] ?? limitation;
+  const key = LIMITATION_KEYS[limitation];
+  return key === undefined ? limitation : t(key);
 }
 
 /* ── 视频面板复盘升级 P1 事件上轴（brief §二 P1）────────────────────────
@@ -137,7 +148,7 @@ export function projectTimelineMarkers(events: ReadonlyArray<TimelineEvent>): Ti
     markers.push({
       timeMs: sortMs,
       type,
-      label: event.label || EVENT_KIND_LABELS[event.type] || event.type,
+      label: event.label || eventKindLabel(event.type),
       sortMs,
     });
   }
@@ -164,12 +175,12 @@ export interface SegmentButton {
   kindLabel: string;
 }
 
-/** segment_kind → 短类型词；未知 kind 原样透传（不编造语义）。
+/** segment_kind → 字典键；未知 kind 原样透传（不编造语义）。
     拍板：worst→「修正最多」与诊断页「最差」解歧；typical→「参照」。 */
-export const SEGMENT_KIND_LABELS: Record<string, string> = {
-  worst: "修正最多",
-  typical: "参照",
-  improved: "改善",
+export const SEGMENT_KIND_KEYS: Record<string, MessageKey> = {
+  worst: "metric.segment.worst",
+  typical: "metric.segment.typical",
+  improved: "metric.segment.improved",
 };
 
 /**
@@ -208,9 +219,12 @@ export function projectEvidenceSegmentButtons(
       id: segment.segment_id,
       startMs: Math.max(0, Math.min(startMs, centerMs - SIGNAL_SEGMENT_FALLBACK_WINDOW_MS)),
       endMs: clampEnd(Math.max(endMs, centerMs + SIGNAL_SEGMENT_FALLBACK_WINDOW_MS)),
-      kindLabel: (segment.segment_kind && SEGMENT_KIND_LABELS[segment.segment_kind])
-        || segment.segment_kind
-        || "片段",
+      kindLabel: (() => {
+        const kind = segment.segment_kind;
+        if (!kind) return t("metric.segment.fallback");
+        const key = SEGMENT_KIND_KEYS[kind];
+        return key === undefined ? kind : t(key);
+      })(),
     };
     if (button.endMs <= button.startMs) continue;
     buttons.push(button);

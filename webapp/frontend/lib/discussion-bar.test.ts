@@ -7,6 +7,7 @@ import {
   groupDiscussionChips,
   type DiscussionChip,
 } from "./discussion-bar";
+import { translate } from "./i18n/core";
 
 // 「本次讨论」挂载条平铺/溢出分组（0905 拍板）：已完成 chip 只平铺前 3 个，
 // 余量折叠进下拉；文案与既有 chip 完全一致；顺序语义不变。
@@ -42,6 +43,9 @@ test("discussion chip label matches the original chip copy", () => {
   // 无 run 号：只有场景名。
   assert.equal(discussionChipLabel(7, { scenario: "Gridshot", runId: null }), "Gridshot");
   // 场景名缺失回落「分析 #id」（与原 chip 的 ?? 回退一致）。
-  assert.equal(discussionChipLabel(7, { scenario: null, runId: 3 }), "分析 #7 · run 3");
-  assert.equal(discussionChipLabel(7, undefined), "分析 #7");
+  assert.equal(
+    discussionChipLabel(7, { scenario: null, runId: 3 }),
+    translate("zh-CN", "coach.analysis.fallbackLabel", { id: 7 }) + translate("zh-CN", "coach.discussion.runSuffix", { runId: 3 }),
+  );
+  assert.equal(discussionChipLabel(7, undefined), translate("zh-CN", "coach.analysis.fallbackLabel", { id: 7 }));
 });

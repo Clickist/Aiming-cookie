@@ -38,6 +38,7 @@ import {
   openKovaakScenario,
   resetDesktopRuntimeConnection,
 } from "./desktop";
+import { translate } from "./i18n/core";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = Reflect.get(globalThis, "window");
@@ -796,7 +797,7 @@ test("KovaaK scenario launch reports the browser limitation without invoking Tau
   const result = await openKovaakScenario("1wall 6targets small");
 
   assert.equal(result.status, "desktop_unavailable");
-  assert.match(result.message, /网页预览不能启动 KovaaK/);
+  assert.equal(result.message, translate("zh-CN", "desktop.kovaak.webPreviewBlocked"));
 });
 
 test("KovaaK scenario launch rejects arbitrary text before reaching the desktop bridge", async () => {

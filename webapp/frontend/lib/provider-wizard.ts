@@ -25,7 +25,8 @@
  * 调整不令已通过的测试失效。
  */
 
-import { OFFICIAL_RELAY_PROVIDER_ID, OFFICIAL_RELAY_PROVIDER_LABEL } from "@/lib/provider-helpers";
+import { officialRelayProviderLabel, OFFICIAL_RELAY_PROVIDER_ID } from "@/lib/provider-helpers";
+import { t, type MessageKey } from "./i18n/core";
 import type {
   CustomProviderKind,
   CustomProviderModel,
@@ -42,14 +43,25 @@ export interface WizardTypeOption {
   custom: boolean;
 }
 
+/**
+ * 自定义档显示名的字典键（i18n 批 1）：brand 名（DeepSeek/OpenAI/Anthropic）
+ * 不需要翻译；WIZARD_TYPES 里只有自定义档的 label 放键，消费时经
+ * resolveWizardTypeLabel() 解析（不在模块加载期固化）。
+ */
+const WIZARD_CUSTOM_TYPE_LABEL_KEY: MessageKey = "settings.provider.wizard.customType";
+
+function resolveWizardTypeLabel(label: string): string {
+  return label === WIZARD_CUSTOM_TYPE_LABEL_KEY ? t(WIZARD_CUSTOM_TYPE_LABEL_KEY) : label;
+}
+
 export const WIZARD_TYPES: readonly WizardTypeOption[] = [
   { id: "deepseek", label: "DeepSeek", custom: false },
   { id: "openai", label: "OpenAI", custom: false },
   { id: "anthropic", label: "Anthropic", custom: false },
-  { id: "custom", label: "自定义 OpenAI 兼容", custom: true },
+  { id: "custom", label: WIZARD_CUSTOM_TYPE_LABEL_KEY, custom: true },
 ];
 
-const WIZARD_CUSTOM_FALLBACK: WizardTypeOption = { id: "custom", label: "自定义 OpenAI 兼容", custom: true };
+const WIZARD_CUSTOM_FALLBACK: WizardTypeOption = { id: "custom", label: WIZARD_CUSTOM_TYPE_LABEL_KEY, custom: true };
 
 /**
  * 第 1 步类型卡列表（点点 0911 线框拍板）：从内置 catalog 派生完整厂商
@@ -60,12 +72,12 @@ export function wizardTypeOptions(catalog: ProviderCatalogV1 | null): WizardType
   const builtin = (catalog?.providers ?? [])
     .filter((provider) => provider.provider_id !== OFFICIAL_RELAY_PROVIDER_ID)
     .map((provider) => ({ id: provider.provider_id, label: provider.provider_name, custom: false }));
-  if (!builtin.length) return [...WIZARD_TYPES];
+  if (!builtin.length) return WIZARD_TYPES.map((type) => ({ ...type, label: resolveWizardTypeLabel(type.label) }));
   // 会员档置顶（线框 ①）：目录里存在才置顶，缺失时列表与旧行为一致。
   const member = (catalog?.providers ?? []).some((provider) => provider.provider_id === OFFICIAL_RELAY_PROVIDER_ID)
-    ? [{ id: OFFICIAL_RELAY_PROVIDER_ID, label: OFFICIAL_RELAY_PROVIDER_LABEL, custom: false }]
+    ? [{ id: OFFICIAL_RELAY_PROVIDER_ID, label: officialRelayProviderLabel(), custom: false }]
     : [];
-  return [...member, ...builtin, WIZARD_CUSTOM_FALLBACK];
+  return [...member, ...builtin, { ...WIZARD_CUSTOM_FALLBACK, label: resolveWizardTypeLabel(WIZARD_CUSTOM_FALLBACK.label) }];
 }
 
 /** 会员档：第 2 步整页换「登录并订阅」流（不走 API key 表单）。 */
@@ -103,7 +115,7 @@ export function wizardCatalogProvider(
 }
 
 export function wizardDefaultName(catalog: ProviderCatalogV1 | null, typeId: string): string {
-  if (isWizardCustom(typeId)) return "自定义 Provider";
+  if (isWizardCustom(typeId)) return t("settings.provider.wizard.customProviderName");
   return wizardCatalogProvider(catalog, typeId)?.provider_name ?? "Provider";
 }
 

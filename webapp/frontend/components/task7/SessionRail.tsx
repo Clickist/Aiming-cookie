@@ -70,11 +70,18 @@ export interface SessionRailAccount {
   relink: boolean;
 }
 
+/**
+ * 「新对话」哨兵标题（i18n 批 1 解耦）：AppShell 造草稿会话与本组件识别
+ * 草稿态共用这一个常量做跨层匹配——它是稳定标识符，不是展示文案（展示
+ * 文案批 5 接字典时不得把本常量的值跟着翻译，否则跨层匹配即断）。
+ */
+export const NEW_SESSION_TITLE = "新对话";
+
 function sessionTitle(session: SessionRailSession): string {
   const title = session.title?.trim();
-  if (title && title !== "新对话") return title;
+  if (title && title !== NEW_SESSION_TITLE) return title;
   const preview = session.lastMessagePreview?.trim() || session.last_message_preview?.trim();
-  if (title === "新对话" && !preview) return "新对话"; // 草稿态：还没有消息，保持"新对话"
+  if (title === NEW_SESSION_TITLE && !preview) return NEW_SESSION_TITLE; // 草稿态：还没有消息，保持"新对话"
   return session.label?.trim() || session.name?.trim() || session.summary?.trim()
     || preview || "未命名对话";
 }

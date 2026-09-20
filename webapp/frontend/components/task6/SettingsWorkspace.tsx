@@ -724,7 +724,8 @@ export function SettingsWorkspace() {
                     });
                     // 线框形态：纯行（无边框壳，悬停高亮）= 语义色圆点 + 场景名 +
                     // 行尾精简状态词；完整归因（括号里的人话）收进悬停 title。
-                    const status = summarizeCaptureRunStatus(described.videoLabel, described.traceLabel);
+                    // i18n 批 1 解耦：状态归并吃结构化状态枚举，显示词只做显示。
+                    const status = summarizeCaptureRunStatus(described.videoStatus, described.traceStatus);
                     return (
                       <li
                         className="task6-capture-event"
