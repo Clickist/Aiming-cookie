@@ -7,6 +7,7 @@ import {
   saveKovaaKLocalDirectories,
 } from "@/lib/api";
 import { isDesktopRuntime, pickDesktopDirectory } from "@/lib/desktop";
+import { useT, type MessageKey } from "@/lib/i18n";
 import type { KovaaKLocalDirectoriesV1 } from "@/lib/types";
 import { Button, Notice, Status } from "@/ui/primitives";
 
@@ -19,31 +20,33 @@ interface KovaaKDirectoriesPanelProps {
   onContinue?: () => void;
 }
 
-const DIRECTORY_DETAILS: Record<DirectoryKind, { label: string; pickerTitle: string; description: string }> = {
+const DIRECTORY_DETAILS: Record<DirectoryKind, { labelKey: MessageKey; pickerTitleKey: MessageKey; descriptionKey: MessageKey }> = {
   stats: {
-    label: "Stats 文件夹",
-    pickerTitle: "选择 KovaaK Stats 文件夹",
-    description: "包含 KovaaK 导出的训练统计文件。",
+    labelKey: "kovaak.directories.statsLabel",
+    pickerTitleKey: "kovaak.directories.statsPickerTitle",
+    descriptionKey: "kovaak.directories.statsDesc",
   },
   performance: {
-    label: "Performance 文件夹",
-    pickerTitle: "选择 KovaaK Performance 文件夹",
-    description: "包含 KovaaK 的 Performance 训练记录。",
+    labelKey: "kovaak.directories.performanceLabel",
+    pickerTitleKey: "kovaak.directories.performancePickerTitle",
+    descriptionKey: "kovaak.directories.performanceDesc",
   },
 };
 
-function statusText(directory: KovaaKLocalDirectoriesV1[DirectoryKind]): string {
-  if (!directory.path) return "未找到";
-  if (directory.matching_files === "found") return `已发现 ${directory.matching_file_count} 个文件`;
-  return "文件夹已找到，尚未发现训练文件";
-}
-
 export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectoriesPanelProps) {
+  const t = useT();
   const [desktop, setDesktop] = useState(false);
   const [directories, setDirectories] = useState<KovaaKLocalDirectoriesV1 | null>(null);
   const [selected, setSelected] = useState<Partial<Record<DirectoryKind, string>>>({});
   const [operation, setOperation] = useState<Operation>("loading");
-  const [feedback, setFeedback] = useState<string | null>(null);
+  // i18n 批 2 解耦：反馈语气随调用点显式给出，不再按中文子串（includes("已")）猜。
+  const [feedback, setFeedback] = useState<{ tone: "warning" | "error"; text: string } | null>(null);
+
+  const statusText = useCallback((directory: KovaaKLocalDirectoriesV1[DirectoryKind]): string => {
+    if (!directory.path) return t("kovaak.directories.notFound");
+    if (directory.matching_files === "found") return t("kovaak.directories.foundFiles", { count: directory.matching_file_count ?? 0 });
+    return t("kovaak.directories.folderFoundNoFiles");
+  }, [t]);
 
   const load = useCallback(async () => {
     setOperation("loading");
@@ -51,11 +54,11 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
     try {
       setDirectories(await getKovaaKLocalDirectories());
     } catch {
-      setFeedback("本地目录状态暂时无法读取，请稍后重试。");
+      setFeedback({ tone: "error", text: t("kovaak.directories.readFailed") });
     } finally {
       setOperation("idle");
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const available = isDesktopRuntime();
@@ -68,10 +71,10 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
     setOperation("selecting");
     setFeedback(null);
     try {
-      const path = await pickDesktopDirectory(DIRECTORY_DETAILS[kind].pickerTitle);
+      const path = await pickDesktopDirectory(t(DIRECTORY_DETAILS[kind].pickerTitleKey));
       if (path) setSelected((current) => ({ ...current, [kind]: path }));
     } catch {
-      setFeedback("无法打开文件夹选择器，请重试。");
+      setFeedback({ tone: "error", text: t("kovaak.directories.pickerFailed") });
     } finally {
       setOperation("idle");
     }
@@ -85,7 +88,7 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
 
   const save = async () => {
     if (!selected.stats || !selected.performance) {
-      setFeedback("请分别选择 Stats 和 Performance 文件夹后再保存。");
+      setFeedback({ tone: "error", text: t("kovaak.directories.bothRequired") });
       return;
     }
     setOperation("saving");
@@ -97,19 +100,19 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
       });
       setDirectories(next);
       setSelected({});
-      if (next.activation === "failed") setFeedback("目录已保存，但监听未能切换。请重新打开应用后检查。 ");
+      if (next.activation === "failed") setFeedback({ tone: "warning", text: t("kovaak.directories.savedWatcherFailed") });
       else if (next.stats.matching_files === "no_matching_files" || next.performance.matching_files === "no_matching_files") {
-        setFeedback("目录已启用。AC 会在每次启动时自动开启 KovaaK 统计导出（Challenge Completion；若 KovaaK 正在运行会跳过，下次启动 AC 时补开）。仍未发现文件时可手动设置：设置 → 其他 → 统计数据输出 → Challenge Completion（英文界面：Settings → MAIN → Statistics Export → Challenge Completion），改完需完全退出并重启 KovaaK。 ");
+        setFeedback({ tone: "warning", text: t("kovaak.directories.savedAutoExport") });
       }
     } catch {
-      setFeedback("目录没有保存。请确认选择的是两个可读取的不同文件夹。 ");
+      setFeedback({ tone: "error", text: t("kovaak.directories.saveFailed") });
     } finally {
       setOperation("idle");
     }
   };
 
   if (!desktop) {
-    return <div className="kovaak-directories-panel" data-context={context}><Notice tone="warning" title="仅限桌面版">本地训练目录需要通过 Windows 桌面版的系统文件夹选择器确认。</Notice></div>;
+    return <div className="kovaak-directories-panel" data-context={context}><Notice tone="warning" title={t("kovaak.directories.desktopOnlyTitle")}>{t("kovaak.directories.desktopOnlyBody")}</Notice></div>;
   }
 
   const confirmed = Boolean(directories?.stats.path && directories?.performance.path);
@@ -122,29 +125,35 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
     const stats = directories?.stats;
     const performance = directories?.performance;
     if (stats?.matching_files === "found" && performance?.matching_files === "found") {
-      return `Stats ${stats.matching_file_count ?? 0} 个文件 · Performance ${performance.matching_file_count ?? 0} 个文件已发现。`;
+      return t("kovaak.directories.mergedFound", {
+        stats: stats.matching_file_count ?? 0,
+        performance: performance.matching_file_count ?? 0,
+      });
     }
-    return `Stats：${stats ? statusText(stats) : "状态未知"} · Performance：${performance ? statusText(performance) : "状态未知"}。`;
+    return t("kovaak.directories.mergedStatus", {
+      stats: stats ? statusText(stats) : t("kovaak.directories.statusUnknown"),
+      performance: performance ? statusText(performance) : t("kovaak.directories.statusUnknown"),
+    });
   };
   return (
     <div className="kovaak-directories-panel" data-context={context}>
-      {operation === "loading" ? <Status tone="neutral">正在读取本地目录状态…</Status> : null}
-      {feedback ? <Notice tone={feedback.includes("已") ? "warning" : "error"}>{feedback}</Notice> : null}
+      {operation === "loading" ? <Status tone="neutral">{t("kovaak.directories.loading")}</Status> : null}
+      {feedback ? <Notice tone={feedback.tone}>{feedback.text}</Notice> : null}
       {mergedSettingsView ? (
         <>
-          <h3 className="task6-profile-group-title">本地目录</h3>
+          <h3 className="task6-profile-group-title">{t("kovaak.directories.sectionTitle")}</h3>
           <p className="task6-card-desc">{mergedDesc()}</p>
           <div className="kovaak-directories-footer">
-            <p className="kovaak-module-note">两个文件夹均由 AC 自动发现</p>
-            <Button disabled={operation !== "idle"} onClick={() => void pickBothDirectories()} size="compact" variant="secondary">更换文件夹</Button>
+            <p className="kovaak-module-note">{t("kovaak.directories.autoDiscovered")}</p>
+            <Button disabled={operation !== "idle"} onClick={() => void pickBothDirectories()} size="compact" variant="secondary">{t("kovaak.directories.changeFolders")}</Button>
           </div>
         </>
       ) : (
         <>
           {context === "settings" ? (
             <>
-              <h3 className="task6-profile-group-title">本地目录</h3>
-              <p className="task6-card-desc">确认 KovaaK 的 Stats 与 Performance 文件夹，AC 据此发现训练并自动开启统计导出。</p>
+              <h3 className="task6-profile-group-title">{t("kovaak.directories.sectionTitle")}</h3>
+              <p className="task6-card-desc">{t("kovaak.directories.settingsDesc")}</p>
             </>
           ) : null}
           <div className="kovaak-directories-list">
@@ -153,33 +162,33 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
               const directory = directories?.[kind];
               return (
                 <article className="task6-form-row kovaak-directory-entry" key={kind}>
-                  <span className="task6-form-row-label">{detail.label}</span>
+                  <span className="task6-form-row-label">{t(detail.labelKey)}</span>
                   <div className="kovaak-directory-entry-info">
-                    <p>{detail.description}</p>
+                    <p>{t(detail.descriptionKey)}</p>
                     {/* 只读状态是纯文本行，不再用输入框/徽标壳。 */}
                     <p>
                       {selected[kind]
-                        ? "已选择，等待一起保存"
+                        ? t("kovaak.directories.selectedPending")
                         : directory
                           ? statusText(directory)
-                          : "状态未知"}
+                          : t("kovaak.directories.statusUnknown")}
                     </p>
                   </div>
-                  <Button disabled={operation !== "idle"} onClick={() => void selectDirectory(kind)} size="compact" variant="secondary">{selected[kind] || directory?.path ? "更换文件夹" : "选择文件夹"}</Button>
+                  <Button disabled={operation !== "idle"} onClick={() => void selectDirectory(kind)} size="compact" variant="secondary">{selected[kind] || directory?.path ? t("kovaak.directories.changeFolders") : t("kovaak.directories.selectFolder")}</Button>
                 </article>
               );
             })}
           </div>
           {/* 线框形态：「保存并启用」不独占整行——与提示小字同行，按钮在行尾。 */}
           <div className="kovaak-directories-footer">
-            <p className="kovaak-module-note">自动发现失败时，请分别选择两个文件夹。完整本地路径不会显示给 Coach 或发送给 Provider。</p>
-            <Button disabled={operation !== "idle" || !selected.stats || !selected.performance} onClick={() => void save()} variant="secondary">保存并启用</Button>
+            <p className="kovaak-module-note">{t("kovaak.directories.manualHint")}</p>
+            <Button disabled={operation !== "idle" || !selected.stats || !selected.performance} onClick={() => void save()} variant="secondary">{t("kovaak.directories.saveAndEnable")}</Button>
           </div>
         </>
       )}
       {context === "onboarding" && onContinue ? (
         <div className="kovaak-onboarding-actions">
-          <Button disabled={operation !== "idle" || (!confirmed && !(selected.stats && selected.performance))} onClick={onContinue}>继续</Button>
+          <Button disabled={operation !== "idle" || (!confirmed && !(selected.stats && selected.performance))} onClick={onContinue}>{t("kovaak.onboarding.continue")}</Button>
         </div>
       ) : null}
     </div>

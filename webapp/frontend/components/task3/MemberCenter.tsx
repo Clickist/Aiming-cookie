@@ -16,6 +16,7 @@ import { useCallback, useState } from "react";
 
 import { logoutMemberAccount } from "@/lib/api";
 import { openExternalUrl } from "@/lib/desktop";
+import { useT } from "@/lib/i18n";
 import { notifyMemberStateChanged } from "@/lib/member-state";
 import { MEMBER_COPY, formatMemberDate, planLabel } from "@/lib/member";
 import type { MemberMe } from "@/lib/types";
@@ -38,6 +39,7 @@ export function MemberCenter({
   onLogout?: () => Promise<void> | void;
 }) {
   const router = useRouter();
+  const t = useT();
   const [loggingOut, setLoggingOut] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -60,11 +62,11 @@ export function MemberCenter({
       }
       router.push("/");
     } catch {
-      setMessage("退出登录未完成，请稍后重试。");
+      setMessage(t("member.center.logoutFailed"));
     } finally {
       setLoggingOut(false);
     }
-  }, [onLogout, router]);
+  }, [onLogout, router, t]);
 
   const plan = planLabel(me?.plan ?? null);
   // 三种订阅形态（线框 ②c 的两态 + ⑨ 的失效态）：生效中 / 已取消未到期 / 已结束。
@@ -81,7 +83,7 @@ export function MemberCenter({
     <div className="task3-member-center">
       <div className="task3-member-center-head" onMouseDown={startWindowDraggingOnBackground}>
         <div className="task3-member-center-head-inner">
-          <IconButton label="返回对话" onClick={() => router.push("/")} size="compact" title="返回对话">
+          <IconButton label={t("member.center.backToChat")} onClick={() => router.push("/")} size="compact" title={t("member.center.backToChat")}>
             <IconChevronLeft />
           </IconButton>
           <strong>{MEMBER_COPY.centerTitle}</strong>
@@ -157,7 +159,7 @@ export function MemberCenter({
               </div>
               {me.boost_buyable ? (
                 <Button onClick={() => void openExternalUrl(PAY_BOOSTER_URL)} size="compact" variant="secondary">
-                  购买加油包
+                  {t("member.center.boosterBuyAction")}
                 </Button>
               ) : (
                 <span className="task3-member-disabled" aria-disabled="true">{MEMBER_COPY.boosterBuyDisabled}</span>
@@ -198,8 +200,8 @@ export function MemberCenter({
           </>
         ) : (
           <div className="task3-member-empty">
-            <p>还没有登录 Aiming Cookie。在下方设置里连接会员档或自定义 Provider 后即可使用 Coach。</p>
-            <Button onClick={() => router.push("/settings")} variant="secondary">打开设置</Button>
+            <p>{t("member.center.emptyBody")}</p>
+            <Button onClick={() => router.push("/settings")} variant="secondary">{t("member.center.openSettings")}</Button>
           </div>
         )}
         {message ? <Notice tone="warning">{message}</Notice> : null}

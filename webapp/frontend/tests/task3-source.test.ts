@@ -209,9 +209,9 @@ test("session selection updates the Coach deep link", async () => {
 test("session archive and delete failures surface through the existing Toast", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.match(value, /import \{[^}]*Toast[^}]*\} from "@\/ui\/primitives"/);
-  assert.match(value, /notifySessionFeedback\("未能归档会话，请重试。"\)/);
-  assert.match(value, /notifySessionFeedback\("未能删除会话，请重试。"\)/);
-  assert.match(value, /操作已完成，但会话列表暂时未能刷新。/);
+  assert.match(value, /notifySessionFeedback\(t\("appshell\.toast\.archiveFailed"\)\)/);
+  assert.match(value, /notifySessionFeedback\(t\("appshell\.toast\.deleteFailed"\)\)/);
+  assert.match(value, /notifySessionFeedback\(t\("appshell\.toast\.reloadFailed"\)\)/);
   // seq 兼作重挂载 key 与 onClose 新鲜度校验：迟到的旧关闭不清掉新提示。
   assert.match(value, /<Toast key=\{sessionFeedback\.seq\}/);
   assert.match(value, /current && current\.seq === sessionFeedback\.seq \? null : current/);
@@ -287,7 +287,7 @@ test("custom Provider auto-detects protocol and exposes protocol choice only as 
   assert.doesNotMatch(onboarding, /onClick=\{\(\) => void discoverCustomModels\(\)\}/);
   assert.match(onboarding, /customProtocolNeedsChoice/);
   assert.match(onboarding, /customProtocolConfirmed/);
-  assert.match(onboarding, /列表中没有需要的 Model ID/);
+  assert.match(onboarding, /onboarding\.model\.notListed/);
   assert.match(onboarding, /customModelState === "manual"/);
 });
 
@@ -339,7 +339,7 @@ test("KovaaK onboarding step is retired while the shared connection panel stays 
   // 0912 点点拍板：onboarding 收敛为两步，KovaaK 连接不再引导，仍可在设置中连接。
   assert.doesNotMatch(onboarding, /KovaaKConnectionPanel/);
   assert.match(onboarding, /useState<1 \| 2>\(1\)/);
-  assert.match(onboarding, /共 2 步/);
+  assert.match(onboarding, /onboarding\.progress\.ariaLabel/);
   assert.doesNotMatch(onboarding, /共 3 步|setStep\(3\)|step !== 3/);
   assert.match(settings, /<KovaaKConnectionPanel context="settings" \/>/);
   assert.match(panel, /getKovaaKConnection/);

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useT, type MessageKey } from "@/lib/i18n";
 import { Badge } from "@/ui/primitives";
 
 export function PageHeading({
@@ -25,16 +26,18 @@ export function PageHeading({
   );
 }
 
-const EVIDENCE_TEXT: Record<string, string> = {
-  available: "可用",
-  attached: "已关联",
-  partial: "部分可用",
-  missing: "缺失",
-  unavailable: "来源不可用",
-  not_present: "未提供",
-  unsupported: "不支持",
-  aligned: "已对齐",
-  failed: "失败",
+// i18n 批 2：与 history.status.* 同码同值的条目共用键（字典是单一事实源），
+// 仅「部分可用 / 已对齐」两值无既有键，落在 analysis.evidence.* 下。
+const EVIDENCE_KEYS: Record<string, MessageKey> = {
+  available: "history.status.available",
+  attached: "history.status.attached",
+  partial: "analysis.evidence.partial",
+  missing: "history.status.missing",
+  unavailable: "history.status.sourceUnavailable",
+  not_present: "history.status.notPresent",
+  unsupported: "history.status.unsupported",
+  aligned: "analysis.evidence.aligned",
+  failed: "history.status.failed",
 };
 
 export function EvidenceChip({
@@ -46,12 +49,14 @@ export function EvidenceChip({
   state: string | undefined;
   text?: string;
 }) {
+  const t = useT();
   const normalized = state ?? "missing";
   const ok = normalized === "available" || normalized === "attached" || normalized === "aligned";
   const part = normalized === "partial";
   const tone = ok ? "ok" : part ? "part" : "bad";
   const icon = ok ? "✓" : part ? "!" : "✕";
-  const displayText = text ? text : ok ? label : EVIDENCE_TEXT[normalized] ?? normalized;
+  const fallbackKey = EVIDENCE_KEYS[normalized];
+  const displayText = text ? text : ok ? label : fallbackKey ? t(fallbackKey) : normalized;
   return (
     <span className={`task3-evidence-chip task3-evidence-chip--${tone}`}>
       <i aria-hidden="true">{icon}</i>
@@ -61,15 +66,19 @@ export function EvidenceChip({
 }
 
 export function PreviewBadge() {
-  return <Badge className="task3-preview-badge">预览 / 实验</Badge>;
+  const t = useT();
+  return <Badge className="task3-preview-badge">{t("analysis.badge.preview")}</Badge>;
 }
 
-const MODE_LABELS: Record<string, string> = {
-  multimodal: "多源模式",
-  input_native: "输入原生",
-  video_fallback: "视频兼容",
+// 三种分析模式与 contracts 的 analysis.input.* 同词，共用键；未知模式单独落键。
+const MODE_LABEL_KEYS: Record<string, MessageKey> = {
+  multimodal: "analysis.input.multimodal",
+  input_native: "analysis.input.native",
+  video_fallback: "analysis.input.videoFallback",
 };
 
 export function ModeBadge({ mode }: { mode: string | null | undefined }) {
-  return <Badge className="task3-mode-badge">{MODE_LABELS[mode ?? ""] ?? mode ?? "未知模式"}</Badge>;
+  const t = useT();
+  const key = MODE_LABEL_KEYS[mode ?? ""];
+  return <Badge className="task3-mode-badge">{key ? t(key) : (mode ?? t("analysis.mode.unknown"))}</Badge>;
 }

@@ -8,6 +8,7 @@ import {
   saveExternalTelemetryWatchRoot,
 } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
+import { useT } from "@/lib/i18n";
 import type { ExternalRunListItemV1, ExternalTelemetryConfigV1 } from "@/lib/types";
 import { Button, Notice, Status } from "@/ui/primitives";
 
@@ -15,12 +16,14 @@ const MAX_LISTED_RUNS = 50;
 
 /** 设置：外部遥测导入（ExternalTelemetryRun，proposal-only 标签）。 */
 export function ExternalTelemetryPanel() {
+  const t = useT();
   const [desktop, setDesktop] = useState(false);
   const [config, setConfig] = useState<ExternalTelemetryConfigV1 | null>(null);
   const [runs, setRuns] = useState<ExternalRunListItemV1[]>([]);
   const [watchRootInput, setWatchRootInput] = useState("");
   const [operation, setOperation] = useState<"idle" | "loading" | "saving">("loading");
-  const [feedback, setFeedback] = useState<string | null>(null);
+  // i18n 批 2 解耦：反馈语气随调用点显式给出，不再按中文前缀（startsWith("已")）猜。
+  const [feedback, setFeedback] = useState<{ tone: "info" | "error"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setOperation("loading");
@@ -36,11 +39,11 @@ export function ExternalTelemetryPanel() {
         setRuns([]);
       }
     } catch {
-      setFeedback("外部遥测状态暂时无法读取，请稍后重试。");
+      setFeedback({ tone: "error", text: t("kovaak.telemetry.readFailed") });
     } finally {
       setOperation("idle");
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     setDesktop(isDesktopRuntime());
@@ -51,7 +54,7 @@ export function ExternalTelemetryPanel() {
   const save = async () => {
     const trimmed = watchRootInput.trim();
     if (!trimmed) {
-      setFeedback("请填写外部遥测 cleaned 目录的完整本地路径。");
+      setFeedback({ tone: "error", text: t("kovaak.telemetry.pathRequired") });
       return;
     }
     setOperation("saving");
@@ -60,15 +63,15 @@ export function ExternalTelemetryPanel() {
       const next = await saveExternalTelemetryWatchRoot({ watch_root: trimmed });
       setConfig(next);
       if (next.activation === "failed") {
-        setFeedback("路径已保存，但监听未能启动。请重新打开应用后检查。");
+        setFeedback({ tone: "info", text: t("kovaak.telemetry.savedWatcherFailed") });
       } else if (next.activation === "runtime_unavailable") {
-        setFeedback("路径已保存，下次启动应用后生效。");
+        setFeedback({ tone: "info", text: t("kovaak.telemetry.savedNextLaunch") });
       } else {
-        setFeedback("已保存并开始监听。");
+        setFeedback({ tone: "info", text: t("kovaak.telemetry.savedWatching") });
       }
       await load();
     } catch {
-      setFeedback("路径没有保存。请确认填写的是完整绝对路径。");
+      setFeedback({ tone: "error", text: t("kovaak.telemetry.saveFailed") });
     } finally {
       setOperation("idle");
     }
@@ -77,7 +80,7 @@ export function ExternalTelemetryPanel() {
   if (!desktop) {
     return (
       <div className="kovaak-directories-panel" data-context="settings">
-        <Notice tone="warning" title="仅限桌面版">外部遥测导入需要通过 Windows 桌面版启用。</Notice>
+        <Notice tone="warning" title={t("kovaak.telemetry.desktopOnlyTitle")}>{t("kovaak.telemetry.desktopOnlyBody")}</Notice>
       </div>
     );
   }
@@ -86,17 +89,17 @@ export function ExternalTelemetryPanel() {
   const watcherState = typeof watcher?.directory_state === "string" ? watcher.directory_state : null;
   return (
     <div className="kovaak-directories-panel" data-context="settings">
-      {operation === "loading" ? <Status tone="neutral">正在读取外部遥测状态…</Status> : null}
-      {feedback ? <Notice tone={feedback.startsWith("已") || feedback.startsWith("路径已") ? "info" : "error"}>{feedback}</Notice> : null}
+      {operation === "loading" ? <Status tone="neutral">{t("kovaak.telemetry.loading")}</Status> : null}
+      {feedback ? <Notice tone={feedback.tone}>{feedback.text}</Notice> : null}
       <div className="kovaak-directories-list">
         <article className="kovaak-directory-row">
           <div>
-            <strong>cleaned 数据目录</strong>
-            <p>外部遥测清洗产物目录（只读监听，导入副本保存在本地数据根）。</p>
+            <strong>{t("kovaak.telemetry.directoryLabel")}</strong>
+            <p>{t("kovaak.telemetry.directoryDesc")}</p>
             <Status tone={config?.watch_root ? "success" : "neutral"}>
               {config?.watch_root
-                ? `已监听，共 ${config.run_count} 条外部轮次${watcherState && watcherState !== "ready" ? `（watcher: ${watcherState}）` : ""}`
-                : "尚未配置"}
+                ? `${t("kovaak.telemetry.watching", { count: config.run_count })}${watcherState && watcherState !== "ready" ? t("kovaak.telemetry.watcherSuffix", { state: watcherState }) : ""}`
+                : t("kovaak.telemetry.notConfigured")}
             </Status>
           </div>
         </article>
@@ -106,13 +109,13 @@ export function ExternalTelemetryPanel() {
               type="text"
               value={watchRootInput}
               onChange={(event) => setWatchRootInput(event.target.value)}
-              placeholder="例如 C:\\Users\\你\\Desktop\\FPSAimTrainer\\analysis\\external\\cleaned"
+              placeholder={t("kovaak.telemetry.pathPlaceholder")}
               disabled={operation !== "idle"}
               style={{ width: "100%" }}
             />
           </div>
           <Button disabled={operation !== "idle"} onClick={() => void save()} size="compact" variant="secondary">
-            保存并监听
+            {t("kovaak.telemetry.saveAndWatch")}
           </Button>
         </article>
       </div>
@@ -122,19 +125,19 @@ export function ExternalTelemetryPanel() {
             const uncertain = run.proposal_status === "uncertain";
             const label = run.proposal_label
               ? `${run.proposal_label}${uncertain ? "?" : ""}`
-              : "场景待标注";
+              : t("kovaak.telemetry.pendingLabel");
             return (
               <article className="kovaak-directory-row" key={run.external_run_id}>
                 <div>
                   <strong>
-                    {run.source_file ?? "未知来源"} · round {run.round ?? "-"}{" "}
+                    {run.source_file ?? t("kovaak.telemetry.unknownSource")} · round {run.round ?? "-"}{" "}
                     {uncertain ? "?" : ""}
                   </strong>
                   <p>
                     {label}
-                    {run.proposal_score != null ? `（置信度 ${run.proposal_score.toFixed(3)}）` : ""}
+                    {run.proposal_score != null ? t("kovaak.telemetry.confidence", { score: run.proposal_score.toFixed(3) }) : ""}
                     {run.t2k_p50 != null ? ` · T2K p50 ${run.t2k_p50.toFixed(3)}s` : ""}
-                    {run.matched_run_ids.length > 0 ? ` · 已配对 Run ${run.matched_run_ids[0]}` : ""}
+                    {run.matched_run_ids.length > 0 ? t("kovaak.telemetry.matchedRun", { runId: run.matched_run_ids[0] }) : ""}
                     {run.quality_issues.length > 0 ? ` · ${run.quality_issues.join(", ")}` : ""}
                   </p>
                 </div>
@@ -142,12 +145,12 @@ export function ExternalTelemetryPanel() {
             );
           })}
           {(config?.run_count ?? 0) > runs.length ? (
-            <p className="kovaak-module-note">仅显示最近 10 条，共 {config?.run_count} 条。</p>
+            <p className="kovaak-module-note">{t("kovaak.telemetry.recentOnly", { count: config?.run_count ?? 0 })}</p>
           ) : null}
         </div>
       ) : null}
       <p className="kovaak-module-note">
-        自动场景标签仅为提案（uncertain 显示 "?"），不会写入已确认的场景记忆。详见 docs/EXTERNAL_TELEMETRY_IMPORT.md。
+        {t("kovaak.telemetry.proposalNote")}
       </p>
     </div>
   );

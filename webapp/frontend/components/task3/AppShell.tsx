@@ -26,6 +26,7 @@ import {
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
+import { useT } from "@/lib/i18n";
 import { memberChipView } from "@/lib/member";
 import { notifyMemberStateChanged, useMemberState } from "@/lib/member-state";
 import { useMemberDeepLinks } from "@/lib/member-deeplink";
@@ -60,6 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const t = useT();
   const shellHidden = pathname.startsWith("/onboarding");
   const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
   const settingsRoute = pathname.startsWith("/settings");
@@ -593,13 +595,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       await updateCoachSession(sessionId, { status: "archived" });
     } catch {
-      notifySessionFeedback("未能归档会话，请重试。");
+      notifySessionFeedback(t("appshell.toast.archiveFailed"));
       return;
     }
     try {
       await reloadCoachSessions(selectedCoachSessionId === sessionId ? null : undefined);
     } catch {
-      notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
+      notifySessionFeedback(t("appshell.toast.reloadFailed"));
     }
   };
 
@@ -614,7 +616,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       await deleteCoachSession(sessionId);
     } catch {
-      notifySessionFeedback("未能删除会话，请重试。");
+      notifySessionFeedback(t("appshell.toast.deleteFailed"));
       void reloadCoachSessions().catch(() => {});
       return;
     }
@@ -626,11 +628,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname);
     }
-    notifySessionFeedback("会话已删除。");
+    notifySessionFeedback(t("appshell.toast.deleted"));
     try {
       await reloadCoachSessions(selectedCoachSessionId === sessionId ? null : undefined);
     } catch {
-      notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
+      notifySessionFeedback(t("appshell.toast.reloadFailed"));
     }
   };
 
@@ -644,11 +646,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
   const chipEmail = chip.email;
 
+  // 顶栏会话标题：NEW_SESSION_TITLE 哨兵是稳定标识符，不得 t() 化；
+  // 只在展示处映射为展示键（与 SessionRail 的 rail 标题同款边界）。
+  const topbarSessionTitle = draftSession
+    ? NEW_SESSION_TITLE
+    : (coachSessions.find((session) => Number(session.id) === selectedCoachSessionId)?.title ?? NEW_SESSION_TITLE);
+  const topbarTitle = topbarSessionTitle === NEW_SESSION_TITLE ? t("appshell.topbar.newSession") : topbarSessionTitle;
+
   if (shellHidden) return <ErrorBoundary>{children}</ErrorBoundary>;
 
   return (
     <div className="task3-app">
-      <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
+      <a className="task3-skip-link" href="#main-content">{t("appshell.skipLink")}</a>
       {/* 横跨顶栏已全局拆除（0910 拍板）：窗口三键改为全局常浮浮层，
           覆盖所有路由（Coach/历史/设置）；onboarding 自带一份，不经此处。 */}
       <div className="task3-wincontrols-global">
@@ -741,13 +750,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                         <span
                           className="task3-coach-status-dot"
                           data-state={capability}
-                          title={capability === "ready" ? "Coach 已就绪" : capability === "loading" ? "正在读取 Coach 状态" : capability === "unavailable" ? "Coach 不可用" : "Coach 待配置"}
+                          title={capability === "ready" ? t("appshell.status.ready") : capability === "loading" ? t("appshell.status.loading") : capability === "unavailable" ? t("appshell.status.unavailable") : t("appshell.status.waiting")}
                         />
-                        <span className="task3-coach-topbar-title">
-                          {draftSession
-                            ? "新对话"
-                            : (coachSessions.find((session) => Number(session.id) === selectedCoachSessionId)?.title ?? "新对话")}
-                        </span>
+                        <span className="task3-coach-topbar-title">{topbarTitle}</span>
                         {/* 讨论条 portal 挂载点（v6 四轮）：CoachPanel 经 portal
                             把"本次讨论"条渲染到这里（标题之后、三键之前）。 */}
                         <div className="task3-coach-topbar-slot" id="task3-coach-topbar-slot" />
@@ -774,7 +779,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     调节对话列宽（视频面板吃剩余空间），只调宽度。 */}
                 {videoTarget && !videoClosing ? (
                   <div
-                    aria-label="调节对话面板宽度"
+                    aria-label={t("appshell.splitHandle.ariaLabel")}
                     aria-orientation="vertical"
                     className="task3-video-split-handle"
                     onPointerDown={startSplitDrag}

@@ -2,6 +2,8 @@
 
 import type { MouseEvent } from "react";
 
+import { useT } from "@/lib/i18n";
+
 type WindowControlAction = "minimize" | "toggleMaximize" | "close";
 
 async function getTauriWindow() {
@@ -43,31 +45,32 @@ function stopTitleBarDrag(event: MouseEvent<HTMLDivElement>) {
 }
 
 export function TauriWindowControls() {
+  const t = useT();
   return (
-    <div aria-label="窗口控制" className="task3-window-controls" onMouseDown={stopTitleBarDrag}>
+    <div aria-label={t("common.window.controlsAria")} className="task3-window-controls" onMouseDown={stopTitleBarDrag}>
       <button
-        aria-label="最小化"
+        aria-label={t("common.window.minimize")}
         className="task3-window-control"
         onClick={() => void runWindowControl("minimize")}
-        title="最小化"
+        title={t("common.window.minimize")}
         type="button"
       >
         <span aria-hidden="true">-</span>
       </button>
       <button
-        aria-label="最大化或还原"
+        aria-label={t("common.window.toggleMaximize")}
         className="task3-window-control"
         onClick={() => void runWindowControl("toggleMaximize")}
-        title="最大化或还原"
+        title={t("common.window.toggleMaximize")}
         type="button"
       >
         <span aria-hidden="true">□</span>
       </button>
       <button
-        aria-label="关闭"
+        aria-label={t("common.window.close")}
         className="task3-window-control task3-window-control--close"
         onClick={() => void runWindowControl("close")}
-        title="关闭"
+        title={t("common.window.close")}
         type="button"
       >
         <span aria-hidden="true">×</span>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { translate } from "../lib/i18n/core";
 import {
   buildRunAnalysisRequest,
   getRunModeAvailability,
@@ -39,10 +40,14 @@ test("task presentation maps machine codes to Chinese and ignores backend Englis
   } satisfies TaskDetailV1;
 
   assert.deepEqual(presentTask(task), {
-    state: "分析中",
-    phase: "计算运动学指标",
+    state: translate("zh-CN", "history.taskState.running"),
+    phase: translate("zh-CN", "history.taskPhase.kinematics"),
     failureDomain: null,
-    presentationLabel: "1wall 6targets | 训练：2026-07-25T00:00:00Z | 分析：分析尚未完成",
+    presentationLabel: translate("zh-CN", "analysis.record.label", {
+      scenario: "1wall 6targets",
+      trainingAt: "2026-07-25T00:00:00Z",
+      analysisAt: translate("zh-CN", "analysis.record.analysisPending"),
+    }),
   });
 });
 
@@ -52,18 +57,29 @@ test("record labels include scenario and available timestamps without exposing t
     trainingAt: "2026-08-09T08:10:09Z",
     analysisCompletedAt: "2026-08-09T08:12:30Z",
   });
-  assert.equal(label, "1wall 5targets pasu | 训练：2026-08-09T08:10:09Z | 分析：2026-08-09T08:12:30Z");
+  assert.equal(
+    label,
+    translate("zh-CN", "analysis.record.label", {
+      scenario: "1wall 5targets pasu",
+      trainingAt: "2026-08-09T08:10:09Z",
+      analysisAt: "2026-08-09T08:12:30Z",
+    }),
+  );
   assert.doesNotMatch(label, /run:\d+|analysis:\d+/);
   assert.equal(
     presentRecordLabel({ scenario: "C:\\Users\\private\\stats.csv", trainingAt: null, analysisCompletedAt: null }),
-    "未命名场景 | 训练：训练时间未知 | 分析：分析尚未完成",
+    translate("zh-CN", "analysis.record.label", {
+      scenario: translate("zh-CN", "analysis.scenario.unnamed"),
+      trainingAt: translate("zh-CN", "analysis.record.trainingUnknown"),
+      analysisAt: translate("zh-CN", "analysis.record.analysisPending"),
+    }),
   );
 });
 
 test("presentRecordLabel titleOnly keeps History row titles to the sanitized scenario name", () => {
   assert.equal(presentRecordLabel({ scenario: "1wall6targets", titleOnly: true }), "1wall6targets");
   // 与默认行为同一套场景名净化：路径等可疑值不进标题。
-  assert.equal(presentRecordLabel({ scenario: "C:\\Users\\private\\stats.csv", titleOnly: true }), "未命名场景");
+  assert.equal(presentRecordLabel({ scenario: "C:\\Users\\private\\stats.csv", titleOnly: true }), translate("zh-CN", "analysis.scenario.unnamed"));
 });
 
 test("run mode availability consumes supported_input_modes without re-deriving evidence", () => {

@@ -34,6 +34,7 @@ import {
   updateProviderProfile,
 } from "@/lib/api";
 import { isDesktopRuntime, openExternalUrl, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { useT, type TranslateFn } from "@/lib/i18n";
 import { MEMBER_COPY, maskEmail } from "@/lib/member";
 import { isMemberWizardType, wizardTypeOptions } from "@/lib/provider-wizard";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
@@ -81,14 +82,15 @@ const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: C
   },
 };
 
-function authModeLabel(mode: ProviderAuthMode): string {
+function authModeLabel(t: TranslateFn, mode: ProviderAuthMode): string {
   if (mode === "api_key") return "API Key";
-  if (mode === "oauth") return "OAuth / 设备码";
-  return "环境凭据";
+  if (mode === "oauth") return t("onboarding.authMode.oauth");
+  return t("onboarding.authMode.env");
 }
 
 export function OnboardingFlow() {
   const router = useRouter();
+  const t = useT();
   const [step, setStep] = useState<1 | 2>(1);
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
   const [providerId, setProviderId] = useState("");
@@ -154,7 +156,7 @@ export function OnboardingFlow() {
     setMemberStage("waiting");
     setMemberMessage("");
     if (!isDesktopRuntime()) {
-      setMemberMessage("浏览器预览不能唤起系统浏览器与接收 deep-link，请在桌面版中完成登录。");
+      setMemberMessage(t("onboarding.member.browserPreviewBlocked"));
       return;
     }
     const result = await startMemberLogin();
@@ -166,9 +168,9 @@ export function OnboardingFlow() {
     try {
       await openExternalUrl(result.login_url);
     } catch {
-      setMemberMessage("没能打开系统浏览器，可点下方「重新打开浏览器页面」。");
+      setMemberMessage(t("onboarding.member.browserFailed"));
     }
-  }, []);
+  }, [t]);
 
   /** 「重新打开浏览器页面」：复用已起的 login_url；没有则重起一轮 device_code。 */
   const reopenMemberBrowser = useCallback(async (): Promise<void> => {
@@ -215,10 +217,10 @@ export function OnboardingFlow() {
       return false;
     } catch {
       setMemberStage("test_failed");
-      setMemberMessage("连接测试未能发起，请稍后重试。");
+      setMemberMessage(t("onboarding.member.testFailedToStart"));
       return false;
     }
-  }, []);
+  }, [t]);
 
   // 选中会员档即起流（线框 ① 注：选中后按钮变「登录并订阅」→ 打开系统浏览器）。
   useEffect(() => {
@@ -258,7 +260,7 @@ export function OnboardingFlow() {
           const me = await syncMemberState();
           if (me?.member) {
             setMemberStage("test_failed");
-            setMemberMessage(result.connection_message ?? "连接测试未通过，可重试。");
+            setMemberMessage(result.connection_message ?? t("onboarding.member.testFailedFallback"));
           }
           return;
         }
@@ -327,13 +329,13 @@ export function OnboardingFlow() {
         }
       } else {
         setCatalogUnavailable(true);
-        setMessage("Provider 目录暂时不可用，请稍后重试。");
+        setMessage(t("onboarding.catalog.unavailable"));
       }
       if (statusResult.status === "fulfilled" && statusResult.value.status === "ready") {
         setProfileId(statusResult.value.profile_id);
         setConnectionState("ready");
         setCatalogUnavailable(false);
-        setMessage("连接成功 · 已保存的 Provider");
+        setMessage(t("onboarding.connect.successSaved"));
         if (profilesResult.status === "fulfilled") {
           const profile = profilesResult.value.profiles.find((item) => item.id === statusResult.value.profile_id) ?? null;
           setSavedProfile(profile);
@@ -390,15 +392,15 @@ export function OnboardingFlow() {
             await takeProviderAuthResult(profileId, next.id);
             const status = await testProviderProfile(profileId);
             setConnectionState(status.status === "ready" ? "ready" : "failed");
-            setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
+            setMessage(status.status === "ready" ? t("onboarding.connect.successModel", { model: custom ? customModel : selectedModelLabel }) : status.message);
           } else if (["failed", "cancelled", "timed_out"].includes(next.status)) {
             setConnectionState("failed");
-            setMessage("Provider 认证未完成，可重新尝试。");
+            setMessage(t("onboarding.auth.incomplete"));
           }
         })
         .catch(() => {
           setConnectionState("failed");
-          setMessage("认证状态暂时无法读取，可重新尝试。");
+          setMessage(t("onboarding.auth.statusUnreadable"));
         });
     }, 900);
     return () => window.clearTimeout(timer);
@@ -418,7 +420,7 @@ export function OnboardingFlow() {
     try {
       const profileInput = custom
         ? {
-            name: "自定义 Provider",
+            name: t("settings.provider.wizard.customProviderName"),
             kind: customKind,
             base_url: customBaseUrl,
             model_id: customModel,
@@ -443,15 +445,15 @@ export function OnboardingFlow() {
         setConnectionState("authorizing");
         const next = await authorizeProviderProfile(profile.id, "oauth");
         setOperation(next);
-        setMessage("请按 Provider 指引完成授权。");
+        setMessage(t("onboarding.auth.followProvider"));
         return;
       }
       const status = await testProviderProfile(profile.id);
       setConnectionState(status.status === "ready" ? "ready" : "failed");
-      setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
+      setMessage(status.status === "ready" ? t("onboarding.connect.successModel", { model: custom ? customModel : selectedModelLabel }) : status.message);
     } catch {
       setConnectionState("failed");
-      setMessage("连接失败。请检查 Provider、模型和认证信息后重试。");
+      setMessage(t("onboarding.connect.failed"));
     }
   };
 
@@ -463,7 +465,7 @@ export function OnboardingFlow() {
       setPromptValue("");
       setOperation(next);
     } catch {
-      setMessage("认证输入未被接受，请重试。");
+      setMessage(t("onboarding.auth.inputRejected"));
     }
   };
 
@@ -486,7 +488,7 @@ export function OnboardingFlow() {
       if (state.availability !== "available") throw new Error("unavailable");
       router.push("/");
     } catch {
-      setMessage("设置未能完整保存。没有假装自动采集已启用，请重试。");
+      setMessage(t("onboarding.capture.saveFailed"));
       setFinishing(false);
     }
   };
@@ -512,9 +514,9 @@ export function OnboardingFlow() {
     || menuOpen
     || !formComplete;
   const statusMessage = connectionState === "testing"
-    ? "测试中…"
+    ? t("onboarding.status.testing")
     : connectionState === "authorizing"
-      ? "等待授权…"
+      ? t("onboarding.status.authorizing")
       : message;
   const statusTone = connectionState === "testing" || connectionState === "authorizing"
     ? "loading"
@@ -595,7 +597,7 @@ export function OnboardingFlow() {
         <div className="task3-toolbar-spacer" />
         <TauriWindowControls />
       </div>
-      <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 2 步`}>
+      <div className="task3-onboarding-progress" aria-label={t("onboarding.progress.ariaLabel", { step })}>
         <span data-active={step === 1 || undefined}>1</span>
         <i />
         <span data-active={step === 2 || undefined}>2</span>
@@ -620,7 +622,7 @@ export function OnboardingFlow() {
         />
       ) : step === 1 ? (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="provider-title" key="provider">
-          <h1 id="provider-title">连接模型服务</h1>
+          <h1 id="provider-title">{t("onboarding.title")}</h1>
 
           <div className="task3-onboarding-wizard-fields">
               <Field label="Provider">
@@ -641,10 +643,10 @@ export function OnboardingFlow() {
                     }}
                     type="button"
                   >
-                    <span aria-live="polite">{custom ? "自定义 Provider" : (wizardTypeLabels.get(providerId) ?? selectedProvider?.provider_name ?? "选择 Provider")}</span>
+                    <span aria-live="polite">{custom ? t("settings.provider.wizard.customProviderName") : (wizardTypeLabels.get(providerId) ?? selectedProvider?.provider_name ?? t("onboarding.provider.select"))}</span>
                   </button>
                   {openMenu === "provider" ? (
-                    <div aria-label="Provider 选项" className="task3-onboarding-dropdown-menu" id="onboarding-provider-listbox" role="listbox">
+                    <div aria-label={t("onboarding.provider.optionsAria")} className="task3-onboarding-dropdown-menu" id="onboarding-provider-listbox" role="listbox">
                       {providers
                         .filter((provider) => !isMemberWizardType(provider.provider_id))
                         .map((provider) => (
@@ -657,7 +659,7 @@ export function OnboardingFlow() {
                           type="button"
                         >
                           <span>{provider.provider_name}</span>
-                          <small>{provider.auth_modes.map(authModeLabel).join(" / ")}</small>
+                          <small>{provider.auth_modes.map((mode) => authModeLabel(t, mode)).join(" / ")}</small>
                         </button>
                       ))}
                       {/* 会员档置顶（线框 ①）：账号订阅，登录即用。 */}
@@ -681,8 +683,8 @@ export function OnboardingFlow() {
                         role="option"
                         type="button"
                       >
-                        <span>自定义 Provider</span>
-                        <small>填写 URL 和 API key 后自动识别接口</small>
+                        <span>{t("settings.provider.wizard.customProviderName")}</span>
+                        <small>{t("onboarding.provider.customHint")}</small>
                       </button>
                     </div>
                   ) : null}
@@ -703,7 +705,7 @@ export function OnboardingFlow() {
                       value={apiKey}
                     />
                   </Field>
-                  {customProtocolNeedsChoice ? <Field label="接口协议">
+                  {customProtocolNeedsChoice ? <Field label={t("onboarding.protocol.label")}>
                     <div className="task3-onboarding-dropdown" ref={protocolMenuRef}>
                       <button
                         aria-controls="onboarding-protocol-listbox"
@@ -724,7 +726,7 @@ export function OnboardingFlow() {
                         <span aria-live="polite">{CUSTOM_PROTOCOLS[customKind].label}</span>
                       </button>
                       {openMenu === "protocol" ? (
-                        <div aria-label="接口协议选项" className="task3-onboarding-dropdown-menu" id="onboarding-protocol-listbox" role="listbox">
+                        <div aria-label={t("onboarding.protocol.optionsAria")} className="task3-onboarding-dropdown-menu" id="onboarding-protocol-listbox" role="listbox">
                           {(Object.entries(CUSTOM_PROTOCOLS) as Array<[CustomProviderKind, typeof CUSTOM_PROTOCOLS[CustomProviderKind]]>).map(([kind, protocol]) => (
                             <button
                               aria-selected={kind === customKind}
@@ -743,7 +745,7 @@ export function OnboardingFlow() {
                   </Field> : null}
                   {customModelState === "loading" || customModelMessage ? (
                     <div className="task3-custom-model-discovery" aria-live="polite">
-                      {customModelState === "loading" ? <p data-tone="loading">正在读取可用模型…</p> : null}
+                      {customModelState === "loading" ? <p data-tone="loading">{t("onboarding.model.loading")}</p> : null}
                       {customModelMessage ? <p data-tone={customModelError ? "error" : undefined}>{customModelMessage}</p> : null}
                     </div>
                   ) : null}
@@ -766,12 +768,12 @@ export function OnboardingFlow() {
                           }}
                           type="button"
                         >
-                          <span aria-live="polite">{customModel || "选择 Model"}</span>
+                          <span aria-live="polite">{customModel || t("onboarding.model.select")}</span>
                         </button>
                         {openMenu === "model" ? (
-                          <div aria-label="Model 选项" className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
-                            <div className="task3-onboarding-dropdown-group" role="group" aria-label="可用 Model">
-                              <div className="task3-onboarding-dropdown-label">可用 Model</div>
+                          <div aria-label={t("onboarding.model.optionsAria")} className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
+                            <div className="task3-onboarding-dropdown-group" role="group" aria-label={t("onboarding.model.available")}>
+                              <div className="task3-onboarding-dropdown-label">{t("onboarding.model.available")}</div>
                               {customModels.map((candidate) => (
                                 <button
                                   aria-selected={candidate.model_id === customModel}
@@ -787,7 +789,7 @@ export function OnboardingFlow() {
                             </div>
                             <div className="task3-onboarding-dropdown-group">
                               <button className="task3-onboarding-dropdown-option" onClick={useManualCustomModel} type="button">
-                                <span>列表中没有需要的 Model ID</span>
+                                <span>{t("onboarding.model.notListed")}</span>
                               </button>
                             </div>
                           </div>
@@ -804,11 +806,11 @@ export function OnboardingFlow() {
               ) : null}
 
               {!custom && selectedProvider && selectedProvider.auth_modes.length > 1 ? (
-                <div className="task3-auth-modes" role="radiogroup" aria-label="认证方式">
+                <div className="task3-auth-modes" role="radiogroup" aria-label={t("onboarding.authMode.ariaLabel")}>
                   {selectedProvider.auth_modes.map((mode) => (
                     <label key={mode}>
                       <input checked={authMode === mode} disabled={connectionReady} name="auth-mode" onChange={() => setAuthMode(mode)} type="radio" />
-                      <span>{authModeLabel(mode)}</span>
+                      <span>{authModeLabel(t, mode)}</span>
                     </label>
                   ))}
                 </div>
@@ -820,7 +822,7 @@ export function OnboardingFlow() {
                     autoComplete="off"
                     disabled={connectionReady}
                     onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={connectionReady && savedProfile?.has_api_key ? "已保存的凭据" : undefined}
+                    placeholder={connectionReady && savedProfile?.has_api_key ? t("onboarding.apikey.savedPlaceholder") : undefined}
                     type="password"
                     value={apiKey}
                   />
@@ -846,10 +848,10 @@ export function OnboardingFlow() {
                       }}
                       type="button"
                     >
-                      <span aria-live="polite">{selectedModelLabel || "选择 Model"}</span>
+                      <span aria-live="polite">{selectedModelLabel || t("onboarding.model.select")}</span>
                     </button>
                     {openMenu === "model" && selectedProvider ? (
-                      <div aria-label="Model 选项" className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
+                      <div aria-label={t("onboarding.model.optionsAria")} className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
                         <div className="task3-onboarding-dropdown-group" role="group" aria-label={selectedProvider.provider_name}>
                           <div className="task3-onboarding-dropdown-label">{selectedProvider.provider_name}</div>
                           {selectedProvider.models.map((model) => (
@@ -876,8 +878,8 @@ export function OnboardingFlow() {
             <div className="task3-auth-operation" aria-live="polite">
               {operation.events.map((event, index) => (
                 <div key={`${event.type}-${index}`}>
-                  {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.url)}>打开 Provider 授权页</a> : null}
-                  {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.verification_uri)}>前往验证</a></p> : null}
+                  {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.url)}>{t("onboarding.auth.openProviderPage")}</a> : null}
+                  {event.type === "device_code" ? <p>{t("onboarding.auth.deviceCodeLabel")}<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.verification_uri)}>{t("onboarding.auth.verifyLink")}</a></p> : null}
                   {event.type === "progress" ? <p>{event.message}</p> : null}
                 </div>
               ))}
@@ -885,7 +887,7 @@ export function OnboardingFlow() {
                 <Field label={operation.prompts[0].message}>
                   <div className="task3-inline-field">
                     <FieldControl autoComplete="off" onChange={(event) => setPromptValue(event.target.value)} type={operation.prompts[0].type === "secret" ? "password" : "text"} value={promptValue} />
-                    <Button onClick={() => void submitPrompt()} variant="secondary">提交</Button>
+                    <Button onClick={() => void submitPrompt()} variant="secondary">{t("onboarding.auth.submit")}</Button>
                   </div>
                 </Field>
               ) : null}
@@ -898,38 +900,38 @@ export function OnboardingFlow() {
               {statusMessage && statusTone ? <span data-tone={statusTone}>{statusMessage}</span> : null}
             </div>
             {connectionReady ? (
-              <Button className="task3-onboarding-primary" onClick={() => setStep(2)}>继续</Button>
+              <Button className="task3-onboarding-primary" onClick={() => setStep(2)}>{t("onboarding.actions.continue")}</Button>
             ) : (
               <Button className="task3-onboarding-primary" disabled={testDisabled} onClick={() => void connect()}>
-                测试连接
+                {t("onboarding.connect.test")}
               </Button>
             )}
           </div>
         </section>
       ) : (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="capture-title" key="capture">
-          <div className="task3-eyebrow">第二步 · 自动采集</div>
-          <h1 id="capture-title">训练后自动整理证据</h1>
-          <p className="task3-lead">桌面版可在 KovaaK 运行时准备 300 秒硬件编码回放缓冲，并优先保留 Raw Input。每一局完成后仍由你确认要分析哪一条 Run。</p>
+          <div className="task3-eyebrow">{t("onboarding.capture.eyebrow")}</div>
+          <h1 id="capture-title">{t("onboarding.capture.title")}</h1>
+          <p className="task3-lead">{t("onboarding.capture.lead")}</p>
           {desktop ? (
             <label className="task3-opt-in-row">
               <input checked={captureOptIn} onChange={(event) => setCaptureOptIn(event.target.checked)} type="checkbox" />
-              <span><strong>启用自动采集</strong><small>仅采集 KovaaK 窗口；暂停局按 fail-closed 处理，不生成误导性证据。</small></span>
+              <span><strong>{t("onboarding.capture.optInLabel")}</strong><small>{t("onboarding.capture.optInNote")}</small></span>
             </label>
           ) : (
-            <Notice title="当前是浏览器预览">自动采集、Raw Input 和桌面文件选择只在 Windows 桌面版可用；页面结构保持一致。</Notice>
+            <Notice title={t("onboarding.capture.browserTitle")}>{t("onboarding.capture.browserBody")}</Notice>
           )}
           {captureStatus?.availability === "available" ? (
             <div className="task3-capture-facts">
-              <span>平台支持 <strong>{captureStatus.platform_supported ? "是" : "否"}</strong></span>
-              <span>Raw Input 授权 <strong>{captureStatus.raw_input_permission === "granted" ? "已授权" : captureStatus.raw_input_permission === "denied" ? "已拒绝" : "待确认"}</strong></span>
-              <span>当前采集 <strong>{captureStatus.capture_enabled ? "已启用" : "未启用"}</strong></span>
+              <span>{t("onboarding.capture.platformSupported")} <strong>{captureStatus.platform_supported ? t("onboarding.capture.yes") : t("onboarding.capture.no")}</strong></span>
+              <span>{t("onboarding.capture.rawInputPermission")} <strong>{captureStatus.raw_input_permission === "granted" ? t("onboarding.capture.permissionGranted") : captureStatus.raw_input_permission === "denied" ? t("onboarding.capture.permissionDenied") : t("onboarding.capture.permissionPending")}</strong></span>
+              <span>{t("onboarding.capture.currentCapture")} <strong>{captureStatus.capture_enabled ? t("onboarding.capture.captureEnabled") : t("onboarding.capture.captureDisabled")}</strong></span>
             </div>
           ) : null}
           {message ? <Notice tone="error">{message}</Notice> : null}
           <div className="task3-onboarding-actions">
-            <Button onClick={() => setStep(1)} variant="secondary">返回</Button>
-            <Button disabled={finishing || !desktop || !captureOptIn || !(connectionReady || memberReady)} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
+            <Button onClick={() => setStep(1)} variant="secondary">{t("onboarding.capture.back")}</Button>
+            <Button disabled={finishing || !desktop || !captureOptIn || !(connectionReady || memberReady)} onClick={() => void finish()}>{finishing ? t("onboarding.capture.saving") : t("onboarding.capture.enter")}</Button>
           </div>
         </section>
       )}
@@ -962,9 +964,10 @@ function MemberConnect({
   onSubscribe: () => void;
   onUseByok: () => void;
 }) {
+  const t = useT();
   return (
     <section className="task3-onboarding-sheet task3-onboarding-step task3-member-connect" aria-labelledby="member-title" key="member">
-      <h1 id="member-title">连接模型服务 · Aiming Cookie</h1>
+      <h1 id="member-title">{t("onboarding.member.title")}</h1>
 
       {stage === "waiting" ? (
         <>
@@ -975,7 +978,7 @@ function MemberConnect({
               {MEMBER_COPY.waitingBody}
               <br />
               {MEMBER_COPY.waitingReopenHint}
-              <button className="task3-member-link" onClick={onReopen} type="button">点此重新打开</button>
+              <button className="task3-member-link" onClick={onReopen} type="button">{t("onboarding.member.reopenLink")}</button>
             </p>
           </div>
           <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>

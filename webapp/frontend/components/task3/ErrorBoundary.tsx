@@ -3,6 +3,7 @@
 import { Component, type ReactNode } from "react";
 
 import { logFrontendError } from "@/lib/frontend-log";
+import { t } from "@/lib/i18n";
 import { Button, ErrorState } from "@/ui/primitives";
 
 type ErrorBoundaryProps = {
@@ -52,10 +53,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             placeItems: "center",
           }}
         >
-          <ErrorState title="界面出了点问题">
-            <p style={{ margin: "0 0 var(--space-4)" }}>这部分界面崩溃了，重试即可恢复；若反复出现请重启应用。</p>
+          <ErrorState title={t("common.errorBoundary.title")}>
+            <p style={{ margin: "0 0 var(--space-4)" }}>{t("common.errorBoundary.body")}</p>
             <Button onClick={this.retry} variant="secondary">
-              重试
+              {t("common.errorBoundary.retry")}
             </Button>
           </ErrorState>
         </div>

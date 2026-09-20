@@ -227,7 +227,7 @@ test("Settings hosts the KovaaK connection surface without adding a Benchmark ro
   assert.match(settings, /KovaaKConnectionPanel/);
   // 0912 点点拍板：S2 Benchmark 成绩单有版权不上屏——连接后只显示已连接，
   // 全界面不出现 S2 字样（改叫 KovaaKs/Steam 在线成绩）；数据留给 Coach 后台读取。
-  assert.match(panel, /已连接 KovaaKs 在线成绩/);
+  assert.match(panel, /kovaak\.connection\.connectedTitle/);
   assert.doesNotMatch(panel, /S2|Benchmark|成绩单|score-row|让 Coach 看看/);
   assert.doesNotMatch(settings, /S2|Benchmark/);
   // 同意勾选（0912 点点拍板）：settings 屏退役，仅 onboarding 向导保留；

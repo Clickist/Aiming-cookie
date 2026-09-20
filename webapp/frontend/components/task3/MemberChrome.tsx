@@ -9,6 +9,7 @@
  */
 
 import { MEMBER_COPY, formatMemberDate } from "@/lib/member";
+import { useT } from "@/lib/i18n";
 import type { MemberMe } from "@/lib/types";
 
 /**
@@ -24,11 +25,12 @@ export function MemberNotice({
   onDismiss: () => void;
   children: React.ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="task3-member-notice" data-tone={tone} role="status">
       <span className="task3-member-notice-text">{children}</span>
       <button
-        aria-label="关闭提示"
+        aria-label={t("member.notice.closeAria")}
         className="task3-member-notice-close"
         onClick={onDismiss}
         type="button"

@@ -9,6 +9,7 @@ import {
   refreshKovaaKConnection,
   saveKovaaKConnection,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { KovaaKScoresV1 } from "@/lib/types";
 import { Button, Dialog, Field, FieldControl, Notice, Status } from "@/ui/primitives";
 
@@ -34,14 +35,8 @@ function isSteamProfile(value: string): boolean {
   return STEAM_ID.test(value) || STEAM_PROFILE.test(value);
 }
 
-function observedAt(value: string | null): string {
-  if (!value) return "暂无成功读取记录";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "已有可用成绩";
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
-
 export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKConnectionPanelProps) {
+  const t = useT();
   const [connected, setConnected] = useState(false);
   const [scores, setScores] = useState<KovaaKScoresV1 | null>(null);
   const [steamProfile, setSteamProfile] = useState("");
@@ -52,6 +47,13 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const hasScores = scores?.availability === "available";
+
+  const observedAt = useCallback((value: string | null): string => {
+    if (!value) return t("kovaak.connection.observedNone");
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return t("kovaak.connection.observedFallback");
+    return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  }, [t]);
 
   const load = useCallback(async () => {
     setOperation("loading");
@@ -66,14 +68,14 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       setScores(scoresResult.value);
     }
     if (connectionResult.status === "rejected") {
-      setFeedback({ tone: "error", message: "KovaaK 连接状态暂时无法读取，请稍后重试。" });
+      setFeedback({ tone: "error", message: t("kovaak.connection.readFailed") });
     } else if (scoresResult.status === "rejected") {
-      setFeedback({ tone: "error", message: "KovaaK 成绩暂时无法读取，请稍后重试。" });
+      setFeedback({ tone: "error", message: t("kovaak.connection.scoresReadFailed") });
     } else {
       setFeedback(null);
     }
     setOperation("idle");
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -82,13 +84,13 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   const save = async () => {
     const value = steamProfile.trim();
     if (!isSteamProfile(value)) {
-      setInputError("没有识别到有效的 Steam 个人资料链接或 17 位 Steam ID。");
+      setInputError(t("kovaak.connection.steamIdInvalid"));
       return;
     }
     // 点点 0912 拍板：settings 去掉同意勾选门槛（愿意输入并点读取即表达意图）；
     // onboarding 向导仍保留勾选。后端合同 identity_consent 恒为 true。
     if (context === "onboarding" && !identityConsent) {
-      setInputError("读取前需要同意本次使用该 Steam ID。" );
+      setInputError(t("kovaak.connection.consentRequired"));
       return;
     }
     setOperation("saving");
@@ -100,7 +102,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       setSteamProfile("");
       await refresh();
     } catch {
-      setFeedback({ tone: "error", message: "连接未能保存，请检查输入后重试。" });
+      setFeedback({ tone: "error", message: t("kovaak.connection.saveFailed") });
       setOperation("idle");
     }
   };
@@ -112,11 +114,11 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       await refreshKovaaKConnection();
       const nextScores = await getKovaaKScores();
       setScores(nextScores);
-      setFeedback({ tone: "success", message: "成绩已更新。" });
+      setFeedback({ tone: "success", message: t("kovaak.connection.scoresUpdated") });
     } catch {
       setFeedback({
         tone: hasScores ? "warning" : "error",
-        message: hasScores ? "这次没有更新，上次成绩仍然可用。" : "这次没有读到可用成绩，请稍后刷新。",
+        message: hasScores ? t("kovaak.connection.refreshNoUpdate") : t("kovaak.connection.refreshNoScores"),
       });
     } finally {
       setOperation("idle");
@@ -131,9 +133,9 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       setConnected(false);
       setScores(null);
       setIdentityConsent(false);
-      setFeedback({ tone: "success", message: "KovaaK 连接已移除。" });
+      setFeedback({ tone: "success", message: t("kovaak.connection.removed") });
     } catch {
-      setFeedback({ tone: "error", message: "KovaaK 连接未能移除，请重试。" });
+      setFeedback({ tone: "error", message: t("kovaak.connection.removeFailed") });
     } finally {
       setConfirmRemove(false);
       setOperation("idle");
@@ -154,8 +156,8 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       <div className="kovaak-panel" data-context={context}>
         <div className="kovaak-module">
           <div className="kovaak-module-read-state">
-            <Status tone="neutral"><span className="kovaak-skeleton-dot" />正在读取成绩…</Status>
-            <span className="kovaak-module-note">通常只需几秒，可以继续其它操作</span>
+            <Status tone="neutral"><span className="kovaak-skeleton-dot" />{t("kovaak.connection.loading")}</Status>
+            <span className="kovaak-module-note">{t("kovaak.connection.loadingHint")}</span>
           </div>
           <div style={{ marginTop: "var(--space-3)", width: "62%" }}><div className="kovaak-skeleton" /></div>
           <div style={{ marginTop: "var(--space-2)", width: "44%" }}><div className="kovaak-skeleton" /></div>
@@ -171,11 +173,11 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       <FieldControl
         data-invalid={inputError ? "true" : undefined}
         onChange={(event) => { setSteamProfile(event.target.value); setInputError(null); }}
-        placeholder="粘贴链接或输入数字 ID…"
+        placeholder={t("kovaak.connection.inputPlaceholder")}
         value={steamProfile}
       />
       <Button disabled={busy || (context === "onboarding" && !identityConsent)} onClick={() => void save()}>
-        {operation === "saving" ? "正在读取…" : "读取成绩"}
+        {operation === "saving" ? t("kovaak.connection.reading") : t("kovaak.connection.readScores")}
       </Button>
     </div>
   );
@@ -184,32 +186,32 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       {context === "settings" ? (
         <>
           {/* 0912 线框拍板：卡内自包含标题；同意勾选与说明文字全部退役。 */}
-          <h3 className="task6-profile-group-title">KovaaKs 在线成绩</h3>
-          <p className="task6-card-desc">粘贴 Steam 链接或 17 位数字 ID；数据只在本机展示。</p>
+          <h3 className="task6-profile-group-title">{t("kovaak.connection.settingsTitle")}</h3>
+          <p className="task6-card-desc">{t("kovaak.connection.settingsDesc")}</p>
         </>
       ) : null}
       <div className="kovaak-connect-form">
-        {context === "onboarding" ? <Field label="Steam 个人资料链接 或 17 位 Steam ID">{connectRow}</Field> : connectRow}
+        {context === "onboarding" ? <Field label={t("kovaak.connection.steamFieldLabel")}>{connectRow}</Field> : connectRow}
         {context === "onboarding" ? (
           <>
-            <p className="kovaak-module-note">粘贴完整链接或直接输入数字 ID；不需要登录 Steam，也不会要求授权。</p>
+            <p className="kovaak-module-note">{t("kovaak.connection.pasteHint")}</p>
             <label className="kovaak-consent">
               <input
                 checked={identityConsent}
                 onChange={(event) => setIdentityConsent(event.target.checked)}
                 type="checkbox"
               />
-              <span>我同意使用此 Steam ID 在本机读取 KovaaKs 在线成绩</span>
+              <span>{t("kovaak.connection.consentLabel")}</span>
             </label>
             <p className="kovaak-module-note">
-              Steam ID 仅保存在本机、不回显、不发送给 Coach Provider；勾选同意后才能读取成绩。
+              {t("kovaak.connection.consentNote")}
             </p>
           </>
         ) : null}
         {inputError ? (
           <p className="kovaak-consent-error" role="alert">
             <span aria-hidden="true">⚠</span>
-            <span>没有识别到有效的 Steam 个人资料链接——请检查是否完整粘贴，或直接输入 17 位数字 ID。</span>
+            <span>{t("kovaak.connection.steamIdInvalidDetail")}</span>
           </p>
         ) : null}
       </div>
@@ -221,17 +223,17 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   const connectedView = (
     <div className="kovaak-module">
       <div className="kovaak-connected">
-        <span className="kovaak-connection-status"><strong>已连接 KovaaKs 在线成绩</strong></span>
-        <Status tone="success"><span aria-hidden="true">●</span>已连接</Status>
+        <span className="kovaak-connection-status"><strong>{t("kovaak.connection.connectedTitle")}</strong></span>
+        <Status tone="success"><span aria-hidden="true">●</span>{t("kovaak.connection.connected")}</Status>
       </div>
       <p className="kovaak-module-note">
-        最近成功同步：{observedAt(scores?.observed_at ?? null)}。成绩数据只保存在本机，Coach 分析时会在后台读取。
+        {t("kovaak.connection.lastSync", { time: observedAt(scores?.observed_at ?? null) })}
       </p>
       <div className="kovaak-actions">
         <Button disabled={busy} onClick={() => void refresh()} size="compact" variant="secondary">
-          {operation === "refreshing" ? "正在刷新…" : "刷新成绩"}
+          {operation === "refreshing" ? t("kovaak.connection.refreshing") : t("kovaak.connection.refreshScores")}
         </Button>
-        <Button disabled={busy} onClick={() => setConfirmRemove(true)} size="compact" variant="ghost">停止使用此来源</Button>
+        <Button disabled={busy} onClick={() => setConfirmRemove(true)} size="compact" variant="ghost">{t("kovaak.connection.stopUsingSource")}</Button>
       </div>
       {!connected ? feedbackMessage : null}
     </div>
@@ -243,18 +245,18 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
       {!connected ? feedbackMessage : null}
       {context === "onboarding" ? (
         <div className="kovaak-onboarding-actions">
-          {onSkip ? <Button onClick={onSkip} size="compact" variant="ghost">跳过这一步</Button> : null}
-          {connected && onContinue ? <Button onClick={onContinue}>继续</Button> : null}
+          {onSkip ? <Button onClick={onSkip} size="compact" variant="ghost">{t("kovaak.connection.skipStep")}</Button> : null}
+          {connected && onContinue ? <Button onClick={onContinue}>{t("kovaak.onboarding.continue")}</Button> : null}
         </div>
       ) : null}
 
       <Dialog
-        footer={<><Button onClick={() => setConfirmRemove(false)} size="compact" variant="secondary">取消</Button><Button onClick={() => void remove()} size="compact" variant="danger">停止使用</Button></>}
+        footer={<><Button onClick={() => setConfirmRemove(false)} size="compact" variant="secondary">{t("kovaak.connection.cancel")}</Button><Button onClick={() => void remove()} size="compact" variant="danger">{t("kovaak.connection.stopUsing")}</Button></>}
         onClose={() => setConfirmRemove(false)}
         open={confirmRemove}
-        title="停止使用 KovaaK 成绩来源"
+        title={t("kovaak.connection.stopUsingTitle")}
       >
-        <p>本地保存的连接与已读取成绩会被移除；不影响本地分析与历史。之后可以重新连接。</p>
+        <p>{t("kovaak.connection.stopUsingBody")}</p>
       </Dialog>
     </div>
   );
