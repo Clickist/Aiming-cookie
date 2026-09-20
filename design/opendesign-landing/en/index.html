@@ -787,8 +787,10 @@
       .topnav nav a.nav-account { display: inline-flex; }
     }
     /* ⑩b 三档价格块：三卡统一常规描边（Plus 不做橙色高亮描边） */
-    .pricing-title { font-family: var(--font-display); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; text-align: center; margin: 0; }
-    .pricing-sub { margin: 8px 0 0; text-align: center; font-size: 15px; color: var(--muted); }
+    /* Title inherits the page's standard h2 scale (48px) like every other section heading —
+       a 20px override here made it look shrunken next to them */
+    .pricing-title { text-align: center; }
+    .pricing-sub { margin: 8px 0 0; text-align: center; font-size: var(--fs-lead); line-height: 1.6; color: var(--muted); }
     .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 880px; margin: 20px auto 0; align-items: stretch; }
     .price-card { display: flex; flex-direction: column; padding: 24px 22px; min-height: 270px; }
     .price-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-xs); }
