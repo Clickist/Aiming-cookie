@@ -716,6 +716,93 @@
       .ac-hv-refresh-text { display: none; }
       .ac-hv-coach-pill { padding: 0 12px; }
     }
+
+    /* ─── 落地页账号入口（⑩）：未登录「登录」/ 已登录 头像+邮箱下拉 ───── */
+    .acct { position: relative; display: inline-flex; align-items: center; }
+    /* 类规则里的 display 会盖掉 [hidden] 的 UA 默认值，这里显式兜住 */
+    .topnav-right [hidden] { display: none !important; }
+    .acct-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      min-height: 38px; padding: 4px 12px 4px 5px;
+      background: transparent; color: var(--fg);
+      border: 1px solid var(--border); border-radius: 999px;
+      font-size: 14px; font-weight: 500; letter-spacing: -0.005em;
+      transition: border-color .15s ease;
+    }
+    .acct-chip:hover { border-color: var(--fg); }
+    .acct-avatar {
+      flex: none; width: 28px; height: 28px; border-radius: 50%;
+      display: grid; place-items: center;
+      background: var(--accent-soft); color: var(--accent);
+      font-size: 12px; font-weight: 600;
+    }
+    .acct-mail { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .acct-caret { color: var(--muted); font-size: 11px; transition: transform .15s ease; }
+    .acct-chip[aria-expanded="true"] .acct-caret { transform: rotate(180deg); }
+    .acct-panel {
+      position: absolute; top: calc(100% + 10px); right: 0; z-index: 30;
+      width: 272px; overflow: hidden; text-align: left;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      box-shadow: 0 16px 32px rgba(36, 33, 29, .14);
+    }
+    html.dark .acct-panel { box-shadow: 0 16px 32px rgba(0, 0, 0, .5); }
+    .acct-sum { padding: 14px 16px 16px; }
+    .acct-plan { font-size: 12px; color: var(--muted); }
+    .acct-note { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    .acct-bar { height: 6px; margin: 8px 0 6px; border-radius: 999px; background: var(--fg-soft); overflow: hidden; }
+    .acct-bar > i { display: block; height: 100%; background: var(--accent); }
+    .acct-pct { font-size: 14px; font-weight: 600; }
+    .acct-row {
+      display: flex; align-items: center; width: 100%; min-height: 44px;
+      padding: 10px 16px; border: 0; border-top: 1px solid var(--border);
+      background: transparent; color: var(--muted); font-size: 13px; text-align: left;
+    }
+    .acct-row:hover { color: var(--fg); background: var(--fg-soft); }
+    .acct-row--hot { color: var(--accent); font-weight: 600; }
+    .acct-row--hot:hover { color: var(--accent); }
+    /* ≤640px：顶栏不塞账号入口，它跟随 .menu-toggle 菜单一起收进移动端菜单 */
+    .acct-menu { display: none; }
+    .acct-menu [hidden] { display: none !important; }
+    @media (min-width: 641px) and (max-width: 920px) {
+      /* 顶栏 ≤920px 会隐藏 .topnav .btn，登录入口在该档位仍需常驻 */
+      .topnav .btn.acct-login { display: inline-flex; }
+    }
+    @media (max-width: 640px) {
+      .acct { display: none; }
+      .acct-menu { display: block; grid-column: 1 / -1; }
+      .acct-menu .acct-menu__row {
+        display: flex; align-items: center; width: 100%; min-height: 44px;
+        padding: 0; border: 0; border-bottom: 1px solid var(--border);
+        background: transparent; color: var(--muted); font-size: 14px; text-align: left;
+      }
+      .acct-menu .acct-menu__row:hover { color: var(--fg); }
+      .acct-menu__sum { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 12px 0 0; }
+      .acct-menu__user .acct-bar { margin: 8px 0 12px; }
+    }
+
+    /* ─── 落地页底部三档价格块（⑩b）：BYOK / Standard / Plus ─────────── */
+    .pricing-sub { margin: 12px 0 0; font-size: 15px; color: var(--muted); }
+    .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap-md); align-items: stretch; }
+    .pricing-card { display: flex; flex-direction: column; }
+    .card.pricing-card { padding: 24px 22px; min-height: 270px; }
+    .pricing-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; }
+    .pricing-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      background: var(--fg-soft); color: var(--muted);
+      font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
+    }
+    .pricing-badge--outline { background: transparent; border: 1px solid var(--border); font-weight: 500; }
+    .pricing-price {
+      margin-top: 16px; font-family: var(--font-display);
+      font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
+    }
+    .pricing-price small { font-family: var(--font-body); font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+    .pricing-desc { margin: 10px 0 0; font-size: 14px; line-height: 1.6; color: var(--muted); }
+    .pricing-cta { margin-top: auto; padding-top: 22px; }
+    .pricing-cta .btn { width: 100%; justify-content: center; }
+    @media (max-width: 920px) {
+      .pricing-grid { grid-template-columns: 1fr; max-width: 480px; margin-inline: auto; }
+    }
     </style>
 </head>
 <body>
@@ -727,6 +814,21 @@
         <a href="#capture" data-od-id="nav-capture">采集</a>
         <a href="#metrics" data-od-id="nav-metrics">指标</a>
         <a href="#coach" data-od-id="nav-coach">Coach</a>
+        <!-- ≤640px：账号入口随导航收进本菜单（⑩ 的移动端形态） -->
+        <div class="acct-menu" id="acctMenu" data-od-id="account-menu">
+          <a class="acct-menu__row" id="acctMenuLogin" href="https://accounts.example.invalid/login" data-od-id="menu-login">登录</a>
+          <div class="acct-menu__user" id="acctMenuUser" hidden>
+            <div class="acct-menu__sum">
+              <span class="acct-plan" id="acctMenuPlan"></span>
+              <span class="acct-pct" id="acctMenuPct" hidden></span>
+            </div>
+            <div class="acct-note" id="acctMenuNote" hidden>已取消 · 到期后停止</div>
+            <div class="acct-bar"><i id="acctMenuBar"></i></div>
+            <a class="acct-menu__row" id="acctMenuAccount" href="https://accounts.example.invalid/account">前往账号中心 ›</a>
+            <a class="acct-menu__row" id="acctMenuBilling" href="https://accounts.example.invalid/account/billing">管理订阅</a>
+            <button class="acct-menu__row" id="acctMenuSignOut" type="button">退出登录</button>
+          </div>
+        </div>
       </nav>
       <button class="menu-toggle" type="button" aria-label="打开导航菜单" aria-controls="site-nav" aria-expanded="false" data-od-id="menu-toggle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
@@ -738,9 +840,148 @@
           <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"></path></svg>
         </button>
         <a class="btn btn-bilibili" href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener" data-od-id="top-bilibili">Bilibili 主页</a>
+        <!-- ⑩ 账号入口：初始未登录态；探测成功后原位替换为头像+邮箱下拉 -->
+        <a class="btn btn-secondary acct-login" id="acctLogin" href="https://accounts.example.invalid/login" data-od-id="top-login">登录</a>
+        <div class="acct" id="acct" hidden>
+          <button class="acct-chip" id="acctChip" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="acctPanel" aria-label="账号菜单" data-od-id="acct-chip">
+            <span class="acct-avatar" id="acctAvatar" aria-hidden="true"></span>
+            <span class="acct-mail" id="acctMail"></span>
+            <span class="acct-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="acct-panel" id="acctPanel" hidden>
+            <div class="acct-sum">
+              <div class="acct-plan" id="acctPlan"></div>
+              <div class="acct-note" id="acctNote" hidden>已取消 · 到期后停止</div>
+              <div class="acct-bar" id="acctBar" hidden><i id="acctBarFill"></i></div>
+              <div class="acct-pct" id="acctPct" hidden></div>
+            </div>
+            <a class="acct-row acct-row--hot" id="acctAccount" href="https://accounts.example.invalid/account" data-od-id="acct-account">前往账号中心 ›</a>
+            <a class="acct-row" id="acctBilling" href="https://accounts.example.invalid/account/billing" data-od-id="acct-billing">管理订阅</a>
+            <button class="acct-row" id="acctSignOut" type="button" data-od-id="acct-signout">退出登录</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
+
+  <script>
+    // ─── ⑩ 账号入口：/api/me/web 跨域探测（session cookie），失败静默回退未登录态 ──
+    (function () {
+      const ACCOUNTS = 'https://accounts.example.invalid';
+      const el = (id) => document.getElementById(id);
+      const loginBtn = el('acctLogin');
+      const acct = el('acct');
+      const chip = el('acctChip');
+      const panel = el('acctPanel');
+      const menuLogin = el('acctMenuLogin');
+      const menuUser = el('acctMenuUser');
+      if (!loginBtn || !acct || !chip || !panel) return;
+
+      // 邮箱掩码：u***@gmail.com；邮箱首字母做头像
+      const maskEmail = (email) => {
+        const s = String(email || '');
+        const at = s.indexOf('@');
+        return at > 0 ? s.slice(0, 1) + '***' + s.slice(at) : s;
+      };
+      const initialOf = (email) => String(email || '?').trim().slice(0, 1).toUpperCase() || '?';
+      const planLabel = (plan) =>
+        plan === 'standard' ? 'Standard · 连续包月' : plan === 'plus' ? 'Plus · 连续包月' : '免费版';
+
+      const closePanel = () => {
+        panel.hidden = true;
+        chip.setAttribute('aria-expanded', 'false');
+      };
+      const openPanel = () => {
+        panel.hidden = false;
+        chip.setAttribute('aria-expanded', 'true');
+      };
+      chip.addEventListener('click', () => { if (panel.hidden) openPanel(); else closePanel(); });
+      document.addEventListener('click', (e) => { if (!acct.contains(e.target)) closePanel(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
+
+      let setLoggedOut = () => {};
+      const signOut = async () => {
+        try {
+          const res = await fetch(ACCOUNTS + '/api/auth/sign-out', { method: 'POST', credentials: 'include' });
+          if (res.ok) setLoggedOut();
+        } catch (e) { /* 静默：网络失败不改动页面状态 */ }
+      };
+      el('acctSignOut')?.addEventListener('click', signOut);
+      el('acctMenuSignOut')?.addEventListener('click', () => {
+        signOut();
+        const nav = el('site-nav');
+        const toggle = document.querySelector('[data-od-id="menu-toggle"]');
+        if (nav && toggle) {
+          nav.dataset.open = 'false';
+          toggle.setAttribute('aria-expanded', 'false');
+          toggle.setAttribute('aria-label', '打开导航菜单');
+        }
+      });
+
+      const setLoggedIn = (data) => {
+        const user = data.user || {};
+        const links = data.links || {};
+        const email = String(user.email || '');
+        const pctRaw = data.pools && data.pools.sub ? data.pools.sub.pct : null;
+        const pct = typeof pctRaw === 'number' ? Math.max(0, Math.min(100, pctRaw)) : null;
+
+        el('acctAvatar').textContent = initialOf(email);
+        el('acctMail').textContent = maskEmail(email);
+        el('acctPlan').textContent = planLabel(data.plan);
+        el('acctNote').hidden = !data.cancel_at_period_end;
+        const bar = el('acctBar');
+        const pctEl = el('acctPct');
+        if (pct === null) {
+          bar.hidden = true;
+          pctEl.hidden = true;
+        } else {
+          bar.hidden = false;
+          pctEl.hidden = false;
+          el('acctBarFill').style.width = pct + '%';
+          pctEl.textContent = '余量 ' + pct + '%';
+        }
+        if (links.account) el('acctAccount').setAttribute('href', links.account);
+        if (links.billing) el('acctBilling').setAttribute('href', links.billing);
+
+        // 移动端菜单内的账号区（与顶栏同源数据）
+        if (menuLogin && menuUser) {
+          menuLogin.hidden = true;
+          menuUser.hidden = false;
+          el('acctMenuPlan').textContent = planLabel(data.plan);
+          el('acctMenuNote').hidden = !data.cancel_at_period_end;
+          const menuPct = el('acctMenuPct');
+          if (pct === null) {
+            menuPct.hidden = true;
+            el('acctMenuBar').parentElement.hidden = true;
+          } else {
+            menuPct.hidden = false;
+            menuPct.textContent = '余量 ' + pct + '%';
+            el('acctMenuBar').style.width = pct + '%';
+          }
+          if (links.account) el('acctMenuAccount').setAttribute('href', links.account);
+          if (links.billing) el('acctMenuBilling').setAttribute('href', links.billing);
+        }
+
+        loginBtn.hidden = true;
+        acct.hidden = false;
+      };
+
+      setLoggedOut = () => {
+        closePanel();
+        loginBtn.hidden = false;
+        acct.hidden = true;
+        if (menuLogin && menuUser) {
+          menuLogin.hidden = false;
+          menuUser.hidden = true;
+        }
+      };
+
+      fetch(ACCOUNTS + '/api/me/web', { credentials: 'include', headers: { Accept: 'application/json' } })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => { if (data && data.logged_in) setLoggedIn(data); })
+        .catch(() => { /* 静默回退未登录态 */ });
+    })();
+  </script>
 
   <main id="content">
 
@@ -2170,6 +2411,45 @@
     </section>
 
   </main>
+
+  <!-- 块 8 · 三档价格块（⑩b）：BYOK / Standard / Plus -->
+  <section class="section" id="pricing" data-od-id="pricing">
+    <div class="container">
+      <div class="center" style="text-align: center;">
+        <h2>选择你的练法</h2>
+        <p class="pricing-sub">教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</p>
+      </div>
+      <div class="pricing-grid" style="margin-top: clamp(28px, 3vw, 40px);">
+        <div class="card pricing-card" data-od-id="plan-byok">
+          <div class="pricing-head"><span class="pricing-badge">BYOK</span></div>
+          <div class="pricing-price">¥0 <small>· 应用免费</small></div>
+          <p class="pricing-desc">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）</p>
+          <div class="pricing-cta">
+            <a class="btn btn-secondary" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>下载客户端</a>
+          </div>
+        </div>
+        <div class="card pricing-card" data-od-id="plan-standard">
+          <div class="pricing-head"><span class="pricing-badge">Standard</span></div>
+          <div class="pricing-price">¥10 <small>/月 · 自动续费</small></div>
+          <p class="pricing-desc">教练每月约 120 轮对话</p>
+          <div class="pricing-cta">
+            <a class="btn btn-secondary" href="https://accounts.example.invalid/pay" data-plan-cta="standard">订阅 Standard</a>
+          </div>
+        </div>
+        <div class="card pricing-card" data-od-id="plan-plus">
+          <div class="pricing-head">
+            <span class="pricing-badge">Plus</span>
+            <span class="pricing-badge pricing-badge--outline">单轮价低 10%</span>
+          </div>
+          <div class="pricing-price">¥30 <small>/月 · 自动续费</small></div>
+          <p class="pricing-desc">教练每月约 400 轮对话</p>
+          <div class="pricing-cta">
+            <a class="btn btn-primary" href="https://accounts.example.invalid/pay" data-plan-cta="plus">订阅 Plus</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <div class="container meta-notice" data-od-id="notice">
     <p>须知：Coach 需要自备 LLM provider——免费的是产品，模型费用属于你与所选 provider 的关系。</p>
