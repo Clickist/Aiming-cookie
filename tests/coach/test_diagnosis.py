@@ -187,7 +187,7 @@ def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
         metric_refs=["metric:post_change_error"],
     )
 
-    assert refs.registry_version == "2026-09-12.v12"
+    assert refs.registry_version == "2026-09-20.v13"
     assert 1 <= len(refs.entry_refs) <= 3
     assert all(ref.startswith("knowledge:") for ref in refs.entry_refs)
     assert not hasattr(refs, "severity")
@@ -212,7 +212,7 @@ def test_static_registry_backed_issue_carries_exact_observation_and_knowledge_re
 
     issue = diagnosis.issues[0]
     assert issue.observation_ref == "metric.terminal_control"
-    assert issue.knowledge_registry_version == "2026-09-12.v12"
+    assert issue.knowledge_registry_version == "2026-09-20.v13"
     # 09-10 撤销冻结期前缀过滤后恢复匹配器 top-3：terminal-control 之外
     # 带上冲过头触发与控制平滑度两条对症条目。
     assert issue.knowledge_entry_refs == [

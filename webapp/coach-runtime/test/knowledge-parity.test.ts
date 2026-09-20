@@ -68,6 +68,6 @@ test("TypeScript and Python load the same registry version", () => {
   for (const cwd of [REPO_ROOT, PACKAGE_ROOT]) {
     const [pyVersion] = runPython(script, null, cwd) as string[];
     assert.equal(pyVersion, registry.registry_version, cwd);
-    assert.equal(pyVersion, "2026-09-12.v12", cwd);
+    assert.equal(pyVersion, "2026-09-20.v13", cwd);
   }
 });
