@@ -417,7 +417,9 @@
   </style>
   <style>
     /* 历史页 v6 mock 样式（scoped） */
-    .ac-history-mock-v6 { position: relative; }
+    /* isolation 把 mock 内部的 z-index（如 .ac-hv-head 的 100）关进自己的层叠上下文，
+       否则 mock 滚到顶部时会盖住真页眉 .topnav（z-index 10） */
+    .ac-history-mock-v6 { position: relative; isolation: isolate; }
     /* 页面滚动条（对齐真 app ui/theme.css:617-643）：6px、透明轨道、thumb r3、随主题。
        深色 thumb #3a3833、浅色 thumb #cec6bc，均取当前主题的 outline-variant。 */
     .ac-history-mock-v6 .ac-hv-page::-webkit-scrollbar { width: 6px; height: 6px; }
