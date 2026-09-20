@@ -2241,7 +2241,38 @@
       </div>
     </section>
 
-    <!-- FAQ -->
+    <!-- ⑩b Pricing tiers（在 Coach 与 FAQ 之间；CTA 两态与 ⑩ 共用探测结果） -->
+    <section class="section pricing" id="pricing" data-od-id="pricing">
+      <div class="container">
+        <h2 class="pricing-title">Choose how you train</h2>
+        <p class="pricing-sub">Coach subscription is about 7.9× of DeepSeek's official price · cancel anytime</p>
+        <div class="price-grid">
+          <div class="card price-card" data-od-id="price-byok">
+            <div class="price-head"><span class="price-badge">BYOK</span></div>
+            <div class="price-amount">¥0<span class="price-per"> · App is free</span></div>
+            <p class="price-desc">Bring your own API key — DeepSeek's official API, OpenRouter, or a custom provider.</p>
+            <a class="btn btn-secondary price-cta" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>Download for Windows</a>
+          </div>
+          <div class="card price-card" data-od-id="price-standard">
+            <div class="price-head"><span class="price-badge">Standard</span></div>
+            <div class="price-amount">¥10<span class="price-per">/mo · auto-renews</span></div>
+            <p class="price-desc">About 120 coach conversations per month</p>
+            <a class="btn btn-secondary price-cta" data-cta="sub" data-od-id="cta-standard" href="https://accounts.example.invalid/pay">Subscribe to Standard</a>
+          </div>
+          <div class="card price-card" data-od-id="price-plus">
+            <div class="price-head">
+              <span class="price-badge">Plus</span>
+              <span class="price-badge price-badge--info">10% lower per round</span>
+            </div>
+            <div class="price-amount">¥30<span class="price-per">/mo · auto-renews</span></div>
+            <p class="price-desc">About 400 coach conversations per month</p>
+            <a class="btn btn-primary price-cta" data-cta="sub" data-od-id="cta-plus" href="https://accounts.example.invalid/pay">Subscribe to Plus</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Block 9 · FAQ -->
     <section class="section" data-od-id="faq" id="faq">
       <div class="container stack" style="gap: 32px;">
         <div style="max-width: 720px;">
@@ -2286,36 +2317,7 @@
 
   </main>
 
-  <!-- ⑩b 三档价格块（页脚之前；CTA 两态与 ⑩ 共用探测结果） -->
-  <section class="section pricing" id="pricing" data-od-id="pricing">
-    <div class="container">
-      <h2 class="pricing-title">Choose how you train</h2>
-      <p class="pricing-sub">Coach subscription is about 7.9× of DeepSeek's official price · cancel anytime</p>
-      <div class="price-grid">
-        <div class="card price-card" data-od-id="price-byok">
-          <div class="price-head"><span class="price-badge">BYOK</span></div>
-          <div class="price-amount">¥0<span class="price-per"> · App is free</span></div>
-          <p class="price-desc">Bring your own API key — DeepSeek's official API, OpenRouter, or a custom provider.</p>
-          <a class="btn btn-secondary price-cta" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>Download for Windows</a>
-        </div>
-        <div class="card price-card" data-od-id="price-standard">
-          <div class="price-head"><span class="price-badge">Standard</span></div>
-          <div class="price-amount">¥10<span class="price-per">/mo · auto-renews</span></div>
-          <p class="price-desc">About 120 coach conversations per month</p>
-          <a class="btn btn-secondary price-cta" data-cta="sub" data-od-id="cta-standard" href="https://accounts.example.invalid/pay">Subscribe to Standard</a>
-        </div>
-        <div class="card price-card" data-od-id="price-plus">
-          <div class="price-head">
-            <span class="price-badge">Plus</span>
-            <span class="price-badge price-badge--info">10% lower per round</span>
-          </div>
-          <div class="price-amount">¥30<span class="price-per">/mo · auto-renews</span></div>
-          <p class="price-desc">About 400 coach conversations per month</p>
-          <a class="btn btn-primary price-cta" data-cta="sub" data-od-id="cta-plus" href="https://accounts.example.invalid/pay">Subscribe to Plus</a>
-        </div>
-      </div>
-    </div>
-  </section>
+  
 
   <div class="container meta-notice" data-od-id="notice">
     <p>Note: the Coach requires your own LLM provider — the product is free; model costs are between you and your provider.</p>
@@ -2415,7 +2417,6 @@
       });
       setProgress();
     })();
-
 
     const menuToggle = document.querySelector('[data-od-id="menu-toggle"]');
     const siteNav = document.querySelector('#site-nav');

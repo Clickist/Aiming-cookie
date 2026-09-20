@@ -2382,7 +2382,46 @@
       </div>
     </section>
 
-    <!-- 块 7 · FAQ -->
+    <!-- 块 7 · 三档价格块（⑩b）：BYOK / Standard / Plus -->
+    <section class="section" id="pricing" data-od-id="pricing">
+      <div class="container">
+        <div class="center" style="text-align: center;">
+          <h2>选择你的练法</h2>
+          <p class="pricing-sub">教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</p>
+        </div>
+        <div class="pricing-grid" style="margin-top: clamp(28px, 3vw, 40px);">
+          <div class="card pricing-card" data-od-id="plan-byok">
+            <div class="pricing-head"><span class="pricing-badge">BYOK</span></div>
+            <div class="pricing-price">¥0 <small>· 应用免费</small></div>
+            <p class="pricing-desc">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）</p>
+            <div class="pricing-cta">
+              <a class="btn btn-secondary" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>下载客户端</a>
+            </div>
+          </div>
+          <div class="card pricing-card" data-od-id="plan-standard">
+            <div class="pricing-head"><span class="pricing-badge">Standard</span></div>
+            <div class="pricing-price">¥10 <small>/月 · 自动续费</small></div>
+            <p class="pricing-desc">教练每月约 120 轮对话</p>
+            <div class="pricing-cta">
+              <a class="btn btn-secondary" href="https://accounts.example.invalid/pay" data-plan-cta="standard">订阅 Standard</a>
+            </div>
+          </div>
+          <div class="card pricing-card" data-od-id="plan-plus">
+            <div class="pricing-head">
+              <span class="pricing-badge">Plus</span>
+              <span class="pricing-badge pricing-badge--info">单轮价低 10%</span>
+            </div>
+            <div class="pricing-price">¥30 <small>/月 · 自动续费</small></div>
+            <p class="pricing-desc">教练每月约 400 轮对话</p>
+            <div class="pricing-cta">
+              <a class="btn btn-primary" href="https://accounts.example.invalid/pay" data-plan-cta="plus">订阅 Plus</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 块 8 · FAQ -->
     <section class="section" data-od-id="faq" id="faq">
       <div class="container stack" style="gap: 32px;">
         <div style="max-width: 720px;">
@@ -2427,44 +2466,7 @@
 
   </main>
 
-  <!-- 块 8 · 三档价格块（⑩b）：BYOK / Standard / Plus -->
-  <section class="section" id="pricing" data-od-id="pricing">
-    <div class="container">
-      <div class="center" style="text-align: center;">
-        <h2>选择你的练法</h2>
-        <p class="pricing-sub">教练订阅约为 DeepSeek 官方价格的 7.9 折 · 随时可取消</p>
-      </div>
-      <div class="pricing-grid" style="margin-top: clamp(28px, 3vw, 40px);">
-        <div class="card pricing-card" data-od-id="plan-byok">
-          <div class="pricing-head"><span class="pricing-badge">BYOK</span></div>
-          <div class="pricing-price">¥0 <small>· 应用免费</small></div>
-          <p class="pricing-desc">自带 API Key（DeepSeek 官方 / OpenRouter / 自定义）</p>
-          <div class="pricing-cta">
-            <a class="btn btn-secondary" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>下载客户端</a>
-          </div>
-        </div>
-        <div class="card pricing-card" data-od-id="plan-standard">
-          <div class="pricing-head"><span class="pricing-badge">Standard</span></div>
-          <div class="pricing-price">¥10 <small>/月 · 自动续费</small></div>
-          <p class="pricing-desc">教练每月约 120 轮对话</p>
-          <div class="pricing-cta">
-            <a class="btn btn-secondary" href="https://accounts.example.invalid/pay" data-plan-cta="standard">订阅 Standard</a>
-          </div>
-        </div>
-        <div class="card pricing-card" data-od-id="plan-plus">
-          <div class="pricing-head">
-            <span class="pricing-badge">Plus</span>
-            <span class="pricing-badge pricing-badge--info">单轮价低 10%</span>
-          </div>
-          <div class="pricing-price">¥30 <small>/月 · 自动续费</small></div>
-          <p class="pricing-desc">教练每月约 400 轮对话</p>
-          <div class="pricing-cta">
-            <a class="btn btn-primary" href="https://accounts.example.invalid/pay" data-plan-cta="plus">订阅 Plus</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  
 
   <div class="container meta-notice" data-od-id="notice">
     <p>须知：Coach 需要自备 LLM provider——免费的是产品，模型费用属于你与所选 provider 的关系。</p>
@@ -2564,7 +2566,6 @@
       });
       setProgress();
     })();
-
 
     const menuToggle = document.querySelector('[data-od-id="menu-toggle"]');
     const siteNav = document.querySelector('#site-nav');
