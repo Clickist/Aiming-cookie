@@ -84,12 +84,32 @@ export function subscribeLocale(listener: () => void): () => void {
   };
 }
 
+/**
+ * 首次启动（用户从未手动选过语言）按系统语言预选：zh* 系统→zh-CN，
+ * 其余→en-US；读不到系统语言时保守回默认。只影响预选，手动选择一经
+ * 落库（localStorage 有值）即不再跟随系统。
+ */
+function inferSystemLocale(): Locale {
+  if (typeof navigator === "undefined") return DEFAULT_LOCALE;
+  const lang = (navigator.language ?? "").toLowerCase();
+  if (!lang) return DEFAULT_LOCALE;
+  return lang.startsWith("zh") ? "zh-CN" : "en-US";
+}
+
 /** 从 localStorage 读回偏好（无 window/无存储/值非法时保持现状，幂等可重入）。 */
 export function loadStoredLocale(): Locale {
   if (typeof window === "undefined") return currentLocale;
   try {
     const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    if (stored === null) return currentLocale;
+    if (stored === null) {
+      // 无存储偏好＝从未手动选过：按系统语言预选一次。
+      const inferred = inferSystemLocale();
+      if (inferred !== currentLocale) {
+        currentLocale = inferred;
+        notifyLocaleListeners();
+      }
+      return currentLocale;
+    }
     const next = normalizeLocale(stored);
     if (next !== currentLocale) {
       currentLocale = next;

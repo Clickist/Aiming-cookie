@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { formatHistoryDate } from "../lib/contracts";
-import { setLocale, translate } from "../lib/i18n/core";
+import { LOCALE_STORAGE_KEY, loadStoredLocale, setLocale, translate } from "../lib/i18n/core";
 
 // i18n 收尾批（语言切换 UI + 日期 locale 化）的回归锁：
 // 1) en 字典对三页代表文案给出真英文；2) 设置页语言行接线 useLocale→setLocale；
@@ -97,6 +97,62 @@ test("setLocale 切换后日期/时间格式随 locale 变化并可切回恢复�
     setLocale("zh-CN");
     assert.equal(formatHistoryDate(iso), zh, "切回 zh-CN 后未恢复原格式");
   } finally {
+    setLocale("zh-CN");
+  }
+});
+
+test("首次启动按系统语言预选；手动选择一经落库不再跟随系统", () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const store = new Map<string, string>();
+  const localStorageMock = {
+    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+    setItem: (key: string, value: string) => void store.set(key, value),
+    removeItem: (key: string) => void store.delete(key),
+  };
+  const setNavigatorLanguage = (language: string | undefined): void => {
+    Object.defineProperty(globalThis, "navigator", {
+      value: language === undefined ? {} : { language },
+      configurable: true,
+    });
+  };
+  try {
+    (globalThis as { window?: unknown }).window = { localStorage: localStorageMock };
+
+    // 无存储偏好 + 中文系统（含繁体）→ 预选 zh-CN
+    setLocale("zh-CN");
+    store.clear();
+    setNavigatorLanguage("zh-TW");
+    assert.equal(loadStoredLocale(), "zh-CN", "繁体系统应预选中文");
+    setLocale("zh-CN");
+    store.clear();
+    setNavigatorLanguage("zh-CN");
+    assert.equal(loadStoredLocale(), "zh-CN", "简体系统应预选中文");
+
+    // 无存储偏好 + 非中文系统（英/日）→ 预选 en-US
+    setLocale("zh-CN");
+    store.clear();
+    setNavigatorLanguage("en-US");
+    assert.equal(loadStoredLocale(), "en-US", "英文系统应预选英文");
+    setLocale("zh-CN");
+    store.clear();
+    setNavigatorLanguage("ja-JP");
+    assert.equal(loadStoredLocale(), "en-US", "日文系统应预选英文（无对应字典回落英语）");
+
+    // 系统语言读不到 → 保守回默认 zh-CN
+    setLocale("zh-CN");
+    store.clear();
+    setNavigatorLanguage(undefined);
+    assert.equal(loadStoredLocale(), "zh-CN", "读不到系统语言应保守回默认");
+
+    // 手动选择已落库：系统语言不再影响
+    setLocale("zh-CN");
+    store.set(LOCALE_STORAGE_KEY, "zh-CN");
+    setNavigatorLanguage("en-US");
+    assert.equal(loadStoredLocale(), "zh-CN", "已手动选择中文后不应被英文系统改写");
+  } finally {
+    delete (globalThis as { window?: unknown }).window;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+    else delete (globalThis as { navigator?: unknown }).navigator;
     setLocale("zh-CN");
   }
 });
