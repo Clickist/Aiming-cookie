@@ -14,9 +14,10 @@ test("legacy analysis route redirects while its reusable workspace assets remain
   const workspace = await source("components/task5/AnalysisWorkspace.tsx");
   const primitives = await source("ui/primitives.tsx");
   assert.match(page, /redirect\("\/history"\)/);
-  assert.match(workspace, /诊断/);
-  assert.match(workspace, /视频/);
-  assert.match(workspace, /数据/);
+  // 批 3 起三个 tab 文案走字典（analysis.tabs.*）。
+  assert.match(workspace, /t\("analysis\.tabs\.diagnosis"\)/);
+  assert.match(workspace, /t\("analysis\.tabs\.video"\)/);
+  assert.match(workspace, /t\("analysis\.tabs\.data"\)/);
   assert.match(workspace, /<Tabs/);
   assert.match(primitives, /aria-selected/);
 
@@ -35,28 +36,28 @@ test("video view consumes managed URLs and keeps the timeline seekable", async (
   assert.match(video, /getAnalysisVideoBlob/);
   assert.match(video, /URL\.createObjectURL/);
   assert.match(video, /URL\.revokeObjectURL/);
-  assert.match(video, /没有可用视觉证据/);
+  assert.match(video, /t\("analysis\.video\.noEvidenceTitle"\)/);
   assert.match(video, /<video/);
-  assert.match(video, /aria-label="分析时间轴"/);
+  assert.match(video, /aria-label=\{t\("analysis\.video\.timelineAria"\)\}/);
   assert.doesNotMatch(video, /raw_trace|video_path|file:\/\//);
 });
 
 test("video view separates no-video and input-data tiers from real evidence loss", async () => {
   const video = await source("components/task5/VideoView.tsx");
   // 无视频：本局没有录制视频（input-native 档）。
-  assert.match(video, /本局没有录制视频/);
+  assert.match(video, /t\("analysis\.video\.noEvidenceBody"\)/);
   // 本档不消费视觉测量：文案不再暗示视频被移除或服务故障。
-  assert.match(video, /本档分析基于输入数据/);
-  assert.match(video, /不代表证据被移除/);
+  assert.match(video, /t\("analysis\.video\.inputOnlyTitle"\)/);
+  assert.match(video, /t\("analysis\.video\.inputOnlyBody"\)/);
   assert.match(video, /presentation\.family\.status === "supported"/);
   // 吓人文案只保留给本应消费视觉测量的档位与真实加载失败。
-  assert.match(video, /视觉证据当前不可用/);
+  assert.match(video, /t\("analysis\.video\.unavailableTitle"\)/);
 });
 
 test("diagnosis suppresses scenario-specific advice when the scenario is not classified", async () => {
   const diagnosis = await source("components/task5/DiagnosisView.tsx");
   assert.match(diagnosis, /presentation\.family\.status !== "unavailable"/);
-  assert.match(diagnosis, /当前场景尚未完成核验/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.unverifiedTitle"\)/);
 });
 
 test("analysis header does not repeat the evidence summary", async () => {
@@ -65,7 +66,7 @@ test("analysis header does not repeat the evidence summary", async () => {
   assert.doesNotMatch(workspace, /结论依赖|视觉证据已校验/);
   assert.doesNotMatch(workspace, /<div className=\{styles\.evidenceRow\}>/);
   assert.match(workspace, /aria-describedby="analysis-evidence-summary"/);
-  assert.match(workspace, /aria-label="查看本次分析证据"/);
+  assert.match(workspace, /aria-label=\{t\("analysis\.header\.evidenceAria"\)\}/);
   assert.match(workspace, /id="analysis-evidence-summary" role="tooltip"/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)\s*\{\s*\.evidenceSummary:hover \.evidenceTooltip\s*\{[^}]*\}\s*\}/);
   assert.match(styles, /\.evidenceSummary:focus-within \.evidenceTooltip/);
@@ -78,7 +79,7 @@ test("video volume follows familiar mute, hover, focus, and slider behavior", as
   assert.match(video, /const \[volume, setVolume\] = useState\(1\)/);
   assert.match(video, /const \[muted, setMuted\] = useState\(false\)/);
   assert.match(video, /aria-pressed=\{muted\}/);
-  assert.match(video, /aria-label="音量"/);
+  assert.match(video, /aria-label=\{t\("analysis\.video\.volumeAria"\)\}/);
   assert.match(video, /aria-orientation="vertical"/);
   assert.match(video, /\\uFE0E/);
   assert.match(video, /className=\{styles\.volumeIcon\}/);
@@ -96,17 +97,17 @@ test("diagnosis distinguishes current observations from legacy candidate explana
   assert.match(diagnosis, /rootCauses/);
   assert.match(diagnosis, /presentationKind/);
   assert.match(diagnosis, /claimLabel/);
-  assert.match(diagnosis, /分析发现/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.issuesTitle"\)/);
   assert.match(diagnosis, /issue\.severity !== "info"/);
-  assert.match(diagnosis, /候选解释/);
-  assert.match(diagnosis, /规则化练习建议/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.candidateTitle"\)/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.prescriptionTitle"\)/);
   assert.doesNotMatch(diagnosis, /历史候选说明/);
-  assert.match(diagnosis, /查看证据/);
-  assert.match(diagnosis, /查看指标/);
-  assert.match(diagnosis, /问 Coach/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.viewEvidence"\)/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.viewMetric"\)/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.askCoach"\)/);
   assert.doesNotMatch(diagnosis, /最需要处理|三层根因|<h4>处方<\/h4>/);
   assert.match(data, /metrics\.formal/);
-  assert.match(data, /文本摘要/);
+  assert.match(data, /t\("analysis\.data\.switching\.summaryPrefix"\)/);
   assert.match(data, /limitations/);
   assert.doesNotMatch(`${diagnosis}${data}`, /raw_trace|stats_source_ref|performance_source_ref|absolute_path/);
 });
@@ -116,7 +117,7 @@ test("diagnosis keeps descriptive metrics and true empty states inside consisten
   const styles = await source("components/task5/task5.module.css");
 
   assert.match(diagnosis, /summaryMode === "descriptive"/);
-  assert.match(diagnosis, /当前缺少可比较标准，只展示本局数值/);
+  assert.match(diagnosis, /t\("analysis\.diagnosis\.summaryDescriptiveHint"\)/);
   assert.match(diagnosis, /summaryMode !== "descriptive"/);
   assert.doesNotMatch(diagnosis, /\? "描述性"/);
   assert.match(diagnosis, /unit === "percent"/);
@@ -151,7 +152,7 @@ test("data view consumes the bounded analysis-data projection without a pseudo t
   assert.match(formats, /tracking_fixed_window: "metric\.eventKind\.trackingFixedWindow"/);
   assert.match(formats, /tracking_episode: "metric\.eventKind\.trackingEpisode"/);
   assert.match(formats, /low_confidence: "metric\.eventKind\.lowConfidence"/);
-  assert.match(data, /共 \$\{radiusPoints\.length\} 个样本/);
+  assert.match(data, /t\("analysis\.data\.tracking\.radiusBody", \{ n: radiusPoints\.length, peak: Number\(peakRadius\.toFixed\(2\)\) \}\)/);
   assert.match(formats, /no_target_visible: "metric\.limitation\.noTargetVisible"/);
   assert.match(formats, /return metric\.definition\?\.name \?\? metricReference\(metric\)/);
   assert.match(formats, /return metric\.definition\?\.description \?\? null/);
@@ -185,14 +186,14 @@ test("data view renders bounded family rows without adding a family tab", async 
   assert.match(formats, /tracking_fixed_window/);
   assert.match(formats, /tracking_change_response/);
   assert.match(formats, /static_flick/);
-  assert.match(data, /切换到新目标耗时/);
-  assert.match(data, /到达后稳定耗时/);
+  assert.match(data, /t\("analysis\.data\.switchChain\.ariaTransition"/);
+  assert.match(data, /t\("analysis\.data\.switchChain\.ariaSettle"/);
   assert.match(formats, /tracking_change_response: "metric\.eventKind\.trackingChangeResponse"/);
-  assert.match(data, /加速阶段|减速阶段|稳定阶段/);
+  assert.match(data, /t\("analysis\.data\.flicking\.(accel|decel|settle)"/);
   assert.match(formats, /peak: "metric\.eventKind\.peak"/);
   assert.match(formats, /corrective: "metric\.eventKind\.corrective"/);
   assert.match(data, /presentation\.video\.kind === "seekable"/);
-  assert.match(data, /加载更多/);
+  assert.match(data, /t\("analysis\.data\.loadMore"/);
   assert.doesNotMatch(data, /人的反应(?:时间|延迟)/);
   assert.doesNotMatch(workspace, /Switching.*Tracking.*Flicking|family-tab/i);
 });

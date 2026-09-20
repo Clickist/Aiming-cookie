@@ -43,7 +43,7 @@ test("history keeps refresh and Coach return without batch attach", async () => 
   const styles = await source("components/task4/task4.css");
   // 0911 点点第二批：刷新文字按钮换成「更新于 N 前」状态行，点击仍触发 loadHistory。
   assert.match(client, /className="task4-refresh-status"/);
-  assert.match(client, /更新于 \$\{relativeUpdatedAt/);
+  assert.match(client, /t\("history\.refresh\.updatedAt", \{ ago: relativeUpdatedAt/);
   assert.match(client, /onClick=\{\(\) => void loadHistory\(\)\}/);
   assert.doesNotMatch(client, /variant="ghost">刷新</);
   assert.doesNotMatch(client, /新建分析/);
@@ -60,10 +60,10 @@ test("history hands multi-selected runs and analyses to the Coach via the pendin
   // 无任何可用 tier 的训练记录禁用勾选；未完成的分析不可选
   assert.match(value, /disabled=\{run\.supported_input_modes\.length === 0\}/);
   assert.match(value, /disabled=\{session\.status !== "done"\}/);
-  // 「让 Coach 分析」拼话术交给 Coach 输入框，用户发送后逐条处理
+  // 「让 Coach 分析」拼话术交给 Coach 输入框，用户发送后逐条处理（批 3 起文案走字典）
   assert.match(value, /buildCoachAnalysisDraft\(\{/);
   assert.match(value, /sessionStorage\.setItem\(COACH_PENDING_INTENT_KEY/);
-  assert.match(value, /让 Coach 分析/);
+  assert.match(value, /t\("history\.coachPill\./);
   // 详情抽屉与摘要弹窗已移除：入口按钮不再存在
   assert.doesNotMatch(value, /查看 Run/);
   assert.doesNotMatch(value, /查看摘要/);
@@ -114,12 +114,12 @@ test("history distinguishes desktop empty states with watcher guidance instead o
     value,
     /runDiscovery === "available" && allListsEmpty && \(watcherStatus === "no_candidates" \|\| watcherStatus === "not_exporting"\)/,
   );
-  // 状态 a：未找到目录 → 引导去 设置 → KovaaK 本地目录。
-  assert.match(value, /未找到你的 KovaaK 训练数据/);
+  // 状态 a：未找到目录 → 引导去 设置 → KovaaK 本地目录（批 3 起文案走字典键）。
+  assert.match(value, /t\("history\.watcher\.noCandidatesTitle"\)/);
   assert.match(value, /settings#kovaak-directories/);
   // 状态 b： KovaaK 的实际选项是 Challenge Completion（不存在 "Always"）。
-  assert.match(value, /KovaaK 未在导出训练数据/);
-  assert.match(value, /请在 KovaaK 中打开 设置 → 其他 → 统计数据输出，选择 Challenge Completion，然后完成一局挑战。/);
+  assert.match(value, /t\("history\.watcher\.notExportingTitle"\)/);
+  assert.match(value, /t\("history\.watcher\.notExportingBody"\)/);
   assert.doesNotMatch(value, /Always/);
 });
 
@@ -135,9 +135,9 @@ test("run rows show match time from training_at and keep titles to scenario name
   assert.match(value, /presentRecordLabel\(\{ scenario: session\.scenario, titleOnly: true \}\)/);
   assert.match(contracts, /if \(input\.titleOnly\) return scenario;/);
   // 0911 点点五轮：分析行单行化——摘要/双时间收敛进整行悬停提示，无内容时无 title。
-  assert.match(value, /session\.summary_label \? `摘要：\$\{session\.summary_label\}` : null/);
-  // telemetry_multimodal 与 multimodal 界面统一叫「多源模式」。
-  assert.match(value, /telemetry_multimodal: "多源模式"/);
+  assert.match(value, /session\.summary_label \? t\("history\.hover\.summary", \{ label: session\.summary_label \}\) : null/);
+  // telemetry_multimodal 与 multimodal 界面统一叫「多源模式」（批 3 起映射值是字典键）。
+  assert.match(value, /telemetry_multimodal: "analysis\.input\.multimodal"/);
 });
 
 test("history merges the drag band and page head into one 56px solid topbar (0911 点点第三批 A + 第四轮)", async () => {
@@ -156,8 +156,8 @@ test("history merges the drag band and page head into one 56px solid topbar (091
   // 左组紧凑排列：返回键 → 标题 → 场景名筛选框 →「更新于 N 前」→ 胶囊按钮。
   assert.match(client, /className="task4-topbar-left"/);
   const leftAt = client.indexOf('className="task4-topbar-left"');
-  const backAt = client.indexOf('label="返回 Coach"');
-  const titleAt = client.indexOf('task4-page-title">历史');
+  const backAt = client.indexOf('label={t("history.page.backToCoach")}');
+  const titleAt = client.indexOf('task4-page-title">{t("history.page.title")}');
   const filterAt = client.indexOf('className="task4-filter-input"');
   const refreshAt = client.indexOf('className="task4-refresh-status"');
   const pillAt = client.indexOf('className="task4-coach-pill"');
@@ -169,7 +169,7 @@ test("history merges the drag band and page head into one 56px solid topbar (091
   // primary 橙 + 计数；旧右端条件渲染组退役。
   assert.match(client, /disabled=\{selectedCount === 0\}/);
   assert.match(client, /data-active=\{selectedCount > 0 \|\| undefined\}/);
-  assert.match(client, /\{selectedCount > 0 \? `让 Coach 分析（\$\{selectedCount\}）` : "让 Coach 分析"\}/);
+  assert.match(client, /\{selectedCount > 0 \? t\("history\.coachPill\.withCount", \{ n: selectedCount \}\) : t\("history\.coachPill\.idle"\)\}/);
   assert.doesNotMatch(client, /task4-page-actions/);
   assert.doesNotMatch(styles, /task4-page-actions/);
   assert.match(styles, /\.task4-coach-pill\s*\{[^}]*height:\s*30px/);
@@ -211,7 +211,7 @@ test("analysis records section folds like run records, expanded by default with 
   // 折叠头样式同「训练记录」：区块名 + 条数 + 箭头，整头可点 + aria-expanded。
   assert.match(value, /className="task4-sec-head task4-sec-collapsible" onClick=\{toggleAnalysisRecords\}/);
   assert.match(value, /aria-expanded=\{analysisRecordsOpen\}/);
-  assert.match(value, /aria-label=\{analysisRecordsOpen \? "收起分析记录" : "展开分析记录"\}/);
+  assert.match(value, /aria-label=\{analysisRecordsOpen \? t\("history\.section\.collapseAnalysis"\) : t\("history\.section\.expandAnalysis"\)\}/);
 });
 
 test("run rows collapse to a single line with score, time and issue columns (0911 点点第三批 B)", async () => {
@@ -229,8 +229,8 @@ test("run rows collapse to a single line with score, time and issue columns (091
   // 分割线只挂在 Analysis 行之间；Run 行组内不画线（组间靠组头 margin）。
   assert.match(styles, /\.task4-analysis-row \+ \.task4-analysis-row\s*\{[^}]*border-top:\s*1px solid var\(--outline-variant\)/);
   assert.doesNotMatch(styles, /\.task4-rowline \+ \.task4-rowline/);
-  // 组头加重：「9月2日 · N条」格式，600 字重主文字色，组间 margin 分层。
-  assert.match(client, /\{group\.label\} · \{group\.items\.length\}条/);
+  // 组头加重：「9月2日 · N条」格式，600 字重主文字色，组间 margin 分层（批 3 起整句入字典）。
+  assert.match(client, /\{t\("history\.day\.group", \{ label: group\.label, n: group\.items\.length \}\)\}/);
   assert.match(styles, /\.task4-day-label\s*\{[^}]*font:\s*600 var\(--text-caption\)/);
   assert.match(styles, /\.task4-day-label\s*\{[^}]*color:\s*var\(--on-surface\)/);
   assert.match(styles, /\.task4-day-label\s*\{[^}]*margin-top:\s*var\(--space-3\)/);
@@ -244,12 +244,12 @@ test("run lists show the first 5 entries with an expand toggle persisted to loca
   assert.match(value, /const MAX_VISIBLE_RUNS = 5;/);
   assert.match(value, /"aiming-cookie\.ui\.history-run-expand"/);
   assert.match(value, /slice\(0, MAX_VISIBLE_RUNS\)/);
-  assert.match(value, /显示全部 \$\{filteredSections\.pendingRuns\.length\} 条/);
-  assert.match(value, /显示全部 \$\{filteredSections\.runRecords\.length\} 条/);
+  assert.match(value, /t\("history\.expand\.showAll", \{ n: filteredSections\.pendingRuns\.length \}\)/);
+  assert.match(value, /t\("history\.expand\.showAll", \{ n: filteredSections\.runRecords\.length \}\)/);
   assert.match(value, /toggleRunExpand\("pending"\)/);
   assert.match(value, /toggleRunExpand\("records"\)/);
   assert.match(value, /toggleRunExpand\("analysis"\)/);
-  assert.match(value, /显示全部 \$\{filteredSections\.analysisRecords\.length\} 条/);
+  assert.match(value, /t\("history\.expand\.showAll", \{ n: filteredSections\.analysisRecords\.length \}\)/);
   // 勾选集合跨折叠保留：计数与话术仍取全量数据，不取可见切片。
   assert.match(value, /runs\.filter\(\(run\) => selectedRunIds\.includes\(run\.id\)\)/);
 });
@@ -278,16 +278,16 @@ test("abnormal runs show a red exclamation mark with a human-readable hover titl
   // 触发条件：limitations 非空，或来源不可用终态；悬停 title + aria-label 人话。
   assert.match(client, /function runIssueText/);
   assert.match(client, /run\.finalization_state === "source_unavailable" \|\| run\.finalization_state === "unavailable"/);
-  assert.match(client, /训练来源已不可用/);
+  assert.match(client, /t\("history\.issue\.sourceUnavailable"\)/);
   assert.match(client, /run\.limitations\.map\(limitationLabel\)/);
   // 收尾局等输入落盘时给真实中间态，不按 limitations 误报「Raw 来源不可用」。
   assert.match(client, /finalizationPendingText\(run\.finalization_error\)/);
   assert.match(client, /title=\{issue\}/);
-  assert.match(client, /aria-label=\{`训练异常：\$\{issue\}`\}/);
+  assert.match(client, /aria-label=\{t\("history\.aria\.runIssue", \{ issue \}\)\}/);
   // 证据 chips 墙与「证据不完整」「来源不可用」badge 同步退役；「已分析」保留。
   assert.doesNotMatch(client, /task4-ev|EvidenceChip|evidenceChipState|证据不完整/);
   assert.doesNotMatch(styles, /task4-ev/);
-  assert.match(client, /已分析/);
+  assert.match(client, /t\("history\.run\.analyzed"\)/);
   assert.doesNotMatch(client, /task4-badge-warn">来源不可用|task4-badge-err">证据不完整/);
 });
 
@@ -335,13 +335,13 @@ test("history rows toggle from the whole row with a custom drawn checkbox (0911 
 
 test("history filters runs and sessions by scenario name (0911 点点第二批 7a)", async () => {
   const value = await source("components/task4/HistoryClient.tsx");
-  assert.match(value, /placeholder="按场景名筛选…"/);
+  assert.match(value, /placeholder=\{t\("history\.filter\.placeholder"\)\}/);
   assert.match(value, /const normalizedFilter = scenarioFilter\.trim\(\)\.toLocaleLowerCase\(\)/);
   assert.match(value, /toLocaleLowerCase\(\)\.includes\(normalizedFilter\)/);
   // 过滤只影响渲染：勾选与「让 Coach 分析」话术仍取全量数据。
   assert.match(value, /runs\.filter\(\(run\) => selectedRunIds\.includes\(run\.id\)\)/);
   // 过滤后某区块无结果显示专用空态。
-  assert.match(value, /title="没有匹配的记录"/);
+  assert.match(value, /title=\{t\("history\.filter\.emptyTitle"\)\}/);
 });
 
 test("history groups run and analysis lists by day (0911 点点第二批 7b + 五轮对齐)", async () => {
@@ -352,8 +352,8 @@ test("history groups run and analysis lists by day (0911 点点第二批 7b + �
   assert.match(value, /className="task4-day-label"/);
   // 0911 点点五轮：三个区块全部按日分组（1 处定义 + 3 处调用）。
   assert.equal(value.match(/groupByDay\(/g)?.length, 3);
-  assert.match(value, /今天/);
-  assert.match(value, /昨天/);
+  assert.match(value, /t\("history\.day\.today"\)/);
+  assert.match(value, /t\("history\.day\.yesterday"\)/);
 });
 
 test("history run records section collapses by default with persisted state (0911 点点第二批 8)", async () => {
@@ -380,7 +380,7 @@ test("history updated-at status row avoids layout jitter (0911 点点第二批 1
   // 时间基点 = 最近一次成功/部分成功读取完成时刻；粒度 秒/分钟/小时。
   assert.match(value, /function relativeUpdatedAt/);
   assert.match(value, /setLastLoadedAt\(loadedAt\)/);
-  assert.match(value, /\$\{Math\.floor\(minutes \/ 60\)\} 小时前/);
+  assert.match(value, /t\("history\.relative\.hoursAgo", \{ n: Math\.floor\(minutes \/ 60\) \}\)/);
   // 防抖动：文字固定 min-width，主按钮位置纹丝不动。
   assert.match(styles, /\.task4-refresh-text\s*\{[^}]*min-width:\s*96px/);
   assert.match(styles, /\.task4-refresh-text\s*\{[^}]*white-space:\s*nowrap/);
@@ -389,5 +389,5 @@ test("history updated-at status row avoids layout jitter (0911 点点第二批 1
   assert.match(styles, /\.task4-refresh-status\[data-stale="true"\] \.task4-refresh-text\s*\{[^}]*color:\s*var\(--event-peak\)/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.task4-refresh-icon\[data-loading="true"\]\s*\{[^}]*animation:\s*none/);
   assert.match(value, /data-stale=\{updatedStale \|\| undefined\}/);
-  assert.match(value, /aria-label=\{lastLoadedAt === null \? "刷新（正在读取）" : `刷新（上次更新 \$\{relativeUpdatedAt\(nowTick, lastLoadedAt\)\}）`\}/);
+  assert.match(value, /aria-label=\{lastLoadedAt === null \? t\("history\.refresh\.ariaLoading"\) : t\("history\.refresh\.ariaUpdatedAt", \{ ago: relativeUpdatedAt\(nowTick, lastLoadedAt\) \}\)\}/);
 });

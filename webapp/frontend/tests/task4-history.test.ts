@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { translate } from "../lib/i18n/core";
 import {
   buildHistorySections,
   getHistoryStatusText,
@@ -92,23 +93,29 @@ test("history labels retain display data without turning refs into user copy", (
 });
 
 test("history status text distinguishes unavailable, partial, unsupported, offline, permission, and deleted", () => {
-  assert.equal(getHistoryStatusText("source_unavailable"), "来源不可用");
-  assert.equal(getHistoryStatusText("partial"), "部分结果");
-  assert.equal(getHistoryStatusText("unsupported"), "不支持");
-  assert.equal(getHistoryStatusText("offline"), "离线");
-  assert.equal(getHistoryStatusText("permission_denied"), "权限被拒绝");
-  assert.equal(getHistoryStatusText("deleted"), "引用已删除");
+  // 批 3 起与字典同源断言（文案改词测试不碎）。
+  assert.equal(getHistoryStatusText("source_unavailable"), translate("zh-CN", "history.status.sourceUnavailable"));
+  assert.equal(getHistoryStatusText("partial"), translate("zh-CN", "history.status.partial"));
+  assert.equal(getHistoryStatusText("unsupported"), translate("zh-CN", "history.status.unsupported"));
+  assert.equal(getHistoryStatusText("offline"), translate("zh-CN", "history.status.offline"));
+  assert.equal(getHistoryStatusText("permission_denied"), translate("zh-CN", "history.status.permissionDenied"));
+  assert.equal(getHistoryStatusText("deleted"), translate("zh-CN", "history.status.deleted"));
 });
 
 test("trend presentation is fail-closed and never fabricates PB or percent change", () => {
   assert.deepEqual(getTrendPresentation({ comparable: false, reason: "calibration_mismatch" }), {
     comparable: false,
-    summary: "暂不可比较：校准不一致",
+    summary: translate("zh-CN", "history.trend.notComparable", {
+      reason: translate("zh-CN", "history.trend.calibrationMismatch"),
+    }),
     value: null,
   });
   assert.deepEqual(getTrendPresentation({ comparable: true, current: 12, baseline: 10, delta: 2, percent_change: 20, metric_key: "accuracy", unit: "%" }), {
     comparable: true,
-    summary: "当前 12% · 基线 10% · 差异 +2%",
+    summary:
+      translate("zh-CN", "history.trend.current", { value: "12%" })
+      + translate("zh-CN", "history.trend.baseline", { value: "10%" })
+      + translate("zh-CN", "history.trend.delta", { value: "+2%" }),
     value: 12,
   });
 });

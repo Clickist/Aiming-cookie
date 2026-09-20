@@ -1,13 +1,15 @@
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { metricDescription, metricLabel, metricReference } from "@/lib/metric-format";
+import { t, useT, type MessageKey } from "@/lib/i18n";
 import { Badge, Button, Empty, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
-const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
-  symptom: "表现",
-  physical: "物理原因",
-  training: "训练方向",
+// i18n 批 3：legacy 候选层级标签是字典键（MessageKey），渲染时经 t() 解析（§2c）。
+const LEGACY_CANDIDATE_LEVEL_KEYS: Record<string, MessageKey> = {
+  symptom: "analysis.diagnosis.levelSymptom",
+  physical: "analysis.diagnosis.levelPhysical",
+  training: "analysis.diagnosis.levelTraining",
 };
 
 function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning" | "error" {
@@ -17,7 +19,7 @@ function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning"
 }
 
 function formatMetricValue(value: number | string | null, unit: string | null): string {
-  if (value === null) return "不可用";
+  if (value === null) return t("metric.value.unavailable");
   const shown = typeof value === "number" ? Number(value.toFixed(3)) : value;
   if (unit === "percent") return `${shown}%`;
   if (unit === "dimensionless" || unit === "ratio") return String(shown);
@@ -29,18 +31,19 @@ function IssueBody({
 }: {
   issue: AnalysisWorkspacePresentation["issues"][number];
 }) {
+  const t = useT();
   if (issue.presentationKind === "registry-backed") {
     return (
       <div className={styles.issueBody}>
         {issue.priorityReason ? <p>{issue.priorityReason}</p> : null}
         <dl className={styles.issueCause}>
           <div>
-            <dt>候选解释</dt>
-            <dd>{issue.candidateExplanation ?? "当前 Analysis 未提供额外解释。"}</dd>
+            <dt>{t("analysis.diagnosis.candidateTitle")}</dt>
+            <dd>{issue.candidateExplanation ?? t("analysis.diagnosis.candidateFallback")}</dd>
           </div>
           <div>
-            <dt>可验证预期</dt>
-            <dd>{issue.expectedResult ?? "当前 Analysis 未给出可验证预期。"}</dd>
+            <dt>{t("analysis.diagnosis.expectedTitle")}</dt>
+            <dd>{issue.expectedResult ?? t("analysis.diagnosis.expectedFallback")}</dd>
           </div>
         </dl>
       </div>
@@ -52,12 +55,15 @@ function IssueBody({
       {issue.priorityReason ? <p>{issue.priorityReason}</p> : null}
       {issue.rootCauses.length ? (
         <dl className={styles.issueCause}>
-          {issue.rootCauses.map((cause) => (
-            <div key={`${cause.level}-${cause.text}`}>
-              <dt>{LEGACY_CANDIDATE_LEVEL_LABEL[cause.level] ?? cause.level}</dt>
-              <dd>{cause.text}</dd>
-            </div>
-          ))}
+          {issue.rootCauses.map((cause) => {
+            const levelKey = LEGACY_CANDIDATE_LEVEL_KEYS[cause.level];
+            return (
+              <div key={`${cause.level}-${cause.text}`}>
+                <dt>{levelKey === undefined ? cause.level : t(levelKey)}</dt>
+                <dd>{cause.text}</dd>
+              </div>
+            );
+          })}
         </dl>
       ) : null}
     </div>
@@ -77,6 +83,7 @@ export function DiagnosisView({
   presentation: AnalysisWorkspacePresentation;
   selectedIssue: number | null;
 }) {
+  const t = useT();
   const severityByMetric = presentation.issues.reduce<Record<string, "info" | "watch" | "fix">>(
     (acc, issue) => {
       for (const ref of issue.metricRefs) {
@@ -123,14 +130,14 @@ export function DiagnosisView({
       </section>
 
       {presentation.issues.length === 0 ? (
-        <Empty className={styles.metricSummaryEmpty} title="当前证据不足以形成明确发现">
-          查看数据来源和限制，或在后续收集更完整的证据。
+        <Empty className={styles.metricSummaryEmpty} title={t("analysis.headline.none")}>
+          {t("analysis.diagnosis.emptyBody")}
         </Empty>
       ) : (
         <section className={styles.issueSection} aria-labelledby="issues-title">
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle} id="issues-title">分析发现</span>
-            <span className={styles.sectionHint}>按优先级排序 · 最多展开 {presentation.issues.length} 个</span>
+            <span className={styles.sectionTitle} id="issues-title">{t("analysis.diagnosis.issuesTitle")}</span>
+            <span className={styles.sectionHint}>{t("analysis.diagnosis.issuesHint", { n: presentation.issues.length })}</span>
           </div>
           <div className={styles.issueList}>
             {presentation.issues.map((issue, index) => (
@@ -142,19 +149,19 @@ export function DiagnosisView({
                 <div className={styles.issueHead}>
                   {issue.severity !== "info" ? (
                     <Status className={styles.issueSeverity} tone={severityTone(issue.severity)}>
-                      {issue.severity === "fix" ? "优先处理" : "需要关注"}
+                      {issue.severity === "fix" ? t("analysis.diagnosis.severityFix") : t("analysis.diagnosis.severityWatch")}
                     </Status>
                   ) : null}
                   {issue.claimLabel ? <Status tone="neutral">{issue.claimLabel}</Status> : null}
                   <span className={styles.issueName}>{issue.signal}</span>
                   <div className={styles.issueActions}>
-                    <Button onClick={() => onSelectEvidence(index)} size="compact" variant="ghost">查看证据</Button>
+                    <Button onClick={() => onSelectEvidence(index)} size="compact" variant="ghost">{t("analysis.diagnosis.viewEvidence")}</Button>
                     {issue.metricRefs[0] ? (
                       <Button onClick={() => onSelectMetric(issue.metricRefs[0])} size="compact" variant="ghost">
-                        查看指标
+                        {t("analysis.diagnosis.viewMetric")}
                       </Button>
                     ) : null}
-                    <Button onClick={onAskCoach} size="compact" variant="secondary">问 Coach</Button>
+                    <Button onClick={onAskCoach} size="compact" variant="secondary">{t("analysis.diagnosis.askCoach")}</Button>
                   </div>
                 </div>
                 <IssueBody issue={issue} />
@@ -167,14 +174,14 @@ export function DiagnosisView({
       {prescription || expected ? (
         <section className={styles.prescriptionSection} aria-labelledby="prescription-title">
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle} id="prescription-title">规则化练习建议</span>
+            <span className={styles.sectionTitle} id="prescription-title">{t("analysis.diagnosis.prescriptionTitle")}</span>
           </div>
           <div className={styles.prescriptionPanel}>
             {prescription ? (
               <>
                 <div className={styles.prescriptionTitle}>{prescription.scenario}</div>
                 <p className={styles.prescriptionReason}>{prescription.reason}</p>
-                {prescription.cue ? <Badge tone="info">训练 cue：{prescription.cue}</Badge> : null}
+                {prescription.cue ? <Badge tone="info">{t("analysis.diagnosis.prescriptionCue", { cue: prescription.cue })}</Badge> : null}
               </>
             ) : (
               <p className={styles.prescriptionReason}>{expected}</p>
@@ -184,18 +191,18 @@ export function DiagnosisView({
       ) : null}
 
       {!hasClassifiedScenario && presentation.issues.some((issue) => issue.prescriptions.length > 0) ? (
-        <Notice tone="warning" title="当前场景尚未完成核验">
-          本页不展示具体场景建议；请先确认本局场景与可用分析范围。
+        <Notice tone="warning" title={t("analysis.diagnosis.unverifiedTitle")}>
+          {t("analysis.diagnosis.unverifiedBody")}
         </Notice>
       ) : null}
 
       <section className={styles.metricSummary} aria-labelledby="core-metrics-title">
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle} id="core-metrics-title">
-            {summaryMode === "descriptive" ? "本局指标" : "核心指标摘要"}
+            {summaryMode === "descriptive" ? t("analysis.diagnosis.summaryDescriptiveTitle") : t("analysis.diagnosis.summaryFormalTitle")}
           </span>
           <span className={styles.sectionHint}>
-            {summaryMode === "descriptive" ? "当前缺少可比较标准，只展示本局数值" : "完整数据在「数据」视图"}
+            {summaryMode === "descriptive" ? t("analysis.diagnosis.summaryDescriptiveHint") : t("analysis.diagnosis.summaryFormalHint")}
           </span>
         </div>
         {summary.length ? (
@@ -215,11 +222,11 @@ export function DiagnosisView({
                   <span className={styles.metricValue}>{formatMetricValue(metric.value, metric.unit)}</span>
                   <span className={styles.metricPlain}>
                     {metricDescription(metric)
-                      ?? (metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`)}
+                      ?? (metric.coverage === null ? t("analysis.diagnosis.coverageUnknown") : t("analysis.diagnosis.coverage", { pct: Math.round(metric.coverage * 100) }))}
                   </span>
                   {summaryMode !== "descriptive" ? (
                     <Status tone={severityTone(severity)}>
-                      {severity === "fix" ? "优先处理" : severity === "watch" ? "需要关注" : "参考"}
+                      {severity === "fix" ? t("analysis.diagnosis.severityFix") : severity === "watch" ? t("analysis.diagnosis.severityWatch") : t("analysis.diagnosis.severityInfo")}
                     </Status>
                   ) : null}
                 </button>
@@ -227,14 +234,14 @@ export function DiagnosisView({
             })}
           </div>
         ) : (
-          <Empty className={styles.metricSummaryEmpty} title="暂无可展示指标">
-            本次分析没有产生可解释的指标；完整状态仍保留在数据视图中。
+          <Empty className={styles.metricSummaryEmpty} title={t("analysis.diagnosis.noMetricsTitle")}>
+            {t("analysis.diagnosis.noMetricsBody")}
           </Empty>
         )}
       </section>
 
       {presentation.limitations.length ? (
-        <Notice title="本次分析的适用范围" tone="warning">
+        <Notice title={t("analysis.diagnosis.scopeTitle")} tone="warning">
           {presentation.limitations.join(" ")}
         </Notice>
       ) : null}

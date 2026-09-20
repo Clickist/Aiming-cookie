@@ -14,6 +14,7 @@ import {
 } from "@/lib/metric-format";
 import { formatTimecode, formatTimecodeRange } from "@/lib/rich-text";
 import type { FrontendEvidenceSegmentsV1 } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
@@ -56,6 +57,7 @@ export function VideoView({
   onCurrentTimeChange: (timeMs: number) => void;
   presentation: AnalysisWorkspacePresentation;
 }) {
+  const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const objectUrlRef = useRef<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -465,8 +467,8 @@ export function VideoView({
   if (presentation.video.kind === "native-only") {
     return (
       <div className={styles.videoView}>
-        <Empty title="没有可用视觉证据">
-          本局没有录制视频：这条 input-native Analysis 只包含输入运动学与事件对齐，不显示空播放器，也不推断视觉结论。
+        <Empty title={t("analysis.video.noEvidenceTitle")}>
+          {t("analysis.video.noEvidenceBody")}
         </Empty>
       </div>
     );
@@ -476,31 +478,31 @@ export function VideoView({
     if (presentation.family.status === "supported") {
       return (
         <div className={styles.videoView}>
-          <Notice tone="warning" title="视觉证据当前不可用">
-            原生分析结果仍然保留。视频可能已被手动移除，或本地媒体服务暂时不可用。
+          <Notice tone="warning" title={t("analysis.video.unavailableTitle")}>
+            {t("analysis.video.unavailableBody")}
           </Notice>
-          <Button onClick={() => void loadEvidence()} variant="secondary">重试视觉证据</Button>
+          <Button onClick={() => void loadEvidence()} variant="secondary">{t("analysis.video.retryEvidence")}</Button>
         </div>
       );
     }
     return (
       <div className={styles.videoView}>
-        <Empty title="本档分析基于输入数据">
-          本档分析不消费视觉测量；本局没有可附加的回放视频，这不代表证据被移除。
+        <Empty title={t("analysis.video.inputOnlyTitle")}>
+          {t("analysis.video.inputOnlyBody")}
         </Empty>
       </div>
     );
   }
 
-  if (loading) return <Loading>正在读取本地视频</Loading>;
+  if (loading) return <Loading>{t("analysis.video.loading")}</Loading>;
 
   if (loadFailed || !videoUrl) {
     return (
       <div className={styles.videoView}>
-        <Notice tone="warning" title="视觉证据当前不可用">
-          原生分析结果仍然保留。视频可能已被手动移除，或本地媒体服务暂时不可用。
+        <Notice tone="warning" title={t("analysis.video.unavailableTitle")}>
+          {t("analysis.video.unavailableBody")}
         </Notice>
-        <Button onClick={() => void loadEvidence()} variant="secondary">重试视觉证据</Button>
+        <Button onClick={() => void loadEvidence()} variant="secondary">{t("analysis.video.retryEvidence")}</Button>
       </div>
     );
   }
@@ -524,7 +526,7 @@ export function VideoView({
   return (
     <div className={styles.videoView}>
       <section
-        aria-label="视频证据播放器"
+        aria-label={t("analysis.video.playerAria")}
         className={styles.playerStage}
         style={stageRatio ? { aspectRatio: String(stageRatio) } : undefined}
       >
@@ -559,7 +561,7 @@ export function VideoView({
 
       <div className={styles.playerBar}>
         <button
-          aria-label="后退一帧"
+          aria-label={t("analysis.video.stepBackAria")}
           className={styles.playerBarBtn}
           onBlur={clearHoldJump}
           onClick={() => {
@@ -574,12 +576,12 @@ export function VideoView({
           }}
           onPointerLeave={clearHoldJump}
           onPointerUp={clearHoldJump}
-          title="逐帧后退（, 键；Shift 加倍）· 长按连续回退 5 秒"
+          title={t("analysis.video.stepBackTitle")}
           type="button"
         >⏮</button>
         <button className={styles.playerBarBtn} onClick={togglePlay} type="button">{isPlaying ? "⏸" : "▶"}</button>
         <button
-          aria-label="前进一帧"
+          aria-label={t("analysis.video.stepForwardAria")}
           className={styles.playerBarBtn}
           onBlur={clearHoldJump}
           onClick={() => {
@@ -593,35 +595,35 @@ export function VideoView({
           }}
           onPointerLeave={clearHoldJump}
           onPointerUp={clearHoldJump}
-          title="逐帧前进（. 键；Shift 加倍）· 长按连续快进 5 秒"
+          title={t("analysis.video.stepForwardTitle")}
           type="button"
         >⏭</button>
         <span className={styles.playerBarTime}>{timeText}</span>
         <div className={styles.playerBarSpacer} />
         <button
-          aria-label={`播放速度 ${speed}×，点击切换到下一档`}
+          aria-label={t("analysis.video.speedAria", { speed })}
           className={styles.playerBarBtn}
           data-active={speed !== 1 || undefined}
           onClick={cycleSpeed}
-          title="变速循环：0.25× → 0.5× → 1×"
+          title={t("analysis.video.speedTitle")}
           type="button"
         >
           {speed}×
         </button>
         <div className={styles.volumeControl}>
           <button
-            aria-label={muted ? "取消静音" : "静音"}
+            aria-label={muted ? t("analysis.video.unmute") : t("analysis.video.mute")}
             aria-pressed={muted}
             className={styles.playerBarBtn}
             onClick={toggleMute}
-            title={muted ? "取消静音" : "静音"}
+            title={muted ? t("analysis.video.unmute") : t("analysis.video.mute")}
             type="button"
           >
             <span aria-hidden="true" className={styles.volumeIcon}>{volumeIcon}</span>
           </button>
           <div className={styles.volumePopover}>
             <input
-              aria-label="音量"
+              aria-label={t("analysis.video.volumeAria")}
               aria-orientation="vertical"
               className={styles.volumeSlider}
               max="100"
@@ -646,7 +648,7 @@ export function VideoView({
         }} type="button">⛶</button>
       </div>
 
-      <section className={styles.timelineSection} aria-label="分析时间轴">
+      <section className={styles.timelineSection} aria-label={t("analysis.video.timelineAria")}>
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
           {/* 进度填充按真实轨道宽计算（容器 - 两侧 10px 内边距），与 markers
@@ -701,7 +703,7 @@ export function VideoView({
             style={{ insetInlineStart: `calc(10px + (100% - 20px) * ${(cursorLeft / 100).toFixed(6)})` }}
           />
           <input
-            aria-label="分析时间轴"
+            aria-label={t("analysis.video.timelineAria")}
             className={styles.timelineInput}
             max={timelineMax}
             min={0}
@@ -747,15 +749,15 @@ export function VideoView({
           （旧会话/纯口头讲解）→ 兜底用 evidence-segments/peak 的循环按钮。
           两组不同时渲染，避免正文与 chips 两套词表并存。 */}
       {coachTimepoints.length > 0 ? (
-        <section aria-label="讲解回看点" className={styles.signalSection}>
+        <section aria-label={t("analysis.video.replaySectionAria")} className={styles.signalSection}>
           <div className={styles.signalRow}>
             {coachTimepoints.map((point) => (
               <button
-                aria-label={`回看 ${formatTimecode(point.timeMs / 1000)} ${point.label}`}
+                aria-label={t("analysis.video.replayAria", { time: formatTimecode(point.timeMs / 1000), label: point.label })}
                 className={styles.signalButton}
                 key={point.id}
                 onClick={() => seekAndArrive(point.timeMs)}
-                title="点击跳转并暂停到该回看点"
+                title={t("analysis.video.replayTitle")}
                 type="button"
               >
                 <span className={styles.signalButtonRange}>{formatTimecode(point.timeMs / 1000)}</span>
@@ -765,19 +767,19 @@ export function VideoView({
           </div>
         </section>
       ) : signalSegmentButtons.length > 0 ? (
-        <section aria-label="信号片段循环" className={styles.signalSection}>
+        <section aria-label={t("analysis.video.loopSectionAria")} className={styles.signalSection}>
           <div className={styles.signalRow}>
             {signalSegmentButtons.map((segment) => {
               const active = loopTarget?.id === segment.id;
               return (
                 <button
-                  aria-label={`循环播放 ${formatTimecodeRange(segment.startMs / 1000, segment.endMs / 1000)} ${segment.kindLabel}`}
+                  aria-label={t("analysis.video.loopAria", { range: formatTimecodeRange(segment.startMs / 1000, segment.endMs / 1000), label: segment.kindLabel })}
                   aria-pressed={active}
                   className={styles.signalButton}
                   data-active={active || undefined}
                   key={segment.id}
                   onClick={() => toggleSignalLoop(segment)}
-                  title="点击开始循环播放；再次点击退出"
+                  title={t("analysis.video.loopTitle")}
                   type="button"
                 >
                   <span className={styles.signalButtonRange}>
@@ -789,16 +791,16 @@ export function VideoView({
             })}
           </div>
           {loopTarget ? (
-            <div aria-label="循环节奏（与全局变速同步）" className={styles.speedDock} role="group">
+            <div aria-label={t("analysis.video.speedDockAria")} className={styles.speedDock} role="group">
               {SPEED_STEPS.map((step) => (
                 <button
-                  aria-label={`循环节奏 ${step}×`}
+                  aria-label={t("analysis.video.speedStepAria", { step })}
                   aria-pressed={speed === step}
                   className={`${styles.playerBarBtn} ${styles.speedDockBtn}`}
                   data-active={speed === step || undefined}
                   key={step}
                   onClick={() => setSpeed(step)}
-                  title={`慢放精读 ${step}×（与全局变速同源）`}
+                  title={t("analysis.video.speedStepTitle", { step })}
                   type="button"
                 >
                   {step}×

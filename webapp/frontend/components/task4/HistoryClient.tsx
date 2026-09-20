@@ -6,6 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import { finalizationPendingText } from "@/lib/capture-events";
+import { t, useT, type MessageKey } from "@/lib/i18n";
 import {
   buildCoachAnalysisDraft,
   buildHistorySections,
@@ -58,50 +59,60 @@ function sessionTone(status: string): "neutral" | "info" | "success" | "warning"
   return "neutral";
 }
 
+// i18n 批 3：状态词/模式词是字典键（MessageKey），调用时经 t() 解析（§2c——
+// 不在模块加载期固化 t() 结果，保证切语言即时生效）。
+const SESSION_STATUS_KEYS: Record<string, MessageKey> = {
+  queued: "history.status.queued",
+  running: "history.taskState.running",
+  done: "history.status.completed",
+  failed: "history.status.failed",
+};
+
 function sessionStatus(status: string): string {
-  return {
-    queued: "排队中",
-    running: "分析中",
-    done: "已完成",
-    failed: "失败",
-  }[status] ?? getHistoryStatusText(status);
+  const key = SESSION_STATUS_KEYS[status];
+  return key === undefined ? getHistoryStatusText(status) : t(key);
 }
 
+const INPUT_MODE_KEYS: Record<string, MessageKey> = {
+  input_native: "analysis.input.native",
+  multimodal: "analysis.input.multimodal",
+  // 与 multimodal 同一执行语义的遥测档（后端 V2 语义等价映射）：
+  // 界面统一叫「多源模式」，不把管线代号漏到文案里（0911 审计 §12.6）。
+  telemetry_multimodal: "analysis.input.multimodal",
+  video_fallback: "analysis.input.videoFallback",
+};
+
 function inputModeLabel(mode: string): string {
-  return {
-    input_native: "输入原生",
-    multimodal: "多源模式",
-    // 与 multimodal 同一执行语义的遥测档（后端 V2 语义等价映射）：
-    // 界面统一叫「多源模式」，不把管线代号漏到文案里（0911 审计 §12.6）。
-    telemetry_multimodal: "多源模式",
-    video_fallback: "视频兼容",
-  }[mode] ?? mode;
+  const key = INPUT_MODE_KEYS[mode];
+  return key === undefined ? mode : t(key);
 }
 
 /** 异常人话映射（0911 点点第三批 F）：恢复上一批删掉的 limitationLabel 精简版。
     limitation 键形如 "raw_unavailable"（后端 _run_evidence_view 生成）。 */
-const LIMITATION_KIND_LABEL: Record<string, string> = {
-  stats: "Stats",
-  performance: "Performance",
-  raw: "Raw",
-  video: "视频",
+const LIMITATION_KIND_KEYS: Record<string, MessageKey> = {
+  stats: "history.limitation.kindStats",
+  performance: "history.limitation.kindPerformance",
+  raw: "history.limitation.kindRaw",
+  video: "history.limitation.kindVideo",
 };
 
-const LIMITATION_AVAILABILITY_LABEL: Record<string, string> = {
-  failed: "读取失败",
-  invalid: "内容已变化",
-  missing: "未提供",
-  not_present: "未提供",
-  unavailable: "来源不可用",
+const LIMITATION_AVAILABILITY_KEYS: Record<string, MessageKey> = {
+  failed: "history.limitation.readFailed",
+  invalid: "history.limitation.contentChanged",
+  missing: "history.status.notPresent",
+  not_present: "history.status.notPresent",
+  unavailable: "history.status.sourceUnavailable",
 };
 
 function limitationLabel(limitation: string): string {
-  if (limitation === "canonical_window_missing") return "时间窗口未对齐";
+  if (limitation === "canonical_window_missing") return t("history.limitation.canonicalWindowMissing");
   const separator = limitation.lastIndexOf("_");
   if (separator <= 0) return limitation;
-  const kind = LIMITATION_KIND_LABEL[limitation.slice(0, separator)] ?? limitation.slice(0, separator);
+  const kindKey = LIMITATION_KIND_KEYS[limitation.slice(0, separator)];
+  const kind = kindKey === undefined ? limitation.slice(0, separator) : t(kindKey);
   const availability = limitation.slice(separator + 1);
-  return `${kind} ${LIMITATION_AVAILABILITY_LABEL[availability] ?? availability}`;
+  const availabilityKey = LIMITATION_AVAILABILITY_KEYS[availability];
+  return `${kind} ${availabilityKey === undefined ? availability : t(availabilityKey)}`;
 }
 
 /** 行内红色感叹号的悬停/读屏文案（0911 点点第三批 F）：替代 chips 墙与红底
@@ -110,17 +121,17 @@ function limitationLabel(limitation: string): string {
     中间态，否则按 limitations 只会误报「Raw 来源不可用」。 */
 function runIssueText(run: KovaaKRunListItem): string | null {
   if (run.finalization_state === "source_unavailable" || run.finalization_state === "unavailable") {
-    return "训练来源已不可用";
+    return t("history.issue.sourceUnavailable");
   }
   const pending = finalizationPendingText(run.finalization_error);
   if (pending) return pending;
   if (run.limitations.length === 0) return null;
-  return run.limitations.map(limitationLabel).join("；");
+  return run.limitations.map(limitationLabel).join(t("common.separator.semicolon"));
 }
 
 function runRecordBadge(run: KovaaKRunListItem) {
   if (run.analysis_count > 0 || run.readiness_state === "analyzed") {
-    return <span className="task4-badge task4-badge-neu">已分析</span>;
+    return <span className="task4-badge task4-badge-neu">{t("history.run.analyzed")}</span>;
   }
   return null;
 }
@@ -141,24 +152,24 @@ function formatScore(score: number): string {
 /** 相对时间文案（0911 点点第二批）：<60 秒=N 秒前、<60 分钟=N 分钟前、否则 N 小时前。 */
 function relativeUpdatedAt(nowMs: number, atMs: number): string {
   const seconds = Math.max(0, Math.floor((nowMs - atMs) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
+  if (seconds < 60) return t("history.relative.secondsAgo", { n: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟前`;
-  return `${Math.floor(minutes / 60)} 小时前`;
+  if (minutes < 60) return t("history.relative.minutesAgo", { n: minutes });
+  return t("history.relative.hoursAgo", { n: Math.floor(minutes / 60) });
 }
 
 /** 训练日分组标签：今天/昨天/M月D日（与 contracts.formatHistoryDate 的文案同源）。 */
 function trainingDayLabel(iso: string | null | undefined): string {
-  if (!iso) return "时间未知";
+  if (!iso) return t("history.time.unknown");
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "时间未知";
+  if (Number.isNaN(date.getTime())) return t("history.time.unknown");
   const now = new Date();
   const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (sameDay(date, now)) return "今天";
+  if (sameDay(date, now)) return t("history.day.today");
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return "昨天";
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
+  if (sameDay(date, yesterday)) return t("history.day.yesterday");
+  return t("history.day.monthDay", { month: date.getMonth() + 1, day: date.getDate() });
 }
 
 /** 按日把条目归组（0911 点点第二批；五轮起泛化供分析记录复用）：同日条目即使
@@ -190,6 +201,7 @@ function RunRow({
   onToggle?: (run: KovaaKRunListItem) => void;
   selected?: boolean;
 }) {
+  const t = useT();
   const isPending = run.readiness_state === "pending_analysis";
   // 对局时间优先 source_key 解析值；created_at 是批次发现时间，同批多局共享
   // （曾把不同对局渲染成"完全重复卡"，0911 审计 §12.6）。
@@ -210,12 +222,15 @@ function RunRow({
         // 勾选圆点居行首；点击止于此处：onChange 已切换一次，冒泡到整行会二次切换。
         <div className="task4-row-actions" onClick={(event) => event.stopPropagation()}>
           <input
-            aria-label={`选择 ${run.scenario ?? "未知场景"}（${formatHistoryDate(trainingAt)}）`}
+            aria-label={t("history.aria.selectRun", {
+              scenario: run.scenario ?? t("capture.evidence.unknownScenario"),
+              when: formatHistoryDate(trainingAt),
+            })}
             checked={Boolean(selected)}
             className="task4-check"
             disabled={disabled}
             onChange={() => onToggle(run)}
-            title={disabled ? "证据不足以分析" : undefined}
+            title={disabled ? t("history.run.disabledReason") : undefined}
             type="checkbox"
           />
         </div>
@@ -227,7 +242,7 @@ function RunRow({
       <span className="task4-run-time">{trainingTimeLabel(trainingAt)}</span>
       {issue ? (
         <span
-          aria-label={`训练异常：${issue}`}
+          aria-label={t("history.aria.runIssue", { issue })}
           className="task4-run-issue"
           role="img"
           title={issue}
@@ -250,15 +265,18 @@ function AnalysisRow({
   selected?: boolean;
   session: SessionListItem;
 }) {
+  const t = useT();
   const tone = sessionTone(session.status);
   const interactive = Boolean(onToggle) && !disabled;
   const analysisAt = session.analysis_completed_at ?? session.finished_at;
   // 单行化后副行退役：训练/分析时间与摘要收敛进整行悬停提示（0911 点点五轮）。
   const hoverText = [
-    `模式 ${inputModeLabel(session.input_mode)}${session.input_mode === "input_native" ? "（预览）" : ""}`,
-    session.training_at ? `训练 ${formatHistoryDate(session.training_at)}` : null,
-    analysisAt ? `分析 ${formatHistoryDate(analysisAt)}` : null,
-    session.summary_label ? `摘要：${session.summary_label}` : null,
+    t("history.hover.mode", {
+      mode: inputModeLabel(session.input_mode) + (session.input_mode === "input_native" ? t("history.hover.modePreviewSuffix") : ""),
+    }),
+    session.training_at ? t("history.hover.training", { when: formatHistoryDate(session.training_at) }) : null,
+    analysisAt ? t("history.hover.analysis", { when: formatHistoryDate(analysisAt) }) : null,
+    session.summary_label ? t("history.hover.summary", { label: session.summary_label }) : null,
   ].filter(Boolean).join(" · ");
   return (
     <div
@@ -270,12 +288,15 @@ function AnalysisRow({
       {onToggle ? (
         <div className="task4-row-actions" onClick={(event) => event.stopPropagation()}>
           <input
-            aria-label={`选择分析 ${session.scenario ?? "未知场景"}（${formatHistoryDate(session.training_at ?? session.created_at)}）`}
+            aria-label={t("history.aria.selectAnalysis", {
+              scenario: session.scenario ?? t("capture.evidence.unknownScenario"),
+              when: formatHistoryDate(session.training_at ?? session.created_at),
+            })}
             checked={Boolean(selected)}
             className="task4-check"
             disabled={disabled}
             onChange={() => onToggle(session)}
-            title={disabled ? "分析未完成，暂无结果可讨论" : undefined}
+            title={disabled ? t("history.analysis.disabledReason") : undefined}
             type="checkbox"
           />
         </div>
@@ -301,29 +322,31 @@ function RunSectionState({
   kind: "pending" | "records";
   runDiscovery: RunDiscoveryState;
 }) {
+  const t = useT();
   const pending = kind === "pending";
   if (runDiscovery === "browser_unavailable" || runDiscovery === "service_unavailable") {
     const browserUnavailable = runDiscovery === "browser_unavailable";
     const title = pending
-      ? browserUnavailable ? "当前无法发现待分析 Run" : "待分析 Run 暂时不可用"
-      : browserUnavailable ? "当前无法发现训练 Run" : "训练 Run 暂时不可用";
+      ? browserUnavailable ? t("history.discovery.cannotFindPendingTitle") : t("history.discovery.pendingUnavailableTitle")
+      : browserUnavailable ? t("history.discovery.cannotFindRunsTitle") : t("history.discovery.runsUnavailableTitle");
     const detail = browserUnavailable
       ? pending
-        ? "Run 发现需要桌面应用能力；这里不会把不可读取误报成没有记录。"
-        : "Run 发现需要桌面应用能力；恢复后可以重新读取。"
-      : "恢复桌面服务后可以重新读取。";
+        ? t("history.discovery.browserDetailPending")
+        : t("history.discovery.browserDetailRuns")
+      : t("history.discovery.serviceDetail");
     return <Notice tone="warning" title={title}>{detail}</Notice>;
   }
 
   return (
-    <Empty className="task4-panel task4-state-panel" title={runDiscovery === "loading" ? pending ? "正在读取待分析 Run" : "正在读取训练 Run" : pending ? "没有待确认训练" : "还没有其它训练记录"}>
-      {pending ? "完成新的 Challenge 后，满足 readiness 的 Run 会出现在这里。" : "已确认或已分析的 Run 会保留在这里。"}
+    <Empty className="task4-panel task4-state-panel" title={runDiscovery === "loading" ? pending ? t("history.discovery.loadingPending") : t("history.discovery.loadingRuns") : pending ? t("history.discovery.emptyPendingTitle") : t("history.discovery.emptyRunsTitle")}>
+      {pending ? t("history.discovery.emptyPendingBody") : t("history.discovery.emptyRunsBody")}
     </Empty>
   );
 }
 
 export function HistoryClient() {
   const router = useRouter();
+  const t = useT();
   const [runs, setRuns] = useState<KovaaKRunListItem[]>([]);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [refresh, setRefresh] = useState<RefreshState>("loading");
@@ -528,7 +551,7 @@ export function HistoryClient() {
       setSelectionNotice(null);
       setSelectedRunIds(selectedRunIds.filter((id) => id !== run.id));
     } else if (selectedCount >= MAX_SELECTED_RUNS) {
-      setSelectionNotice(`最多同时选 ${MAX_SELECTED_RUNS} 条一起交给 Coach。`);
+      setSelectionNotice(t("history.coachPill.limitNotice", { n: MAX_SELECTED_RUNS }));
     } else {
       setSelectionNotice(null);
       setSelectedRunIds([...selectedRunIds, run.id]);
@@ -540,7 +563,7 @@ export function HistoryClient() {
       setSelectionNotice(null);
       setSelectedAnalysisIds(selectedAnalysisIds.filter((id) => id !== session.id));
     } else if (selectedCount >= MAX_SELECTED_RUNS) {
-      setSelectionNotice(`最多同时选 ${MAX_SELECTED_RUNS} 条一起交给 Coach。`);
+      setSelectionNotice(t("history.coachPill.limitNotice", { n: MAX_SELECTED_RUNS }));
     } else {
       setSelectionNotice(null);
       setSelectedAnalysisIds([...selectedAnalysisIds, session.id]);
@@ -566,7 +589,7 @@ export function HistoryClient() {
     router.push("/?intent=coach-analysis");
   };
 
-  const updatedLabel = lastLoadedAt === null ? "正在读取…" : `更新于 ${relativeUpdatedAt(nowTick, lastLoadedAt)}`;
+  const updatedLabel = lastLoadedAt === null ? t("history.refresh.loading") : t("history.refresh.updatedAt", { ago: relativeUpdatedAt(nowTick, lastLoadedAt) });
   const updatedStale = lastLoadedAt !== null && nowTick - lastLoadedAt >= STALE_AFTER_MS;
 
   if (initialError && runs.length === 0 && sessions.length === 0) {
@@ -576,16 +599,16 @@ export function HistoryClient() {
         <div className="task4-page-head" onMouseDown={startWindowDraggingOnBackground}>
           <div className="task4-col task4-head-col">
           <div className="task4-topbar-left">
-            <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>
-            <div className="task4-page-title">历史</div>
+            <IconButton label={t("history.page.backToCoach")} onClick={() => router.push("/")} size="compact" title={t("history.page.backToCoach")}><IconChevronLeft /></IconButton>
+            <div className="task4-page-title">{t("history.page.title")}</div>
           </div>
           </div>
         </div>
         <div className="task4-page">
         <div className="task4-col">
-          <ErrorState title="历史暂时不可用">
-            <p>读取失败没有被显示成没有记录。</p>
-            <Button onClick={() => void loadHistory(true)} variant="secondary">重试</Button>
+          <ErrorState title={t("history.error.title")}>
+            <p>{t("history.error.body")}</p>
+            <Button onClick={() => void loadHistory(true)} variant="secondary">{t("history.error.retry")}</Button>
           </ErrorState>
         </div>
         </div>
@@ -603,24 +626,24 @@ export function HistoryClient() {
         <div className="task4-page-head" onMouseDown={startWindowDraggingOnBackground}>
           <div className="task4-col task4-head-col">
           <div className="task4-topbar-left">
-            <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>
-            <div className="task4-page-title">历史</div>
+            <IconButton label={t("history.page.backToCoach")} onClick={() => router.push("/")} size="compact" title={t("history.page.backToCoach")}><IconChevronLeft /></IconButton>
+            <div className="task4-page-title">{t("history.page.title")}</div>
             <input
-              aria-label="按场景名筛选"
+              aria-label={t("history.filter.ariaLabel")}
               className="task4-filter-input"
               onChange={(event) => setScenarioFilter(event.target.value)}
-              placeholder="按场景名筛选…"
+              placeholder={t("history.filter.placeholder")}
               type="text"
               value={scenarioFilter}
             />
             {/* 「更新于 N 前」状态行（0911 点点第二批 12）：
                 点击整行 = 重新读取；轮询进行中箭头旋转；文字固定宽度防抖动。 */}
             <button
-              aria-label={lastLoadedAt === null ? "刷新（正在读取）" : `刷新（上次更新 ${relativeUpdatedAt(nowTick, lastLoadedAt)}）`}
+              aria-label={lastLoadedAt === null ? t("history.refresh.ariaLoading") : t("history.refresh.ariaUpdatedAt", { ago: relativeUpdatedAt(nowTick, lastLoadedAt) })}
               className="task4-refresh-status"
               data-stale={updatedStale || undefined}
               onClick={() => void loadHistory()}
-              title="刷新"
+              title={t("history.refresh.title")}
               type="button"
             >
               <span aria-hidden="true" className="task4-refresh-icon" data-loading={refresh === "loading" || undefined}>
@@ -640,7 +663,7 @@ export function HistoryClient() {
             onClick={startCoachAnalysis}
             type="button"
           >
-            {selectedCount > 0 ? `让 Coach 分析（${selectedCount}）` : "让 Coach 分析"}
+            {selectedCount > 0 ? t("history.coachPill.withCount", { n: selectedCount }) : t("history.coachPill.idle")}
           </button>
           {/* 勾选超限提示随顶栏常驻视口（绝对定位挂在顶栏下缘渐隐带之下）。 */}
           {selectionNotice ? <Notice className="task4-head-notice" tone="info">{selectionNotice}</Notice> : null}
@@ -648,32 +671,32 @@ export function HistoryClient() {
         </div>
         <div className="task4-page">
         <div className="task4-col">
-      {refresh === "unavailable" ? <Notice tone="warning" title="刷新暂时不可用">保留当前已读取内容；恢复本地服务后可以重试。</Notice> : null}
-      {runDiscovery === "browser_unavailable" ? <Notice tone="info" title="Run 发现仅在桌面应用可用">浏览器可以查看分析记录；要查看自动采集的 Run，请在桌面应用中打开 History。</Notice> : null}
-      {runDiscovery === "service_unavailable" ? <Notice tone="warning" title="Run 暂时不可用">桌面服务没有返回训练 Run；这不是"没有记录"。恢复服务后可以刷新。</Notice> : null}
+      {refresh === "unavailable" ? <Notice tone="warning" title={t("history.notice.refreshUnavailableTitle")}>{t("history.notice.refreshUnavailableBody")}</Notice> : null}
+      {runDiscovery === "browser_unavailable" ? <Notice tone="info" title={t("history.notice.runDiscoveryDesktopTitle")}>{t("history.notice.runDiscoveryDesktopBody")}</Notice> : null}
+      {runDiscovery === "service_unavailable" ? <Notice tone="warning" title={t("history.notice.runUnavailableTitle")}>{t("history.notice.runUnavailableBody")}</Notice> : null}
 
       {watcherGuidance === "no_candidates" ? (
-        <Empty className="task4-panel task4-state-panel" title="未找到你的 KovaaK 训练数据">
-          <p>自动发现没有找到可用的 KovaaK 数据目录。</p>
+        <Empty className="task4-panel task4-state-panel" title={t("history.watcher.noCandidatesTitle")}>
+          <p>{t("history.watcher.noCandidatesBody")}</p>
           <Button onClick={() => router.push("/settings#kovaak-directories")} size="compact" variant="secondary">
-            前往 设置 → KovaaK 本地目录 手动指定
+            {t("history.watcher.goSettings")}
           </Button>
         </Empty>
       ) : null}
       {watcherGuidance === "not_exporting" ? (
-        <Empty className="task4-panel task4-state-panel" title="KovaaK 未在导出训练数据">
-          <p>请在 KovaaK 中打开 设置 → 其他 → 统计数据输出，选择 Challenge Completion，然后完成一局挑战。</p>
+        <Empty className="task4-panel task4-state-panel" title={t("history.watcher.notExportingTitle")}>
+          <p>{t("history.watcher.notExportingBody")}</p>
         </Empty>
       ) : null}
 
       <section className="task4-sec" aria-labelledby="pending-title">
         {/* 「待分析训练」折叠（0911 点点五轮：三区块头统一，默认展开）。 */}
         <div className="task4-sec-head task4-sec-collapsible" onClick={togglePendingRecords}>
-          <h2 id="pending-title" className="task4-sec-title">待分析训练</h2>
+          <h2 id="pending-title" className="task4-sec-title">{t("history.section.pending")}</h2>
           <span className="task4-sec-count">{filteredSections.pendingRuns.length}</span>
           <button
             aria-expanded={pendingRecordsOpen}
-            aria-label={pendingRecordsOpen ? "收起待分析训练" : "展开待分析训练"}
+            aria-label={pendingRecordsOpen ? t("history.section.collapsePending") : t("history.section.expandPending")}
             className="task4-sec-caret"
             onClick={(event) => {
               event.stopPropagation();
@@ -686,7 +709,7 @@ export function HistoryClient() {
         </div>
         {pendingRecordsOpen ? (filteredSections.pendingRuns.length === 0 ? (
           normalizedFilter ? (
-            <Empty className="task4-panel task4-state-panel" title="没有匹配的记录">换个场景名关键词再试。</Empty>
+            <Empty className="task4-panel task4-state-panel" title={t("history.filter.emptyTitle")}>{t("history.filter.emptyBody")}</Empty>
           ) : (
             <RunSectionState kind="pending" runDiscovery={runDiscovery} />
           )
@@ -694,7 +717,7 @@ export function HistoryClient() {
           <div className="task4-panel">
             {groupByDay(visiblePendingRuns, (run) => run.training_at ?? run.created_at).map((group, groupIndex) => (
               <Fragment key={`${group.label}-${groupIndex}`}>
-                <div className="task4-day-label">{group.label} · {group.items.length}条</div>
+                <div className="task4-day-label">{t("history.day.group", { label: group.label, n: group.items.length })}</div>
                 {group.items.map((run) => (
                   <RunRow
                     key={run.run_ref}
@@ -711,7 +734,7 @@ export function HistoryClient() {
                 onClick={() => toggleRunExpand("pending")}
                 type="button"
               >
-                {runExpand.pending ? "收起" : `显示全部 ${filteredSections.pendingRuns.length} 条`}
+                {runExpand.pending ? t("history.expand.collapse") : t("history.expand.showAll", { n: filteredSections.pendingRuns.length })}
               </button>
             ) : null}
           </div>
@@ -723,11 +746,11 @@ export function HistoryClient() {
             整段折叠头，默认展开、状态持久化；收起时不渲染行，勾选集合保留、
             仍计入「让 Coach 分析」计数。 */}
         <div className="task4-sec-head task4-sec-collapsible" onClick={toggleAnalysisRecords}>
-          <h2 id="analysis-title" className="task4-sec-title">分析记录</h2>
+          <h2 id="analysis-title" className="task4-sec-title">{t("history.section.analysis")}</h2>
           <span className="task4-sec-count">{filteredSections.analysisRecords.length}</span>
           <button
             aria-expanded={analysisRecordsOpen}
-            aria-label={analysisRecordsOpen ? "收起分析记录" : "展开分析记录"}
+            aria-label={analysisRecordsOpen ? t("history.section.collapseAnalysis") : t("history.section.expandAnalysis")}
             className="task4-sec-caret"
             onClick={(event) => {
               event.stopPropagation();
@@ -741,10 +764,10 @@ export function HistoryClient() {
         {analysisRecordsOpen ? (
           filteredSections.analysisRecords.length === 0 ? (
             normalizedFilter ? (
-              <Empty className="task4-panel task4-state-panel" title="没有匹配的记录">换个场景名关键词再试。</Empty>
+              <Empty className="task4-panel task4-state-panel" title={t("history.filter.emptyTitle")}>{t("history.filter.emptyBody")}</Empty>
             ) : (
-              <Empty className="task4-panel task4-state-panel" title="还没有分析记录">
-                完成一局 KovaaK 训练后，记录会保留在这里。
+              <Empty className="task4-panel task4-state-panel" title={t("history.analysis.emptyTitle")}>
+                {t("history.analysis.emptyBody")}
               </Empty>
             )
           ) : (
@@ -752,7 +775,7 @@ export function HistoryClient() {
               {/* 按分析完成日分组 + 前 5 条切片（0911 点点五轮：与 Run 区完全对齐）。 */}
               {groupByDay(visibleAnalysisRecords, (session) => session.analysis_completed_at ?? session.finished_at ?? session.created_at).map((group, groupIndex) => (
                 <Fragment key={`${group.label}-${groupIndex}`}>
-                  <div className="task4-day-label">{group.label} · {group.items.length}条</div>
+                  <div className="task4-day-label">{t("history.day.group", { label: group.label, n: group.items.length })}</div>
                   {group.items.map((session) => (
                     <AnalysisRow
                       disabled={session.status !== "done"}
@@ -770,7 +793,7 @@ export function HistoryClient() {
                   onClick={() => toggleRunExpand("analysis")}
                   type="button"
                 >
-                  {runExpand.analysis ? "收起" : `显示全部 ${filteredSections.analysisRecords.length} 条`}
+                  {runExpand.analysis ? t("history.expand.collapse") : t("history.expand.showAll", { n: filteredSections.analysisRecords.length })}
                 </button>
               ) : null}
             </div>
@@ -782,11 +805,11 @@ export function HistoryClient() {
         {/* 「训练记录」默认折叠（0911 点点第二批 8）：收起时只留区块头 + 箭头，
             不渲染行列表；已勾选 id 保留，不影响「让 Coach 分析」计数。 */}
         <div className="task4-sec-head task4-sec-collapsible" onClick={toggleRunRecords}>
-          <h2 id="runs-title" className="task4-sec-title">训练记录</h2>
+          <h2 id="runs-title" className="task4-sec-title">{t("history.section.runs")}</h2>
           <span className="task4-sec-count">{filteredSections.runRecords.length}</span>
           <button
             aria-expanded={runRecordsOpen}
-            aria-label={runRecordsOpen ? "收起训练记录" : "展开训练记录"}
+            aria-label={runRecordsOpen ? t("history.section.collapseRuns") : t("history.section.expandRuns")}
             className="task4-sec-caret"
             onClick={(event) => {
               event.stopPropagation();
@@ -800,7 +823,7 @@ export function HistoryClient() {
         {runRecordsOpen ? (
           filteredSections.runRecords.length === 0 ? (
             normalizedFilter ? (
-              <Empty className="task4-panel task4-state-panel" title="没有匹配的记录">换个场景名关键词再试。</Empty>
+              <Empty className="task4-panel task4-state-panel" title={t("history.filter.emptyTitle")}>{t("history.filter.emptyBody")}</Empty>
             ) : (
               <RunSectionState kind="records" runDiscovery={runDiscovery} />
             )
@@ -809,7 +832,7 @@ export function HistoryClient() {
               {/* 「训练记录」整段展开后，段内再套前 5 条规则（0911 点点第三批 D）。 */}
               {groupByDay(visibleRunRecords, (run) => run.training_at ?? run.created_at).map((group, groupIndex) => (
                 <Fragment key={`${group.label}-${groupIndex}`}>
-                  <div className="task4-day-label">{group.label} · {group.items.length}条</div>
+                  <div className="task4-day-label">{t("history.day.group", { label: group.label, n: group.items.length })}</div>
                   {group.items.map((run) => (
                     <RunRow
                       disabled={run.supported_input_modes.length === 0}
@@ -827,7 +850,7 @@ export function HistoryClient() {
                   onClick={() => toggleRunExpand("records")}
                   type="button"
                 >
-                  {runExpand.records ? "收起" : `显示全部 ${filteredSections.runRecords.length} 条`}
+                  {runExpand.records ? t("history.expand.collapse") : t("history.expand.showAll", { n: filteredSections.runRecords.length })}
                 </button>
               ) : null}
             </div>

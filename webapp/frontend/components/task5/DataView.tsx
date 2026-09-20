@@ -19,25 +19,28 @@ import type {
   FrontendAnalysisFamilyDataRowV1,
   FrontendAnalysisFamilyDataV1,
 } from "@/lib/types";
+import { t, useT, type MessageKey } from "@/lib/i18n";
 import { Badge, Button, Empty, Loading, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
-const FAMILY_GROUPS: Record<string, { title: string; keys: string[] }[]> = {
+// i18n 批 3：分组标题是字典键（MessageKey），渲染时经 t() 解析（§2c——不在模块
+// 加载期固化 t() 结果，保证切语言即时生效）。
+const FAMILY_GROUPS: Record<string, { title: MessageKey; keys: string[] }[]> = {
   target_switching: [
-    { title: "切换速度", keys: ["target_switching.transition_time_ms", "transition_time_ms"] },
-    { title: "移动质量", keys: ["target_switching.transition_distance_px", "transition_distance_px", "target_switching.path_efficiency", "path_efficiency"] },
-    { title: "稳定控制", keys: ["target_switching.settle_duration_ms", "settle_duration_ms"] },
+    { title: "analysis.data.group.switchSpeed", keys: ["target_switching.transition_time_ms", "transition_time_ms"] },
+    { title: "analysis.data.group.movementQuality", keys: ["target_switching.transition_distance_px", "transition_distance_px", "target_switching.path_efficiency", "path_efficiency"] },
+    { title: "analysis.data.group.stabilityControl", keys: ["target_switching.settle_duration_ms", "settle_duration_ms"] },
   ],
   continuous_tracking: [
-    { title: "跟踪质量", keys: ["continuous_tracking.target_relative_error_px", "target_relative_error_px", "continuous_tracking.time_in_radius_ratio", "time_in_radius_ratio", "continuous_tracking.sparc", "sparc"] },
-    { title: "偏离与恢复", keys: ["continuous_tracking.loss_count", "loss_count", "continuous_tracking.loss_duration_ms", "loss_duration_ms", "continuous_tracking.reacquisition_latency_ms", "reacquisition_latency_ms"] },
-    { title: "控制负担", keys: ["continuous_tracking.correction_burden", "correction_burden"] },
+    { title: "analysis.data.group.trackingQuality", keys: ["continuous_tracking.target_relative_error_px", "target_relative_error_px", "continuous_tracking.time_in_radius_ratio", "time_in_radius_ratio", "continuous_tracking.sparc", "sparc"] },
+    { title: "analysis.data.group.deviationRecovery", keys: ["continuous_tracking.loss_count", "loss_count", "continuous_tracking.loss_duration_ms", "loss_duration_ms", "continuous_tracking.reacquisition_latency_ms", "reacquisition_latency_ms"] },
+    { title: "analysis.data.group.controlBurden", keys: ["continuous_tracking.correction_burden", "correction_burden"] },
   ],
   static_clicking: [
-    { title: "停枪控制", keys: ["sparc", "decel_frac"] },
-    { title: "动作质量", keys: ["linearity", "reverse_ratio"] },
-    { title: "效率", keys: ["path_efficiency"] },
+    { title: "analysis.data.group.stopControl", keys: ["sparc", "decel_frac"] },
+    { title: "analysis.data.group.actionQuality", keys: ["linearity", "reverse_ratio"] },
+    { title: "analysis.data.group.efficiency", keys: ["path_efficiency"] },
   ],
 };
 
@@ -47,7 +50,7 @@ function familyMetricText(key: string, value: number): string {
   }
   if (key.endsWith("_ms")) return `${Number(value.toFixed(1))} ms`;
   if (key.endsWith("_px")) return `${Number(value.toFixed(1))} px`;
-  if (key === "corrective_count" || key.endsWith("_count")) return `${Number(value.toFixed(1))} 次`;
+  if (key === "corrective_count" || key.endsWith("_count")) return `${Number(value.toFixed(1))}${t("metric.unit.count")}`;
   if (key === "peak_speed") return `${Number(value.toFixed(2))} counts/ms`;
   return String(Number(value.toFixed(3)));
 }
@@ -77,7 +80,8 @@ function MetricOverviewPanel({
   onSelectMetric: (metric: string) => void;
   familyCode: string;
 }) {
-  const groups = FAMILY_GROUPS[familyCode] ?? [{ title: "指标", keys: [] }];
+  const t = useT();
+  const groups = FAMILY_GROUPS[familyCode] ?? [{ title: "analysis.data.group.metricsFallback", keys: [] }];
   const groupMap = groups.map((group) => ({
     ...group,
     metrics: metrics.filter((metric) => {
@@ -94,8 +98,8 @@ function MetricOverviewPanel({
       {groupMap.map((group) => (
         <div className={styles.metricGroupBlock} key={group.title}>
           <div className={styles.metricGroupHeader}>
-            <span>{group.title}</span>
-            <span>{group.metrics.length} 项</span>
+            <span>{t(group.title)}</span>
+            <span>{t("analysis.data.group.count", { n: group.metrics.length })}</span>
           </div>
           <div className={styles.metricGroupRows}>
             {group.metrics.map((metric) => {
@@ -114,8 +118,8 @@ function MetricOverviewPanel({
       {remaining.length ? (
         <div className={styles.metricGroupBlock}>
           <div className={styles.metricGroupHeader}>
-            <span>其他</span>
-            <span>{remaining.length} 项</span>
+            <span>{t("analysis.data.group.other")}</span>
+            <span>{t("analysis.data.group.count", { n: remaining.length })}</span>
           </div>
           <div className={styles.metricGroupRows}>
             {remaining.map((metric) => {
@@ -144,18 +148,19 @@ function SwitchChainRow({
   onSelectTime: (timeMs: number) => void;
   row: FrontendAnalysisFamilyDataRowV1;
 }) {
+  const t = useT();
   const bounds = rowBounds(row);
   const { kill_ms: kill, transition_ms: transition, acquire_ms: acquire, settle_ms: settle } = row.timing;
   const hasAll = [kill, transition, acquire].every(Number.isFinite);
   const total = settle ?? acquire ?? transition ?? 1;
   const slow = typeof row.metrics.path_efficiency === "number" && row.metrics.path_efficiency < 0.6;
   const accessibleLabel = [
-    `完整切换 #${index + 1}`,
-    `切换到新目标耗时 ${familyMetricText("transition_time_ms", row.metrics.transition_time_ms)}`,
-    `切换位移 ${familyMetricText("transition_distance_px", row.metrics.transition_distance_px)}`,
-    `路径效率 ${familyMetricText("path_efficiency", row.metrics.path_efficiency)}`,
-    `到达后稳定耗时 ${familyMetricText("settle_duration_ms", row.metrics.settle_duration_ms)}`,
-  ].join("，");
+    t("analysis.data.switchChain.aria", { index: index + 1 }),
+    t("analysis.data.switchChain.ariaTransition", { value: familyMetricText("transition_time_ms", row.metrics.transition_time_ms) }),
+    t("analysis.data.switchChain.ariaDistance", { value: familyMetricText("transition_distance_px", row.metrics.transition_distance_px) }),
+    t("analysis.data.switchChain.ariaEfficiency", { value: familyMetricText("path_efficiency", row.metrics.path_efficiency) }),
+    t("analysis.data.switchChain.ariaSettle", { value: familyMetricText("settle_duration_ms", row.metrics.settle_duration_ms) }),
+  ].join(t("common.separator.comma"));
 
   return (
     <button
@@ -219,6 +224,7 @@ function SwitchingDataView({
   onSelectMetric: (metric: string) => void;
   presentation: AnalysisWorkspacePresentation;
 }) {
+  const t = useT();
   const rows = familyData?.rows ?? [];
   const slowRowIndex = rows.reduce((acc, row, index) => {
     if (row.kind !== "switch_chain") return acc;
@@ -245,39 +251,39 @@ function SwitchingDataView({
     <div className={styles.familyDataLayout} data-family="switching">
       <div className={styles.metricsColumn}>
         <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>指标总览</span>
-          <span className={styles.sectionHint}>切换专项</span>
+          <span className={styles.sectionTitle}>{t("analysis.data.overviewTitle")}</span>
+          <span className={styles.sectionHint}>{t("analysis.data.overviewHintSwitching")}</span>
         </div>
         <MetricOverviewPanel familyCode="target_switching" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         <Notice tone="warning">
-          当前证据<b>不能</b>判断：目标选择、第一枪、首次伤害、持续目标身份与重新进入——界面不展示也不暗示这些结论。
+          {t("analysis.data.switching.cannotJudgePrefix")}<b>{t("analysis.data.switching.cannotJudge")}</b>{t("analysis.data.switching.cannotJudgeSuffix")}
         </Notice>
         <div className={styles.boundaryPanel}>
-          <div className={styles.boundaryTitle}>事件命名</div>
+          <div className={styles.boundaryTitle}>{t("analysis.data.switching.eventNaming")}</div>
           <dl className={styles.boundaryKv}>
-            <dt>本次击杀</dt><dd>kill</dd>
-            <dt>一次完整切换</dt><dd>switch_chain</dd>
-            <dt>开始切换</dt><dd>transition</dd>
-            <dt>到达新目标</dt><dd>next_target_acquired</dd>
-            <dt>稳定完成</dt><dd>settle</dd>
+            <dt>{t("analysis.data.switching.kill")}</dt><dd>kill</dd>
+            <dt>{t("analysis.data.switching.fullSwitch")}</dt><dd>switch_chain</dd>
+            <dt>{t("analysis.data.switching.startSwitch")}</dt><dd>transition</dd>
+            <dt>{t("analysis.data.switching.arriveNewTarget")}</dt><dd>next_target_acquired</dd>
+            <dt>{t("analysis.data.switching.settleDone")}</dt><dd>settle</dd>
           </dl>
         </div>
       </div>
       <div className={styles.detailColumn}>
         <div className={styles.sectionHead}>
-          <h2 className={styles.sectionTitle} id="family-detail-title">切换链</h2>
-          <span className={styles.sectionCount}>{familyData?.total_count ?? rows.length} 次完整切换</span>
-          <span className={styles.sectionHint}>点击行跳到视频对应时间</span>
+          <h2 className={styles.sectionTitle} id="family-detail-title">{t("analysis.data.switching.chainTitle")}</h2>
+          <span className={styles.sectionCount}>{t("analysis.data.switching.totalCount", { n: familyData?.total_count ?? rows.length })}</span>
+          <span className={styles.sectionHint}>{t("analysis.data.switching.rowHint")}</span>
         </div>
           {slowRowIndex >= 0 || goodRowIndex >= 0 ? (
           <div className={styles.familyHighlights}>
-            {slowRowIndex >= 0 ? <Badge tone="info">表现较慢的切换 · #{slowRowIndex + 1}</Badge> : null}
-            {goodRowIndex >= 0 ? <Badge tone="info">较好对照 · #{goodRowIndex + 1}</Badge> : null}
+            {slowRowIndex >= 0 ? <Badge tone="info">{t("analysis.data.switching.slowBadge", { n: slowRowIndex + 1 })}</Badge> : null}
+            {goodRowIndex >= 0 ? <Badge tone="info">{t("analysis.data.switching.goodBadge", { n: goodRowIndex + 1 })}</Badge> : null}
           </div>
         ) : null}
-        {loadingFamily ? <Loading>正在读取逐行动作数据</Loading> : null}
+        {loadingFamily ? <Loading>{t("analysis.data.loadingRows")}</Loading> : null}
         {familyData?.availability === "unavailable" ? (
-          <Notice tone="warning" title="切换链数据暂不可用">本次证据没有可安全展示的逐行动作记录。</Notice>
+          <Notice tone="warning" title={t("analysis.data.switching.chainUnavailableTitle")}>{t("analysis.data.switching.chainUnavailableBody")}</Notice>
         ) : null}
         {rows.length ? (
           <div className={styles.switchChainPanel}>
@@ -290,19 +296,22 @@ function SwitchingDataView({
         ) : null}
         {familyData && familyData.next_offset !== null ? (
           <Button disabled={loadingMoreFamily} onClick={onLoadMoreFamily} variant="secondary">
-            {loadingMoreFamily ? "正在加载" : `加载更多（已显示 ${rows.length} / ${familyData.total_count}）`}
+            {loadingMoreFamily ? t("analysis.data.loadingMore") : t("analysis.data.loadMore", { shown: rows.length, total: familyData.total_count })}
           </Button>
         ) : null}
         <div className={styles.switchLegend}>
-          <span><span className={styles.switchLegendDot} />本次击杀</span>
-          <span><span className={styles.switchLegendMove} />开始切换 → 到达新目标</span>
-          <span><span className={styles.switchLegendSettle} />到达 → 稳定完成</span>
+          <span><span className={styles.switchLegendDot} />{t("analysis.data.switching.kill")}</span>
+          <span><span className={styles.switchLegendMove} />{t("analysis.data.switching.legendMove")}</span>
+          <span><span className={styles.switchLegendSettle} />{t("analysis.data.switching.legendSettle")}</span>
         </div>
         <div className={styles.chartCard}>
           <p className={styles.chartCap}>
-            文本摘要：{rows.length} 次完整切换{medianTransition !== null ? `的中位耗时 ${familyMetricText("transition_time_ms", medianTransition)}` : ""}
-            {slowRowIndex >= 0 ? `；#${slowRowIndex + 1} 明显偏慢，建议优先在视频回看` : ""}
-            {goodRowIndex >= 0 ? `；#${goodRowIndex + 1} 是较好的对照` : ""}。
+            {t("analysis.data.switching.summaryPrefix")}
+            {t("analysis.data.switching.totalCount", { n: rows.length })}
+            {medianTransition !== null ? t("analysis.data.switching.summaryMedian", { value: familyMetricText("transition_time_ms", medianTransition) }) : ""}
+            {slowRowIndex >= 0 ? t("analysis.data.switching.summarySlow", { n: slowRowIndex + 1 }) : ""}
+            {goodRowIndex >= 0 ? t("analysis.data.switching.summaryGood", { n: goodRowIndex + 1 }) : ""}
+            {t("analysis.data.switching.summaryTail")}
           </p>
         </div>
       </div>
@@ -331,6 +340,7 @@ function TrackingDataView({
   const reacqRows = familyData?.rows.filter((row) => row.kind === "tracking_reacquisition") ?? [];
   const timelineMax = Math.max(1, ...lossRows.concat(reacqRows).flatMap((row) => Object.values(row.timing)));
   const hasFormalMetrics = presentation.metrics.formal.length > 0;
+  const t = useT();
 
   const longestLoss = lossRows.reduce<{ row: FrontendAnalysisFamilyDataRowV1 | null; duration: number }>(
     (acc, row) => {
@@ -352,11 +362,11 @@ function TrackingDataView({
   const links: { label: string; kindLabel: string; seq: number; start: number; end: number }[] = [];
   if (longestLoss.row) {
     const bounds = rowBounds(longestLoss.row);
-    if (bounds) links.push({ label: "表现较差的偏离", kindLabel: "偏离", seq: lossRows.indexOf(longestLoss.row) + 1, start: bounds[0], end: bounds[1] });
+    if (bounds) links.push({ label: t("analysis.data.tracking.worstDeviation"), kindLabel: t("analysis.data.tracking.deviation"), seq: lossRows.indexOf(longestLoss.row) + 1, start: bounds[0], end: bounds[1] });
   }
   if (slowestReacq.row) {
     const bounds = rowBounds(slowestReacq.row);
-    if (bounds) links.push({ label: "重新捕获较慢", kindLabel: "重新捕获", seq: reacqRows.indexOf(slowestReacq.row) + 1, start: bounds[0], end: bounds[1] });
+    if (bounds) links.push({ label: t("analysis.data.tracking.slowReacquisition"), kindLabel: t("analysis.data.tracking.reacquisition"), seq: reacqRows.indexOf(slowestReacq.row) + 1, start: bounds[0], end: bounds[1] });
   }
 
   return (
@@ -364,26 +374,26 @@ function TrackingDataView({
       {hasFormalMetrics ? (
         <div className={styles.metricsColumn}>
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle}>指标总览</span>
-            <span className={styles.sectionHint}>按理解目的分组</span>
+            <span className={styles.sectionTitle}>{t("analysis.data.overviewTitle")}</span>
+            <span className={styles.sectionHint}>{t("analysis.data.overviewHintGrouped")}</span>
           </div>
           <MetricOverviewPanel familyCode="continuous_tracking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
       ) : null}
       <div className={styles.detailColumn}>
         <div className={styles.sectionHead}>
-          <h2 className={styles.sectionTitle} id="family-detail-title">跟踪分段</h2>
-          <span className={styles.sectionCount}>{familyData?.total_count ?? familyData?.rows.length ?? 0} 条记录</span>
+          <h2 className={styles.sectionTitle} id="family-detail-title">{t("analysis.data.tracking.title")}</h2>
+          <span className={styles.sectionCount}>{t("analysis.data.tracking.totalCount", { n: familyData?.total_count ?? familyData?.rows.length ?? 0 })}</span>
         </div>
         <div className={styles.chartGrid}>
           <div
-            aria-label={`目标相对误差半径分布，共 ${radiusPoints.length} 个样本，峰值 ${Number(peakRadius.toFixed(2))}`}
+            aria-label={t("analysis.data.tracking.radiusAria", { n: radiusPoints.length, peak: Number(peakRadius.toFixed(2)) })}
             className={styles.chartCard}
             role="img"
           >
             <div className={styles.chartTitle}>
-              目标相对误差半径分布
-              <Badge tone="neutral" style={{ marginInlineStart: "auto" }}>已归一化</Badge>
+              {t("analysis.data.tracking.radiusTitle")}
+              <Badge tone="neutral" style={{ marginInlineStart: "auto" }}>{t("analysis.data.tracking.normalized")}</Badge>
             </div>
             {radiusPoints.length ? (
               <>
@@ -399,15 +409,15 @@ function TrackingDataView({
                 <div className={styles.errorSeriesAxis}><span>0.0</span><span>{Number(peakRadius.toFixed(2))}</span></div>
               </>
             ) : (
-              <p className={styles.chartCap}>目标相对误差样本不可用。</p>
+              <p className={styles.chartCap}>{t("analysis.data.tracking.samplesUnavailable")}</p>
             )}
             <p className={styles.chartCap}>
-              {`按目标半径归一化后的偏差分布。共 ${radiusPoints.length} 个样本，峰值 ${Number(peakRadius.toFixed(2))}。数值已在本地按目标半径归一化并量化；页面不接收位置或半径坐标。`}
+              {t("analysis.data.tracking.radiusBody", { n: radiusPoints.length, peak: Number(peakRadius.toFixed(2)) })}
             </p>
           </div>
 
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>偏离与重新捕获时序</div>
+            <div className={styles.chartTitle}>{t("analysis.data.tracking.timelineTitle")}</div>
             {lossRows.length || reacqRows.length ? (
               <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 100">
                 <line opacity="0.3" stroke="var(--outline-variant)" strokeWidth="1" x1="20" x2="340" y1="50" y2="50" />
@@ -426,23 +436,23 @@ function TrackingDataView({
                   return <line key={`reacq-${index}`} stroke="var(--tertiary)" strokeWidth="2" x1={left} x2={left + width} y1="70" y2="70" />;
                 })}
                 <rect fill="var(--event-peak)" height="10" opacity="0.6" width="10" x="20" y="84" />
-                <text className={styles.chartText} x="34" y="93">偏离（宽度=持续时间）</text>
+                <text className={styles.chartText} x="34" y="93">{t("analysis.data.tracking.legendDeviation")}</text>
                 <line stroke="var(--tertiary)" strokeWidth="2" x1="160" x2="175" y1="89" y2="89" />
-                <text className={styles.chartText} x="180" y="93">重新捕获延迟</text>
+                <text className={styles.chartText} x="180" y="93">{t("analysis.data.tracking.legendReacquisition")}</text>
               </svg>
             ) : (
-              <p className={styles.chartCap}>本次没有可定位的偏离/重新捕获事件。</p>
+              <p className={styles.chartCap}>{t("analysis.data.tracking.noEvents")}</p>
             )}
             <p className={styles.chartCap}>
-              {lossRows.length} 次偏离事件，{reacqRows.length} 次重新捕获记录。
+              {t("analysis.data.tracking.eventCounts", { loss: lossRows.length, reacq: reacqRows.length })}
             </p>
           </div>
         </div>
 
         {links.length && presentation.video.kind === "seekable" ? (
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>视频联动入口</div>
-            <p className={styles.chartCap}>点击跳到 Video 视图对应时间：</p>
+            <div className={styles.chartTitle}>{t("analysis.data.videoLinks.title")}</div>
+            <p className={styles.chartCap}>{t("analysis.data.videoLinks.hint")}</p>
             <div className={styles.videoLinks}>
               {links.map((link) => (
                 <div className={styles.videoLinkRow} key={link.label}>
@@ -457,17 +467,17 @@ function TrackingDataView({
         ) : null}
 
         <div className={styles.boundaryPanel}>
-          <div className={styles.boundaryTitle}>分析边界</div>
+          <div className={styles.boundaryTitle}>{t("analysis.data.boundary.title")}</div>
           <dl className={styles.boundaryKv}>
-            <dt>测量范围</dt><dd>目标偏差、偏离/重新捕获、运动平滑度（需目标坐标和移动轨迹）。</dd>
-            <dt>重新捕获延迟</dt><dd>包含系统延迟和认知延迟，无法分离具体响应来源。</dd>
-            <dt>不可用</dt><dd>频率域指标（phase lag / velocity gain / coherence）、理想路径对比（需视觉坐标系轨迹）。</dd>
+            <dt>{t("analysis.data.boundary.scope")}</dt><dd>{t("analysis.data.boundary.trackingScope")}</dd>
+            <dt>{t("analysis.data.tracking.legendReacquisition")}</dt><dd>{t("analysis.data.boundary.reacqDelayBody")}</dd>
+            <dt>{t("metric.value.unavailable")}</dt><dd>{t("analysis.data.boundary.trackingUnavailableBody")}</dd>
           </dl>
         </div>
 
-        {loadingFamily ? <Loading>正在读取逐行动作数据</Loading> : null}
+        {loadingFamily ? <Loading>{t("analysis.data.loadingRows")}</Loading> : null}
         {familyData?.availability === "unavailable" ? (
-          <Notice tone="warning" title="跟踪分段数据暂不可用">通用指标仍然可用；本次没有可安全展示的逐行动作记录。</Notice>
+          <Notice tone="warning" title={t("analysis.data.tracking.unavailableTitle")}>{t("analysis.data.familyRowsUnavailableBody")}</Notice>
         ) : null}
       </div>
     </div>
@@ -500,15 +510,6 @@ function FlickingDataView({
     (acc, row) => ((row.metrics.path_efficiency ?? Infinity) < (acc.row?.metrics.path_efficiency ?? Infinity) ? { row } : acc),
     { row: null },
   ).row;
-  const flickLinks: { label: string; kindLabel: string; seq: number; start: number; end: number }[] = [];
-  if (bestRow) {
-    const bounds = rowBounds(bestRow);
-    if (bounds) flickLinks.push({ label: "表现较好", kindLabel: "Flick", seq: rows.indexOf(bestRow) + 1, start: bounds[0], end: bounds[1] });
-  }
-  if (slowRow && slowRow !== bestRow) {
-    const bounds = rowBounds(slowRow);
-    if (bounds) flickLinks.push({ label: "表现较慢", kindLabel: "Flick", seq: rows.indexOf(slowRow) + 1, start: bounds[0], end: bounds[1] });
-  }
 
   function phaseDurations(rowsArg: FrontendAnalysisFamilyDataRowV1[]): { accel: number; decel: number; settle: number } | null {
     const accel = rowsArg
@@ -528,26 +529,36 @@ function FlickingDataView({
   const phases = phaseDurations(rows);
   const totalPhase = phases ? phases.accel + phases.decel + phases.settle : 0;
   const hasFormalMetrics = presentation.metrics.formal.length > 0;
+  const t = useT();
+  const flickLinks: { label: string; kindLabel: string; seq: number; start: number; end: number }[] = [];
+  if (bestRow) {
+    const bounds = rowBounds(bestRow);
+    if (bounds) flickLinks.push({ label: t("analysis.data.flicking.bestLabel"), kindLabel: "Flick", seq: rows.indexOf(bestRow) + 1, start: bounds[0], end: bounds[1] });
+  }
+  if (slowRow && slowRow !== bestRow) {
+    const bounds = rowBounds(slowRow);
+    if (bounds) flickLinks.push({ label: t("analysis.data.flicking.slowLabel"), kindLabel: "Flick", seq: rows.indexOf(slowRow) + 1, start: bounds[0], end: bounds[1] });
+  }
 
   return (
     <div className={styles.familyDataLayout} data-family="flicking" data-metrics={hasFormalMetrics ? "available" : "empty"}>
       {hasFormalMetrics ? (
         <div className={styles.metricsColumn}>
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle}>指标总览</span>
-            <span className={styles.sectionHint}>按理解目的分组</span>
+            <span className={styles.sectionTitle}>{t("analysis.data.overviewTitle")}</span>
+            <span className={styles.sectionHint}>{t("analysis.data.overviewHintGrouped")}</span>
           </div>
           <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
       ) : null}
       <div className={styles.detailColumn}>
         <div className={styles.sectionHead}>
-          <h2 className={styles.sectionTitle} id="family-detail-title">逐次 Flick</h2>
-          <span className={styles.sectionCount}>{familyData?.total_count ?? rows.length} 次记录</span>
+          <h2 className={styles.sectionTitle} id="family-detail-title">{t("analysis.data.flicking.title")}</h2>
+          <span className={styles.sectionCount}>{t("analysis.data.flicking.totalCount", { n: familyData?.total_count ?? rows.length })}</span>
         </div>
         <div className={styles.chartGrid}>
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>时序分布</div>
+            <div className={styles.chartTitle}>{t("analysis.data.flicking.timingTitle")}</div>
             {phases && totalPhase > 0 ? (
               <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 90">
                 <rect fill="var(--tertiary)" height="40" opacity="0.75" width={(phases.accel / totalPhase) * 320} x="20" y="20" />
@@ -556,20 +567,20 @@ function FlickingDataView({
                 <text className={styles.chartTextOnTertiary} textAnchor="middle" x={20 + (phases.accel / totalPhase) * 160} y="45">{Math.round((phases.accel / totalPhase) * 100)}%</text>
                 <text className={styles.chartTextOnPrimary} textAnchor="middle" x={20 + (phases.accel / totalPhase) * 320 + (phases.decel / totalPhase) * 160} y="45">{Math.round((phases.decel / totalPhase) * 100)}%</text>
                 <rect fill="var(--tertiary)" height="8" opacity="0.75" width="8" x="20" y="72" />
-                <text className={styles.chartText} x="32" y="79">加速 {familyMetricText("accel_duration_ms", phases.accel)}</text>
+                <text className={styles.chartText} x="32" y="79">{t("analysis.data.flicking.accel", { value: familyMetricText("accel_duration_ms", phases.accel) })}</text>
                 <rect fill="var(--event-peak)" height="8" opacity="0.75" width="8" x="110" y="72" />
-                <text className={styles.chartText} x="122" y="79">减速 {familyMetricText("decel_duration_ms", phases.decel)}</text>
+                <text className={styles.chartText} x="122" y="79">{t("analysis.data.flicking.decel", { value: familyMetricText("decel_duration_ms", phases.decel) })}</text>
                 <rect fill="var(--on-surface-variant)" height="8" opacity="0.75" width="8" x="220" y="72" />
-                <text className={styles.chartText} x="232" y="79">稳定 {familyMetricText("settle_duration_ms", phases.settle)}</text>
+                <text className={styles.chartText} x="232" y="79">{t("analysis.data.flicking.settle", { value: familyMetricText("settle_duration_ms", phases.settle) })}</text>
               </svg>
             ) : (
-              <p className={styles.chartCap}>阶段时序样本不足。</p>
+              <p className={styles.chartCap}>{t("analysis.data.flicking.timingInsufficient")}</p>
             )}
-            <p className={styles.chartCap}>移动持续时间的阶段分解（中位数）。减速阶段占比超过一半表示减速控制是关键。</p>
+            <p className={styles.chartCap}>{t("analysis.data.flicking.timingBody")}</p>
           </div>
 
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>路径质量分布</div>
+            <div className={styles.chartTitle}>{t("analysis.data.flicking.pathTitle")}</div>
             {efficiencies.length ? (
               <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 110">
                 {Array.from({ length: 10 }).map((_, index) => {
@@ -589,18 +600,18 @@ function FlickingDataView({
                 ) : null}
               </svg>
             ) : (
-              <p className={styles.chartCap}>路径效率样本不足。</p>
+              <p className={styles.chartCap}>{t("analysis.data.flicking.pathInsufficient")}</p>
             )}
             <p className={styles.chartCap}>
-              {rows.length} 次 Flick 的路径效率分布。{medianEff !== null ? `中位数 ${Number((medianEff * 100).toFixed(0))}%（橙色虚线）。` : ""}
+              {t("analysis.data.flicking.pathBody", { n: rows.length })}{medianEff !== null ? t("analysis.data.flicking.pathMedian", { value: Number((medianEff * 100).toFixed(0)) }) : ""}
             </p>
           </div>
         </div>
 
         {flickLinks.length && presentation.video.kind === "seekable" ? (
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>视频联动入口</div>
-            <p className={styles.chartCap}>点击跳到 Video 视图对应时间：</p>
+            <div className={styles.chartTitle}>{t("analysis.data.videoLinks.title")}</div>
+            <p className={styles.chartCap}>{t("analysis.data.videoLinks.hint")}</p>
             <div className={styles.videoLinks}>
               {flickLinks.map((link) => (
                 <div className={styles.videoLinkRow} key={link.label}>
@@ -615,17 +626,17 @@ function FlickingDataView({
         ) : null}
 
         <div className={styles.boundaryPanel}>
-          <div className={styles.boundaryTitle}>分析边界</div>
+          <div className={styles.boundaryTitle}>{t("analysis.data.boundary.title")}</div>
           <dl className={styles.boundaryKv}>
-            <dt>测量范围</dt><dd>仅 raw input（timestamp, dx, dy），不推断目标位置。</dd>
-            <dt>坐标系</dt><dd>dx/dy 是 mouse counts，需 DPI/sens 校准才能转物理距离。</dd>
-            <dt>不可用</dt><dd>目标误差、视觉路径对比（需视觉坐标系轨迹）。</dd>
+            <dt>{t("analysis.data.boundary.scope")}</dt><dd>{t("analysis.data.boundary.flickScope")}</dd>
+            <dt>{t("analysis.data.boundary.frame")}</dt><dd>{t("analysis.data.boundary.frameBody")}</dd>
+            <dt>{t("metric.value.unavailable")}</dt><dd>{t("analysis.data.boundary.flickUnavailableBody")}</dd>
           </dl>
         </div>
 
-        {loadingFamily ? <Loading>正在读取逐次 Flick 数据</Loading> : null}
+        {loadingFamily ? <Loading>{t("analysis.data.loadingFlick")}</Loading> : null}
         {familyData?.availability === "unavailable" ? (
-          <Notice tone="warning" title="逐次 Flick 数据暂不可用">通用指标仍然可用；本次没有可安全展示的逐行动作记录。</Notice>
+          <Notice tone="warning" title={t("analysis.data.flicking.unavailableTitle")}>{t("analysis.data.familyRowsUnavailableBody")}</Notice>
         ) : null}
       </div>
     </div>
@@ -656,14 +667,15 @@ function GenericDataView({
     return markers;
   }, [data?.event_markers]);
   const hasFormalMetrics = presentation.metrics.formal.length > 0;
+  const t = useT();
 
   return (
     <div className={styles.familyDataLayout} data-family="generic" data-metrics={hasFormalMetrics ? "available" : "empty"}>
       {hasFormalMetrics ? (
         <div className={styles.metricsColumn}>
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle}>指标总览</span>
-            <span className={styles.sectionHint}>按理解目的分组</span>
+            <span className={styles.sectionTitle}>{t("analysis.data.overviewTitle")}</span>
+            <span className={styles.sectionHint}>{t("analysis.data.overviewHintGrouped")}</span>
           </div>
           <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
@@ -671,7 +683,7 @@ function GenericDataView({
       <div className={styles.detailColumn}>
         <div className={styles.chartGrid}>
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle} id="family-detail-title">事件分布</div>
+            <div className={styles.chartTitle} id="family-detail-title">{t("analysis.data.generic.eventTitle")}</div>
             {data?.event_distribution.length ? (
               <div className={styles.distributionPlot} role="group">
                 {data.event_distribution.map(({ kind, count }) => {
@@ -692,15 +704,15 @@ function GenericDataView({
                 })}
               </div>
             ) : (
-              <p className={styles.chartCap}>当前没有可安全公开的事件 marker。</p>
+              <p className={styles.chartCap}>{t("analysis.data.generic.noMarkers")}</p>
             )}
             <p className={styles.chartCap}>
-              {data?.event_distribution.length ? `已验证事件共 ${data.event_distribution.reduce((sum, item) => sum + item.count, 0)} 个。` : "没有足够事件生成分布摘要。"}
+              {data?.event_distribution.length ? t("analysis.data.generic.eventTotal", { n: data.event_distribution.reduce((sum, item) => sum + item.count, 0) }) : t("analysis.data.generic.eventInsufficient")}
             </p>
           </div>
 
           <div className={styles.chartCard}>
-            <div className={styles.chartTitle}>目标相对误差半径分布</div>
+            <div className={styles.chartTitle}>{t("analysis.data.tracking.radiusTitle")}</div>
             {radiusPoints.length ? (
               <div aria-hidden="true" className={styles.errorSeries} role="presentation">
                 {Array.from({ length: 20 }).map((_, index) => {
@@ -712,15 +724,15 @@ function GenericDataView({
                 })}
               </div>
             ) : (
-              <p className={styles.chartCap}>目标相对误差样本不可用。</p>
+              <p className={styles.chartCap}>{t("analysis.data.tracking.samplesUnavailable")}</p>
             )}
-            <p className={styles.chartCap}>按目标半径归一化后的偏差分布；页面不接收位置或半径坐标。</p>
+            <p className={styles.chartCap}>{t("analysis.data.generic.radiusBodyShort")}</p>
           </div>
         </div>
 
-        {loadingFamily ? <Loading>正在读取逐行动作数据</Loading> : null}
+        {loadingFamily ? <Loading>{t("analysis.data.loadingRows")}</Loading> : null}
         {familyData?.availability === "unavailable" ? (
-          <Notice tone="warning" title="专项动作数据暂不可用">通用指标仍然可用。</Notice>
+          <Notice tone="warning" title={t("analysis.data.generic.unavailableTitle")}>{t("analysis.data.generic.unavailableBody")}</Notice>
         ) : null}
       </div>
     </div>
@@ -738,6 +750,7 @@ export function DataView({
   presentation: AnalysisWorkspacePresentation;
   selectedMetric: string | null;
 }) {
+  const t = useT();
   const rootRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<FrontendAnalysisDataV1 | null>(null);
   const [loadingData, setLoadingData] = useState(true);
@@ -850,8 +863,8 @@ export function DataView({
 
   return (
     <div className={styles.dataView} ref={rootRef}>
-      {loadingData ? <Loading>正在读取安全数据投影</Loading> : null}
-      {dataUnavailable ? <Notice tone="warning" title="Analysis Data 当前不可用">页面不会用 Session 结果或历史趋势填补这部分数据。</Notice> : null}
+      {loadingData ? <Loading>{t("analysis.data.loadingProjection")}</Loading> : null}
+      {dataUnavailable ? <Notice tone="warning" title={t("analysis.data.dataUnavailableTitle")}>{t("analysis.data.dataUnavailableBody")}</Notice> : null}
       {!loadingData && !dataUnavailable ? (
         familyView === "switching" ? <SwitchingDataView {...viewProps} /> :
         familyView === "tracking" ? <TrackingDataView {...viewProps} /> :
@@ -859,13 +872,13 @@ export function DataView({
         <GenericDataView {...viewProps} />
       ) : null}
 
-      {familyUnavailable ? <Notice tone="warning" title="专项动作数据读取失败">通用指标仍然可用；这部分不会用示例数据填补。</Notice> : null}
+      {familyUnavailable ? <Notice tone="warning" title={t("analysis.data.familyUnavailableTitle")}>{t("analysis.data.familyUnavailableBody")}</Notice> : null}
 
       {availableLimited.length ? (
         <section className={styles.limitedMetrics} aria-labelledby="limited-metrics-title">
           <div className={styles.sectionHead}>
-            <h2 className={styles.sectionTitle} id="limited-metrics-title">实验性或受限指标</h2>
-            <Badge tone="warning">不用于正式结论</Badge>
+            <h2 className={styles.sectionTitle} id="limited-metrics-title">{t("analysis.data.limitedTitle")}</h2>
+            <Badge tone="warning">{t("analysis.data.limitedBadge")}</Badge>
           </div>
           <div className={styles.metricOverviewPanel}>
             {availableLimited.map((metric) => {
@@ -884,14 +897,14 @@ export function DataView({
 
       {unavailableMetrics.length ? (
         <details className={styles.unavailableMetrics}>
-          <summary>不可用指标（{unavailableMetrics.length} 项）与原因——不补假数据</summary>
+          <summary>{t("analysis.data.unavailableSummary", { n: unavailableMetrics.length })}</summary>
           {unavailableMetrics.map((metric) => (
             <div className={styles.metricRow} data-metric-label={metricReference(metric)} key={metricReference(metric)}>
               <span className={styles.metricKey}>{metricLabel(metric)}</span>
-              <span className={styles.metricValue}>不可用</span>
+              <span className={styles.metricValue}>{t("metric.value.unavailable")}</span>
               <span className={styles.metricPlain}>
-                {metric.limitations.map(limitationLabel).join("；") || "本次证据不足以安全计算"}
-                {" · 来源："}{metricSourceText(metric)}
+                {metric.limitations.map(limitationLabel).join(t("common.separator.semicolon")) || t("analysis.data.noSafeLimitation")}
+                {t("analysis.data.sourcePrefix")}{metricSourceText(metric)}
               </span>
             </div>
           ))}
@@ -901,7 +914,7 @@ export function DataView({
       {sharedLimitationLabels.length ? (
         <section className={styles.analysisLimitations}>
           <div className={styles.sectionHead}>
-            <h2 className={styles.sectionTitle}>Analysis 范围限制</h2>
+            <h2 className={styles.sectionTitle}>{t("analysis.data.limitationsTitle")}</h2>
           </div>
           <ul>{sharedLimitationLabels.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
         </section>

@@ -129,6 +129,22 @@ test("样板组件 UpdatePrompt 已接字典：无裸中文字面量（注释除
   assert.match(source, /useT\(\)/);
 });
 
+test("批 3（task4 + task5）已接字典：无裸中文字面量（注释除外）", async () => {
+  const stripComments = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const files = [
+    "components/task4/HistoryClient.tsx",
+    "components/task5/AnalysisWorkspace.tsx",
+    "components/task5/DiagnosisView.tsx",
+    "components/task5/DataView.tsx",
+    "components/task5/VideoView.tsx",
+  ];
+  for (const file of files) {
+    const source = await readFile(path.join(frontendRoot, file), "utf8");
+    assert.doesNotMatch(stripComments(source), /[\u4e00-\u9fff]/, `${file} 存在裸中文（应进 lib/i18n/dict/task45.zh.ts 分片）`);
+  }
+});
+
 test("批 5（task7 + app + ui）已接字典：无裸中文字面量（注释与哨兵常量除外）", async () => {
   const stripComments = (source: string) =>
     source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { translate } from "../lib/i18n/core";
 import {
   getAnalysisViewState,
   presentAnalysisWorkspace,
@@ -215,9 +216,14 @@ test("workspace presents the attached training and completion times without inte
     analysis_completed_at: "2026-07-25T06:33:00Z",
   }));
 
+  // 批 3 起展示文案与字典同源断言（文案改词测试不碎）。
   assert.equal(
     presentation?.recordLabel,
-    "1wall 6targets small | 训练：2026-07-25T06:30:00Z | 分析：2026-07-25T06:33:00Z",
+    translate("zh-CN", "analysis.record.label", {
+      scenario: "1wall 6targets small",
+      trainingAt: "2026-07-25T06:30:00Z",
+      analysisAt: "2026-07-25T06:33:00Z",
+    }),
   );
   assert.doesNotMatch(presentation?.recordLabel ?? "", /run:7|analysis:42/);
 });
@@ -316,9 +322,9 @@ test("workspace preserves only safe optional issue knowledge refs", () => {
   assert.equal(projected?.knowledgeRegistryVersion, "2026-07-29.v4");
   assert.deepEqual(projected?.knowledgeEntryRefs, ["knowledge:static.flicking-terminal-control@2"]);
   assert.equal(projected?.candidateExplanation, "This observation is a candidate explanation, not a confirmed mechanism.");
-  assert.equal(projected?.expectedResult, "反向修正比例下降");
+  assert.equal(projected?.expectedResult, translate("zh-CN", "analysis.diagnosis.reverseRatioDown"));
   assert.equal(projected?.claimLevel, "deterministic_rule");
-  assert.equal(projected?.claimLabel, "规则化观察");
+  assert.equal(projected?.claimLabel, translate("zh-CN", "analysis.claim.deterministicRule"));
   assert.equal(projected?.presentationKind, "registry-backed");
 
   const malformed = result();
@@ -432,12 +438,12 @@ test("workspace presents only known Switching identifiers as natural user text",
       ["unknown.safe_metric", "unknown.safe_metric"],
     ],
   );
-  assert.equal(presentation?.issues[0]?.signal, "切换耗时高于可比基线");
+  assert.equal(presentation?.issues[0]?.signal, translate("zh-CN", "analysis.switching.slowBaseline"));
   assert.equal(presentation?.issues[0]?.priorityReason, "切换耗时");
   assert.deepEqual(presentation?.issues[0]?.metricRefs, ["target_switching.transition_time_ms"]);
   assert.deepEqual(presentation?.issues[0]?.eventRefs, ["event.switch_chain"]);
-  assert.equal(presentation?.issues[1]?.signal, "到达后稳定耗时高于可比基线");
-  assert.equal(presentation?.issues[1]?.priorityReason, "当前合同未提供可展示的优先级理由");
+  assert.equal(presentation?.issues[1]?.signal, translate("zh-CN", "analysis.switching.arrivalBaseline"));
+  assert.equal(presentation?.issues[1]?.priorityReason, translate("zh-CN", "analysis.fallback.priorityReasonDisplay"));
   assert.deepEqual(presentation?.issues[1]?.metricRefs, ["target_switching.settle_duration_ms"]);
   assert.deepEqual(presentation?.issues[1]?.eventRefs, ["event.settle"]);
   assert.doesNotMatch(presentation?.headline ?? "", /target_switching\./);
@@ -551,40 +557,53 @@ test("workspace projects partial Session 22 findings as descriptive Chinese obse
   assert.equal(presentation?.metrics.summaryMode, "descriptive");
   assert.deepEqual(presentation?.metrics.summary.map((metric) => metric.referenceKey), ["decel_frac", "reverse_ratio", "submovement_overlap"]);
   assert.deepEqual(presentation?.metrics.formal, []);
-  assert.equal(presentation?.profile?.description, "主要移动和后续修正看起来分为两段。");
-  assert.equal(presentation?.headline, "本轮最值得关注：减速阶段偏长");
-  assert.deepEqual(presentation?.issues.map((issue) => issue.signal), ["减速阶段偏长", "反向修正偏多", "主要移动与后续修正较分离"]);
+  assert.equal(presentation?.profile?.description, translate("zh-CN", "analysis.profile.twoStageDescription"));
+  assert.equal(
+    presentation?.headline,
+    translate("zh-CN", "analysis.headline.topIssue", { signal: translate("zh-CN", "analysis.diagnosis.decelLong") }),
+  );
+  assert.deepEqual(
+    presentation?.issues.map((issue) => issue.signal),
+    [
+      translate("zh-CN", "analysis.diagnosis.decelLong"),
+      translate("zh-CN", "analysis.diagnosis.reverseMany"),
+      translate("zh-CN", "analysis.diagnosis.twoStageSeparation"),
+    ],
+  );
   assert.deepEqual(presentation?.issues.map((issue) => issue.priorityReason), [
     null,
     null,
     null,
   ]);
-  assert.deepEqual(presentation?.issues.map((issue) => issue.claimLabel), ["待验证", "待验证", "待验证"]);
+  assert.deepEqual(
+    presentation?.issues.map((issue) => issue.claimLabel),
+    Array.from({ length: 3 }, () => translate("zh-CN", "analysis.claim.experimental")),
+  );
   assert.deepEqual(presentation?.issues[0]?.metricRefs, ["decel_frac"]);
   assert.deepEqual(presentation?.issues[0]?.rootCauses.map((cause) => cause.text), [
-    "速度达到峰值后，减速阶段持续得较久。",
-    "证据只能说明减速阶段偏长。",
-    "减速尽量一次完成。",
+    translate("zh-CN", "analysis.diagnosis.decelTooLong"),
+    translate("zh-CN", "analysis.diagnosis.decelLongEvidenceOnly"),
+    translate("zh-CN", "analysis.diagnosis.decelOneShot"),
   ]);
-  assert.equal(presentation?.issues[0]?.prescriptions[0]?.reason, "练习完整的加速和减速，减速尽量一次完成。");
+  assert.equal(presentation?.issues[0]?.prescriptions[0]?.reason, translate("zh-CN", "analysis.diagnosis.decelFullPractice"));
   assert.deepEqual(presentation?.issues[1]?.rootCauses.map((cause) => cause.text), [
-    "减速阶段出现较多反向修正。",
-    "证据只能说明反向修正偏多。",
-    "单次制动后做连续微调。",
+    translate("zh-CN", "analysis.diagnosis.decelRepeatedFix"),
+    translate("zh-CN", "analysis.diagnosis.reverseManyEvidenceOnly"),
+    translate("zh-CN", "analysis.diagnosis.singleBrakeFluid"),
   ]);
-  assert.equal(presentation?.issues[1]?.prescriptions[0]?.reason, "在减速阶段微调，减少来回修正。");
+  assert.equal(presentation?.issues[1]?.prescriptions[0]?.reason, translate("zh-CN", "analysis.diagnosis.fluidStyleDecel"));
   assert.deepEqual(presentation?.issues[2]?.rootCauses.map((cause) => cause.text), [
-    "主要移动后出现一次相对独立的微调。",
-    "证据只能说明主要移动和后续修正较分离。",
-    "主要移动和后续微调重叠衔接。",
+    translate("zh-CN", "analysis.diagnosis.flickStopMicro"),
+    translate("zh-CN", "analysis.diagnosis.separationEvidenceOnly"),
+    translate("zh-CN", "analysis.diagnosis.fluidOverlap"),
   ]);
-  assert.equal(presentation?.issues[2]?.prescriptions[0]?.reason, "让修正与主动作更连贯地衔接，在减速阶段微调。");
+  assert.equal(presentation?.issues[2]?.prescriptions[0]?.reason, translate("zh-CN", "analysis.diagnosis.fluidCoherent"));
   assert.deepEqual(presentation?.limitations, [
-    "缺少目标相对事实（误差、目标身份或速度）。",
-    "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
-    "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
-    "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
-    "当前合同未提供可展示的限制说明",
+    translate("zh-CN", "metric.limitation.targetRelativeFactsMissing"),
+    translate("zh-CN", "analysis.diagnosis.alignmentPartial"),
+    translate("zh-CN", "analysis.diagnosis.exactReviewedOnly"),
+    translate("zh-CN", "analysis.diagnosis.targetRelativeUnavailable"),
+    translate("zh-CN", "analysis.fallback.limitation"),
   ]);
   assert.doesNotMatch(JSON.stringify(presentation), /\[experimental\]|decel_frac high|reverse_ratio high|submovement two-stage|unknown_internal_limitation|Input-native metrics|不能据此判断|这只描述动作模式|不代表好坏/);
 });
@@ -615,7 +634,7 @@ test("target-relative limitations suppress contradictory issue wording", () => {
 
   const presentation = presentAnalysisWorkspace(session({ result: limited }));
 
-  assert.equal(presentation?.issues[0]?.candidateExplanation, "反向修正偏多");
+  assert.equal(presentation?.issues[0]?.candidateExplanation, translate("zh-CN", "analysis.diagnosis.reverseMany"));
   assert.doesNotMatch(JSON.stringify(presentation), /接近落点/);
 });
 

@@ -49,9 +49,9 @@ test("P2 row renders at the video bottom from mapped buttons only and hides whil
   assert.match(video, /const coachTimepoints = useMemo\(/);
   assert.match(video, /\{coachTimepoints\.length > 0 \? \(/);
   assert.match(video, /\) : signalSegmentButtons\.length > 0 \? \(/);
-  // 文案「00:38–00:43 类型词」复用 metric/rich-text 时间码约定。
+  // 文案「00:38–00:43 类型词」复用 metric/rich-text 时间码约定（批 3 起 aria 整句走字典）。
   assert.match(video, /formatTimecodeRange\(segment\.startMs \/ 1000, segment\.endMs \/ 1000\)/);
-  assert.match(video, /aria-label=\{`循环播放 \$\{formatTimecodeRange/);
+  assert.match(video, /aria-label=\{t\("analysis\.video\.loopAria", \{ range: formatTimecodeRange/);
   assert.match(video, /aria-pressed=\{active\}/);
   // 横向放不下横向滚动（overflow-x: auto），不做聚合归类。
   const css = await source("components/task5/task5.module.css");
@@ -118,8 +118,8 @@ test("P2 loop visuals: band sits between progress and markers with handles, alwa
 
 test("P2 speed dock floats beside the row only while looping and shares the global rate state", async () => {
   const video = await source("components/task5/VideoView.tsx");
-  // D6：仅 loopTarget 存在时浮出；直接 setSpeed 与全局变速同一状态源。
-  assert.match(video, /\{loopTarget \? \(\s*<div aria-label="循环节奏（与全局变速同步）"/);
+  // D6：仅 loopTarget 存在时浮出；直接 setSpeed 与全局变速同一状态源（批 3 起 aria 走字典）。
+  assert.match(video, /\{loopTarget \? \(\s*<div aria-label=\{t\("analysis\.video\.speedDockAria"\)\}/);
   assert.match(video, /onClick=\{\(\) => setSpeed\(step\)\}/);
   assert.match(video, /SPEED_STEPS\.map\(\(step\) => \(/);
   // 全局变速副作用唯一（playbackRate 赋值只有既有 effect 一处），变速坞不自建速率通道。

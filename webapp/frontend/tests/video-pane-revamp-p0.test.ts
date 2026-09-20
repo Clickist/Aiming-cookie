@@ -26,8 +26,9 @@ test("P0.1 frame stepping: ,/. keys plus buttons step by inferred fps with 33ms 
   assert.match(video, /const FRAME_COARSE_FACTOR = 2;/);
   assert.match(video, /const stepFrame = \(direction: number, coarse: boolean\)/);
   assert.match(video, /stepFrameRef\.current\(event\.key === "," \? -1 : 1, event\.shiftKey\)/);
-  assert.match(video, /aria-label="后退一帧"/);
-  assert.match(video, /aria-label="前进一帧"/);
+  // 批 3（i18n）起 aria 文案走字典键（analysis.video.stepBackAria / stepForwardAria）。
+  assert.match(video, /aria-label=\{t\("analysis\.video\.stepBackAria"\)\}/);
+  assert.match(video, /aria-label=\{t\("analysis\.video\.stepForwardAria"\)\}/);
   // 帧率推算：HTML 标准不暴露 fps，用 getVideoPlaybackQuality 差分推算，
   // 暂停中/窗口过短不编造，换源重置回兜底。
   assert.match(video, /getVideoPlaybackQuality/);
@@ -61,8 +62,9 @@ test("P0.2 speed control cycles 0.25x -> 0.5x -> 1x and applies playbackRate imm
   const video = await source("components/task5/VideoView.tsx");
   assert.match(video, /const SPEED_STEPS = \[0\.25, 0\.5, 1\];/);
   assert.match(video, /SPEED_STEPS\[\(index \+ 1\) % SPEED_STEPS\.length\]/);
-  assert.match(video, /aria-label=\{`播放速度 \$\{speed\}×，点击切换到下一档`\}/);
-  assert.match(video, /变速循环：0\.25× → 0\.5× → 1×/);
+  // 批 3（i18n）起变速文案走字典键（speedAria 整句插值 / speedTitle）。
+  assert.match(video, /aria-label=\{t\("analysis\.video\.speedAria", \{ speed \}\)\}/);
+  assert.match(video, /t\("analysis\.video\.speedTitle"\)/);
   // 切换即时作用并随换源恢复：既有 playbackRate 副作用保持。
   assert.match(video, /video\.playbackRate = speed/);
 });
