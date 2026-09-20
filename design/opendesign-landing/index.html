@@ -749,8 +749,13 @@
     .acct-sum { padding: 14px 16px 16px; }
     .acct-plan { font-size: 12px; color: var(--muted); }
     .acct-note { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    /* 余量条按剩余分档着色（绿/橙/红，色值同客户端 quota token）；令牌挂在面板上，明暗各一套 */
+    .acct-panel, .acct-menu { --ac-quota-ok: #16875b; --ac-quota-warn: #e8930c; --ac-quota-low: #c53442; }
+    html.dark .acct-panel, html.dark .acct-menu { --ac-quota-ok: #4fdca0; --ac-quota-warn: #e8a33d; --ac-quota-low: #ff8792; }
     .acct-bar { height: 6px; margin: 8px 0 6px; border-radius: 999px; background: var(--fg-soft); overflow: hidden; }
-    .acct-bar > i { display: block; height: 100%; background: var(--accent); }
+    .acct-bar > i { display: block; height: 100%; background: var(--ac-quota-ok); }
+    .acct-bar.is-warn > i { background: var(--ac-quota-warn); }
+    .acct-bar.is-low > i { background: var(--ac-quota-low); }
     .acct-pct { font-size: 14px; font-weight: 600; }
     .acct-row {
       display: flex; align-items: center; width: 100%; min-height: 44px;
@@ -791,7 +796,9 @@
       background: var(--fg-soft); color: var(--muted);
       font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
     }
-    .pricing-badge--outline { background: transparent; border: 1px solid var(--border); font-weight: 500; }
+    /* Plus 角标：线框稿的 tertiary 蓝（badge blue），与英文版一致 */
+    .pricing-badge--info { background: #d7e7ff; color: #003461; }
+    html.dark .pricing-badge--info { background: #1c3a5c; color: #d2e4ff; }
     .pricing-price {
       margin-top: 16px; font-family: var(--font-display);
       font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
@@ -938,6 +945,8 @@
           bar.hidden = false;
           pctEl.hidden = false;
           el('acctBarFill').style.width = pct + '%';
+          bar.classList.toggle('is-low', pct < 10);
+          bar.classList.toggle('is-warn', pct >= 10 && pct < 30);
           pctEl.textContent = '余量 ' + pct + '%';
         }
         if (links.account) el('acctAccount').setAttribute('href', links.account);
@@ -957,6 +966,9 @@
             menuPct.hidden = false;
             menuPct.textContent = '余量 ' + pct + '%';
             el('acctMenuBar').style.width = pct + '%';
+            const menuBar = el('acctMenuBar').parentElement;
+            menuBar.classList.toggle('is-low', pct < 10);
+            menuBar.classList.toggle('is-warn', pct >= 10 && pct < 30);
           }
           if (links.account) el('acctMenuAccount').setAttribute('href', links.account);
           if (links.billing) el('acctMenuBilling').setAttribute('href', links.billing);
@@ -2439,7 +2451,7 @@
         <div class="card pricing-card" data-od-id="plan-plus">
           <div class="pricing-head">
             <span class="pricing-badge">Plus</span>
-            <span class="pricing-badge pricing-badge--outline">单轮价低 10%</span>
+            <span class="pricing-badge pricing-badge--info">单轮价低 10%</span>
           </div>
           <div class="pricing-price">¥30 <small>/月 · 自动续费</small></div>
           <p class="pricing-desc">教练每月约 400 轮对话</p>
