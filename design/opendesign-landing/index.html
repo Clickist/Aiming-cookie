@@ -204,13 +204,14 @@
     .btn:active { transform: translateY(1px); }
     .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
     .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, black); }
+    /* 登录/注册：橙底白字，亮暗同款深橙（暗色的浅橙 #ff8a5c 托不住白字；与账号页主按钮同值） */
+    .acct-login, .acct-signin { background: #c94608; border-color: #c94608; color: #ffffff; }
+    .acct-login:hover, .acct-signin:hover { background: color-mix(in oklch, #c94608 88%, black); border-color: color-mix(in oklch, #c94608 88%, black); }
     .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; opacity: 0.62; transform: none; }
     .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
     .btn-secondary:hover { border-color: var(--fg); }
     .btn-ghost { background: transparent; color: var(--fg); border-color: transparent; padding-inline: 8px; }
     .btn-ghost:hover { color: var(--accent); }
-    .btn-bilibili { background: var(--fg); color: var(--surface); border-color: var(--fg); }
-    .btn-bilibili:hover { background: color-mix(in oklch, var(--fg) 88%, black); border-color: color-mix(in oklch, var(--fg) 88%, black); }
     .btn-arrow::after { content: '→'; transition: transform 0.15s ease; }
     .btn-arrow:hover::after { transform: translateX(2px); }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; }
@@ -821,6 +822,7 @@
         <a href="#capture" data-od-id="nav-capture">采集</a>
         <a href="#metrics" data-od-id="nav-metrics">指标</a>
         <a href="#coach" data-od-id="nav-coach">Coach</a>
+        <a href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener" data-od-id="nav-bilibili">Bilibili 主页</a>
         <!-- ≤640px：账号入口随导航收进本菜单（⑩ 的移动端形态） -->
         <div class="acct-menu" id="acctMenu" data-od-id="account-menu">
           <a class="acct-menu__row" id="acctMenuLogin" href="https://accounts.example.invalid/login" data-od-id="menu-login">登录</a>
@@ -846,9 +848,8 @@
           <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
           <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"></path></svg>
         </button>
-        <a class="btn btn-bilibili" href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener" data-od-id="top-bilibili">Bilibili 主页</a>
         <!-- ⑩ 账号入口：初始未登录态；探测成功后原位替换为头像+邮箱下拉 -->
-        <a class="btn btn-secondary acct-login" id="acctLogin" href="https://accounts.example.invalid/login" data-od-id="top-login">登录</a>
+        <a class="btn btn-primary acct-login" id="acctLogin" href="https://accounts.example.invalid/login" data-od-id="top-login">登录/注册</a>
         <div class="acct" id="acct" hidden>
           <button class="acct-chip" id="acctChip" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="acctPanel" aria-label="账号菜单" data-od-id="acct-chip">
             <span class="acct-avatar" id="acctAvatar" aria-hidden="true"></span>
