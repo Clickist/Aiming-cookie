@@ -69,6 +69,8 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
 // token 只是防滥用的轻门禁，不是机密；上传失败由调用方降级到本地导出。
 // token 不入库：由 Next 构建期从 .env.production.local（gitignore）注入
 // NEXT_PUBLIC_DIAGNOSTICS_UPLOAD_TOKEN；未注入的构建跳过上传、走本地导出。
+// 该错误码区别于网络/服务失败：它说明当前构建缺配置，重试无用。
+export const DIAGNOSTICS_UPLOAD_NOT_CONFIGURED = "DIAGNOSTICS_UPLOAD_NOT_CONFIGURED";
 const DIAGNOSTICS_UPLOAD_URL = "https://logs.aimingcookie.com/upload";
 const DIAGNOSTICS_UPLOAD_TOKEN = process.env.NEXT_PUBLIC_DIAGNOSTICS_UPLOAD_TOKEN ?? "";
 
@@ -77,7 +79,7 @@ export async function uploadDesktopCaptureDiagnostics(): Promise<string> {
     throw new Error("Capture diagnostics are only available in the desktop app");
   }
   if (!DIAGNOSTICS_UPLOAD_TOKEN) {
-    throw new Error("Diagnostics upload is not configured in this build");
+    throw new Error(DIAGNOSTICS_UPLOAD_NOT_CONFIGURED);
   }
   const bundle = await invoke<string>("desktop_collect_capture_diagnostics");
   const response = await fetch(DIAGNOSTICS_UPLOAD_URL, {

@@ -21,7 +21,7 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
-import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
+import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
@@ -284,6 +284,8 @@ export function SettingsWorkspace() {
 
   // 一键上传诊断包到 logs.aimingcookie.com；成功回显编号给开发者对账，
   // 失败不阻塞用户——提示改用「导出运行日志」走本地文件降级。
+  // 「未配置」与「上传失败」分开提示：前者是构建缺 token（重试无用，找开发者），
+  // 后者是网络/服务问题（可重试）。两者混用会让构建问题被读成网络问题。
   const uploadCaptureDiagnostics = async () => {
     setDiagnosticUploading(true);
     try {
@@ -293,7 +295,9 @@ export function SettingsWorkspace() {
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
       logFrontendError("capture-diagnostics-upload", code || String(error));
-      if (code === "UPLOAD_RATE_LIMITED") {
+      if (code === DIAGNOSTICS_UPLOAD_NOT_CONFIGURED) {
+        setFeedback("当前版本没有内置上传配置（构建缺 token），重试不会成功；请改用「导出运行日志」手动发送文件，并把这条提示告诉开发者。");
+      } else if (code === "UPLOAD_RATE_LIMITED") {
         setFeedback("上传太频繁（每小时最多 10 次），请稍后再试；紧急时可改用「导出运行日志」手动发送文件。");
       } else if (code === "UPLOAD_QUOTA_EXCEEDED") {
         setFeedback("今天的上传额度已用完，请明天再试；紧急时可改用「导出运行日志」手动发送文件。");
