@@ -13,12 +13,14 @@
 import { sharedZh } from "./dict/shared.zh";
 import { task3Zh } from "./dict/task3.zh";
 import { task45Zh } from "./dict/task45.zh";
+import { task6Zh } from "./dict/task6.zh";
 import { task7Zh } from "./dict/task7.zh";
 
 export const zhCN = {
   ...sharedZh,
   ...task3Zh,
   ...task45Zh,
+  ...task6Zh,
   ...task7Zh,
 } as const;
 

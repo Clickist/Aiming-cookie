@@ -7,11 +7,13 @@ import type { MessageKey } from "./zh-CN";
 import { sharedEn } from "./dict/shared.en";
 import { task3En } from "./dict/task3.en";
 import { task45En } from "./dict/task45.en";
+import { task6En } from "./dict/task6.en";
 import { task7En } from "./dict/task7.en";
 
 export const enUS = {
   ...sharedEn,
   ...task3En,
   ...task45En,
+  ...task6En,
   ...task7En,
 } satisfies Record<MessageKey, string>;
