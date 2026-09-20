@@ -1,6 +1,33 @@
+<div align="center">
+
+<img width="96" src="design/opendesign-landing/logo.png" alt="Aiming Cookie logo" />
+
 # Aiming Cookie
 
-**本地运行的 FPS 瞄准 AI 教练。** 面向 KovaaK's FPS Aim Trainer 的认真训练者：打完一局，它已经看完了你的鼠标轨迹、对局遥测、击杀记录和录像，能告诉你哪里出了问题、偏了多少度、下次练什么。
+**本地运行的 FPS 瞄准 AI 教练**
+
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/release-v1.2.4-green.svg)](https://aimingcookie.com)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)](#快速开始)
+[![Website](https://img.shields.io/badge/website-aimingcookie.com-FF6B2C.svg)](https://aimingcookie.com)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/DEVELOPMENT.md)
+
+**简体中文** · [English](README.en.md)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="design/opendesign-landing/hero-shot-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="design/opendesign-landing/hero-shot-light.png">
+  <img width="820" alt="Aiming Cookie 主界面：Coach 对话、视频时间戳与数据引用" src="design/opendesign-landing/hero-shot-dark.png">
+</picture>
+
+| ⬇️ [下载最新版](https://aimingcookie.com) | 🚀 [快速开始](#快速开始) | 📚 [开发文档](docs/DEVELOPMENT.md) | 🧩 [知识库 SDK](sdk/knowledge-pack/SPEC.md) |
+| :---: | :---: | :---: | :---: |
+
+</div>
+
+---
+
+面向 KovaaK's FPS Aim Trainer 的认真训练者：打完一局，它已经看完了你的鼠标轨迹、对局遥测、击杀记录和录像，能告诉你哪里出了问题、偏了多少度、下次练什么。
 
 不打分、不玄学——所有证据来自你自己的机器，分析与数据都留在本地。
 
@@ -93,7 +120,7 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 
 ## 当前状态
 
-**v1.2.1 已发布**（安装包与自动更新经官网分发；安装包未签名，SmartScreen 需选择「仍要运行」）。
+**v1.2.4 已发布**（安装包与自动更新经官网分发；安装包未签名，SmartScreen 需选择「仍要运行」）。
 
 - ✅ 四源采集链路、通用视觉分析、Coach 全能力、自动更新——均经真机验证
 - 🚧 已知限制：含视频的分析需等待 1-2 分钟（有进度显示）；击中判定存在 ±10px 视觉灰区；安装包未签名
