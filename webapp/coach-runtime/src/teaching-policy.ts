@@ -490,19 +490,131 @@ export function teachingTurnRequiresLocalFallback(contract: TeachingTurnContract
   return contract.phase === "intake" && contract.primary_candidate === null;
 }
 
-function fallbackText(contract: TeachingTurnContract, plan: TeachingPlan): string {
-  const sentence = (value: string): string => /[。.!！?？]$/.test(value) ? value : `${value}。`;
+/**
+ * 本地兜底话术模板（双语，2026-09 i18n 收尾）。
+ *
+ * 语言取值：fallbackForTeachingTurn 目前没有 src 内运行时调用方（guided
+ * 教学回环的兜底库，行为由测试锁定）；契约字段本身跟随回合消息语言（英文
+ * 回合填英文 observation/cue/question），但契约对象里没有可判定的语言信号，
+ * 因此由调用方按 run 语言（RunRecord.locale，X-Locale 管道）显式传入 locale，
+ * 缺省 zh-CN 与既有中文输出逐字节一致。en 措辞与 turn.ts 语言指令块的
+ * 术语口径一致（复测=retest；「cue/教学提示」类内部词汇不出现在对话里，
+ * 英文同样用 reminder 而不是 cue）。
+ */
+type FallbackTemplates = {
+  terminator: string;
+  /** 句尾连接符：中文无空格直连；英文句间补一个空格再拼下一段。 */
+  joiner: string;
+  problemLead: (label: string) => string;
+  evidenceLead: (text: string) => string;
+  cueLead: string;
+  changedVariableFallback: string;
+  practice: (changed: string) => string;
+  awaitExecution: string;
+  retestImmediate: string;
+  retestDelayed: string;
+  retestNearTransfer: string;
+  retestUnmatched: string;
+  awaitRetest: string;
+  reviseNotComparable: string;
+  reviseRetainWithRecommendation: (message: string) => string;
+  reviseRetainDelayed: string;
+  reviseRetainNearTransfer: string;
+  reviseRetainDefault: string;
+  reviseLowerDelayed: string;
+  reviseLowerNearTransfer: string;
+  reviseLowerDefault: string;
+  reviseRejectDelayed: string;
+  reviseRejectNearTransfer: string;
+  reviseRejectDefault: string;
+  reviseUnclear: string;
+  pauseAttached: string;
+  pauseSkipped: string;
+  stopForDiscomfort: string;
+};
+
+const FALLBACK_TEMPLATES: Record<"zh-CN" | "en-US", FallbackTemplates> = {
+  "zh-CN": {
+    terminator: "。",
+    joiner: "",
+    problemLead: (label) => `我先看${label}`,
+    evidenceLead: (text) => `目前看到${text}`,
+    cueLead: "这组只记住一件事：",
+    changedVariableFallback: "这一条提醒",
+    practice: (changed) => `这组只改${changed}，其他条件先不动。`,
+    awaitExecution: "已准备好记录这次练习。请在确认界面核对事实后选择确认或取消。",
+    retestImmediate: "接下来按同一个场景和设置复测，只看这条提醒有没有帮到这一轮。",
+    retestDelayed: "下次按同一个场景和设置复测，看看这次调整能不能保留下来。",
+    retestNearTransfer: "接下来换一个相近任务，只改一个条件，看看这条提醒还能不能用。这个结果不能直接代表主游戏表现。",
+    retestUnmatched: "现在还缺能对得上的复测结果，训练方向先不改。",
+    awaitRetest: "已准备好记录这次复测。请在确认界面核对事实后选择确认或取消。",
+    reviseNotComparable: "这次的场景、设置或记录条件和之前没对齐，分数直接放一起看会误导。训练方向先不改，再按原条件重新复测。",
+    reviseRetainWithRecommendation: (message) =>
+      `这次同条件复测支持这条提示当下有帮助，先继续用。之后再做延迟检查，现在还不能说已经稳定掌握。${message}`,
+    reviseRetainDelayed: "隔一段时间后再按同条件复测，结果仍支持这个方向，说明这条提醒保留下来了，先继续用。",
+    reviseRetainNearTransfer: "换到相近任务并只改一个条件后，这条提醒仍然有帮助，可以先继续用；这不代表主游戏表现已经提升。",
+    reviseRetainDefault: "这次同条件复测支持这条提醒当下有帮助，先继续用。之后再做延迟检查，现在还不能说已经稳定掌握。",
+    reviseLowerDelayed: "隔一段时间后的同条件复测没有稳定保留下来，先把这个方向往后放。",
+    reviseLowerNearTransfer: "这条提醒在相近任务里没有稳定复现，先把这个方向往后放；这不代表主游戏表现。",
+    reviseLowerDefault: "这次同条件复测没有明显支持这个方向，先把它往后放。",
+    reviseRejectDelayed: "隔一段时间后的同条件复测不支持这个方向，先不沿着它练，回头看另外几个可能。",
+    reviseRejectNearTransfer: "相近任务的结果不支持这个方向，先不沿着它练；这不代表主游戏表现。",
+    reviseRejectDefault: "这次同条件复测不支持这个方向，先不沿着它练，回头看另外几个可能。",
+    reviseUnclear: "这次结果还不够明确，训练方向先不改。",
+    pauseAttached: "这条分析已经附加。当前证据不足以形成训练处方，但仍然可以查这条记录的原始事实和历史趋势，不需要重新附加。",
+    pauseSkipped: "那这组先不练，训练计划不改。你准备继续时再告诉我。",
+    stopForDiscomfort: "那先别练这组了，休息一下，别硬撑。",
+  },
+  "en-US": {
+    terminator: ".",
+    joiner: " ",
+    problemLead: (label) => `First, let's look at ${label}`,
+    evidenceLead: (text) => `So far I'm seeing ${text}`,
+    cueLead: "For this set, remember just one thing: ",
+    changedVariableFallback: "this one reminder",
+    practice: (changed) => `For this set, change only ${changed}; keep every other condition as it was.`,
+    awaitExecution: "Ready to record this practice. Check the facts on the confirmation screen, then confirm or cancel.",
+    retestImmediate: "Next, retest under the same scenario and settings — we only want to see whether this reminder helped this round.",
+    retestDelayed: "Next time, retest under the same scenario and settings to see whether this adjustment sticks.",
+    retestNearTransfer: "Next, switch to a similar task and change just one condition to see whether this reminder still works. This result does not directly represent your main-game performance.",
+    retestUnmatched: "There is still no retest result that lines up with this practice, so the training direction stays unchanged for now.",
+    awaitRetest: "Ready to record this retest. Check the facts on the confirmation screen, then confirm or cancel.",
+    reviseNotComparable: "This run's scenario, settings, or recording conditions don't line up with the previous one, so comparing the scores directly would mislead. The training direction stays unchanged — rerun the retest under the original conditions.",
+    reviseRetainWithRecommendation: (message) =>
+      `This same-conditions retest supports that this reminder helps right now, so keep using it. A delayed check comes later — for now we can't call it solidly learned yet. ${message}`,
+    reviseRetainDelayed: "A later retest under the same conditions still supports this direction, which means the reminder has stuck — keep using it for now.",
+    reviseRetainNearTransfer: "After switching to a similar task and changing just one condition, this reminder still helped, so you can keep using it; this does not mean your main-game performance has improved.",
+    reviseRetainDefault: "This same-conditions retest supports that this reminder helps right now, so keep using it. A delayed check comes later — for now we can't call it solidly learned yet.",
+    reviseLowerDelayed: "The later same-conditions retest didn't hold up reliably, so put this direction on hold for now.",
+    reviseLowerNearTransfer: "This reminder didn't reliably reappear in the similar task, so put this direction on hold for now; this says nothing about main-game performance.",
+    reviseLowerDefault: "This same-conditions retest didn't clearly support this direction, so put it on hold for now.",
+    reviseRejectDelayed: "The later same-conditions retest doesn't support this direction — stop training along it and go back to the other candidates.",
+    reviseRejectNearTransfer: "The similar-task result doesn't support this direction — stop training along it; this says nothing about main-game performance.",
+    reviseRejectDefault: "This same-conditions retest doesn't support this direction — stop training along it and go back to the other candidates.",
+    reviseUnclear: "This result isn't clear enough yet, so the training direction stays unchanged.",
+    pauseAttached: "This analysis has already been attached. The current evidence isn't enough to form a training prescription, but you can still look up this record's raw facts and history trend — no need to attach it again.",
+    pauseSkipped: "Then let's skip this set for now — the training plan stays unchanged. Tell me whenever you're ready to continue.",
+    stopForDiscomfort: "Then drop this set for now — take a rest and don't push through it.",
+  },
+};
+
+function fallbackText(contract: TeachingTurnContract, plan: TeachingPlan, locale: "zh-CN" | "en-US"): string {
+  const t = FALLBACK_TEMPLATES[locale];
+  const sentence = (value: string): string => {
+    const terminated = /[。.!！?？]$/.test(value) ? value : `${value}${t.terminator}`;
+    return `${terminated}${t.joiner}`;
+  };
   const evidenceText = (value: TeachingTurnContract["supporting_evidence"][number]): string =>
     typeof value === "string" ? value : value.text;
   const observation = contract.observation ? sentence(contract.observation) : "";
   const candidate = contract.primary_candidate ? sentence(contract.primary_candidate) : "";
-  const problem = contract.problem_label ? sentence(`我先看${contract.problem_label}`) : "";
+  const problem = contract.problem_label ? sentence(t.problemLead(contract.problem_label)) : "";
   const supportingEvidence = contract.supporting_evidence.length > 0
-    ? sentence(`目前看到${evidenceText(contract.supporting_evidence[0])}`) : "";
+    ? sentence(t.evidenceLead(evidenceText(contract.supporting_evidence[0]))) : "";
   const alternatives = contract.alternatives.length > 0
     ? sentence(contract.alternatives[0])
     : "";
-  const cue = contract.cue ? `这组只记住一件事：${sentence(contract.cue)}` : "";
+  const cue = contract.cue ? `${t.cueLead}${sentence(contract.cue)}` : "";
   const dose = contract.approved_dose ? sentence(contract.approved_dose) : "";
   switch (plan.action) {
     case "ask_discriminator": return `${problem}${observation}${supportingEvidence}${candidate}${alternatives}${plan.question}`.trim();
@@ -510,68 +622,71 @@ function fallbackText(contract: TeachingTurnContract, plan: TeachingPlan): strin
     case "teach": return `${observation}${candidate}${cue}`.trim();
     case "ask_teach_back": return `${cue}${plan.question}`.trim();
     case "repair_teach_back": return `${cue}${plan.question}`.trim();
-    case "practice": return `${cue}${dose}这组只改${contract.changed_variable ?? "这一条提醒"}，其他条件先不动。`.trim();
-    case "await_execution_confirmation": return "已准备好记录这次练习。请在确认界面核对事实后选择确认或取消。";
+    case "practice": return `${cue}${dose}${t.practice(contract.changed_variable ?? t.changedVariableFallback)}`.trim();
+    case "await_execution_confirmation": return t.awaitExecution;
     case "prepare_retest":
       if (contract.retest.intent === "immediate_matched") {
-        return "接下来按同一个场景和设置复测，只看这条提醒有没有帮到这一轮。";
+        return t.retestImmediate;
       }
       if (contract.retest.intent === "delayed_matched") {
-        return "下次按同一个场景和设置复测，看看这次调整能不能保留下来。";
+        return t.retestDelayed;
       }
       if (contract.retest.intent === "near_transfer") {
-        return "接下来换一个相近任务，只改一个条件，看看这条提醒还能不能用。这个结果不能直接代表主游戏表现。";
+        return t.retestNearTransfer;
       }
-      return "现在还缺能对得上的复测结果，训练方向先不改。";
-    case "await_retest_confirmation": return "已准备好记录这次复测。请在确认界面核对事实后选择确认或取消。";
+      return t.retestUnmatched;
+    case "await_retest_confirmation": return t.awaitRetest;
     case "revise":
       if (contract.retest.comparability === "not_comparable") {
-        return "这次的场景、设置或记录条件和之前没对齐，分数直接放一起看会误导。训练方向先不改，再按原条件重新复测。";
+        return t.reviseNotComparable;
       }
       if (contract.retest.revision_decision === "retain") {
         if (contract.next_recommendation !== null) {
-          return `这次同条件复测支持这条提示当下有帮助，先继续用。之后再做延迟检查，现在还不能说已经稳定掌握。${contract.next_recommendation.message}`;
+          return t.reviseRetainWithRecommendation(contract.next_recommendation.message);
         }
         if (contract.retest.intent === "delayed_matched") {
-          return "隔一段时间后再按同条件复测，结果仍支持这个方向，说明这条提醒保留下来了，先继续用。";
+          return t.reviseRetainDelayed;
         }
         if (contract.retest.intent === "near_transfer") {
-          return "换到相近任务并只改一个条件后，这条提醒仍然有帮助，可以先继续用；这不代表主游戏表现已经提升。";
+          return t.reviseRetainNearTransfer;
         }
-        return "这次同条件复测支持这条提醒当下有帮助，先继续用。之后再做延迟检查，现在还不能说已经稳定掌握。";
+        return t.reviseRetainDefault;
       }
       if (contract.retest.revision_decision === "lower") {
         if (contract.retest.intent === "delayed_matched") {
-          return "隔一段时间后的同条件复测没有稳定保留下来，先把这个方向往后放。";
+          return t.reviseLowerDelayed;
         }
         if (contract.retest.intent === "near_transfer") {
-          return "这条提醒在相近任务里没有稳定复现，先把这个方向往后放；这不代表主游戏表现。";
+          return t.reviseLowerNearTransfer;
         }
-        return "这次同条件复测没有明显支持这个方向，先把它往后放。";
+        return t.reviseLowerDefault;
       }
       if (contract.retest.revision_decision === "reject") {
         if (contract.retest.intent === "delayed_matched") {
-          return "隔一段时间后的同条件复测不支持这个方向，先不沿着它练，回头看另外几个可能。";
+          return t.reviseRejectDelayed;
         }
         if (contract.retest.intent === "near_transfer") {
-          return "相近任务的结果不支持这个方向，先不沿着它练；这不代表主游戏表现。";
+          return t.reviseRejectNearTransfer;
         }
-        return "这次同条件复测不支持这个方向，先不沿着它练，回头看另外几个可能。";
+        return t.reviseRejectDefault;
       }
-      return "这次结果还不够明确，训练方向先不改。";
+      return t.reviseUnclear;
     case "ask_follow_up": return String(plan.question);
     case "pause":
       if (teachingTurnRequiresLocalFallback(contract)) {
-        return "\u8fd9\u6761\u5206\u6790\u5df2\u7ecf\u9644\u52a0\u3002\u5f53\u524d\u8bc1\u636e\u4e0d\u8db3\u4ee5\u5f62\u6210\u8bad\u7ec3\u5904\u65b9\uff0c\u4f46\u4ecd\u53ef\u4ee5\u67e5\u8fd9\u6761\u8bb0\u5f55\u7684\u539f\u59cb\u4e8b\u5b9e\u548c\u5386\u53f2\u8d8b\u52bf\uff0c\u4e0d\u9700\u8981\u91cd\u65b0\u9644\u52a0\u3002";
+        return t.pauseAttached;
       }
-      return "那这组先不练，训练计划不改。你准备继续时再告诉我。";
-    case "stop_for_discomfort": return "那先别练这组了，休息一下，别硬撑。";
+      return t.pauseSkipped;
+    case "stop_for_discomfort": return t.stopForDiscomfort;
   }
 }
 
-export function fallbackForTeachingTurn(contract: TeachingTurnContract): TeachingProviderDraft {
+export function fallbackForTeachingTurn(
+  contract: TeachingTurnContract,
+  locale: "zh-CN" | "en-US" = "zh-CN",
+): TeachingProviderDraft {
   const plan = planTeachingTurn(contract);
-  return { action: plan.action, text: fallbackText(contract, plan) };
+  return { action: plan.action, text: fallbackText(contract, plan, locale) };
 }
 
 export function teachingTurnHoldsState(contract: TeachingTurnContract): boolean {

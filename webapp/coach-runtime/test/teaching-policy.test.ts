@@ -529,3 +529,139 @@ test("a discipline concept missing in both languages still fails validation", ()
     /next_recommendation message/i,
   );
 });
+
+// ── 本地兜底话术双语（2026-09 i18n 收尾）──────────────────────────────────
+//
+// fallbackForTeachingTurn 目前没有 src 内运行时调用方（guided 教学回环的
+// 兜底库，行为由测试锁定）；契约对象里没有可判定的语言信号，locale 由
+// 调用方按 run 语言（RunRecord.locale，X-Locale 管道）显式传入，缺省
+// zh-CN 与既有中文输出逐字节一致。契约字段本身跟随回合消息语言——英文
+// 回合填英文 observation/cue/question，模板只负责连接词与固定句。
+
+test("fallback default locale stays zh byte-for-byte", () => {
+  assert.equal(
+    fallbackForTeachingTurn(contract({ phase: "paused", question_kind: "none", question: null })).text,
+    "那这组先不练，训练计划不改。你准备继续时再告诉我。",
+  );
+  assert.equal(
+    fallbackForTeachingTurn(contract({ phase: "stopped_for_discomfort", question_kind: "none", question: null })).text,
+    "那先别练这组了，休息一下，别硬撑。",
+  );
+  assert.equal(
+    fallbackForTeachingTurn(contract({
+      phase: "await_execution_confirmation",
+      question_kind: "none",
+      question: null,
+      allowed_command: "training_plan.execution.record",
+      confirmation_intent: "execution",
+    })).text,
+    "已准备好记录这次练习。请在确认界面核对事实后选择确认或取消。",
+  );
+});
+
+/** 英文回合契约：字段跟随回合消息语言，全英文。 */
+function enContract(overrides: Partial<TeachingTurnContract> = {}): TeachingTurnContract {
+  return contract({
+    observation: "When the target slows down, your movement keeps rushing past it",
+    primary_candidate: "The thing worth checking first is speed matching",
+    alternatives: ["It may also be about delayed target reading"],
+    cue: "Start slowing your movement as soon as the target slows down",
+    changed_variable: "when you start slowing down",
+    question: "Can you say that one focus point back in your own words?",
+    ...overrides,
+  });
+}
+
+test("en run locale composes English fallback from English contract fields", () => {
+  const teachBack = fallbackForTeachingTurn(enContract(), "en-US");
+  assert.equal(teachBack.action, "ask_teach_back");
+  assert.equal(
+    teachBack.text,
+    "For this set, remember just one thing: Start slowing your movement as soon as the target slows down. " +
+      "Can you say that one focus point back in your own words?",
+  );
+
+  const discriminator = fallbackForTeachingTurn(enContract({
+    phase: "intake",
+    question_kind: "discriminator",
+    question: "Does the late correction happen after the target slows?",
+    problem_id: "tracking.speed_matching",
+    problem_label: "Late speed matching",
+    supporting_evidence: ["Corrections begin after the target decelerates."],
+  }), "en-US");
+  assert.equal(
+    discriminator.text,
+    "First, let's look at Late speed matching. When the target slows down, your movement keeps rushing past it. " +
+      "So far I'm seeing Corrections begin after the target decelerates. " +
+      "The thing worth checking first is speed matching. It may also be about delayed target reading. " +
+      "Does the late correction happen after the target slows?",
+  );
+});
+
+test("every synthesized en fallback branch is English with no CJK bleed", () => {
+  const CJK = /[\u4e00-\u9fff]/;
+  const branches: TeachingTurnContract[] = [
+    enContract({
+      phase: "practice_ready", question_kind: "none", question: null, allowed_command: null,
+    }),
+    enContract({
+      phase: "await_execution_confirmation", question_kind: "none", question: null,
+      allowed_command: "training_plan.execution.record", confirmation_intent: "execution",
+    }),
+    enContract({
+      phase: "retest_ready", question_kind: "none", question: null,
+      retest: { intent: "immediate_matched", comparability_required: true, comparability: "unresolved", revision_decision: null },
+    }),
+    enContract({
+      phase: "retest_ready", question_kind: "none", question: null,
+      retest: { intent: "delayed_matched", comparability_required: true, comparability: "unresolved", revision_decision: null },
+    }),
+    enContract({
+      phase: "retest_ready", question_kind: "none", question: null,
+      retest: { intent: "near_transfer", comparability_required: true, comparability: "unresolved", revision_decision: null },
+    }),
+    enContract({
+      phase: "await_retest_confirmation", question_kind: "none", question: null,
+      allowed_command: "training_plan.retest.record", confirmation_intent: "retest",
+      retest: { intent: "immediate_matched", comparability_required: true, comparability: "unresolved", revision_decision: null },
+    }),
+    enContract({
+      phase: "revise", question_kind: "none", question: null,
+      retest: { intent: "immediate_matched", comparability_required: true, comparability: "not_comparable", revision_decision: null },
+    }),
+    ...(["retain", "lower", "reject"] as const).flatMap((decision) =>
+      (["immediate_matched", "delayed_matched", "near_transfer"] as const).map((intent) =>
+        enContract({
+          phase: "revise", question_kind: "none", question: null,
+          retest: { intent, comparability_required: true, comparability: "comparable", revision_decision: decision },
+        }),
+      ),
+    ),
+    enContract({
+      phase: "revise", question_kind: "none", question: null,
+      retest: { intent: "immediate_matched", comparability_required: true, comparability: "unresolved", revision_decision: null },
+    }),
+    enContract({
+      phase: "intake", observation: null, primary_candidate: null, alternatives: [], cue: null, changed_variable: null,
+      question_kind: "discriminator", question: "An internal question never shown to the user?",
+    }),
+    enContract({ phase: "paused", question_kind: "none", question: null }),
+    enContract({ phase: "stopped_for_discomfort", question_kind: "none", question: null }),
+  ];
+  for (const branch of branches) {
+    const draft = fallbackForTeachingTurn(branch, "en-US");
+    assert.ok(draft.text.length > 0, `${branch.phase} must synthesize text`);
+    assert.doesNotMatch(
+      draft.text,
+      CJK,
+      `en fallback for ${branch.phase}/${branch.retest.intent}/${branch.retest.revision_decision} leaked CJK: ${draft.text}`,
+    );
+  }
+
+  // revise+retain+next_recommendation：英文模板句 + 契约自带英文推荐语。
+  const withRecommendation = fallbackForTeachingTurn(reviseContractWithRecommendation(
+    "Next: a harder stress test on Tracking GridShot Small as the new baseline; one result does not prove transfer.",
+  ), "en-US");
+  assert.match(withRecommendation.text, /solidly learned yet\. Next: a harder stress test/);
+  assert.doesNotMatch(withRecommendation.text, CJK);
+});

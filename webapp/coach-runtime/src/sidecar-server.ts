@@ -33,7 +33,7 @@ import { handleProviderProfileRequest } from "./provider-profiles.ts";
 import { loadProfile } from "./provider-store.ts";
 import { readSessionStats, readSessionMessages } from "./session-repo.ts";
 import { ensureIntroSession, readIntroSessionFlag } from "./intro-session.ts";
-import { INTRO_KICKOFF_PROMPT } from "./intro-kickoff.ts";
+import { introKickoffPrompt, type IntroKickoffLocale } from "./intro-kickoff.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
@@ -81,6 +81,7 @@ async function isActiveProviderReady(): Promise<boolean> {
 function ensureIntroKickoffRun(
   ownerId: string,
   sessionId: number,
+  locale: IntroKickoffLocale,
 ): Promise<{ runRef: string | null; providerReady: boolean }> {
   if (introKickoffInFlight) return introKickoffInFlight;
   introKickoffInFlight = (async () => {
@@ -91,7 +92,10 @@ function ensureIntroKickoffRun(
     if (hasActiveAgentRunForSession(sessionId)) return { runRef: null, providerReady };
     const messages = await readSessionMessages(sessionId);
     if (messages.length > 0) return { runRef: null, providerReady };
-    const run = createAgentRun(ownerId, INTRO_KICKOFF_PROMPT, { sessionId });
+    // 双语 kickoff：开场回合由系统代用户合成，语言取应用 locale（X-Locale），
+    // 教练随后跟随 kickoff 语言（= 本回合用户消息语言）。locale 同时随 run
+    // 记录透传（RunRecord.locale，B0 管道口径）。
+    const run = createAgentRun(ownerId, introKickoffPrompt(locale), { sessionId, locale });
     return { runRef: run.run_ref, providerReady };
   })().finally(() => {
     // 守卫只覆盖单次创建调用；完成后清空让后续（如 sidecar 重启后）可恢复。
@@ -808,8 +812,11 @@ export async function handleSidecarRequest(
   if (req.method === "POST" && url.pathname === "/coach/intro-session") {
     try {
       const ownerId = ownerIdFromRequest(req);
-      const ensured = await ensureIntroSession();
-      const kickoff = await ensureIntroKickoffRun(ownerId, ensured.session_id);
+      // 双语开场：会话标题与 kickoff 都按请求的应用语言（X-Locale）合成；
+      // 首启 locale 即首次 UI 语言（设置默认/系统语言预选），缺省 zh-CN。
+      const locale = localeFromRequest(req);
+      const ensured = await ensureIntroSession(locale);
+      const kickoff = await ensureIntroKickoffRun(ownerId, ensured.session_id, locale);
       writeJson(res, 200, {
         session_id: ensured.session_id,
         created: ensured.created,

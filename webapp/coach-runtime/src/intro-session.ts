@@ -24,7 +24,13 @@ import {
 } from "./session-repo.ts";
 
 export const INTRO_SESSION_TITLE = "开场分析";
+export const INTRO_SESSION_TITLE_EN = "Intro Session";
 const INTRO_SESSION_FLAG_FILE = "intro-session.json";
+
+/** 会话标题按首启应用语言合成（PRD §6.1.1 的英文名即 Intro Session）；缺省 zh。 */
+export function introSessionTitle(locale: "zh-CN" | "en-US" = "zh-CN"): string {
+  return locale === "en-US" ? INTRO_SESSION_TITLE_EN : INTRO_SESSION_TITLE;
+}
 
 export type IntroSessionFlag = {
   created: boolean;
@@ -86,11 +92,14 @@ let ensureInFlight: Promise<{ created: boolean; session_id: number }> | null = n
 
 /**
  * Idempotent creation: the first caller creates the Coach session titled
- * 「开场分析」 and persists the flag; later callers get the existing id back.
- * Concurrent callers share one in-flight creation (local single-user app, but
- * a double-click on first launch must not create two sessions).
+ * 「开场分析」/「Intro Session」(per the first-launch app locale) and persists
+ * the flag; later callers get the existing id back. Concurrent callers share
+ * one in-flight creation (local single-user app, but a double-click on first
+ * launch must not create two sessions).
  */
-export async function ensureIntroSession(): Promise<{ created: boolean; session_id: number }> {
+export async function ensureIntroSession(
+  locale: "zh-CN" | "en-US" = "zh-CN",
+): Promise<{ created: boolean; session_id: number }> {
   const existing = readIntroSessionFlag();
   if (existing.created && existing.session_id !== null) {
     return { created: false, session_id: existing.session_id };
@@ -104,7 +113,7 @@ export async function ensureIntroSession(): Promise<{ created: boolean; session_
     // 「开场分析」with the first sentence.
     writeConversationMeta(id, {
       id,
-      title: INTRO_SESSION_TITLE,
+      title: introSessionTitle(locale),
       title_source: "user",
       status: "active",
       created_at: now,
