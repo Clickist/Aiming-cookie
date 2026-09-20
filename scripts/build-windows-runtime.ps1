@@ -94,6 +94,15 @@ try {
 Require-Path $coachExe "packaged Coach executable"
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot "knowledge") -Destination (Join-Path $runtimeRoot "knowledge") -Recurse
+# Coach mapping resources ride inside the wholesale knowledge copy above; the
+# explicit pass (mirroring the eloshapes block) keeps them guaranteed if the
+# knowledge tree is ever filtered, and fails the build if they are missing.
+$mappingSource = Join-Path $RepoRoot "knowledge\mapping"
+Require-Path (Join-Path $mappingSource "vocabulary.v1.json") "mapping vocabulary resource"
+Require-Path (Join-Path $mappingSource "official.v1.json") "official mapping resource"
+New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "knowledge\mapping") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $mappingSource "vocabulary.v1.json") -Destination (Join-Path $runtimeRoot "knowledge\mapping\vocabulary.v1.json")
+Copy-Item -LiteralPath (Join-Path $mappingSource "official.v1.json") -Destination (Join-Path $runtimeRoot "knowledge\mapping\official.v1.json")
 Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\coach-system.md") -Destination (Join-Path $runtimeRoot "coach-system.md")
 Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\skills") -Destination (Join-Path $runtimeRoot "skills") -Recurse
 New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "pi\packages\agent") -Force | Out-Null

@@ -2,6 +2,7 @@
 structured diagnosis that visualization and agent both consume."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,9 +85,10 @@ def resolve_candidate_knowledge_refs(
     metric_refs: list[str],
 ) -> CandidateKnowledgeRefs:
     """Attach v2 explanations after an analyzer has already produced a fact."""
-    from .knowledge_registry import entry_ref, load_registry, query_registry
+    from .knowledge_active import load_active_registry
+    from .knowledge_registry import entry_ref, query_registry
 
-    registry = load_registry()
+    registry = load_active_registry()
     entries = query_registry(
         registry,
         issue_signal=issue_signal,
@@ -111,6 +113,78 @@ _STATIC_OBSERVATION_REFS = {
 }
 
 
+def _active_archetypes() -> list[dict]:
+    """Archetypes from the active mapping's ``archetypes`` section, shaped
+    exactly like ``profiles.ARCHETYPES`` (WP-06: the data source moved to the
+    mapping; the weighted-match algorithm below is unchanged). A missing
+    mapping file (the normal built-in fallback state) or an empty/unusable
+    section falls back to the frozen ``profiles`` constants."""
+    from .knowledge_active import load_active_mapping
+
+    try:
+        doc, _reason = load_active_mapping()
+        if doc is None:
+            return profiles.ARCHETYPES
+        raw = doc["archetypes"]
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, list) or not raw:
+            return profiles.ARCHETYPES
+        archetypes = []
+        for entry in raw:
+            conditions_raw = entry["conditions"]
+            if isinstance(conditions_raw, (str, bytes)) or not isinstance(conditions_raw, dict):
+                raise ValueError("archetype conditions must be an object")
+            conditions: dict[str, float] = {}
+            for signal, weight in conditions_raw.items():
+                if (
+                    not isinstance(signal, str)
+                    or isinstance(weight, bool)
+                    or not isinstance(weight, (int, float))
+                    or not math.isfinite(weight)
+                ):
+                    raise ValueError("archetype weight must be a finite number")
+                conditions[signal] = float(weight)
+            if not isinstance(entry["id"], str) or not isinstance(entry["label"], str):
+                raise ValueError("archetype id/label must be text")
+            archetypes.append({
+                "id": entry["id"],
+                "label": entry["label"],
+                "conditions": conditions,
+            })
+        return archetypes
+    except Exception:
+        return profiles.ARCHETYPES
+
+
+def _active_root_causes() -> dict[str, tuple[str, str, str]]:
+    """Root-cause copy from the active mapping's ``root_causes`` section
+    (signal -> symptom/physical/training). Same fallback semantics as
+    :func:`_active_archetypes`: a missing mapping/section or unusable data
+    falls back to the frozen ``profiles`` constants."""
+    from .knowledge_active import load_active_mapping
+
+    try:
+        doc, _reason = load_active_mapping()
+        if doc is None:
+            return profiles.ROOT_CAUSES
+        raw = doc["root_causes"]
+        if not isinstance(raw, dict) or not raw:
+            return profiles.ROOT_CAUSES
+        causes: dict[str, tuple[str, str, str]] = {}
+        for signal, triple in raw.items():
+            if (
+                not isinstance(signal, str)
+                or isinstance(triple, (str, bytes))
+                or not isinstance(triple, list)
+                or len(triple) != 3
+                or any(not isinstance(layer, str) for layer in triple)
+            ):
+                raise ValueError("root cause entry must be three copy strings")
+            causes[signal] = (triple[0], triple[1], triple[2])
+        return causes
+    except Exception:
+        return profiles.ROOT_CAUSES
+
+
 def build_diagnosis(findings, summary, comparison, meta):
     return CoachDiagnosis(
         profile=_match_profile(findings, meta),
@@ -126,8 +200,9 @@ def _match_profile(findings, meta=None):
     summary_type = meta.get("summary_type")
     quality_status = meta.get("quality_status")
     signals = {f.signal for f in findings}
+    archetypes = _active_archetypes()
     best, best_score = None, 0.0
-    for arch in profiles.ARCHETYPES:
+    for arch in archetypes:
         conds = arch["conditions"]
         if not conds:
             continue
@@ -137,7 +212,7 @@ def _match_profile(findings, meta=None):
         if score > best_score:
             best, best_score = arch, score
     secondary = [
-        a["label"] for a in profiles.ARCHETYPES
+        a["label"] for a in archetypes
         if a is not best and a["conditions"]
         and any(s in signals for s in a["conditions"])
     ]
@@ -148,12 +223,12 @@ def _match_profile(findings, meta=None):
             return ProfileMatch("unclassified", "未分类", 0.0, [])
         if summary_type == "tracking":
             fluid = next(
-                (a for a in profiles.ARCHETYPES if a["id"] == "fluid_tracker"),
+                (a for a in archetypes if a["id"] == "fluid_tracker"),
                 None,
             )
         else:
             fluid = next(
-                (a for a in profiles.ARCHETYPES if a["id"] == "fluid_precise"),
+                (a for a in archetypes if a["id"] == "fluid_precise"),
                 None,
             )
         if fluid is not None:
@@ -216,7 +291,7 @@ def _build_issues(findings):
 
 
 def _root_causes_for(finding):
-    triple = profiles.ROOT_CAUSES.get(finding.signal)
+    triple = _active_root_causes().get(finding.signal)
     if not triple:
         return [RootCause("symptom", finding.diagnosis)]
     return [

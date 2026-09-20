@@ -1,0 +1,745 @@
+{
+  "pinned_knowledge_registry_version": "2026-09-12.v12",
+  "expected": {
+    "decel_frac_high_above_epsilon_fires": [
+      {
+        "signal": "decel_frac high",
+        "severity": "info",
+        "diagnosis": "减速段占整个 flick 的 66%——速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "练完整的加速→减速，接近目标时果断完成制动",
+            "cue": "练完整的加速→减速，接近目标时果断完成制动",
+            "purpose": "速度峰值后用了较长时间完成减速",
+            "target_metrics": [
+              "decel_frac"
+            ],
+            "expected_direction": [
+              "decel_frac toward individually calibrated target"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "1w4ts Voltaic",
+            "reason": "保持 90%+ 准确率，练完整 flick 的加减速",
+            "cue": "保持 90%+ 准确率，练完整 flick 的加减速",
+            "purpose": "速度峰值后用了较长时间完成减速",
+            "target_metrics": [
+              "decel_frac"
+            ],
+            "expected_direction": [
+              "decel_frac toward individually calibrated target"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "decel_frac"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "速度峰值后用了较长时间完成减速",
+        "expected_result": "decel_frac toward individually calibrated target",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "decel_frac toward individually calibrated target"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "decel_frac_high_at_threshold_silent": [],
+    "decel_frac_band_between_thresholds_silent": [],
+    "decel_frac_low_below_epsilon_fires": [
+      {
+        "signal": "decel_frac low",
+        "severity": "info",
+        "diagnosis": "减速段只占 39%，连续减速时间较短；是否属于制动问题仍需结合 settle/reverse 和个体历史验证。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "练匀减速，把减速段当一次独立动作",
+            "cue": "练匀减速，把减速段当一次独立动作",
+            "purpose": "速度峰值后留给连续减速的时间较短",
+            "target_metrics": [
+              "decel_frac"
+            ],
+            "expected_direction": [
+              "decel_frac toward individually calibrated target"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "decel_frac"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "速度峰值后留给连续减速的时间较短",
+        "expected_result": "decel_frac toward individually calibrated target",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "decel_frac toward individually calibrated target"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "decel_frac_low_at_threshold_silent": [],
+    "linearity_above_epsilon_fires": [
+      {
+        "signal": "linearity high",
+        "severity": "info",
+        "diagnosis": "减速段速度曲线偏离匀减速直线 0.14——速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；抖动看 SPARC。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "把减速段练成干净、连贯的制动",
+            "cue": "把减速段练成干净、连贯的制动",
+            "purpose": "减速阶段的速度下降节奏不够均匀",
+            "target_metrics": [
+              "linearity"
+            ],
+            "expected_direction": [
+              "linearity ↓"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "1w4ts 30% larger",
+            "reason": "减速段精度专项",
+            "cue": "减速段精度专项",
+            "purpose": "减速阶段的速度下降节奏不够均匀",
+            "target_metrics": [
+              "linearity"
+            ],
+            "expected_direction": [
+              "linearity ↓"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "linearity"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "减速阶段的速度下降节奏不够均匀",
+        "expected_result": "linearity ↓",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "linearity ↓"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "linearity_at_threshold_silent": [],
+    "sparc_v2_native_version_gate_blocks": [],
+    "sparc_v2_fair_summary_version_gate_blocks": [],
+    "sparc_unversioned_below_threshold_fires": [
+      {
+        "signal": "sparc low",
+        "severity": "info",
+        "diagnosis": "减速段平滑度 SPARC=-5.5——速度轮廓中的快速波动较多。SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "clean lines，让减速速度连续下降，避免突然硬停",
+            "cue": "clean lines，让减速速度连续下降，避免突然硬停",
+            "purpose": "减速阶段的速度轮廓含较多快速波动",
+            "target_metrics": [
+              "sparc"
+            ],
+            "expected_direction": [
+              "sparc ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "1w4ts 30% larger",
+            "reason": "减速段精度专项",
+            "cue": "减速段精度专项",
+            "purpose": "减速阶段的速度轮廓含较多快速波动",
+            "target_metrics": [
+              "sparc"
+            ],
+            "expected_direction": [
+              "sparc ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "sparc"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "减速阶段的速度轮廓含较多快速波动",
+        "expected_result": "sparc ↑",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "sparc ↑"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "sparc_legacy_v1_version_below_threshold_fires": [
+      {
+        "signal": "sparc low",
+        "severity": "info",
+        "diagnosis": "减速段平滑度 SPARC=-5.5——速度轮廓中的快速波动较多。SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "clean lines，让减速速度连续下降，避免突然硬停",
+            "cue": "clean lines，让减速速度连续下降，避免突然硬停",
+            "purpose": "减速阶段的速度轮廓含较多快速波动",
+            "target_metrics": [
+              "sparc"
+            ],
+            "expected_direction": [
+              "sparc ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "1w4ts 30% larger",
+            "reason": "减速段精度专项",
+            "cue": "减速段精度专项",
+            "purpose": "减速阶段的速度轮廓含较多快速波动",
+            "target_metrics": [
+              "sparc"
+            ],
+            "expected_direction": [
+              "sparc ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "sparc"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "减速阶段的速度轮廓含较多快速波动",
+        "expected_result": "sparc ↑",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "sparc ↑"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "sparc_above_threshold_silent": [],
+    "reverse_ratio_above_epsilon_fires": [
+      {
+        "signal": "reverse_ratio high",
+        "severity": "info",
+        "diagnosis": "减速段有 21% 的帧在反向加速，表现为反复修正。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "把修正并入减速过程，避免停住后再二次修正",
+            "cue": "把修正并入减速过程，避免停住后再二次修正",
+            "purpose": "移动收尾时出现了较多反向修正",
+            "target_metrics": [
+              "reverse_ratio"
+            ],
+            "expected_direction": [
+              "reverse_ratio ↓"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "Multiclick",
+            "reason": "落点精度，减少二次修正",
+            "cue": "落点精度，减少二次修正",
+            "purpose": "移动收尾时出现了较多反向修正",
+            "target_metrics": [
+              "reverse_ratio"
+            ],
+            "expected_direction": [
+              "reverse_ratio ↓"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "reverse_ratio"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "移动收尾时出现了较多反向修正",
+        "expected_result": "reverse_ratio ↓",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "reverse_ratio ↓"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "reverse_ratio_at_threshold_silent": [],
+    "submovement_overlap_below_epsilon_fires": [
+      {
+        "signal": "submovement two-stage",
+        "severity": "info",
+        "diagnosis": "主要移动和后续修正呈较分离的两个阶段。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
+            "cue": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
+            "purpose": "主要移动与后续修正更像两个分离动作",
+            "target_metrics": [
+              "submovement_overlap"
+            ],
+            "expected_direction": [
+              "submovement_overlap toward chosen technique"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "Multiclick",
+            "reason": "落点精度，减少二次修正",
+            "cue": "落点精度，减少二次修正",
+            "purpose": "主要移动与后续修正更像两个分离动作",
+            "target_metrics": [
+              "submovement_overlap"
+            ],
+            "expected_direction": [
+              "submovement_overlap toward chosen technique"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "submovement_overlap"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "主要移动与后续修正更像两个分离动作",
+        "expected_result": "submovement_overlap toward chosen technique",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "submovement_overlap toward chosen technique"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "submovement_overlap_at_threshold_silent": [],
+    "peak_position_low_below_epsilon_fires": [
+      {
+        "signal": "peak_position low",
+        "severity": "info",
+        "diagnosis": "峰位 29%（偏前），速度峰值较早出现；具体动作原因未被输入数据直接测量。",
+        "prescriptions": [
+          {
+            "scenario": "pasu",
+            "reason": "平衡加减速，把峰往中段靠",
+            "cue": "平衡加减速，把峰往中段靠",
+            "purpose": "速度峰值出现得较早",
+            "target_metrics": [
+              "peak_position_pct"
+            ],
+            "expected_direction": [
+              "peak_position_pct toward individual baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "peak_position_pct"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "速度峰值出现得较早",
+        "expected_result": "peak_position_pct toward individual baseline",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "peak_position_pct toward individual baseline"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "peak_position_low_at_threshold_silent": [],
+    "peak_position_band_silent": [],
+    "peak_position_high_at_threshold_silent": [],
+    "peak_position_high_above_epsilon_fires": [
+      {
+        "signal": "peak_position high",
+        "severity": "info",
+        "diagnosis": "峰位 61%（偏后），速度峰值较晚出现；具体动作原因未被输入数据直接测量。",
+        "prescriptions": [
+          {
+            "scenario": "Tile Frenzy",
+            "reason": "练果断加速、提速",
+            "cue": "练果断加速、提速",
+            "purpose": "速度峰值出现得较晚",
+            "target_metrics": [
+              "peak_position_pct"
+            ],
+            "expected_direction": [
+              "peak_position_pct toward individual baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "peak_position_pct"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "速度峰值出现得较晚",
+        "expected_result": "peak_position_pct toward individual baseline",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "peak_position_pct toward individual baseline"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "path_efficiency_below_epsilon_fires": [
+      {
+        "signal": "path_efficiency low",
+        "severity": "info",
+        "diagnosis": "flick 路径直线效率 0.84，实际路径相对终点直线距离更绕；绝对阈值仍需产品校准。",
+        "prescriptions": [
+          {
+            "scenario": "linetrace",
+            "reason": "练直线 flick，走最短路径",
+            "cue": "练直线 flick，走最短路径",
+            "purpose": "实际移动路径比起终点直线距离更绕",
+            "target_metrics": [
+              "path_efficiency"
+            ],
+            "expected_direction": [
+              "path_efficiency ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "clean lines",
+            "reason": "意识：flick 走直线，不画弧",
+            "cue": "意识：flick 走直线，不画弧",
+            "purpose": "实际移动路径比起终点直线距离更绕",
+            "target_metrics": [
+              "path_efficiency"
+            ],
+            "expected_direction": [
+              "path_efficiency ↑"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "path_efficiency"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "实际移动路径比起终点直线距离更绕",
+        "expected_result": "path_efficiency ↑",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "path_efficiency ↑"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "path_efficiency_at_threshold_silent": [],
+    "peak_speed_below_reference_ratio_fires": [
+      {
+        "signal": "peak_speed below reference",
+        "severity": "info",
+        "diagnosis": "甩枪角速度 7°/s 只有参考的 69%（10°/s）；峰值速度低于当前参考，身体原因未被输入数据直接测量。",
+        "prescriptions": [
+          {
+            "scenario": "Tile Frenzy",
+            "reason": "在可控精度下逐步提高动态速度",
+            "cue": "在可控精度下逐步提高动态速度",
+            "purpose": "峰值速度低于当前比较参考",
+            "target_metrics": [
+              "peak_speed_deg"
+            ],
+            "expected_direction": [
+              "peak_speed_deg ↑ against comparable baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "speed 类场景",
+            "reason": "大胆加速，先求速度再收精度",
+            "cue": "大胆加速，先求速度再收精度",
+            "purpose": "峰值速度低于当前比较参考",
+            "target_metrics": [
+              "peak_speed_deg"
+            ],
+            "expected_direction": [
+              "peak_speed_deg ↑ against comparable baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "peak_speed_deg"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "峰值速度低于当前比较参考",
+        "expected_result": "peak_speed_deg ↑ against comparable baseline",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "peak_speed_deg ↑ against comparable baseline"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "peak_speed_at_reference_ratio_silent": [],
+    "peak_speed_reference_metric_missing_silent": [],
+    "throughput_below_reference_ratio_fires": [
+      {
+        "signal": "throughput below reference",
+        "severity": "info",
+        "diagnosis": "Fitts throughput 6.9 bits/s 只有参考的 69%（10.0）；速度-精度综合效率低于当前参考，身体原因未被输入数据直接测量（throughput 已按目标距离/宽度归一化，§6.3）。",
+        "prescriptions": [
+          {
+            "scenario": "Tile Frenzy",
+            "reason": "在可控精度下逐步提高动态速度",
+            "cue": "在可控精度下逐步提高动态速度",
+            "purpose": "速度与精度综合效率低于当前比较参考",
+            "target_metrics": [
+              "throughput"
+            ],
+            "expected_direction": [
+              "throughput ↑ against comparable baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          },
+          {
+            "scenario": "speed 类场景",
+            "reason": "先求速度再收精度",
+            "cue": "先求速度再收精度",
+            "purpose": "速度与精度综合效率低于当前比较参考",
+            "target_metrics": [
+              "throughput"
+            ],
+            "expected_direction": [
+              "throughput ↑ against comparable baseline"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "throughput"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "速度与精度综合效率低于当前比较参考",
+        "expected_result": "throughput ↑ against comparable baseline",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "throughput ↑ against comparable baseline"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "throughput_at_reference_ratio_silent": [],
+    "no_reference_relative_signals_silent": [],
+    "settings_cm360_below_threshold_fires": [
+      {
+        "signal": "sensitivity high",
+        "severity": "info",
+        "diagnosis": "当前灵敏度为 24.9 cm/360。较小 cm/360 可能放大控制输入，但不能单凭设置值判定动作问题，只能作为受控实验假设。",
+        "prescriptions": [
+          {
+            "scenario": "降 sens 5-10%（cm/360 ↑）",
+            "reason": "制动辅助实验；复测 linearity/reverse 是否下降，没降就调回",
+            "cue": "制动辅助实验；复测 linearity/reverse 是否下降，没降就调回",
+            "purpose": "当前 cm/360 较小，是否影响控制仍需实验验证",
+            "target_metrics": [
+              "cm_per_360"
+            ],
+            "expected_direction": [
+              "linearity/reverse_ratio improve after controlled setting experiment"
+            ],
+            "retest_after": "在相同场景、设置和证据质量下复测",
+            "stop_or_adjust_rule": "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法",
+            "source_level": "community_consensus"
+          }
+        ],
+        "claim_level": "experimental",
+        "metric_refs": [
+          "cm_per_360"
+        ],
+        "event_refs": [],
+        "limitations": [
+          "threshold_requires_product_calibration"
+        ],
+        "plain_language_meaning": "当前 cm/360 较小，是否影响控制仍需实验验证",
+        "expected_result": "linearity/reverse_ratio improve after controlled setting experiment",
+        "verification": {
+          "comparable_requirements": [
+            "相同场景",
+            "相同设置",
+            "相同证据质量"
+          ],
+          "success_signals": [
+            "linearity/reverse_ratio improve after controlled setting experiment"
+          ],
+          "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步"
+        }
+      }
+    ],
+    "settings_cm360_at_threshold_silent": [],
+    "settings_cm360_missing_silent": [],
+    "empty_summary_silent": []
+  }
+}

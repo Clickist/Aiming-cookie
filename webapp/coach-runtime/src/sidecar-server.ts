@@ -4,7 +4,14 @@ import { join } from "node:path";
 
 import { getDataRoot } from "./app-data.ts";
 import { failureResponse, makeError, type CoachRuntimeTurnSchema, isRecord } from "./contracts.ts";
+import {
+  activePackDisplayName,
+  lastActiveKnowledgeFallbackReason,
+  loadActiveKnowledgeRegistry,
+  resolveActiveKnowledge,
+} from "./knowledge-active.ts";
 import { materializeKnowledgeDir } from "./knowledge-materialize.ts";
+import { validateKnowledgeRegistry, REGISTRY_SCHEMA_VERSION_V3 } from "./knowledge-registry.ts";
 import {
   CoachDataError,
   createCoachSession,
@@ -235,6 +242,72 @@ export async function handleSidecarRequest(
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  // Loopback parity endpoint (kb-sdk C6): the backend pack-import flow POSTs a
+  // candidate pack's registry JSON here and treats the TS validator as the
+  // parity oracle. A failed validation is a 200 payload, not an error status;
+  // only a malformed request body is a client error.
+  if (req.method === "POST" && url.pathname === "/knowledge/validate") {
+    let parsed: unknown;
+    try {
+      parsed = await parseJsonBody(req);
+    } catch (error) {
+      writeJson(res, 400, {
+        ok: false,
+        error: {
+          code: "invalid_json",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return;
+    }
+    try {
+      // Packs are v3-only (parity with Python validate_pack): the shared
+      // validator still dispatches v1/v2 for historical official assets, so
+      // a pack registry must be gated to v3 before validation.
+      if (
+        !isRecord(parsed)
+        || parsed.schema_version !== REGISTRY_SCHEMA_VERSION_V3
+      ) {
+        writeJson(res, 200, {
+          valid: false,
+          errors: [
+            "knowledge/registry.json must declare schema_version "
+              + `'${REGISTRY_SCHEMA_VERSION_V3}'; packs cannot ship legacy v1/v2 `
+              + "registries (see sdk/knowledge-pack/SPEC.md)",
+          ],
+        });
+        return;
+      }
+      validateKnowledgeRegistry(parsed);
+      writeJson(res, 200, { valid: true });
+    } catch (error) {
+      writeJson(res, 200, {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+      });
+    }
+    return;
+  }
+
+  // Backend-triggered knowledge rematerialization (kb-sdk C3): the activate
+  // endpoint POSTs here after writing config/knowledge.json so a pack switch
+  // takes effect immediately, without restarting the sidecar process. A
+  // fallback to official is a 200 payload (mode/fallbackReason), not an error.
+  if (req.method === "POST" && url.pathname === "/knowledge/rematerialize") {
+    try {
+      writeJson(res, 200, { ok: true, ...rematerializeActiveKnowledge() });
+    } catch (error) {
+      writeJson(res, 500, {
+        ok: false,
+        error: {
+          code: "rematerialize_failed",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
     return;
   }
 
@@ -912,6 +985,41 @@ export function createSidecarServer(options: {
   return server;
 }
 
+export interface KnowledgeRematerializeResult {
+  mode: "official" | "pack";
+  packId?: string;
+  fallbackReason?: string;
+}
+
+/**
+ * Resolve the active knowledge base and re-materialize it into app-data.
+ * Shared by sidecar startup and POST /knowledge/rematerialize so an activate
+ * call takes effect immediately instead of at the next process start. A
+ * failure must not throw past the caller's error handling: startup treats it
+ * as a log, the route answers 5xx.
+ */
+function rematerializeActiveKnowledge(): KnowledgeRematerializeResult {
+  const active = resolveActiveKnowledge();
+  const registry = loadActiveKnowledgeRegistry();
+  const fallbackReason = lastActiveKnowledgeFallbackReason();
+  if (active.mode === "official" && fallbackReason) {
+    // Config/pointer-level degradation; bad-pack load failures already
+    // logged their own reason inside loadActiveKnowledgeRegistry.
+    console.error(`[coach] knowledge active state fell back to official: ${fallbackReason}`);
+  }
+  materializeKnowledgeDir(undefined, {
+    registry,
+    packDisplayName: active.mode === "pack" && fallbackReason === null
+      ? activePackDisplayName(active.packId)
+      : undefined,
+  });
+  return active.mode === "pack" && fallbackReason === null
+    ? { mode: "pack", packId: active.packId }
+    : fallbackReason
+    ? { mode: "official", fallbackReason }
+    : { mode: "official" };
+}
+
 export function startSidecarServer(options: {
   host?: string;
   port?: number;
@@ -919,11 +1027,15 @@ export function startSidecarServer(options: {
 } = {}): http.Server {
   const host = options.host ?? DEFAULT_SIDECAR_HOST;
   const port = options.port ?? DEFAULT_SIDECAR_PORT;
-  // Materialize the knowledge REGISTRY into app-data so the Coach's plain
-  // file tools can browse it (knowledge/index.json). Idempotent and bound to
-  // registry_version; a failure must not keep the sidecar from starting.
+  // Materialize the active knowledge REGISTRY into app-data so the Coach's
+  // plain file tools can browse it (knowledge/index.json). Resolution walks
+  // DATA_ROOT/config/knowledge.json (kb-sdk C3): a pack whose registry fails
+  // to load falls back to the official base, and the fallback reason lands in
+  // the startup log. Idempotent and bound to registry_version; a failure must
+  // not keep the sidecar from starting. The backend activate endpoint can
+  // re-trigger the same routine via POST /knowledge/rematerialize.
   try {
-    materializeKnowledgeDir();
+    rematerializeActiveKnowledge();
   } catch (error) {
     console.error("knowledge materialization failed:", error);
   }

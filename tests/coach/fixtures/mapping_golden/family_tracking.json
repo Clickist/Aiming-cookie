@@ -1,0 +1,318 @@
+{
+  "pinned_knowledge_registry_version": "2026-09-12.v12",
+  "expected": {
+    "comparable_all_candidates_with_guardrails_holding": [
+      {
+        "signal": "tracking lag high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.phase_lag_ms"
+        ],
+        "observation": {
+          "current": 24.0,
+          "matched_baseline": 12.0,
+          "delta": 12.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "episode.tracking",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.predictable-speed-matching@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      },
+      {
+        "signal": "loss count high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.loss_count"
+        ],
+        "observation": {
+          "current": 5.0,
+          "matched_baseline": 2.0,
+          "delta": 3.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "event.loss",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.reactive-change-response@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      },
+      {
+        "signal": "off target long",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.reacquisition_latency_ms"
+        ],
+        "observation": {
+          "current": 210.0,
+          "matched_baseline": 90.0,
+          "delta": 120.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "event.reacquisition",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.reactive-change-response@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      },
+      {
+        "signal": "accel mismatch high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.observed_change_response_ms"
+        ],
+        "observation": {
+          "current": 0.6,
+          "matched_baseline": 0.25,
+          "delta": 0.35
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "event.target_change",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.reactive-change-response@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      },
+      {
+        "signal": "correction burden high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.correction_direction_reversal_count"
+        ],
+        "observation": {
+          "current": 7.0,
+          "matched_baseline": 3.0,
+          "delta": 4.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "metric.smoothness",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.control-smoothness@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      },
+      {
+        "signal": "sparc low",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.sparc"
+        ],
+        "observation": {
+          "current": -6.0,
+          "matched_baseline": -4.0,
+          "delta": -2.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "metric.smoothness",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.control-smoothness@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": [
+          "comparison_is_descriptive_only"
+        ]
+      }
+    ],
+    "not_comparable_returns_empty": [],
+    "comparison_missing_returns_empty": [],
+    "baseline_metric_missing_skips_that_candidate": [
+      {
+        "signal": "loss count high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.loss_count"
+        ],
+        "observation": {
+          "current": 5.0,
+          "matched_baseline": 2.0,
+          "delta": 3.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:tracking:failure"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:tracking:recovery"
+        ],
+        "observation_ref": "event.loss",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.reactive-change-response@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "guardrail_failure_drops_smoothness_candidates": [
+      {
+        "signal": "loss count high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.loss_count"
+        ],
+        "observation": {
+          "current": 5.0,
+          "matched_baseline": 2.0,
+          "delta": 3.0
+        },
+        "supporting_row_refs": [],
+        "counterexample_row_refs": [],
+        "observation_ref": "event.loss",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.reactive-change-response@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "row_field_missing_yields_empty_row_refs": [
+      {
+        "signal": "sparc low",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "continuous_tracking.sparc"
+        ],
+        "observation": {
+          "current": -6.0,
+          "matched_baseline": -4.0,
+          "delta": -2.0
+        },
+        "supporting_row_refs": [],
+        "counterexample_row_refs": [],
+        "observation_ref": "metric.smoothness",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:tracking.control-smoothness@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "equal_to_baseline_skips": [],
+    "improved_lower_better_metric_skips": []
+  }
+}

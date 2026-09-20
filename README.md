@@ -4,6 +4,14 @@
 
 不打分、不玄学——所有证据来自你自己的机器，分析与数据都留在本地。
 
+## 🆕 知识库 SDK 已开放（2026-09-20）
+
+Coach 的瞄准知识不再只有官方一套。我们把整条知识体系做成了**可替换的开放格式**：懂瞄准的你——教练、UP 主、硬核玩家——可以把自己的知识做成一个「知识包」，导入 Aiming Cookie 后**整库替换**官方知识。Coach 讲什么、推荐什么训练，全按你的体系来；官方知识库永远是内置默认档，一键切回，坏包自动回退，分析不受影响。
+
+- 想做自己的知识库：从 [知识库 SDK 规范](sdk/knowledge-pack/SPEC.md) 开始（[English](sdk/knowledge-pack/SPEC.en.md)），[模板包](sdk/knowledge-pack/template/) 改一改就能导入
+- 数据说明文档：AC 采集哪些数据、从哪来、反映什么，逐类写清——做「数据→现象」映射规则的前提（[中文](sdk/knowledge-pack/docs/data-reference.md) / [English](sdk/knowledge-pack/docs/data-reference.en.md)）
+- 官方诊断规则以同样格式随产品发布（`knowledge/mapping/`），是最好的参照样本；校验器 CLI 随仓库提供
+
 ---
 
 ## 为什么做这个

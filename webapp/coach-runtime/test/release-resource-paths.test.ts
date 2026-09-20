@@ -26,6 +26,20 @@ test("release resource root overrides source prompt, Pi metadata, and knowledge 
     assert.equal(piSourceRoot(), join(repoRoot, "pi"));
     assert.equal(loadKnowledgeRegistry().registry_version, "2026-09-20.v13");
     assert.ok(activeScenarioProfileRefs().has("scenario:static.1wall_6targets_small@1"));
+
+    // Packaged mapping resources: the Python coach engine resolves
+    // knowledge/mapping/*.v1.json from the resource root, so the release
+    // layout must ship both files (build-windows-runtime.ps1 copies them
+    // explicitly alongside the wholesale knowledge tree).
+    const mappingRoot = join(repoRoot, "knowledge", "mapping");
+    const officialMapping = JSON.parse(
+      readFileSync(join(mappingRoot, "official.v1.json"), "utf8"),
+    ) as { schema_version?: unknown };
+    const vocabulary = JSON.parse(
+      readFileSync(join(mappingRoot, "vocabulary.v1.json"), "utf8"),
+    ) as { schema_version?: unknown };
+    assert.equal(officialMapping.schema_version, "coach_mapping.v1");
+    assert.equal(vocabulary.schema_version, "coach_mapping_vocabulary.v1");
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;

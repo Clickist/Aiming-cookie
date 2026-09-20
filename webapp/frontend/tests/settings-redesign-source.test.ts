@@ -268,3 +268,53 @@ test("Recent capture events render plain rows with a semantic dot and hover deta
   assert.match(styles, /\.task6-capture-event\[data-tone="working"\] \.task6-capture-event-dot\s*\{[^}]*background:\s*var\(--event-peak\)/);
   assert.match(styles, /\.task6-capture-event\[data-tone="missing"\] \.task6-capture-event-dot\s*\{[^}]*background:\s*var\(--on-surface-variant\)/);
 });
+
+test("Knowledge section pins the official pack on top and gates switching on validation", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  const section = await source("components/task6/KnowledgeSettingsSection.tsx");
+  const api = await source("lib/api.ts");
+  // 导航位置（线框）：「知识库」紧跟「LLM Provider」——同属 Coach 回答的来源。
+  const providerAt = settings.indexOf('{ id: "llm-provider", label: "LLM Provider" }');
+  const knowledgeAt = settings.indexOf('{ id: "knowledge", label: "知识库" }');
+  assert.ok(providerAt !== -1, "llm-provider nav item missing");
+  assert.ok(knowledgeAt !== -1, "knowledge nav item missing");
+  assert.ok(providerAt < knowledgeAt, "knowledge nav item must follow llm-provider");
+  assert.match(settings, /hidden=\{activeNav !== "knowledge"\}/);
+  assert.match(settings, /<KnowledgeSettingsSection notify=\{setFeedback\} \/>/);
+  // 官方档常驻置顶（等同 Provider 官方档语义）；点行=激活且确认弹窗
+  // 说明切换立即生效、sidecar 不可达时降级为「重启应用后生效」。
+  assert.match(section, /Aiming Cookie 官方/);
+  assert.match(section, /内置 · 随产品更新 · 官方训练知识与判定规则/);
+  assert.match(section, /切换后立即生效/);
+  // 包行元信息与徽标：判定规则徽标跟随 has_mapping；invalid 包点行
+  // 不可激活（红点 + 校验失败）。
+  assert.match(section, /pack\.has_mapping/);
+  assert.match(section, /判定规则<\/Badge>/);
+  assert.match(section, /该包校验失败，无法激活/);
+  assert.match(section, /校验失败<\/span>/);
+  // 卸载语义：active 包确认文案明确自动回退官方；历史引用 display-only。
+  assert.match(section, /自动回退 Aiming Cookie 官方知识库/);
+  assert.match(section, /来自已移除的知识库/);
+  // 坏包回退提示条：active=official 存在坏包、或 active 指针仍指坏包时显示
+  // （后端回退行为正确，条文案如实消歧「使用中+校验失败」的矛盾）。
+  assert.match(section, /已自动回退官方知识库/);
+  assert.match(section, /当前激活的知识包校验未通过，已自动改用官方知识库口径/);
+  // 三步导入向导：失败态展示 422 可读明细并锁「下一步」；激活确认含
+  // 即时生效 + 不可达降级警示。
+  assert.match(section, /导入知识包 · 第 \$\{wizardStep\}\/3 步/);
+  assert.match(section, /选路径/, "wizard step labels");
+  assert.match(section, /校验未通过，未安装任何文件/);
+  assert.match(section, /disabled=\{!importResult\} onClick=\{\(\) => setWizardStep\(3\)\}/);
+  assert.match(section, /完成并激活/);
+  assert.match(section, /切换生效说明/);
+  assert.match(section, /重启应用后生效/);
+  // 拍板项：不做 Coach 回答内常驻「当前知识库」标识。
+  assert.doesNotMatch(section, /当前知识库/);
+  // C6 四端点（WP-10 后端合同）+ 422 结构化明细的专用错误类。
+  assert.match(api, /export async function getKnowledgePacks\(/);
+  assert.match(api, /export async function importKnowledgePack\(/);
+  assert.match(api, /export async function activateKnowledgePack\(/);
+  assert.match(api, /export async function uninstallKnowledgePack\(/);
+  assert.match(api, /export class KnowledgePackImportError/);
+  assert.match(api, /"\/api\/knowledge-packs\/import"/);
+});

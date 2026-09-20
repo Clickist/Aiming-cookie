@@ -1,0 +1,262 @@
+{
+  "schema_version": "coach_knowledge_registry.v3",
+  "registry_version": "com.example.my-kb@1.0.0",
+  "signal_aliases": {
+    "sparc smoothness": "sparc low"
+  },
+  "sources": [
+    {
+      "source_ref": "src.my-kb.author",
+      "source_level": "community_consensus",
+      "title": "示例来源：作者整理的教练笔记",
+      "author_or_org": "你的名字",
+      "retrieved_at": "2026-09-20",
+      "locator": "请替换为你自己的可追溯来源（笔记、视频、文章的出处说明）",
+      "applicability": ["all_families"],
+      "supports_sections": [
+        "definition",
+        "scope",
+        "expected_direction",
+        "mechanisms",
+        "cue",
+        "dose_guardrail",
+        "matched_retest",
+        "near_transfer_retest",
+        "stop_adjust_rule",
+        "scenario_prescription"
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "entry_id": "kb.my-kb.explanation.sparc",
+      "entry_version": 1,
+      "status": "active",
+      "category": "mechanism",
+      "topics": ["kb-template.sparc"],
+      "signals": ["sparc low"],
+      "metric_refs": ["sparc"],
+      "family_scope": ["static_clicking"],
+      "observation_refs": [],
+      "quality_prerequisites": [],
+      "definition": {
+        "section_ref": "kb.my-kb.explanation.sparc.definition",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "平滑度 SPARC 描述减速段速度轮廓中快速波动的多少：波动越多，SPARC 越低。它是本包对官方口径的补充解释，不替代官方定义。"
+      },
+      "scope": {
+        "section_ref": "kb.my-kb.explanation.sparc.scope",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "适用于静态点击场景中 flick 减速段的解读；不适用于追踪与转火场景。"
+      },
+      "expected_direction": {
+        "section_ref": "kb.my-kb.explanation.sparc.expected-direction",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "higher_better"
+      },
+      "mechanisms": [
+        {
+          "section_ref": "kb.my-kb.explanation.sparc.mechanism.example",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "速度峰值之后若出现多次快速的方向修正，速度轮廓不再平滑，SPARC 随之下降；常见诱因是减速段被拆成多次停顿再加修正。"
+        }
+      ],
+      "alternative_explanations": [
+        "SPARC 低也可能来自分析窗口过短或非匀速的个人策略，不一定是制动问题。"
+      ],
+      "forbidden_inferences": [
+        "不得仅凭 SPARC 低断言握持张力、设备或灵敏度有问题。"
+      ],
+      "limitations": [
+        "示例阈值为社区经验，未经产品校准，只能作为受控实验假设。"
+      ],
+      "counterevidence": [
+        "目前没有对照实验支持该阈值的绝对健康区间。"
+      ],
+      "sources": ["src.my-kb.author"],
+      "supported_uses": ["explanation_only"]
+    },
+    {
+      "entry_id": "kb.my-kb.experiment.sparc",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": ["kb-template.sparc"],
+      "signals": ["sparc low"],
+      "metric_refs": ["sparc"],
+      "family_scope": ["static_clicking"],
+      "observation_refs": ["metric.terminal_control"],
+      "quality_prerequisites": ["quality.comparable-run"],
+      "definition": {
+        "section_ref": "kb.my-kb.experiment.sparc.definition",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "把减速段当作一次独立、连续的制动动作完成，用于检验减速段波动是否随练习减少。"
+      },
+      "scope": {
+        "section_ref": "kb.my-kb.experiment.sparc.scope",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "适用于静态点击场景的受控实验；结论只在相同场景与设置下成立。"
+      },
+      "expected_direction": {
+        "section_ref": "kb.my-kb.experiment.sparc.expected-direction",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "higher_better"
+      },
+      "mechanisms": [
+        {
+          "section_ref": "kb.my-kb.experiment.sparc.mechanism.example",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "连续减速减少停顿后再修正的次数，速度轮廓更平滑，SPARC 相应提高。"
+        }
+      ],
+      "alternative_explanations": [
+        "SPARC 不改善时，应先排除场景难度变化与状态波动。"
+      ],
+      "forbidden_inferences": [
+        "单次实验结果不得外推为普适训练结论。"
+      ],
+      "limitations": [
+        "实验结论依赖可比条件（相同场景、设置、证据质量）。"
+      ],
+      "counterevidence": [
+        "部分高水平玩家采用两段式减速仍保持高命中率。"
+      ],
+      "cue": {
+        "section_ref": "kb.my-kb.experiment.sparc.cue",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "到位前就开始匀速收力，把减速段当一次独立动作完成，不在停住后再补第二次修正。"
+      },
+      "dose_guardrail": [
+        {
+          "section_ref": "kb.my-kb.experiment.sparc.dose-guardrail.main",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "单次专注练习不超过 20 分钟；出现明显疲劳或命中率持续下降立即停止。"
+        }
+      ],
+      "matched_retest": {
+        "section_ref": "kb.my-kb.experiment.sparc.matched-retest",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "同场景、同灵敏度、同证据质量下复测，比较 SPARC 与命中率。"
+      },
+      "stop_adjust_rule": [
+        {
+          "section_ref": "kb.my-kb.experiment.sparc.stop-adjust-rule.main",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "复测 SPARC 无改善或命中率明显恶化时，停止该练法并回到原方式。"
+        }
+      ],
+      "sources": ["src.my-kb.author"],
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"]
+    },
+    {
+      "entry_id": "prescription.sparc.smoothness",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": ["kb-template.sparc"],
+      "signals": ["sparc low"],
+      "metric_refs": ["sparc"],
+      "family_scope": ["static_clicking"],
+      "observation_refs": ["metric.terminal_control", "metric.smoothness"],
+      "quality_prerequisites": ["quality.comparable-run"],
+      "definition": {
+        "section_ref": "prescription.sparc.smoothness.definition",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "处方条目：当出现 sparc low 信号时，用匀减速类练习改善减速段平滑度。"
+      },
+      "scope": {
+        "section_ref": "prescription.sparc.smoothness.scope",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "适用于静态点击与连续追踪中的平滑度问题；不承诺对其他信号有效。"
+      },
+      "expected_direction": {
+        "section_ref": "prescription.sparc.smoothness.expected-direction",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "higher_better"
+      },
+      "mechanisms": [
+        {
+          "section_ref": "prescription.sparc.smoothness.mechanism.example",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "匀减速练习把制动过程压缩为一次连续动作，减少速度轮廓中的快速波动。"
+        }
+      ],
+      "alternative_explanations": [
+        "平滑度差也可能来自灵敏度不合适，应先用受控实验排除。"
+      ],
+      "forbidden_inferences": [
+        "不得据此刻意降低速度换平滑度；速度与精度需一起复测。"
+      ],
+      "limitations": [
+        "处方来自社区经验，剂量与效果存在个体差异。"
+      ],
+      "counterevidence": [
+        "缺乏跨场景迁移证据；效果可能局限于练习过的场景类型。"
+      ],
+      "cue": {
+        "section_ref": "prescription.sparc.smoothness.cue",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "clean lines：让减速段速度连续下降，避免突然硬停。"
+      },
+      "dose_guardrail": [
+        {
+          "section_ref": "prescription.sparc.smoothness.dose-guardrail.main",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "每次 10-15 分钟、每天 1-2 次；以保持 90% 左右命中率为剂量上限。"
+        }
+      ],
+      "matched_retest": {
+        "section_ref": "prescription.sparc.smoothness.matched-retest",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "同场景、同设置复测 SPARC 与命中率，比较练习前后。"
+      },
+      "near_transfer_retest": {
+        "section_ref": "prescription.sparc.smoothness.near-transfer-retest",
+        "claim_level": "community_practice",
+        "source_refs": ["src.my-kb.author"],
+        "text": "在另一个同类静态点击场景复测一次，检查迁移效果。"
+      },
+      "stop_adjust_rule": [
+        {
+          "section_ref": "prescription.sparc.smoothness.stop-adjust-rule.main",
+          "claim_level": "community_practice",
+          "source_refs": ["src.my-kb.author"],
+          "text": "复测无改善或命中率明显下降时停止，回到原练法并记录原因。"
+        }
+      ],
+      "scenario_prescription": {
+        "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+        "practice_condition": "在同等灵敏度与场景下进行匀减速练习，保持命中率先于速度。",
+        "review_after": "next matched retest",
+        "source_refs": ["src.my-kb.author"],
+        "claim_level": "community_practice"
+      },
+      "sources": ["src.my-kb.author"],
+      "supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ]
+    }
+  ]
+}

@@ -813,6 +813,53 @@ async def test_process_one_happy_path():
 
 
 @pytest.mark.asyncio
+async def test_process_one_marks_knowledge_fallback_official_on_broken_active_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """坏包激活状态下跑分析：结果 warnings 如实带出回退官方（规划 C3）。
+
+    knowledge_active 按调用时 DATA_ROOT 环境变量解析，因此把 env 指向装了
+    坏包的 tmp 目录即可模拟「激活包损坏 → 回退官方」，不碰 worker 其余
+    依赖（它们读 config.DATA_ROOT 模块属性）。
+    """
+    pack_id = "com.example.broken"
+    registry_path = tmp_path / "knowledge-packs" / pack_id / "knowledge" / "registry.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text("{ broken json", encoding="utf-8")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "knowledge.json").write_text(json.dumps({
+        "schema_version": "knowledge_config.v1",
+        "active": pack_id,
+        "installed": [{
+            "pack_id": pack_id, "pack_version": "1.0.0", "display_name": "坏包",
+            "author": "x", "installed_at": "2026-09-20T00:00:00Z", "has_mapping": False,
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+
+    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
+    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
+    with patch("webapp.backend.worker.run_analysis",
+               return_value=({"sparc": {"med": -7.5}},
+                             {"fps": 60, "flicks": [], "kill_frames": [],
+                              "corrective_frames": []})), \
+         patch("webapp.backend.worker.run_report", return_value=fake_report), \
+         patch("webapp.backend.worker._delete_video_safely"):
+        assert await worker.process_one() is True
+
+    session = await queue.get_session(sid)
+    assert session["status"] == "done"
+    warnings = session["result"]["warnings"]
+    fallback = [
+        item for item in warnings
+        if isinstance(item, dict) and item.get("code") == "knowledge_fallback_official"
+    ]
+    assert len(fallback) == 1
+    assert pack_id in str(fallback[0].get("message"))
+
+
+@pytest.mark.asyncio
 async def test_video_fallback_does_not_read_or_load_selected_provider():
     """Video fallback analysis never touches Provider setup (owned by Coach)."""
     sid = await queue.enqueue("owner-selected", "/tmp/v.mp4", "/tmp/s.csv")

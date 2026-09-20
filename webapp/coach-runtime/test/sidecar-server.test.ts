@@ -1,11 +1,120 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { ProviderAuthOperationManager, type PiAuthProvider } from "../src/provider-auth.ts";
 import { createAgentRun, stopAgentRun } from "../src/agent-runs.ts";
+import { loadKnowledgeRegistry } from "../src/knowledge-registry.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 import { waitForTask } from "../src/task-manager.ts";
+
+// Knowledge materialization binds to DATA_ROOT on first use (getDataRoot
+// caches); point it at a throwaway directory before any test can trigger it.
+const dataRoot = mkdtempSync(join(tmpdir(), "coach-sidecar-data-"));
+process.env.DATA_ROOT = dataRoot;
+
+function writeConfig(doc: unknown): void {
+  mkdirSync(join(dataRoot, "config"), { recursive: true });
+  writeFileSync(join(dataRoot, "config", "knowledge.json"), JSON.stringify(doc, null, 2), "utf-8");
+}
+
+function installPack(packId: string, registryRaw: unknown): void {
+  const registryPath = join(dataRoot, "knowledge-packs", packId, "knowledge", "registry.json");
+  mkdirSync(join(registryPath, ".."), { recursive: true });
+  writeFileSync(
+    registryPath,
+    typeof registryRaw === "string" ? registryRaw : JSON.stringify(registryRaw, null, 2),
+    "utf-8",
+  );
+}
+
+function packConfig(active: string): Record<string, unknown> {
+  return {
+    schema_version: "knowledge_config.v1",
+    active,
+    installed: [
+      {
+        pack_id: active,
+        pack_version: "1.0.0",
+        display_name: "示例知识包",
+        author: "Example community",
+        installed_at: "2026-09-20T00:00:00Z",
+        has_mapping: false,
+      },
+    ],
+  };
+}
+
+/** Minimal valid v3-shaped third-party pack registry (inline fixture). */
+function packRegistryFixture(registryVersion: string): Record<string, unknown> {
+  return {
+    schema_version: "coach_knowledge_registry.v3",
+    registry_version: registryVersion,
+    signal_aliases: {},
+    sources: [
+      {
+        source_ref: "community.example-guide",
+        source_level: "community_consensus",
+        title: "Example community guide",
+        author_or_org: "Example community",
+        published_at: null,
+        retrieved_at: "2026-09-20",
+        locator: "https://example.invalid/guide",
+        applicability: ["all_families"],
+        supports_sections: ["definition", "scope", "expected_direction", "mechanisms"],
+      },
+    ],
+    entries: [
+      {
+        entry_id: "community.example-note",
+        entry_version: 1,
+        status: "active",
+        category: "mechanism",
+        topics: ["example.topic"],
+        signals: ["sparc low"],
+        metric_refs: ["metric:sparc"],
+        family_scope: ["static_clicking"],
+        observation_refs: [],
+        quality_prerequisites: [],
+        definition: {
+          section_ref: "community.example-note.definition",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Example definition text.",
+        },
+        scope: {
+          section_ref: "community.example-note.scope",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Scope text.",
+        },
+        expected_direction: {
+          section_ref: "community.example-note.expected-direction",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "higher_better",
+        },
+        mechanisms: [
+          {
+            section_ref: "community.example-note.mechanisms",
+            claim_level: "community_consensus",
+            source_refs: ["community.example-guide"],
+            text: "Example mechanism.",
+          },
+        ],
+        alternative_explanations: ["Alternative explanation."],
+        forbidden_inferences: ["Forbidden inference."],
+        limitations: ["Example limitation."],
+        counterevidence: ["Example counterevidence."],
+        sources: ["community.example-guide"],
+        supported_uses: ["explanation_only"],
+      },
+    ],
+  };
+}
 
 function request(
   server: http.Server,
@@ -595,5 +704,158 @@ test("GET /v1/agent-runs/:ref/stream emits a done event for a stopped run and cl
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
+  }
+});
+
+test("POST /knowledge/validate accepts a minimal valid pack registry", async () => {
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(
+      server,
+      "POST",
+      "/knowledge/validate",
+      JSON.stringify(packRegistryFixture("com.example.good@1.0.0")),
+    );
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, { valid: true });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /knowledge/validate reports validator errors without failing the request", async () => {
+  const broken = packRegistryFixture("com.example.bad@1.0.0");
+  broken.schema_version = "coach_knowledge_registry.v9";
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/knowledge/validate", JSON.stringify(broken));
+    assert.equal(res.statusCode, 200);
+    const body = res.json as { valid: boolean; errors: string[] };
+    assert.equal(body.valid, false);
+    assert.ok(Array.isArray(body.errors) && body.errors.length > 0);
+    assert.ok(typeof body.errors[0] === "string" && body.errors[0].length > 0);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /knowledge/validate returns 400 for a non-JSON body", async () => {
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/knowledge/validate", "{not-json");
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("startSidecarServer materializes the active pack registry with its display name", async () => {
+  installPack("com.example.good", packRegistryFixture("com.example.good@1.0.0"));
+  writeConfig(packConfig("com.example.good"));
+  const { startSidecarServer } = await import("../src/sidecar-server.ts");
+  const server = startSidecarServer({ port: 0 });
+  try {
+    const index = JSON.parse(
+      readFileSync(join(dataRoot, "knowledge", "index.json"), "utf-8"),
+    ) as { registry_version: string; pack_display_name?: string };
+    assert.equal(index.registry_version, "com.example.good@1.0.0");
+    assert.equal(index.pack_display_name, "示例知识包");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("startSidecarServer falls back to the official registry when the active pack is broken", async () => {
+  installPack("com.example.broken", "{ broken json");
+  writeConfig(packConfig("com.example.broken"));
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+  const { startSidecarServer } = await import("../src/sidecar-server.ts");
+  const server = startSidecarServer({ port: 0 });
+  try {
+    const index = JSON.parse(
+      readFileSync(join(dataRoot, "knowledge", "index.json"), "utf-8"),
+    ) as { registry_version: string; pack_display_name?: string };
+    assert.equal(index.registry_version, loadKnowledgeRegistry().registry_version);
+    assert.ok(!("pack_display_name" in index));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    console.error = originalError;
+  }
+  assert.ok(
+    errors.some((line) => line.includes("com.example.broken")),
+    `bad-pack fallback must be logged with the pack id: ${JSON.stringify(errors)}`,
+  );
+});
+
+test("POST /knowledge/validate rejects a v1-shaped pack registry before dispatch", async () => {
+  const legacy = packRegistryFixture("com.example.legacy@1.0.0");
+  // v1 shape: no top-level sources, so the pack source ceiling would never
+  // apply — exactly why the route must gate packs to v3 before dispatch.
+  delete legacy.sources;
+  legacy.schema_version = "coach_knowledge_registry.v1";
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/knowledge/validate", JSON.stringify(legacy));
+    assert.equal(res.statusCode, 200);
+    const body = res.json as { valid: boolean; errors: string[] };
+    assert.equal(body.valid, false);
+    assert.match(body.errors[0], /coach_knowledge_registry\.v3/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("POST /knowledge/rematerialize re-materializes the active pack immediately", async () => {
+  installPack("com.example.good", packRegistryFixture("com.example.good@1.0.0"));
+  writeConfig(packConfig("com.example.good"));
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/knowledge/rematerialize", "{}");
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, { ok: true, mode: "pack", packId: "com.example.good" });
+    const index = JSON.parse(
+      readFileSync(join(dataRoot, "knowledge", "index.json"), "utf-8"),
+    ) as { registry_version: string };
+    assert.equal(index.registry_version, "com.example.good@1.0.0");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("POST /knowledge/rematerialize reports the official fallback for a broken pack", async () => {
+  installPack("com.example.broken", "{ broken json");
+  writeConfig(packConfig("com.example.broken"));
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/knowledge/rematerialize", "{}");
+    assert.equal(res.statusCode, 200);
+    const body = res.json as { ok: boolean; mode: string; fallbackReason?: string };
+    assert.equal(body.ok, true);
+    assert.equal(body.mode, "official");
+    assert.ok(typeof body.fallbackReason === "string" && body.fallbackReason.length > 0);
+    const index = JSON.parse(
+      readFileSync(join(dataRoot, "knowledge", "index.json"), "utf-8"),
+    ) as { registry_version: string };
+    assert.equal(index.registry_version, loadKnowledgeRegistry().registry_version);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    console.error = originalError;
   }
 });

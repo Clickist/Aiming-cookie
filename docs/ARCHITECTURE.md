@@ -283,15 +283,19 @@ Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted �
 
 ### 4.5 Coach Knowledge Registry
 
-- Coach 知识是随产品版本发布、受 Git review 的只读产品资产，不属于任何 owner、Analysis、对话或 Provider；
-- 一份 versioned Registry 是 Python 与 Pi TypeScript runtime 的 canonical knowledge source，禁止在两种语言中各自维护正文副本；
+- Coach 官方知识库是随产品版本发布、受 Git review 的只读产品资产，也是默认常驻档，不属于任何 owner、Analysis、对话或 Provider；用户可经本地导入第三方知识包切换知识档（见下），官方档的发布与 review 方式不因此改变；
+- 同一时刻只有一份 versioned Registry（官方档或当前激活的知识包）是 Python 与 Pi TypeScript runtime 的 canonical knowledge source，禁止在两种语言中各自维护正文副本；
 - Markdown 研究、理论、社区和处方材料只作为来源证据与编辑审查输入，不在运行时由模型直接读取或整份注入上下文；
 - Analysis 结果 JSON 只携带实际使用的 registry/entry/version/source refs，不复制 Registry 正文，也不与静态 asset 双写；
 - metric 定义、运动学机制、诊断适用范围、学术研究、社区 cue、处方/verification、Tracking 和身体/张力候选假设均可进入 Registry，但必须保留 source level、最高 claim、limitations 与 counterevidence；
 - 身体、张力、握持、灵敏度和硬件内容在没有直接传感器或可比实验时只能作为 `experimental` 候选假设，不得生成 measured/deterministic root cause；
 - Registry capability 采用严格递增前缀：`explanation_only` → `diagnosis_support` → `candidate_experiment` → `scenario_prescription`。消费者必须显式请求所需 capability；Provider 可自然组织表达，但不得把低权限 entry 提升为诊断、实验或处方；
 - `explanation_only` 不携带 cue、剂量或复测；`candidate_experiment` 必须携带可逆 cue、dose guardrail、matched retest 与 stop rule；只有 `scenario_prescription` 可以绑定 exact local scenario 和 near-transfer retest；
-- Registry 版本、schema 与 entry ref 必须显式校验并 fail closed；entry 正文、字段或 capability 语义变化必须提升 `entry_version`，不得复用已有 `knowledge:<id>@<version>`；历史 v1/v2/v3 按原 version 精确可读，新版本只能通过同一 loader/query API 发布，禁止另建 community store、resolver 或 Provider authored knowledge state；
+- Registry 版本、schema 与 entry ref 必须显式校验并 fail closed；entry 正文、字段或 capability 语义变化必须提升 `entry_version`，不得复用已有 `knowledge:<id>@<version>`；历史 v1/v2/v3 按原 version 精确可读，新版本只能通过同一 loader/query API 发布。在线知识 store / 自动分发、resolver 和 Provider authored knowledge state 仍被禁止——第三方知识包只经用户本地导入，不进任何在线目录或静默分发（见下）；
+- 第三方知识包与官方档构成"档"切换：同一时刻只有一个 active 知识档，激活即整库替换——知识物化产物按该包的 registry（及其 mapping，若有）整目录重建，不做叠加、合并或按条目混装；激活配置缺失、损坏或指向无法通过校验的坏包时 fail closed 回退官方档，并留下用户可见的回退记录。包格式、manifest 与导入校验的局部合同由 [`sdk/knowledge-pack/SPEC.md`](../sdk/knowledge-pack/SPEC.md) 冻结；
+- 场景 registry（`knowledge/scenarios/`，测量合同：hash → allowed_analyzers / allowed_metric_families）不随知识包替换，始终官方；第三方包的 `scenario_prescription` 条目只能引用官方场景 registry 已审核的 scenario ref，不得自造场景档案；
+- 官方诊断规则以 `knowledge/mapping/` 下的 versioned mapping 数据 + 确定性引擎求值承载；迁移前的内置 Python 规则冻结为 fallback：只保证 mapping 缺失或损坏时分析闭环不中断，不再演进，阈值与规则调整只改官方 mapping 数据；
+- mapping 词汇表冻结承诺分两档：`signals` / `metric_keys` / `observation_refs` 是对第三方作者的硬合同——只加不改不删，改名或删除即 breaking；`limitation_tokens` / `row_fields` / `row_classifications` / `row_filters` 为产品拥有、作者只引用，产品侧改名或删除按 breaking 变更显式处理，不静默漂移；
 - 新 `analysis_result.v2` issue 可携带 `observation_ref` 与成对的 `knowledge_registry_version` / `knowledge_entry_refs`。producer 只能复用 Registry 已声明的 observation ref；没有精确覆盖的本地 observation 仍可展示，但不获得 Coach 教学或 Training Plan 写入授权；
 - Coach 优先按 exact version、单一 entry ref 与 observation ref 解析，显式 `metric:*` 仅作一致性检查。未知、失活或不匹配的引用 fail closed；缺少 refs 的历史 signal 仅能作旧数据显示，不能由此编译新的 prepared Training Plan item；
 - Analysis 不复制 Registry 的 definition/cue/dose/retest 正文。Provider 在取得通过 capability 的 Registry 内容后可以自然改写表达，但不得提升 capability 或生成新的 knowledge ref；

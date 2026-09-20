@@ -139,6 +139,11 @@ const SOURCE_FIELDS_V2 = new Set([
   "source_ref", "source_level", "title", "author_or_org", "published_at",
   "retrieved_at", "locator", "applicability", "supports_sections",
 ]);
+// Parity with Python `_normalize_source_v2`: required keys must be present,
+// `published_at` may be omitted, and no unknown keys are allowed.
+const SOURCE_REQUIRED_FIELDS_V2 = new Set(
+  [...SOURCE_FIELDS_V2].filter((key) => key !== "published_at"),
+);
 const SECTION_FIELDS_V2 = new Set(["section_ref", "claim_level", "source_refs", "text"]);
 const CATEGORIES_V2 = new Set([
   "observation_definition", "mechanism", "training_cue",
@@ -364,7 +369,9 @@ function validateKnowledgeRegistryV1(raw: unknown): KnowledgeRegistry {
 }
 
 function validateSourceV2(raw: unknown, index: number): KnowledgeSourceV2 {
-  if (!isRecord(raw) || !keysEqual(raw, SOURCE_FIELDS_V2)) {
+  if (!isRecord(raw)
+    || [...SOURCE_REQUIRED_FIELDS_V2].some((key) => !(key in raw))
+    || Object.keys(raw).some((key) => !SOURCE_FIELDS_V2.has(key))) {
     throw new KnowledgeRegistryError(`source[${index}] fields are invalid`);
   }
   const sourceRef = text(raw.source_ref, `source[${index}].source_ref`, 160);
@@ -372,7 +379,9 @@ function validateSourceV2(raw: unknown, index: number): KnowledgeSourceV2 {
   if (typeof raw.source_level !== "string" || !SOURCE_LEVELS_V2.has(raw.source_level)) {
     throw new KnowledgeRegistryError("source_level is invalid");
   }
-  const publishedAt = raw.published_at === null ? null : text(raw.published_at, "published_at", 32);
+  const publishedAt = raw.published_at === undefined || raw.published_at === null
+    ? null
+    : text(raw.published_at, "published_at", 32);
   const retrievedAt = text(raw.retrieved_at, "retrieved_at", 32);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(retrievedAt)) throw new KnowledgeRegistryError("retrieved_at is invalid");
   const applicability = stringList(raw.applicability, "applicability", false);
@@ -826,4 +835,24 @@ export function resolveKnowledgeEntry(registryVersion: string, reference: string
   const entry = loadKnowledgeRegistry(registryVersion).entries.find((item) => entryRef(item) === reference);
   if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
   return structuredClone(entry);
+}
+
+// Third-party knowledge packs load from an arbitrary path (kb-sdk plan C4):
+// the registry goes through the same validator and size ceiling as the
+// packaged registries, cached under a key that can never collide with a
+// registry version. Callers own the fallback semantics (knowledge-active).
+export function loadKnowledgeRegistryFromPath(path: string): KnowledgeRegistry {
+  const cacheKey = `path:${path}`;
+  const existing = cached.get(cacheKey);
+  if (existing) return structuredClone(existing);
+  const raw = readFileSync(path);
+  if (raw.byteLength > MAX_REGISTRY_BYTES) throw new KnowledgeRegistryError("registry exceeds size limit");
+  try {
+    const loaded = validateKnowledgeRegistry(JSON.parse(raw.toString("utf8")));
+    cached.set(cacheKey, loaded);
+    return structuredClone(loaded);
+  } catch (error) {
+    if (error instanceof KnowledgeRegistryError) throw error;
+    throw new KnowledgeRegistryError("registry is invalid JSON");
+  }
 }

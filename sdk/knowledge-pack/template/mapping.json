@@ -1,0 +1,49 @@
+{
+  "schema_version": "coach_mapping.v1",
+  "static_clicking": [
+    {
+      "signal": "sparc low",
+      "severity": "fix",
+      "text": "减速段平滑度 SPARC={sparc_med:.1f}：速度轮廓中快速波动偏多。示例阈值，请按你的知识体系调整并注明依据。",
+      "plain_language_meaning": "减速阶段的速度轮廓含较多快速波动",
+      "expected_result": "sparc ↑",
+      "claim_level": "experimental",
+      "metric_refs": ["sparc"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "observation_ref": "metric.terminal_control",
+      "conditions": [
+        {"input": "self_summary", "metric": "sparc", "op": "<", "value": -5.0}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "clean lines：让减速段速度连续下降，避免突然硬停",
+          "cue": "把减速段当一次独立动作完成",
+          "purpose": "减少减速段的速度波动",
+          "target_metrics": ["sparc"],
+          "expected_direction": ["sparc 提高"],
+          "retest_after": "相同场景、相同设置下复测",
+          "stop_or_adjust_rule": "SPARC 无改善或命中率明显下降则停止并恢复原练法",
+          "source_level": "community_consensus"
+        }
+      ]
+    }
+  ],
+  "families": {
+    "continuous_tracking": [
+      {
+        "signal": "sparc low",
+        "metric": "continuous_tracking.sparc",
+        "row_field": "sparc",
+        "direction": "lower",
+        "knowledge_metric_ref": "metric:sparc",
+        "expected_entry_ref": "knowledge:prescription.sparc.smoothness@1",
+        "observation_ref": "metric.smoothness"
+      }
+    ],
+    "dynamic_clicking": [],
+    "target_switching": []
+  },
+  "archetypes": [],
+  "root_causes": {}
+}

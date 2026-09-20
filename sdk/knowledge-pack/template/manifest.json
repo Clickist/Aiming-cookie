@@ -1,0 +1,13 @@
+{
+  "schema_version": "coach_knowledge_pack.v1",
+  "pack_id": "com.example.my-kb",
+  "display_name": "我的瞄准知识库（SDK 模板）",
+  "author": "你的名字",
+  "homepage": "https://example.com/my-kb",
+  "pack_version": "1.0.0",
+  "license": "CC-BY-4.0",
+  "ac_compat": {
+    "knowledge_schema": ["coach_knowledge_registry.v3"],
+    "mapping_schema": ["coach_mapping.v1"]
+  }
+}

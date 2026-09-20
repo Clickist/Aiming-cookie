@@ -58,6 +58,7 @@
 - [`frontend-parity-research-digests.md`](frontend-parity-research-digests.md)：十二路调研合订摘要（对话流/Provider接入/侧栏/视频面/训练数据/任务通知/键盘面板/版式诊断/视觉工艺/富文本排印/输入框编排/安装包品牌化）；只供引用，不构成合同；
 - [`quote-feature-research.md`](quote-feature-research.md)：Coach 引用回复（划选引用到输入框）实现调研（2026-08-27 草稿，供拍板，非实施合同；功能本体此前已上线，v0.1.12 为其浮层偏移修复）；
 - [`pro-benchmark-smoke-plan.md`](pro-benchmark-smoke-plan.md)：高手基准 CV 冒烟验证方案（2026-08-27 落库，状态待执行：立项「高手基准离线提取工具」前用真实高手录像量化免校准 CV 管线精度边界）；
+- [`../sdk/knowledge-pack/SPEC.md`](../sdk/knowledge-pack/SPEC.md)：第三方知识包 SDK 的交付入口（SPEC：包格式、导入校验、档切换语义；含模板与校验器 CLI 说明）；知识包的档切换、整库替换与词汇表冻结等稳定合同见 [`ARCHITECTURE.md`](ARCHITECTURE.md) §4.5，产品语义见 [`PRD.md`](PRD.md) 决策日志 2026-09-20 条；
 - [`../affiliate-worker/README.md`](../affiliate-worker/README.md)：透明联盟转链 Worker（Cloudflare Workers，部署于 `affiliate.gearclickist.com`，淘宝联盟/拼多多转链，密钥只存 Worker Secrets）的 API、部署与冒烟入口；被 Coach `purchase_links.lookup` 经 `affiliate-native.ts` 消费；
 - `superpowers/assessments/`：历史评估证据与决策输入，仅供追溯。
 

@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   REGISTRY_SCHEMA_VERSION_V1,
+  KnowledgeRegistryError,
   activeScenarioProfileRefs,
   entryRef,
   loadKnowledgeRegistry,
+  loadKnowledgeRegistryFromPath,
   resolveKnowledgeEntry,
   validateKnowledgeRegistry,
 } from "../src/knowledge-registry.ts";
@@ -560,12 +564,12 @@ test("v11 closes the signal gaps when loaded as history", () => {
 
 test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () => {
   const registry = loadKnowledgeRegistry();
-  assert.equal(registry.registry_version, "2026-09-12.v12");
+  assert.equal(registry.registry_version, "2026-09-20.v13");
   assert.equal(registry.schema_version, "coach_knowledge_registry.v3");
-  assert.equal(registry.entries.length, 111);
-  assert.equal(registry.sources!.length, 122);
+  assert.equal(registry.entries.length, 118);
+  assert.equal(registry.sources!.length, 135);
 
-  const previous = loadKnowledgeRegistry("2026-09-10.v11");
+  const previous = loadKnowledgeRegistry("2026-09-12.v12");
   assert.deepEqual(
     registry.entries.slice(0, previous.entries.length),
     previous.entries,
@@ -606,4 +610,147 @@ test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () 
 
   // v11 stays loadable as history after v12 is packaged.
   assert.equal(loadKnowledgeRegistry("2026-09-10.v11").registry_version, "2026-09-10.v11");
+});
+
+/** Minimal valid v3-shaped third-party pack registry (inline fixture). */
+function packRegistryFixture(registryVersion: string): Record<string, unknown> {
+  return {
+    schema_version: "coach_knowledge_registry.v3",
+    registry_version: registryVersion,
+    signal_aliases: {},
+    sources: [
+      {
+        source_ref: "community.example-guide",
+        source_level: "community_consensus",
+        title: "Example community guide",
+        author_or_org: "Example community",
+        published_at: null,
+        retrieved_at: "2026-09-20",
+        locator: "https://example.invalid/guide",
+        applicability: ["all_families"],
+        supports_sections: ["definition", "scope", "expected_direction", "mechanisms"],
+      },
+    ],
+    entries: [
+      {
+        entry_id: "community.example-note",
+        entry_version: 1,
+        status: "active",
+        category: "mechanism",
+        topics: ["example.topic"],
+        signals: ["sparc low"],
+        metric_refs: ["metric:sparc"],
+        family_scope: ["static_clicking"],
+        observation_refs: [],
+        quality_prerequisites: [],
+        definition: {
+          section_ref: "community.example-note.definition",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Example definition text.",
+        },
+        scope: {
+          section_ref: "community.example-note.scope",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Scope text.",
+        },
+        expected_direction: {
+          section_ref: "community.example-note.expected-direction",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "higher_better",
+        },
+        mechanisms: [
+          {
+            section_ref: "community.example-note.mechanisms",
+            claim_level: "community_consensus",
+            source_refs: ["community.example-guide"],
+            text: "Example mechanism.",
+          },
+        ],
+        alternative_explanations: ["Alternative explanation."],
+        forbidden_inferences: ["Forbidden inference."],
+        limitations: ["Example limitation."],
+        counterevidence: ["Example counterevidence."],
+        sources: ["community.example-guide"],
+        supported_uses: ["explanation_only"],
+      },
+    ],
+  };
+}
+
+test("loadKnowledgeRegistryFromPath validates and caches a third-party pack registry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "coach-pack-registry-"));
+  const registryPath = join(dir, "registry.json");
+  writeFileSync(registryPath, JSON.stringify(packRegistryFixture("com.example.good@1.0.0")), "utf-8");
+
+  const loaded = loadKnowledgeRegistryFromPath(registryPath);
+  assert.equal(loaded.schema_version, "coach_knowledge_registry.v3");
+  assert.equal(loaded.registry_version, "com.example.good@1.0.0");
+  assert.equal(loaded.entries.length, 1);
+
+  // The returned value is a detached clone, and the path-keyed cache wins over
+  // later file rewrites: mutating the clone or the file keeps loads stable.
+  loaded.entries[0].status = "retired";
+  writeFileSync(registryPath, JSON.stringify(packRegistryFixture("com.example.good@2.0.0")), "utf-8");
+  const again = loadKnowledgeRegistryFromPath(registryPath);
+  assert.equal(again.registry_version, "com.example.good@1.0.0");
+  assert.equal(again.entries[0].status, "active");
+});
+
+test("loadKnowledgeRegistryFromPath rejects bad paths and invalid registries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "coach-pack-registry-"));
+  assert.throws(
+    () => loadKnowledgeRegistryFromPath(join(dir, "missing.json")),
+    /no such file|ENOENT/,
+  );
+
+  const invalidJson = join(dir, "invalid.json");
+  writeFileSync(invalidJson, "{ not json", "utf-8");
+  assert.throws(() => loadKnowledgeRegistryFromPath(invalidJson), KnowledgeRegistryError);
+  assert.throws(() => loadKnowledgeRegistryFromPath(invalidJson), /registry is invalid JSON/);
+
+  const badSchema = join(dir, "bad-schema.json");
+  const broken = packRegistryFixture("com.example.bad@1.0.0");
+  broken.schema_version = "coach_knowledge_registry.v9";
+  writeFileSync(badSchema, JSON.stringify(broken), "utf-8");
+  assert.throws(() => loadKnowledgeRegistryFromPath(badSchema), /schema_version is invalid/);
+});
+
+test("source keys follow the Python contract: published_at optional, unknown keys rejected", () => {
+  // 缺 published_at 的合法 source 必须过校验（与 _normalize_source_v2 对齐），
+  // 归一化输出补回 published_at: null。
+  const withoutPublishedAt = structuredClone(loadRawV4());
+  if (!withoutPublishedAt.sources?.[0]) throw new Error("missing source template");
+  for (const source of withoutPublishedAt.sources) {
+    delete (source as Record<string, unknown>).published_at;
+  }
+  const validated = validateKnowledgeRegistry(withoutPublishedAt);
+  assert.ok((validated.sources ?? []).length > 0);
+  for (const source of validated.sources ?? []) assert.equal(source.published_at, null);
+
+  // 未知键照旧拒绝（required ⊆ keys ⊆ required|{published_at}）。
+  const unknownKey = structuredClone(loadRawV4());
+  if (!unknownKey.sources?.[0]) throw new Error("missing source template");
+  (unknownKey.sources[0] as Record<string, unknown>).publication_note = "extra key";
+  assert.throws(() => validateKnowledgeRegistry(unknownKey), /source\[0\] fields are invalid/);
+
+  const missingRequired = structuredClone(loadRawV4());
+  if (!missingRequired.sources?.[0]) throw new Error("missing source template");
+  delete (missingRequired.sources[0] as Record<string, unknown>).retrieved_at;
+  assert.throws(() => validateKnowledgeRegistry(missingRequired), /source\[0\] fields are invalid/);
+});
+
+test("the shipped SDK template pack registry validates as-is (kb parity P1 repro)", () => {
+  const template = JSON.parse(
+    readFileSync(
+      new URL("../../../sdk/knowledge-pack/template/knowledge/registry.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+  const validated = validateKnowledgeRegistry(template);
+  assert.equal(validated.schema_version, "coach_knowledge_registry.v3");
+  assert.equal(validated.registry_version, "com.example.my-kb@1.0.0");
+  assert.ok((validated.sources ?? []).every((source) => source.published_at === null));
 });
