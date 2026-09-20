@@ -453,3 +453,79 @@ test("teaching session phase transitions follow the guided loop", () => {
   assert.ok(isTeachingPhaseTransitionAllowed("stopped_for_discomfort", "intake"));
   assert.ok(!isTeachingPhaseTransitionAllowed("stopped_for_discomfort", "practice_ready"));
 });
+
+// ── next_recommendation 边界纪律短语：双语期望集 ─────────────────────────
+//
+// 教练回复语言跟随用户消息语言（2026-09 语言指令块拍板）：用例按
+// 「输入消息语言 → 期望回复语言」组织——中文消息 → 中文回复过中文校验，
+// 英文消息 → 英文回复过英文校验。校验侧是双语 OR 集：每个概念任一语言
+// 命中即算覆盖，英文回复不再因只认中文子串被静默拒掉。
+
+function reviseContractWithRecommendation(message: string): TeachingTurnContract {
+  return contract({
+    phase: "revise",
+    question_kind: "none",
+    question: null,
+    active_item_ref: "plan-item:guided-loop",
+    retest: {
+      intent: "immediate_matched",
+      comparability_required: true,
+      comparability: "comparable",
+      revision_decision: "retain",
+    },
+    next_recommendation: {
+      scenario_name: "Tracking GridShot Small",
+      scenario_profile_ref: "scenario:tracking.gridshot-small@1",
+      message,
+    },
+  });
+}
+
+test("zh user message → zh reply passes the discipline validation (legacy behavior)", () => {
+  const parsed = parseTeachingTurnContract(reviseContractWithRecommendation(
+    "下一步用 Tracking GridShot Small 做一次更难的压力测试，作为新的基线；这个结果不证明迁移已经发生。",
+  ));
+  assert.equal(parsed.next_recommendation?.scenario_name, "Tracking GridShot Small");
+});
+
+test("en user message → en reply passes the discipline validation (previously rejected)", () => {
+  for (const message of [
+    "Next: a harder stress test on Tracking GridShot Small as the new baseline; one result does not prove transfer.",
+    "Try a harder stress-test on Tracking GridShot Small for a new baseline — this is not proof of transfer.",
+    "Use Tracking GridShot Small as a new baseline stress test; a single pass doesn't prove transfer.",
+  ]) {
+    const parsed = parseTeachingTurnContract(reviseContractWithRecommendation(message));
+    assert.equal(parsed.next_recommendation?.message, message);
+  }
+});
+
+test("a discipline concept missing in both languages still fails validation", () => {
+  // 中文回复缺「压力测试」概念（英文短语也没有）→ 拒绝。
+  assert.throws(
+    () => parseTeachingTurnContract(reviseContractWithRecommendation(
+      "下一步用 Tracking GridShot Small 建立新的基线；这个结果不证明迁移已经发生。",
+    )),
+    /next_recommendation message/i,
+  );
+  // 英文回复缺「新基线」概念 → 拒绝。
+  assert.throws(
+    () => parseTeachingTurnContract(reviseContractWithRecommendation(
+      "Next: a harder stress test on Tracking GridShot Small; one result does not prove transfer.",
+    )),
+    /next_recommendation message/i,
+  );
+  // 英文回复缺「不证明迁移」概念 → 拒绝。
+  assert.throws(
+    () => parseTeachingTurnContract(reviseContractWithRecommendation(
+      "Next: a harder stress test on Tracking GridShot Small as the new baseline for progress.",
+    )),
+    /next_recommendation message/i,
+  );
+  // 场景名缺失仍拒绝（与语言无关的结构判据）。
+  assert.throws(
+    () => parseTeachingTurnContract(reviseContractWithRecommendation(
+      "Next: a harder stress test as the new baseline; one result does not prove transfer.",
+    )),
+    /next_recommendation message/i,
+  );
+});

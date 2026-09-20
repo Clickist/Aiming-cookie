@@ -81,3 +81,45 @@ test("maxMs drops anchors beyond the video duration once metadata is known", () 
   // 时长未知（undefined）时不丢锚点，交给播放层 clamp。
   assert.equal(projectCoachTimepoints(["@51.5s 末尾"]).length, 1);
 });
+
+// ── 英文消息分支（教练语言跟随用户消息语言；含汉字消息走中文提取，行为
+// 逐字节不变——上面的既有中文断言即 zh 回归面）────────────────────────────
+
+test("english replies label chips with the nearest English phrase before the @time", () => {
+  const points = projectCoachTimepoints([
+    "Watch @2.3s, the crosshair drifts past the target before the click.",
+    "the crosshair settles late @8.4s",
+    "watch the flick land @12.6s cleanly",
+  ]);
+  assert.equal(points[0]?.label, "Watch");
+  // 前置词组超上限时按词边界截尾，截点在词中间则丢掉被截半的词。
+  assert.equal(points[1]?.label, "settles late");
+  assert.equal(points[1]?.label.length, 12);
+  assert.equal(points[2]?.label, "flick land");
+});
+
+test("english labels fall back to the phrase after the @time, then to the english fallback", () => {
+  // 前置无英文词组（裸 @ 开头）→ 取 @time 后的英文词组。
+  const after = projectCoachTimepoints(["@2.1s crosshair overcorrection"]);
+  assert.equal(after[0]?.label, "crosshair");
+  // @time 后紧跟标点再接词组：跳过标点取词组；首词超上限时整词保留（不截半词）。
+  const punctuated = projectCoachTimepoints(["@4.0s — micro-correction burst"]);
+  assert.equal(punctuated[0]?.label, "micro-correction");
+  // 前后都无可用词组（有字母但凑不出 ≥4 字符词组）→ 英文兜底标签。
+  const bare = projectCoachTimepoints(["go @3.4s"]);
+  assert.equal(bare[0]?.label, "replay");
+  // 纯符号/数字消息声明不了语言 → 维持默认中文兜底（既有行为）。
+  const symbolOnly = projectCoachTimepoints(["@3.4s。"]);
+  assert.equal(symbolOnly[0]?.label, "回看点");
+});
+
+test("mixed-language sessions pick the branch per message, not per session", () => {
+  const points = projectCoachTimepoints([
+    "回看 @4.8s，看那一甩。",
+    "watch the flick land @12.6s cleanly",
+  ]);
+  assert.deepEqual(
+    points.map((point) => point.label),
+    ["看那一甩", "flick land"],
+  );
+});

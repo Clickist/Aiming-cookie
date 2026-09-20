@@ -135,6 +135,26 @@ const PREPARED_DIRECTIONS = new Set<TeachingPreparedPlanItem["expected_direction
   "lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only",
 ]);
 const NEXT_RECOMMENDATION_FIELDS = ["scenario_name", "scenario_profile_ref", "message"] as const;
+
+/**
+ * next_recommendation.message 的边界纪律短语：这条推荐只是更难的压力测试和
+ * 新的基线、不证明迁移成功。双语期望集（2026-09 拍板教练语言跟随用户消息
+ * 语言）：中文回复命中中文短语、英文回复命中英文短语，每个概念任一语言命中
+ * 即算覆盖。此前只认中文子串，英文教学回合会在 parse 阶段静默失效——这是
+ * B5' 双语化的核心修复点。英文措辞与 turn.ts 语言指令块口径一致。
+ */
+const NEXT_RECOMMENDATION_DISCIPLINE: ReadonlyArray<{ zh: string; en: RegExp }> = [
+  { zh: "压力测试", en: /stress[- ]?tests?/i },
+  { zh: "新的基线", en: /new baselines?/i },
+  {
+    zh: "不证明迁移",
+    en: /(?:does not|doesn't|not)\s+(?:a\s+)?(?:prove|proof of)\s+transfers?/i,
+  },
+];
+
+function messageCarriesRecommendationDiscipline(message: string): boolean {
+  return NEXT_RECOMMENDATION_DISCIPLINE.every(({ zh, en }) => message.includes(zh) || en.test(message));
+}
 const PATH_OR_URL = /(?:https?:\/\/|file:(?:\/\/)?|(?:^|[\s"'`([{=,:])[A-Za-z]:[\\/]|\\\\)/i;
 const UNSAFE_CONTRACT_TEXT = /\b(?:api[_-]?key|authorization|credential|token|raw_trace|payload)\b/i;
 const INTERNAL_VOCABULARY = /\b(?:TeachingSession|TeachingTurnContract|session_ref|session_version|active_item_ref|question_kind|allowed_command|confirmation_intent|schema_version|phase|coach_retest_outcome(?:\.v\d+)?)\b|\b(?:table|field|cursor)\b/i;
@@ -292,8 +312,7 @@ function parseNextRecommendation(value: unknown): TeachingNextRecommendation | n
     throw new Error("next_recommendation.scenario_profile_ref is invalid");
   }
   const message = requiredText(value.message, "next_recommendation.message");
-  if (!message.includes(scenarioName) || !message.includes("压力测试") ||
-      !message.includes("新的基线") || !message.includes("不证明迁移")) {
+  if (!message.includes(scenarioName) || !messageCarriesRecommendationDiscipline(message)) {
     throw new Error("next_recommendation message is invalid");
   }
   return { scenario_name: scenarioName, scenario_profile_ref: scenarioProfileRef, message };

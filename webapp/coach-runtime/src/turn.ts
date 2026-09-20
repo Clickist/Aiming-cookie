@@ -48,7 +48,8 @@ type ParsedRequest = {
       但用户界面不再出现机器码（0911 点点）。 */
   context_refs?: string[];
   /** B0 locale 管道：请求级展示语言（X-Locale 头经 agent run 透传）。
-      本波只解析不消费——B5 用它选 system prompt / skills 的 locale 变体。 */
+      教练语言不消费它（2026-09 拍板跟随用户消息语言，见 LANGUAGE_FOLLOW_POLICY）；
+      保留给诊断文案波（B3）消费。 */
   locale?: "zh-CN" | "en-US";
   model: CoachRuntimeProviderProfile;
   tool_bridge?: import("./contracts.ts").CoachToolBridge;
@@ -306,7 +307,7 @@ function parseRequest(raw: unknown): ParsedRequest {
         (ref): ref is string => typeof ref === "string" && /^analysis:[1-9][0-9]*$/.test(ref),
       ).slice(0, 10))
     : undefined;
-  // B0 locale 管道：非法值静默回落缺省（undefined → B5 消费侧按 zh-CN 处理）。
+  // B0 locale 管道：非法值静默回落缺省（教练语言不消费，仅透传给 B3 诊断文案）。
   const locale = raw.locale === "en-US" || raw.locale === "zh-CN" ? raw.locale : undefined;
 
   return {
@@ -648,9 +649,25 @@ const MANDATORY_POLICY =
 export const TIME_LINK_DISCIPLINE_POLICY =
   "\n\n回看引导纪律：@X.Xs 时间标记只有在对话确有主题分析挂载时才是可点击的（用户引用了 analysis:N、或本次讨论中创建过分析、打开过它的视频证据）。纯总结、跨局历史对比这类没有主题分析挂载的对话里，不要输出 @X.Xs 回看引导；需要提具体时刻就改用口述时间点（例如「51 秒处」），不要硬造可点击的标记。";
 
+// 回复语言指令块（2026-09-20 站长拍板：单套中文提示词 + 语言指令块，教练
+// 语言跟随当条用户消息的主要语言；不按 locale 分支——X-Locale 只服务诊断
+// 文案波，教练语言不消费它）。恒定注入所有回合：中文用户零行为差（提示词
+// 正文本来就是中文回复口径），非中文用户由本节覆盖正文里的「用中文」表述。
+// 术语对照是 coach-system.md「术语与话术」中文术语表的反向映射；两侧新增
+// 术语时必须同步改。
+export const LANGUAGE_FOLLOW_POLICY = `
+
+## 回复语言（本节优先级高于提示词其余部分的一切语言表述）
+
+- 先判断当前这条用户消息的主要语言，再用同一种语言回复；整条回复只用这一种语言，不要中英混排。用户用英文提问就全程用英文回复，用中文提问就全程用中文回复。
+- 提示词其余部分所有「用中文回复」「用中文口语说话」「把英文术语换算成中文说法」这类语言要求，只在用户消息是中文时适用；用户消息是其他语言时一律以本节为准。
+- 用英文回复时，术语直接用瞄准社群的标准英文词（与中文说法一一对应）：甩枪=flick、停稳=settle、刹住（急停语境）=stop the mouse dead、跟枪=tracking、横移=strafe、冲过头/拉过头=overshoot、刻意拉少一点=underaim、转火=target switching、目标阅读=target reading、重新跟住=reacquisition、复位（鼠标复位）=reset、预判=prediction、小修正=micro-correction、减速段=decel、动作分段=submovement、击杀耗时=TTK、复测=retest、低敏/高敏=low sens/high sens、趴握/抓握/指握=palm/claw/fingertip grip、大臂/手腕=arm/wrist aiming。研究术语同样不许照搬，必须讲成大白话，需要精确时括号带原词（开环=open-loop、闭环=closed-loop、弹道段=ballistic phase、手动间歇控制=intermittent manual control）；「cue／教学提示」这类内部词汇照旧不出现在对话里；SPARC、cm/360 等缩写照旧保留并首次出现时白话解释。
+- 除语言选择本身外，提示词的全部纪律与格式要求在任何输出语言下同样遵守、一字不降：@X.Xs 回看标记的用法与限制、来源引用的说法、富文本白名单规则、数值与事实不可改写、教学闭环话术纪律。
+- 知识库（knowledge/ 目录）和分析文档（analyses/）的内容大部分是中文的：照常检索、照常读中文条目与中文文档，讲解时用用户消息的语言转述其中的口径；不要因为条目是中文就拒答，也不要在非中文回复里整段照贴中文原文。`;
+
 /** Compose the full system prompt from the base prompt and the skills block. */
 export function assembleSystemPrompt(basePrompt: string, skillsBlock: string): string {
-  return `${basePrompt}\n\n${skillsBlock}\n\n${MANDATORY_POLICY}${TIME_LINK_DISCIPLINE_POLICY}`;
+  return `${basePrompt}\n\n${skillsBlock}\n\n${MANDATORY_POLICY}${TIME_LINK_DISCIPLINE_POLICY}${LANGUAGE_FOLLOW_POLICY}`;
 }
 
 // ── Error helpers ────────────────────────────────────────────────────────

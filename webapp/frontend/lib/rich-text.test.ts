@@ -217,6 +217,16 @@ test("GFM tables parse header, alignment row, numeric columns and escaped pipes"
   assert.equal(flat(t.rows[0][2]), "用 | 分隔");
 });
 
+test("english unit cells (min/sec/m/ms and plurals) count as numeric columns", () => {
+  // 教练语言跟随用户消息语言后的英文表格：数值列判定不因单位是英文而失效。
+  const nodes = parseRichText(
+    "| Drill | Duration | Time under target |\n| --- | ---: | --- |\n| Flick warmup | 5 min | 1.8s |\n| Tracking block | 10 mins | 12 sec |",
+  );
+  const t = nodes[0];
+  assert.ok(t.kind === "table");
+  assert.deepEqual(t.numericCols, [false, true, true]);
+});
+
 test("streaming partial tables render what arrived, one piece at a time", () => {
   // 只有表头行（分隔行未到）：按段落保守渲染，不猜列结构也不吞字
   const head = parseRichText("| 场景 | 命中率 |")[0];
