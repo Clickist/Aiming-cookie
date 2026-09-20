@@ -44,10 +44,7 @@
       --fg:      oklch(23.5% 0.008 75);   /* #24211d on-background */
       --muted:   oklch(47.5% 0.013 80);   /* #625c54 on-surface-variant */
       --border:  oklch(82.5% 0.014 85);   /* #cec6bc outline-variant */
-      --accent:  oklch(53% 0.175 43);     /* #c83d00 primary — 稀缺使用 */
-      /* Solid primary buttons: same deep orange + white text in both themes
-         (the dark theme's light orange #ff8a5c can't hold white — 2.3:1) */
-      --btn-solid: #c94608;
+      --accent:  #c83d00;                 /* primary — 与页内 mock / 客户端同一色值（原写法 oklch(53% 0.175 43) 有轻微偏差，按钮与 mock 对不齐） */
 
       /* derived — do not change */
       --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
@@ -205,8 +202,11 @@
       transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
     }
     .btn:active { transform: translateY(1px); }
-    .btn-primary { background: var(--btn-solid); color: #ffffff; border-color: var(--btn-solid); }
-    .btn-primary:hover { background: color-mix(in oklch, var(--btn-solid) 88%, black); border-color: color-mix(in oklch, var(--btn-solid) 88%, black); }
+    /* Primary buttons = theme accent + theme foreground, same rule as the in-page app mock:
+       light theme deep orange #c83d00 with light text; dark theme light orange #ff8a5c with dark
+       text (white on that light orange is only 2.3:1 and looks washed out) */
+    .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, black); border-color: color-mix(in oklch, var(--accent) 88%, black); }
     .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; opacity: 0.62; transform: none; }
     .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
     .btn-secondary:hover { border-color: var(--fg); }

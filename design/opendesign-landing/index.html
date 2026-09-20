@@ -44,9 +44,7 @@
       --fg:      oklch(23.5% 0.008 75);   /* #24211d on-background */
       --muted:   oklch(47.5% 0.013 80);   /* #625c54 on-surface-variant */
       --border:  oklch(82.5% 0.014 85);   /* #cec6bc outline-variant */
-      --accent:  oklch(53% 0.175 43);     /* #c83d00 primary — 稀缺使用 */
-      /* 主按钮实底：亮暗同款深橙 + 白字（暗色主题的浅橙 #ff8a5c 托不住白字，会掉到 2.3:1） */
-      --btn-solid: #c94608;
+      --accent:  #c83d00;                 /* primary — 与页内 mock / 客户端同一色值（原写法 oklch(53% 0.175 43) 有轻微偏差，按钮与 mock 对不齐） */
 
       /* derived — do not change */
       --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
@@ -204,8 +202,10 @@
       transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
     }
     .btn:active { transform: translateY(1px); }
-    .btn-primary { background: var(--btn-solid); color: #ffffff; border-color: var(--btn-solid); }
-    .btn-primary:hover { background: color-mix(in oklch, var(--btn-solid) 88%, black); border-color: color-mix(in oklch, var(--btn-solid) 88%, black); }
+    /* 主按钮＝主题强调色 + 主题前景（与页内 mock / 客户端同一套规矩：
+       亮色深橙 #c83d00 配白字，暗色浅橙 #ff8a5c 配深字——浅橙配白字只有 2.3:1 会发糊） */
+    .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, black); border-color: color-mix(in oklch, var(--accent) 88%, black); }
     .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; opacity: 0.62; transform: none; }
     .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
     .btn-secondary:hover { border-color: var(--fg); }
