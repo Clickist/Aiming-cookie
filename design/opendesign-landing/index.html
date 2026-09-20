@@ -45,6 +45,8 @@
       --muted:   oklch(47.5% 0.013 80);   /* #625c54 on-surface-variant */
       --border:  oklch(82.5% 0.014 85);   /* #cec6bc outline-variant */
       --accent:  oklch(53% 0.175 43);     /* #c83d00 primary — 稀缺使用 */
+      /* 主按钮实底：亮暗同款深橙 + 白字（暗色主题的浅橙 #ff8a5c 托不住白字，会掉到 2.3:1） */
+      --btn-solid: #c94608;
 
       /* derived — do not change */
       --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
@@ -202,11 +204,8 @@
       transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
     }
     .btn:active { transform: translateY(1px); }
-    .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
-    .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, black); }
-    /* 登录/注册：橙底白字，亮暗同款深橙（暗色的浅橙 #ff8a5c 托不住白字；与账号页主按钮同值） */
-    .acct-login, .acct-signin { background: #c94608; border-color: #c94608; color: #ffffff; }
-    .acct-login:hover, .acct-signin:hover { background: color-mix(in oklch, #c94608 88%, black); border-color: color-mix(in oklch, #c94608 88%, black); }
+    .btn-primary { background: var(--btn-solid); color: #ffffff; border-color: var(--btn-solid); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--btn-solid) 88%, black); border-color: color-mix(in oklch, var(--btn-solid) 88%, black); }
     .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; opacity: 0.62; transform: none; }
     .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
     .btn-secondary:hover { border-color: var(--fg); }
