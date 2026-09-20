@@ -34,6 +34,7 @@ function registryFiles(): Map<string, string> {
     ["2026-09-09.v10", join(registry, "registry.v10.json")],
     ["2026-09-10.v11", join(registry, "registry.v11.json")],
     ["2026-09-12.v12", join(registry, "registry.v12.json")],
+    ["2026-09-20.v13", join(registry, "registry.v13.json")],
   ]);
 }
 // v12 adds 60 corpus prescription entries; the packaged registry now exceeds
@@ -794,7 +795,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-09-12.v12"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-09-20.v13"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);

@@ -2049,7 +2049,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-09-12.v12"
+    assert issue["knowledge_registry_version"] == "2026-09-20.v13"
     # 09-10 撤销冻结期前缀过滤后恢复匹配器 top-3（与 test_diagnosis 同口径）。
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@3",
@@ -3198,7 +3198,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-09-12.v12"
+        assert issue["knowledge_registry_version"] == "2026-09-20.v13"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@3"
         ]
