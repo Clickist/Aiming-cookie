@@ -185,10 +185,10 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
     registry_version: string;
     entries: Array<{ entry_file: string; topics: string[]; signals: string[]; metric_refs: string[] }>;
   };
-  assert.equal(index.registry_version, "2026-09-12.v12");
+  assert.equal(index.registry_version, "2026-09-20.v13");
   assert.ok(!index.entries.some((entry) => entry.entry_file.startsWith("prescription.")));
-  assert.equal(index.entries.length, 51);
-  assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 111);
+  assert.equal(index.entries.length, 58);
+  assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 118);
 
   // index.json now fits the Coach read tool's 50KB single-read limit.
   const indexBytes = statSync(join(knowledgeDir, "index.json")).size;
@@ -213,4 +213,108 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
   assert.ok(overflick.metric_refs.includes("metric:reverse_ratio"));
   assert.match(overflick.scenario_availability, /local/);
   assert.ok(overflick.recommendation.length > 0);
+});
+
+/** Minimal valid v3-shaped third-party pack registry (inline fixture). */
+function packRegistryFixture(registryVersion: string): KnowledgeRegistry {
+  return {
+    schema_version: "coach_knowledge_registry.v3",
+    registry_version: registryVersion,
+    signal_aliases: {},
+    sources: [
+      {
+        source_ref: "community.example-guide",
+        source_level: "community_consensus",
+        title: "Example community guide",
+        author_or_org: "Example community",
+        published_at: null,
+        retrieved_at: "2026-09-20",
+        locator: "https://example.invalid/guide",
+        applicability: ["all_families"],
+        supports_sections: ["definition", "scope", "expected_direction", "mechanisms"],
+      },
+    ],
+    entries: [
+      {
+        entry_id: "community.example-note",
+        entry_version: 1,
+        status: "active",
+        category: "mechanism",
+        topics: ["example.topic"],
+        signals: ["sparc low"],
+        metric_refs: ["metric:sparc"],
+        family_scope: ["static_clicking"],
+        observation_refs: [],
+        quality_prerequisites: [],
+        definition: {
+          section_ref: "community.example-note.definition",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Example definition text.",
+        },
+        scope: {
+          section_ref: "community.example-note.scope",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "Scope text.",
+        },
+        expected_direction: {
+          section_ref: "community.example-note.expected-direction",
+          claim_level: "community_consensus",
+          source_refs: ["community.example-guide"],
+          text: "higher_better",
+        },
+        mechanisms: [
+          {
+            section_ref: "community.example-note.mechanisms",
+            claim_level: "community_consensus",
+            source_refs: ["community.example-guide"],
+            text: "Example mechanism.",
+          },
+        ],
+        alternative_explanations: ["Alternative explanation."],
+        forbidden_inferences: ["Forbidden inference."],
+        limitations: ["Example limitation."],
+        counterevidence: ["Example counterevidence."],
+        sources: ["community.example-guide"],
+        supported_uses: ["explanation_only"],
+      },
+    ],
+  } as unknown as KnowledgeRegistry;
+}
+
+test("pack materialization stamps pack_display_name on both indexes", () => {
+  const packRegistry = packRegistryFixture("com.example.good@1.0.0");
+  materializeKnowledgeDir(undefined, { registry: packRegistry, packDisplayName: "示例知识包" });
+
+  const index = JSON.parse(readFileSync(join(knowledgeDir, "index.json"), "utf-8")) as {
+    registry_version: string; pack_display_name?: string; entries: unknown[];
+  };
+  assert.equal(index.registry_version, "com.example.good@1.0.0");
+  assert.equal(index.pack_display_name, "示例知识包");
+  assert.equal(index.entries.length, 1);
+
+  const prescriptions = JSON.parse(readFileSync(join(knowledgeDir, "prescriptions.json"), "utf-8")) as {
+    registry_version: string; pack_display_name?: string; entries: unknown[];
+  };
+  assert.equal(prescriptions.registry_version, "com.example.good@1.0.0");
+  assert.equal(prescriptions.pack_display_name, "示例知识包");
+  assert.equal(prescriptions.entries.length, 0);
+});
+
+test("official materialization omits pack_display_name entirely", () => {
+  materializeKnowledgeDir();
+  const index = JSON.parse(readFileSync(join(knowledgeDir, "index.json"), "utf-8")) as Record<string, unknown>;
+  assert.equal(index.registry_version, registry.registry_version);
+  assert.ok(!("pack_display_name" in index));
+  const prescriptions = JSON.parse(readFileSync(join(knowledgeDir, "prescriptions.json"), "utf-8")) as Record<string, unknown>;
+  assert.ok(!("pack_display_name" in prescriptions));
+});
+
+test("a pack display-name change rebuilds even when the registry is unchanged", () => {
+  const packRegistry = packRegistryFixture("com.example.good@1.0.0");
+  materializeKnowledgeDir(undefined, { registry: packRegistry, packDisplayName: "示例知识包" });
+  materializeKnowledgeDir(undefined, { registry: packRegistry, packDisplayName: "改名后的知识包" });
+  const index = JSON.parse(readFileSync(join(knowledgeDir, "index.json"), "utf-8")) as { pack_display_name?: string };
+  assert.equal(index.pack_display_name, "改名后的知识包");
 });

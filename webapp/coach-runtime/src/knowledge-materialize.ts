@@ -15,6 +15,10 @@
  * The directory is bound to registry_version: a version change rebuilds it
  * from scratch (no stale files from the previous version survive). Writes
  * are idempotent — an already-current directory is left untouched.
+ *
+ * A third-party pack materialization passes the already-loaded registry plus
+ * its display name; both indexes then carry a top-level `pack_display_name`
+ * so the Coach can attribute answers to the pack (official omits the field).
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,6 +41,7 @@ const PRESCRIPTION_PREFIX = "prescription.";
 type KnowledgeIndex = {
   schema_version: typeof INDEX_SCHEMA_VERSION;
   registry_version: string;
+  pack_display_name?: string;
   entries: Array<{
     entry_ref: string;
     entry_file: string;
@@ -51,6 +56,7 @@ type KnowledgeIndex = {
 type KnowledgePrescriptionIndex = {
   schema_version: typeof PRESCRIPTION_INDEX_SCHEMA_VERSION;
   registry_version: string;
+  pack_display_name?: string;
   entries: Array<{
     entry_ref: string;
     entry_file: string;
@@ -84,10 +90,11 @@ function entryFileName(entry: KnowledgeEntry): string {
   return `${ref.replace(/[^A-Za-z0-9._@-]/g, "_")}.json`;
 }
 
-function buildIndex(registry: KnowledgeRegistry): KnowledgeIndex {
+function buildIndex(registry: KnowledgeRegistry, packDisplayName?: string): KnowledgeIndex {
   return {
     schema_version: INDEX_SCHEMA_VERSION,
     registry_version: registry.registry_version,
+    ...(packDisplayName === undefined ? {} : { pack_display_name: packDisplayName }),
     entries: registry.entries.filter((entry) => !isPrescription(entry)).map((entry) => ({
       entry_ref: entryRef(entry),
       entry_file: entryFileName(entry),
@@ -136,10 +143,14 @@ function hasV2Sections(entry: KnowledgeEntry): entry is KnowledgeEntryV2 {
 }
 
 /** Exported as a pure builder so tests can exercise shape guards. */
-export function buildPrescriptionIndex(registry: KnowledgeRegistry): KnowledgePrescriptionIndex {
+export function buildPrescriptionIndex(
+  registry: KnowledgeRegistry,
+  packDisplayName?: string,
+): KnowledgePrescriptionIndex {
   return {
     schema_version: PRESCRIPTION_INDEX_SCHEMA_VERSION,
     registry_version: registry.registry_version,
+    ...(packDisplayName === undefined ? {} : { pack_display_name: packDisplayName }),
     entries: registry.entries
       .filter(isPrescription)
       .filter((entry): entry is KnowledgeEntryV2 => {
@@ -160,12 +171,21 @@ export function buildPrescriptionIndex(registry: KnowledgeRegistry): KnowledgePr
   };
 }
 
-type RefIndex = { schema_version: string; registry_version: string; entries: Array<{ entry_ref: string }> };
+type RefIndex = {
+  schema_version: string;
+  registry_version: string;
+  pack_display_name?: string;
+  entries: Array<{ entry_ref: string }>;
+};
 
 function refsMatch(existing: unknown, index: RefIndex): boolean {
   if (!existing || typeof existing !== "object") return false;
-  const current = existing as { schema_version?: unknown; registry_version?: unknown; entries?: unknown };
+  const current = existing as {
+    schema_version?: unknown; registry_version?: unknown; pack_display_name?: unknown; entries?: unknown;
+  };
   if (current.schema_version !== index.schema_version || current.registry_version !== index.registry_version) return false;
+  // A display-name change (pack re-import) must also trigger a rebuild.
+  if ((current.pack_display_name ?? undefined) !== (index.pack_display_name ?? undefined)) return false;
   if (!Array.isArray(current.entries) || current.entries.length !== index.entries.length) return false;
   // Compare the full ordered ref list, not just the count: same-length
   // indexes from different registries must trigger a rebuild.
@@ -197,10 +217,18 @@ function isCurrentKnowledgeDir(
     .every((entry) => existsSync(join(root, "entries", entry.entry_file)));
 }
 
-export function materializeKnowledgeDir(registryVersion?: string): void {
-  const registry = loadKnowledgeRegistry(registryVersion);
-  const index = buildIndex(registry);
-  const prescriptions = buildPrescriptionIndex(registry);
+/**
+ * `options.registry` supplies an already-loaded registry (active resolution);
+ * when given, `registryVersion` is ignored. `options.packDisplayName` stamps
+ * both indexes with `pack_display_name` (pack mode only; official omits it).
+ */
+export function materializeKnowledgeDir(
+  registryVersion?: string,
+  options: { registry?: KnowledgeRegistry; packDisplayName?: string } = {},
+): void {
+  const registry = options.registry ?? loadKnowledgeRegistry(registryVersion);
+  const index = buildIndex(registry, options.packDisplayName);
+  const prescriptions = buildPrescriptionIndex(registry, options.packDisplayName);
   const root = knowledgeDir();
   if (isCurrentKnowledgeDir(root, index, prescriptions)) return;
 

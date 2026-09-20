@@ -26,6 +26,7 @@ import { logFrontendError } from "@/lib/frontend-log";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
+import { KnowledgeSettingsSection } from "@/components/task6/KnowledgeSettingsSection";
 import { ProviderSettingsSection } from "@/components/task6/ProviderSettingsSection";
 import type {
   CalibrationProfileV1,
@@ -192,6 +193,7 @@ function incompleteReasonLabel(value: IncompleteCaptureItemV1["reason"]): string
 const NAV_ITEMS = [
   { id: "general", label: "通用" },
   { id: "llm-provider", label: "LLM Provider" },
+  { id: "knowledge", label: "知识库" },
   { id: "capture", label: "自动采集" },
   { id: "kovaak", label: "KovaaK" },
   { id: "storage", label: "数据与存储" },
@@ -209,6 +211,7 @@ const HASH_SECTION_ALIASES: Record<string, SettingsSectionId> = {
   "external-telemetry": "capture",
   kovaak: "kovaak",
   "kovaak-directories": "kovaak",
+  knowledge: "knowledge",
   "llm-provider": "llm-provider",
   profile: "general",
   storage: "storage",
@@ -635,6 +638,16 @@ export function SettingsWorkspace() {
             profiles={profiles}
             refresh={refresh}
           />
+        </section>
+
+        {/* 知识库（kb-sdk WP-12，线框 2026-09-20）：官方档置顶 + 已装包列表 + 导入向导。
+            与 Provider 相邻——两者同属「Coach 回答的来源」（Provider 定模型、知识库定口径）。 */}
+        <section className="task6-settings-section" hidden={activeNav !== "knowledge"} id="knowledge" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">知识库</span>
+            <span className="task6-settings-section-note">Coach 分析与讲解所依据的训练知识来源。同一时刻只有一个生效；切换后下一次对话即使用新口径，历史分析保持当时口径。</span>
+          </div>
+          <KnowledgeSettingsSection notify={setFeedback} />
         </section>
 
         <section className="task6-settings-section" data-guidance-target="desktop.capture_control" hidden={activeNav !== "capture"} id="capture" tabIndex={-1}>

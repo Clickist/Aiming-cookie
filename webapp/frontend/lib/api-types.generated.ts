@@ -235,6 +235,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge-packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Knowledge Packs
+         * @description Installed third-party knowledge packs plus the current active pointer.
+         */
+        get: operations["list_knowledge_packs_api_knowledge_packs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-packs/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate Knowledge Pack
+         * @description Switch the active knowledge base (official or an installed pack_id).
+         */
+        post: operations["activate_knowledge_pack_api_knowledge_packs_activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-packs/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Knowledge Pack
+         * @description Validate (Python + sidecar TS parity) then install a local pack.
+         */
+        post: operations["import_knowledge_pack_api_knowledge_packs_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-packs/{pack_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Knowledge Pack
+         * @description Uninstall a pack; an active pack automatically falls back to official.
+         */
+        delete: operations["delete_knowledge_pack_api_knowledge_packs__pack_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/kovaak-connection": {
         parameters: {
             query?: never;
@@ -1480,6 +1560,66 @@ export interface components {
              */
             schema_version: "incomplete_capture_removal.v1";
         };
+        /** KnowledgePackActivateRequest */
+        KnowledgePackActivateRequest: {
+            /** Active */
+            active: string;
+        };
+        /** KnowledgePackActivateResponse */
+        KnowledgePackActivateResponse: {
+            /** Active */
+            active: string;
+            /** Packs */
+            packs?: components["schemas"]["KnowledgePackItem"][];
+            /** Warnings */
+            warnings?: string[];
+        };
+        /**
+         * KnowledgePackImportRequest
+         * @description Frontend native picker hands over a local pack directory or zip.
+         */
+        KnowledgePackImportRequest: {
+            /** Source Path */
+            source_path: string;
+        };
+        /** KnowledgePackImportResponse */
+        KnowledgePackImportResponse: {
+            /** Pack Id */
+            pack_id: string;
+            /** Pack Version */
+            pack_version: string;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** KnowledgePackItem */
+        KnowledgePackItem: {
+            /** Author */
+            author: string;
+            /** Display Name */
+            display_name: string;
+            /** Has Mapping */
+            has_mapping: boolean;
+            /** Homepage */
+            homepage?: string | null;
+            /** Installed At */
+            installed_at: string;
+            /** Pack Id */
+            pack_id: string;
+            /** Pack Version */
+            pack_version: string;
+            /** Valid */
+            valid: boolean;
+        };
+        /**
+         * KnowledgePacksResponse
+         * @description GET /knowledge-packs; activate/delete also return this list shape.
+         */
+        KnowledgePacksResponse: {
+            /** Active */
+            active: string;
+            /** Packs */
+            packs?: components["schemas"]["KnowledgePackItem"][];
+        };
         /**
          * KovaaKAnalysisRequest
          * @description Create an Analysis from a persisted local Run.
@@ -2721,6 +2861,123 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HistoryTrendResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_packs_api_knowledge_packs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePacksResponse"];
+                };
+            };
+        };
+    };
+    activate_knowledge_pack_api_knowledge_packs_activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgePackActivateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePackActivateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_knowledge_pack_api_knowledge_packs_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgePackImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePackImportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_knowledge_pack_api_knowledge_packs__pack_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePacksResponse"];
                 };
             };
             /** @description Validation Error */

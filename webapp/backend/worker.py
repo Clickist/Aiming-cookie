@@ -1104,7 +1104,7 @@ def _native_diagnosis(
 ) -> dict:
     """Build deterministic Coach issues from available native distributions."""
     from dataclasses import asdict
-    from kovaak_tracker.advice import advise
+    from kovaak_tracker.coach import mapping_rules
     from kovaak_tracker.coach.diagnosis import build_diagnosis
 
     supported = {
@@ -1131,7 +1131,7 @@ def _native_diagnosis(
             "metric_version": metric.get("metric_version"),
         }
 
-    findings = advise(summary)
+    findings = mapping_rules.dispatch_static(summary)
     for finding in findings:
         event_refs: list[str] = []
         for metric_key in finding.metric_refs:
@@ -1601,6 +1601,28 @@ def _mark_telemetry_fallback(result: dict, code: str) -> dict:
     return updated
 
 
+def _mark_knowledge_fallback(result: dict) -> dict:
+    """分析侧知识库回退可观测（kb-sdk 规划 C3）：激活包加载失败或 active
+    指针失效回退官方档时，在结果 warnings 里如实带出原因。官方档是正常态，
+    不加警告；探测本身失败不得影响已完成的分析。"""
+    from kovaak_tracker.coach import knowledge_active
+
+    try:
+        knowledge_active.load_active_registry()
+    except Exception:  # noqa: BLE001 - official registry 自身不可用属全局故障
+        return result
+    reason = knowledge_active.last_fallback_reason()
+    if not reason:
+        return result
+    return {
+        **result,
+        "warnings": [
+            *result.get("warnings", []),
+            {"code": "knowledge_fallback_official", "message": reason},
+        ],
+    }
+
+
 def _scenario_dispatch(job: dict, input_mode: str) -> str:
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution")
@@ -2025,9 +2047,7 @@ def _build_dynamic_result_v2(
     created_at: str,
     completed_at: str,
 ) -> dict:
-    from kovaak_tracker.advice_dynamic_clicking import (
-        build_dynamic_clicking_candidate_advice,
-    )
+    from kovaak_tracker.coach import mapping_rules
 
     def coverage_fn(family_result, visual_summary):
         processed_rows = family_result.get("processed_rows")
@@ -2057,7 +2077,7 @@ def _build_dynamic_result_v2(
         visual_result,
         created_at=created_at,
         completed_at=completed_at,
-        advice_fn=build_dynamic_clicking_candidate_advice,
+        advice_fn=mapping_rules.make_family_advice_fn("dynamic_clicking"),
         summary_type="dynamic_clicking",
         analysis_version=DYNAMIC_CLICKING_ANALYSIS_VERSION,
         plain_language_meaning=(
@@ -2081,7 +2101,7 @@ def _build_continuous_tracking_result_v2(
     created_at: str,
     completed_at: str,
 ) -> dict:
-    from kovaak_tracker.advice_tracking import build_tracking_candidate_advice
+    from kovaak_tracker.coach import mapping_rules
 
     return _build_family_result_v2(
         job,
@@ -2089,7 +2109,7 @@ def _build_continuous_tracking_result_v2(
         visual_result,
         created_at=created_at,
         completed_at=completed_at,
-        advice_fn=build_tracking_candidate_advice,
+        advice_fn=mapping_rules.make_family_advice_fn("continuous_tracking"),
         summary_type="continuous_tracking",
         analysis_version=CONTINUOUS_TRACKING_ANALYSIS_VERSION,
         plain_language_meaning=(
@@ -2110,9 +2130,7 @@ def _build_target_switching_result_v2(
     created_at: str,
     completed_at: str,
 ) -> dict:
-    from kovaak_tracker.advice_target_switching import (
-        build_target_switching_candidate_advice,
-    )
+    from kovaak_tracker.coach import mapping_rules
 
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution") or {}
@@ -2144,7 +2162,7 @@ def _build_target_switching_result_v2(
         visual_result,
         created_at=created_at,
         completed_at=completed_at,
-        advice_fn=build_target_switching_candidate_advice,
+        advice_fn=mapping_rules.make_family_advice_fn("target_switching"),
         summary_type="target_switching",
         analysis_version=TARGET_SWITCHING_ANALYSIS_VERSION,
         plain_language_meaning=(
@@ -3775,6 +3793,8 @@ async def process_one() -> bool:
                 outcome_event_bundle=outcome_event_bundle,
                 generic_visual_result=generic_visual_result,
             )
+        # 所有结果路径统一在落盘前做一次知识库回退探测（规划 C3）。
+        result = _mark_knowledge_fallback(result)
         # Carry the capture receipt preroll so downstream video-relative
         # times (overview anchors, frontend playback seeks) can correct
         # for the decode preroll between MP4 PTS 0 and the canonical window.

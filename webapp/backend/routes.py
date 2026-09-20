@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import datetime
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path as FilePath
 from typing import Literal, Optional
 
+import httpx
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -104,6 +107,11 @@ from .schemas import (
     ExternalRunListResponse,
     ExternalTelemetryConfigResponse,
     ExternalTelemetryWatchRootUpdateRequest,
+    KnowledgePackActivateRequest,
+    KnowledgePackActivateResponse,
+    KnowledgePackImportRequest,
+    KnowledgePackImportResponse,
+    KnowledgePacksResponse,
     ManagedVideoUnavailableResponse,
     TimelineEvent,
     CaptureStatusResponse,
@@ -120,6 +128,7 @@ from .workspace import (
     stream_upload_to_path,
 )
 from .native_capture_client import NativeCaptureClient, NativeCaptureRetryableError
+from kovaak_tracker.coach import knowledge_pack
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
@@ -1661,3 +1670,230 @@ async def get_external_run(
     if meta is None:
         raise HTTPException(404, "external run not found")
     return ExternalRunDetailResponse(schema_version="external_run_detail.v1", run=meta)
+
+
+# 知识包管理（kb-sdk plan C6；WP-10）
+# ---------------------------------------------------------------------------
+# 官方档置顶语义由前端处理，本组端点只管理已安装的第三方包与 active 指针。
+# 激活在写完 config 后即时调用 sidecar 的 /knowledge/rematerialize 重物化，
+# 切换立刻生效；sidecar 不可达时降级，并在 warnings 里如实说明
+# 「重启应用后生效」（backend 不拥有 sidecar 进程生命周期）。
+
+
+_PACK_PARITY_TIMEOUT_SECONDS = 5.0
+_SIDECAR_APPLIED_WARNING = "知识库切换已生效，下一次对话即使用新知识库口径"
+_SIDECAR_ACTIVATE_UNREACHABLE_WARNING = (
+    "知识库切换已保存，但 Coach 引擎暂时不可达；重启应用后生效"
+)
+_SIDECAR_UNREACHABLE_WARNING = (
+    "sidecar 校验器不可达，本次导入仅完成 Python 侧校验（TS parity 未执行）"
+)
+
+
+def _pack_manifest_homepage(pack_dir: FilePath) -> Optional[str]:
+    try:
+        doc = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    homepage = doc.get("homepage") if isinstance(doc, dict) else None
+    return homepage if isinstance(homepage, str) and homepage else None
+
+
+def _packs_list_payload() -> dict:
+    """Project knowledge_config + on-disk manifests into the C6 list shape.
+
+    ``valid`` is a fresh quick validation of the installed pack directory so
+    the frontend can grey/red-dot packs that broke after install (sync I/O;
+    callers must run it in a thread).
+    """
+    active = knowledge_pack.read_config(config.DATA_ROOT)["active"]
+    packs: list[dict] = []
+    for entry in knowledge_pack.list_installed(config.DATA_ROOT):
+        pack_dir = FilePath(config.DATA_ROOT) / "knowledge-packs" / str(entry.get("pack_id"))
+        packs.append({
+            "pack_id": str(entry.get("pack_id")),
+            "display_name": str(entry.get("display_name") or ""),
+            "author": str(entry.get("author") or ""),
+            "pack_version": str(entry.get("pack_version") or ""),
+            "homepage": _pack_manifest_homepage(pack_dir),
+            "installed_at": str(entry.get("installed_at") or ""),
+            "has_mapping": bool(entry.get("has_mapping")),
+            "valid": bool(knowledge_pack.validate_pack(pack_dir)["valid"]),
+        })
+    return {"active": active, "packs": packs}
+
+
+def _read_pack_registry_doc(source: FilePath) -> Optional[dict]:
+    """Load knowledge/registry.json from a validated pack dir or zip (parity body)."""
+    try:
+        if source.is_dir():
+            return json.loads((source / "knowledge" / "registry.json").read_bytes())
+        with zipfile.ZipFile(source) as zf:
+            names = [
+                name for name in zf.namelist()
+                if name.split("/")[-2:] == ["knowledge", "registry.json"]
+            ]
+            if not names:
+                return None
+            # 单一包装目录时取最浅者；validate_pack 已确认布局合法。
+            return json.loads(zf.read(min(names, key=lambda n: (n.count("/"), len(n)))))
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        return None
+
+
+async def _sidecar_parity_validate_registry(registry_doc: dict) -> tuple[Optional[bool], list[str]]:
+    """Ask the sidecar's loopback TS validator to re-check the pack registry.
+
+    Returns ``(valid, errors)``; ``valid is None`` means the sidecar was
+    unreachable and import degrades to Python-only validation with a warning.
+    """
+    url = f"{config.COACH_SIDECAR_URL.rstrip('/')}/knowledge/validate"
+    try:
+        async with httpx.AsyncClient(timeout=_PACK_PARITY_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json=registry_doc)
+    except Exception:
+        log.exception("sidecar parity validate call failed for %s", url)
+        return None, []
+    if resp.status_code != 200:
+        log.warning("sidecar parity validate returned status %s", resp.status_code)
+        return None, []
+    try:
+        data = resp.json()
+    except ValueError:
+        log.warning("sidecar parity validate returned a non-JSON body")
+        return None, []
+    if data.get("valid") is True:
+        return True, []
+    errors = [str(item) for item in (data.get("errors") or [])]
+    return False, errors
+
+
+async def _sidecar_rematerialize_knowledge() -> Optional[dict]:
+    """Ask the sidecar to re-materialize the active knowledge dir now.
+
+    Returns the sidecar payload on success; ``None`` when the sidecar is
+    unreachable or the call fails, in which case activate degrades to the
+    honest "takes effect after the app restarts" warning.
+    """
+    url = f"{config.COACH_SIDECAR_URL.rstrip('/')}/knowledge/rematerialize"
+    try:
+        async with httpx.AsyncClient(timeout=_PACK_PARITY_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url)
+    except Exception:
+        log.exception("sidecar rematerialize call failed for %s", url)
+        return None
+    if resp.status_code != 200:
+        log.warning("sidecar rematerialize returned status %s", resp.status_code)
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        log.warning("sidecar rematerialize returned a non-JSON body")
+        return None
+    return data if isinstance(data, dict) and data.get("ok") is True else None
+
+
+def _pack_rejected_422(error_code: str, details: list[str]) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"error_code": error_code, "details": details},
+    )
+
+
+def _pack_error_details(errors: list[dict]) -> list[str]:
+    """Readable, UI-displayable messages from a structured validation report."""
+    return [
+        str(item.get("message") or item.get("code") or "unknown validation error")
+        for item in errors
+    ]
+
+
+@router.get("/knowledge-packs", response_model=KnowledgePacksResponse)
+async def list_knowledge_packs(_: None = Depends(require_desktop_token)):
+    """Installed third-party knowledge packs plus the current active pointer."""
+    payload = await asyncio.to_thread(_packs_list_payload)
+    return KnowledgePacksResponse(**payload)
+
+
+@router.post(
+    "/knowledge-packs/import",
+    response_model=KnowledgePackImportResponse,
+)
+async def import_knowledge_pack(
+    request: KnowledgePackImportRequest,
+    _: None = Depends(require_desktop_token),
+):
+    """Validate (Python + sidecar TS parity) then install a local pack."""
+    if not os.path.isabs(request.source_path):
+        raise HTTPException(400, "source_path 必须是本地目录或 zip 的绝对路径")
+    source = FilePath(request.source_path)
+    result = await asyncio.to_thread(knowledge_pack.validate_pack, source)
+    if not result["valid"]:
+        return _pack_rejected_422(
+            "knowledge_pack_rejected", _pack_error_details(result["errors"]),
+        )
+    registry_doc = await asyncio.to_thread(_read_pack_registry_doc, source)
+    if registry_doc is None:
+        # 校验刚通过却读不回 registry 只可能是源被并发删除；拒绝而非静默安装。
+        return _pack_rejected_422(
+            "knowledge_pack_unreadable",
+            ["cannot read knowledge/registry.json from the pack source"],
+        )
+    parity_valid, parity_errors = await _sidecar_parity_validate_registry(registry_doc)
+    warnings: list[str] = []
+    if parity_valid is None:
+        warnings.append(_SIDECAR_UNREACHABLE_WARNING)
+    elif parity_valid is False:
+        return _pack_rejected_422("knowledge_pack_parity_rejected", parity_errors)
+    try:
+        installed = await asyncio.to_thread(
+            knowledge_pack.install_pack, source, config.DATA_ROOT,
+        )
+    except knowledge_pack.KnowledgePackRejected as exc:
+        return _pack_rejected_422(
+            "knowledge_pack_rejected", _pack_error_details(exc.result["errors"]),
+        )
+    return KnowledgePackImportResponse(
+        pack_id=installed["pack_id"],
+        pack_version=installed["pack_version"],
+        warnings=warnings,
+    )
+
+
+@router.post(
+    "/knowledge-packs/activate",
+    response_model=KnowledgePackActivateResponse,
+)
+async def activate_knowledge_pack(
+    request: KnowledgePackActivateRequest,
+    _: None = Depends(require_desktop_token),
+):
+    """Switch the active knowledge base (official or an installed pack_id)."""
+    try:
+        await asyncio.to_thread(knowledge_pack.set_active, request.active, config.DATA_ROOT)
+    except knowledge_pack.KnowledgePackError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    payload = await asyncio.to_thread(_packs_list_payload)
+    rematerialized = await _sidecar_rematerialize_knowledge()
+    warnings = (
+        [_SIDECAR_APPLIED_WARNING] if rematerialized is not None
+        else [_SIDECAR_ACTIVATE_UNREACHABLE_WARNING]
+    )
+    return KnowledgePackActivateResponse(
+        **payload,
+        warnings=warnings,
+    )
+
+
+@router.delete("/knowledge-packs/{pack_id}", response_model=KnowledgePacksResponse)
+async def delete_knowledge_pack(
+    pack_id: str = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    """Uninstall a pack; an active pack automatically falls back to official."""
+    try:
+        await asyncio.to_thread(knowledge_pack.uninstall_pack, pack_id, config.DATA_ROOT)
+    except knowledge_pack.KnowledgePackError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    payload = await asyncio.to_thread(_packs_list_payload)
+    return KnowledgePacksResponse(**payload)

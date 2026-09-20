@@ -1494,6 +1494,123 @@ export async function removeRunEvidence(
   return (await res.json()) as RunEvidenceRemovalResponse;
 }
 
+// ── 知识包管理（kb-sdk plan C6；WP-12 设置页「知识库」栏）──────────────────
+// 四个端点都在 Python backend（/api/knowledge-packs*），desktop token 门禁一致。
+// 官方档常驻置顶语义由前端处理：active 为 "official" 或已装包 pack_id。
+
+export type KnowledgePackItemV1 = {
+  pack_id: string;
+  display_name: string;
+  author: string;
+  pack_version: string;
+  homepage: string | null;
+  installed_at: string;
+  has_mapping: boolean;
+  valid: boolean;
+};
+
+export type KnowledgePacksResponseV1 = {
+  active: string; // "official" | "<pack_id>"
+  packs: KnowledgePackItemV1[];
+};
+
+export type KnowledgePackImportResponseV1 = {
+  pack_id: string;
+  pack_version: string;
+  warnings: string[];
+};
+
+export type KnowledgePackActivateResponseV1 = KnowledgePacksResponseV1 & {
+  warnings: string[];
+};
+
+/** 导入被拒（422）：error_code + 可读明细列表，供向导失败态逐条上屏。 */
+export class KnowledgePackImportError extends Error {
+  readonly errorCode: string;
+  readonly details: string[];
+
+  constructor(errorCode: string, details: string[]) {
+    super(details[0] ?? "知识包校验未通过");
+    this.name = "KnowledgePackImportError";
+    this.errorCode = errorCode;
+    this.details = details;
+  }
+}
+
+export async function getKnowledgePacks(
+  opts: { signal?: AbortSignal } = {},
+): Promise<KnowledgePacksResponseV1> {
+  const res = await apiFetch(
+    "/api/knowledge-packs",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KnowledgePacksResponseV1;
+}
+
+export async function importKnowledgePack(
+  sourcePath: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KnowledgePackImportResponseV1> {
+  const res = await apiFetch(
+    "/api/knowledge-packs/import",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_path: sourcePath }),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (res.status === 422) {
+    // 422 是校验结论而不是传输错误：结构化 details 逐条进向导失败态。
+    let errorCode = "knowledge_pack_rejected";
+    let details: string[] = [];
+    try {
+      const body = (await res.json()) as { error_code?: unknown; details?: unknown };
+      if (typeof body.error_code === "string") errorCode = body.error_code;
+      if (Array.isArray(body.details)) {
+        details = body.details.filter((item): item is string => typeof item === "string");
+      }
+    } catch {
+      // 非 JSON 响应体——保留默认错误码与空明细。
+    }
+    throw new KnowledgePackImportError(errorCode, details);
+  }
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KnowledgePackImportResponseV1;
+}
+
+export async function activateKnowledgePack(
+  active: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KnowledgePackActivateResponseV1> {
+  const res = await apiFetch(
+    "/api/knowledge-packs/activate",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active }),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KnowledgePackActivateResponseV1;
+}
+
+export async function uninstallKnowledgePack(
+  packId: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KnowledgePacksResponseV1> {
+  const res = await apiFetch(
+    `/api/knowledge-packs/${encodeURIComponent(packId)}`,
+    { method: "DELETE" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KnowledgePacksResponseV1;
+}
+
 /** 「打开文件位置」：只发条目 id/kind；本地路径由后端解析，绝不下发前端。 */
 export async function revealStorageItem(
   request: {

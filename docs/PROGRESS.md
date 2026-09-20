@@ -1,6 +1,20 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-09-13. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-09-20. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-09-20 — 知识库 SDK 一期收官（16 包完工 + 深夜 review 修复）
+
+知识库 SDK 一期 16 个工作包（WP-01～WP-16）全部完工：词汇表冻结、registry/mapping 校验器（Python + TS parity）、静态/家族规则引擎、官方 v13 组装、知识包导入/激活/卸载链路（Python 校验 + sidecar TS parity + 设置页三步向导）与 SPEC/模板交付。
+
+同日深夜 review 出 1 个 P0 + 2 个 P1，均已修复并重跑受影响闸：
+
+- **P0**：`validate_pack` 补 registry schema_version 必须 v3 的前置门（新错误码 `registry_schema_version_invalid`），堵住 v1 形状 registry 绕过第三方来源天花板的洞；sidecar `/knowledge/validate` 加同一前置检查，parity 口径一致。
+- **P1**：sidecar 新增 `POST /knowledge/rematerialize`，backend 激活端点写完 config 后即时调用——知识库切换立即生效（下一次对话即用新口径）；sidecar 不可达时如实降级为「重启应用后生效」。前端与 SPEC 的「重启 Coach 会话后生效」失实文案全部改正。
+- **P1**：分析侧补 `knowledge_fallback_official` 结果 warning（含回退原因），坏包回退官方在分析结果里可观测。
+
+总闸结果（修复后实测）：pytest `tests/coach/` **338 过 / 0 败**、`test_worker.py` 102 过 / 2 败（两条均为既有 v12→v13 版本号断言未更新，非本批范围）、`test_knowledge_pack.py` 56 过、`test_knowledge_packs_api.py` 12 过；coach-runtime `node --test` **453 测试 / 451 过 / 2 跳 / 0 败**；前端 type-check 0 错、unit+contracts **325 过 / 0 败**。
+
+说明：v13 registry 的 dynamic fail-closed 统一是有意变更，不是回归。遗留 P2 五条（registry/mapping 加载缓存、安装/激活链路线程安全、TOCTOU 注释、真机验收等）留待后续批次。
 
 ## 2026-09-13 — v1.0.1 发布：审计修复版（0913 全量审计的修复批）
 

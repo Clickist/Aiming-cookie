@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 
 import {
   analyzeKovaakRun,
+  activateKnowledgePack,
   completeOnboarding,
   createProviderProfile,
   discoverCustomProviderModels,
@@ -10,6 +11,7 @@ import {
   getKovaaKConnection,
   getKovaaKLocalDirectories,
   getKovaaKScores,
+  getKnowledgePacks,
   getProductReadiness,
   getCurrentTraining,
   getAnalysisFamilyData,
@@ -18,6 +20,8 @@ import {
   createCoachAgentRun,
   followUpCoachAgentRun,
   steerCoachAgentRun,
+  importKnowledgePack,
+  KnowledgePackImportError,
   listCoachSessions,
   listCustomProviderModels,
   listSessions,
@@ -27,6 +31,7 @@ import {
   saveKovaaKLocalDirectories,
   switchProviderModel,
   syncKovaaKScores,
+  uninstallKnowledgePack,
 } from "./api";
 import {
   getManagedVideoUrl,
@@ -951,5 +956,87 @@ test("switchProviderModel surfaces the sidecar rejection detail", async () => {
   await assert.rejects(
     switchProviderModel("not-a-real-model"),
     /所选模型不可用/,
+  );
+});
+
+test("knowledge pack helpers follow the desktop-token list contract", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({ baseUrl: "http://127.0.0.1:43127", token: "kb-token" }),
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      active: "com.community.aim-precision",
+      packs: [{
+        pack_id: "com.community.aim-precision",
+        display_name: "Aiming 社区精进包",
+        author: "Cookie 社区 · Kirk",
+        pack_version: "1.4.2",
+        homepage: null,
+        installed_at: "2026-09-18T12:00:00Z",
+        has_mapping: true,
+        valid: true,
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const listing = await getKnowledgePacks();
+  await activateKnowledgePack("official");
+  await uninstallKnowledgePack("com.community.aim-precision");
+
+  assert.equal(requests[0]?.input, "http://127.0.0.1:43127/api/knowledge-packs");
+  assert.equal(new Headers(requests[0]?.init?.headers).get("X-Aiming-Cookie-Desktop-Token"), "kb-token");
+  assert.equal(listing.active, "com.community.aim-precision");
+  assert.equal(listing.packs[0]?.has_mapping, true);
+  assert.equal(listing.packs[0]?.valid, true);
+  assert.equal(requests[1]?.input, "http://127.0.0.1:43127/api/knowledge-packs/activate");
+  assert.equal(requests[1]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[1]?.init?.body)), { active: "official" });
+  assert.equal(requests[2]?.input, "http://127.0.0.1:43127/api/knowledge-packs/com.community.aim-precision");
+  assert.equal(requests[2]?.init?.method, "DELETE");
+});
+
+test("knowledge pack import posts the picker path and surfaces structured rejection details", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({ baseUrl: "http://127.0.0.1:43127", token: "kb-token" }),
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    if (String(input).endsWith("/import")) {
+      const body = JSON.parse(String(init?.body)) as { source_path: string };
+      if (body.source_path.includes("broken-kb")) {
+        return new Response(JSON.stringify({
+          error_code: "knowledge_pack_rejected",
+          details: ["registry.json: signal \"recoil control\" 不在官方词汇表内"],
+        }), { status: 422, headers: { "Content-Type": "application/json" } });
+      }
+    }
+    return new Response(JSON.stringify({
+      pack_id: "com.example.aiming",
+      pack_version: "1.0.0",
+      warnings: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const imported = await importKnowledgePack("D:\\Packs\\aiming-kb");
+
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), { source_path: "D:\\Packs\\aiming-kb" });
+  assert.equal(imported.pack_id, "com.example.aiming");
+
+  await assert.rejects(
+    importKnowledgePack("D:\\Packs\\broken-kb"),
+    (error: unknown) => error instanceof KnowledgePackImportError
+      && error.errorCode === "knowledge_pack_rejected"
+      && error.details.length === 1
+      && error.details[0] === "registry.json: signal \"recoil control\" 不在官方词汇表内",
   );
 });

@@ -1,0 +1,206 @@
+{
+  "pinned_knowledge_registry_version": "2026-09-12.v12",
+  "expected": {
+    "comparable_hits_all_three_candidates": [
+      {
+        "signal": "dynamic click error high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.normalized_click_error"
+        ],
+        "observation": {
+          "current": 0.42,
+          "matched_baseline": 0.2,
+          "delta": 0.21999999999999997
+        },
+        "supporting_row_refs": [
+          "analysis:1:dynamic-click:1"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:dynamic-click:2"
+        ],
+        "observation_ref": "event.dynamic_click",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.click-error-and-acquisition@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      },
+      {
+        "signal": "dynamic acquisition slow",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.acquisition_time_ms"
+        ],
+        "observation": {
+          "current": 850.0,
+          "matched_baseline": 400.0,
+          "delta": 450.0
+        },
+        "supporting_row_refs": [
+          "analysis:1:dynamic-click:1"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:dynamic-click:2"
+        ],
+        "observation_ref": "event.dynamic_click",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.click-error-and-acquisition@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      },
+      {
+        "signal": "relative velocity mismatch",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.relative_velocity"
+        ],
+        "observation": {
+          "current": 0.18,
+          "matched_baseline": 0.08,
+          "delta": 0.09999999999999999
+        },
+        "supporting_row_refs": [
+          "analysis:1:dynamic-click:1"
+        ],
+        "counterexample_row_refs": [
+          "analysis:1:dynamic-click:2"
+        ],
+        "observation_ref": "field.relative_velocity",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.speed-matching-and-reading@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "not_comparable_returns_empty": [],
+    "outcome_only_returns_empty": [],
+    "baseline_metric_missing_skips_that_candidate": [
+      {
+        "signal": "dynamic click error high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.normalized_click_error"
+        ],
+        "observation": {
+          "current": 0.42,
+          "matched_baseline": 0.2,
+          "delta": 0.21999999999999997
+        },
+        "supporting_row_refs": [],
+        "counterexample_row_refs": [],
+        "observation_ref": "event.dynamic_click",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.click-error-and-acquisition@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "unavailable_metric_skips": [],
+    "blocking_limitations_drops_only_affected_candidate": [
+      {
+        "signal": "relative velocity mismatch",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.relative_velocity"
+        ],
+        "observation": {
+          "current": 0.18,
+          "matched_baseline": 0.08,
+          "delta": 0.09999999999999999
+        },
+        "supporting_row_refs": [
+          "analysis:1:dynamic-click:1"
+        ],
+        "counterexample_row_refs": [],
+        "observation_ref": "field.relative_velocity",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.speed-matching-and-reading@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "row_field_missing_yields_empty_row_refs": [
+      {
+        "signal": "dynamic click error high",
+        "claim_level": "deterministic_rule",
+        "metric_refs": [
+          "dynamic_clicking.normalized_click_error"
+        ],
+        "observation": {
+          "current": 0.42,
+          "matched_baseline": 0.2,
+          "delta": 0.21999999999999997
+        },
+        "supporting_row_refs": [],
+        "counterexample_row_refs": [],
+        "observation_ref": "event.dynamic_click",
+        "knowledge_registry_version": "2026-09-12.v12",
+        "knowledge_entry_refs": [
+          "knowledge:dynamic.click-error-and-acquisition@3"
+        ],
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "stop_adjust_rule"
+        ],
+        "limitations": []
+      }
+    ],
+    "equal_to_baseline_skips": [],
+    "empty_knowledge_refs_dropped_since_wp05": []
+  }
+}

@@ -287,6 +287,7 @@ Onboarding 完成后首次进入 Coach 时，自动创建并打开「开场分�
 - 长期表现 / 特点档案与跨上下文衔接的质量提升
 - 训练计划、证据定位和复测体验深化
 - 本地长期档案的导出 / 导入与迁移恢复；不建立账号型云同步
+- 第三方知识包：本地导入、整库替换与档切换（官方知识库为默认常驻档，坏包 fail-closed 回退官方档）；配套知识包 SDK（格式规范 / 模板 / 校验器）面向第三方瞄准作者，置于 `sdk/knowledge-pack/`；在线知识商店后置
 
 ### C 阶段（推荐与生态成熟）
 - 境外合规部署与大陆访问体验优化
@@ -421,6 +422,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **训练事实写入不加确认门**（2026-09-13）：Coach 经原生命令（training_plan.item.add / execution.record / retest.record）可直接写训练事实，不设独立的 confirmation/grant 硬门；写入纪律由 teaching skill 的阶段合同与提示词约束。此前文档声称的 trusted instruction grant 机制从未实现，本条确认按现状维持、不补建。
 - **scenario.open 同意门保持在提示词层**（2026-09-13）：「打开 KovaaK 场景前必须先征得用户同意」由工具描述与教学提示词约束，不加代码层强制拦截（不做过度工程）；防线单层是已知并接受的取舍。
 - **开场分析一次性、成绩层为界**（2026-09-13）：Onboarding 后首启自动创建「开场分析」会话（不设跳过键，切走即跳过）；分析只用成绩层数据（Stats/Perf、社区基准 S2 段位、时长、进步曲线）与用户自评，禁止动作层断言；具体处方保留给 Run 分析管线，开场只给类别级「下一步」；用户基本信息以白名单 JSON（`config/user-profile.json`）承载。数据边界依据：开场时点尚无 Raw Input/遥测证据，低层路径只能声明其实际支撑的结论。
+- **第三方知识包与知识库 SDK**（2026-09-20）：教练知识库支持第三方知识包：整库替换 + 档切换，官方知识库是默认常驻档，激活哪份用哪份，不做叠加合并，坏包 fail-closed 回退官方档。知识包内容分两层：数据→现象映射（哪些指标形态说明什么问题、怎么练）与类 Wiki 知识（讲解正文）。处方能力开放：第三方包可用 `scenario_prescription`，但只能引用官方场景 registry 已审核场景，不能自造场景档案。v1 只做本地导入（作者自行分发 zip/仓库），在线知识商店后置（候选 Cloudflare 静态分发方案，未定案）；配套 SDK（包格式规范 + 模板 + 校验器）置于主仓库 `sdk/knowledge-pack/`，面向第三方瞄准作者。为什么：让社区瞄准知识作者能替换"讲什么、怎么练"，而不动摇测量与诊断的确定性根基。
 - **Provider-first onboarding 是硬门槛**（2026-08-09）：首次启动先说明 Coach 价值、Provider 成本和数据边界；连接 Provider 后才进入 Coach-backed 分析。Provider 不可用时采集可继续，但不生成 Provider-less Analysis 或报告；后续回访从既有入口恢复连接
 - **Pi catalog 与本地 credential**（2026-07-13）：pinned Pi built-in provider/model catalog 就是产品 catalog，不维护 Aiming Cookie allow-list；支持自定义 OpenAI-compatible profile。API key 可作为 local-first 权衡明文保存在本地 config/provider.json，secure store 不是前置 Gate，但 secret 绝不进入 AnalysisResult、Coach 上下文/消息、普通日志、诊断或导出
 - **v1 → B → C 分阶段**：v1 建立开源免费的完整 Coach 闭环；B 深化长期档案、训练计划和复测体验；C 在保持信任边界的前提下接通经验证的外设目录与透明联盟链接

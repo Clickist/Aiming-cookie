@@ -1,0 +1,582 @@
+{
+  "schema_version": "coach_mapping.v1",
+  "static_clicking": [
+    {
+      "signal": "decel_frac high",
+      "severity": "fix",
+      "text": "减速段占整个 flick 的 {decel_frac_pct:.0f}%——速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
+      "plain_language_meaning": "速度峰值后用了较长时间完成减速",
+      "expected_result": "decel_frac toward individually calibrated target",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["decel_frac"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {"input": "self_summary", "metric": "decel_frac", "op": ">", "value": 0.65}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "练完整的加速→减速，接近目标时果断完成制动",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "1w4ts Voltaic",
+          "reason": "保持 90%+ 准确率，练完整 flick 的加减速",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "decel_frac low",
+      "severity": "watch",
+      "text": "减速段只占 {decel_frac_pct:.0f}%，连续减速时间较短；是否属于制动问题仍需结合 settle/reverse 和个体历史验证。",
+      "plain_language_meaning": "速度峰值后留给连续减速的时间较短",
+      "expected_result": "decel_frac toward individually calibrated target",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["decel_frac"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {"input": "self_summary", "metric": "decel_frac", "op": "<", "value": 0.4}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "练匀减速，把减速段当一次独立动作",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "linearity high",
+      "severity": "fix",
+      "text": "减速段速度曲线偏离匀减速直线 {linearity_med:.2f}——速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；抖动看 SPARC。",
+      "plain_language_meaning": "减速阶段的速度下降节奏不够均匀",
+      "expected_result": "linearity ↓",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["linearity"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {"input": "self_summary", "metric": "linearity", "op": ">", "value": 0.13}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "把减速段练成干净、连贯的制动",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "1w4ts 30% larger",
+          "reason": "减速段精度专项",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "sparc low",
+      "severity": "fix",
+      "text": "减速段平滑度 SPARC={sparc_med:.1f}——速度轮廓中的快速波动较多。SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
+      "plain_language_meaning": "减速阶段的速度轮廓含较多快速波动",
+      "expected_result": "sparc ↑",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["sparc"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "observation_ref": "metric.terminal_control",
+      "conditions": [
+        {"input": "self_summary", "metric": "sparc", "op": "<", "value": -5.0},
+        {
+          "input": "self_summary",
+          "metric": "sparc",
+          "op": "metric_version_not_in",
+          "value": [
+            "native_flicking.sparc.v2",
+            "flicking_fair_summary.sparc.v2"
+          ]
+        }
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "clean lines，让减速速度连续下降，避免突然硬停",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "1w4ts 30% larger",
+          "reason": "减速段精度专项",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "reverse_ratio high",
+      "severity": "fix",
+      "text": "减速段有 {reverse_ratio_pct:.0f}% 的帧在反向加速，表现为反复修正。",
+      "plain_language_meaning": "移动收尾时出现了较多反向修正",
+      "expected_result": "reverse_ratio ↓",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["reverse_ratio"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "observation_ref": "metric.terminal_control",
+      "conditions": [
+        {"input": "self_summary", "metric": "reverse_ratio", "op": ">", "value": 0.2}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "把修正并入减速过程，避免停住后再二次修正",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "Multiclick",
+          "reason": "落点精度，减少二次修正",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "submovement two-stage",
+      "severity": "watch",
+      "text": "主要移动和后续修正呈较分离的两个阶段。",
+      "plain_language_meaning": "主要移动与后续修正更像两个分离动作",
+      "expected_result": "submovement_overlap toward chosen technique",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["submovement_overlap"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "observation_ref": "metric.terminal_control",
+      "conditions": [
+        {"input": "self_summary", "metric": "submovement_overlap", "op": "<", "value": 0.3}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "Multiclick",
+          "reason": "落点精度，减少二次修正",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "peak_position low",
+      "severity": "watch",
+      "text": "峰位 {peak_position_pct:.0f}%（偏前），速度峰值较早出现；具体动作原因未被输入数据直接测量。",
+      "plain_language_meaning": "速度峰值出现得较早",
+      "expected_result": "peak_position_pct toward individual baseline",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["peak_position_pct"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {
+          "input": "self_summary",
+          "metric": "peak_position_pct",
+          "op": "in_band",
+          "value": [-1e308, 30.0]
+        }
+      ],
+      "prescriptions": [
+        {
+          "scenario": "pasu",
+          "reason": "平衡加减速，把峰往中段靠",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "peak_position high",
+      "severity": "watch",
+      "text": "峰位 {peak_position_pct:.0f}%（偏后），速度峰值较晚出现；具体动作原因未被输入数据直接测量。",
+      "plain_language_meaning": "速度峰值出现得较晚",
+      "expected_result": "peak_position_pct toward individual baseline",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["peak_position_pct"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {
+          "input": "self_summary",
+          "metric": "peak_position_pct",
+          "op": "in_band",
+          "value": [60.0, 1e308]
+        }
+      ],
+      "prescriptions": [
+        {
+          "scenario": "Tile Frenzy",
+          "reason": "练果断加速、提速",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "path_efficiency low",
+      "severity": "fix",
+      "text": "flick 路径直线效率 {path_efficiency:.2f}，实际路径相对终点直线距离更绕；绝对阈值仍需产品校准。",
+      "plain_language_meaning": "实际移动路径比起终点直线距离更绕",
+      "expected_result": "path_efficiency ↑",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["path_efficiency"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {"input": "self_summary", "metric": "path_efficiency", "op": "<", "value": 0.85}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "linetrace",
+          "reason": "练直线 flick，走最短路径",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "clean lines",
+          "reason": "意识：flick 走直线，不画弧",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "peak_speed below reference",
+      "severity": "fix",
+      "text": "甩枪角速度 {self_peak:.0f}°/s 只有参考的 {ratio_pct:.0f}%（{ref_peak:.0f}°/s）；峰值速度低于当前参考，身体原因未被输入数据直接测量。",
+      "plain_language_meaning": "峰值速度低于当前比较参考",
+      "expected_result": "peak_speed_deg ↑ against comparable baseline",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["peak_speed_deg"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {
+          "input": "self_summary",
+          "metric": "peak_speed_deg",
+          "op": "ratio_to_ref_lt",
+          "value": 0.7
+        }
+      ],
+      "prescriptions": [
+        {
+          "scenario": "Tile Frenzy",
+          "reason": "在可控精度下逐步提高动态速度",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "speed 类场景",
+          "reason": "大胆加速，先求速度再收精度",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "throughput below reference",
+      "severity": "fix",
+      "text": "Fitts throughput {self_throughput:.1f} bits/s 只有参考的 {throughput_ratio_pct:.0f}%（{ref_throughput:.1f}）；速度-精度综合效率低于当前参考，身体原因未被输入数据直接测量（throughput 已按目标距离/宽度归一化，§6.3）。",
+      "plain_language_meaning": "速度与精度综合效率低于当前比较参考",
+      "expected_result": "throughput ↑ against comparable baseline",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["throughput"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {
+          "input": "self_summary",
+          "metric": "throughput",
+          "op": "ratio_to_ref_lt",
+          "value": 0.7
+        }
+      ],
+      "prescriptions": [
+        {
+          "scenario": "Tile Frenzy",
+          "reason": "在可控精度下逐步提高动态速度",
+          "target_metrics": [],
+          "expected_direction": []
+        },
+        {
+          "scenario": "speed 类场景",
+          "reason": "先求速度再收精度",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    },
+    {
+      "signal": "sensitivity high",
+      "severity": "watch",
+      "text": "当前灵敏度为 {cm_per_360:.1f} cm/360。较小 cm/360 可能放大控制输入，但不能单凭设置值判定动作问题，只能作为受控实验假设。",
+      "plain_language_meaning": "当前 cm/360 较小，是否影响控制仍需实验验证",
+      "expected_result": "linearity/reverse_ratio improve after controlled setting experiment",
+      "claim_level": "deterministic_rule",
+      "metric_refs": ["cm_per_360"],
+      "limitations": ["threshold_requires_product_calibration"],
+      "conditions": [
+        {"input": "settings", "metric": "cm_per_360", "op": "<", "value": 25.0}
+      ],
+      "prescriptions": [
+        {
+          "scenario": "降 sens 5-10%（cm/360 ↑）",
+          "reason": "制动辅助实验；复测 linearity/reverse 是否下降，没降就调回",
+          "target_metrics": [],
+          "expected_direction": []
+        }
+      ]
+    }
+  ],
+  "families": {
+    "continuous_tracking": [
+      {
+        "signal": "tracking lag high",
+        "metric": "continuous_tracking.phase_lag_ms",
+        "row_field": "phase_lag_ms",
+        "direction": "absolute_higher",
+        "knowledge_metric_ref": "metric:phase_lag",
+        "expected_entry_ref": "knowledge:tracking.predictable-speed-matching@3",
+        "observation_ref": "episode.tracking"
+      },
+      {
+        "signal": "loss count high",
+        "metric": "continuous_tracking.loss_count",
+        "row_field": "loss_count",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:loss_count",
+        "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+        "observation_ref": "event.loss"
+      },
+      {
+        "signal": "off target long",
+        "metric": "continuous_tracking.reacquisition_latency_ms",
+        "row_field": "reacquisition_latency_ms",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:reacquisition_time",
+        "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+        "observation_ref": "event.reacquisition"
+      },
+      {
+        "signal": "accel mismatch high",
+        "metric": "continuous_tracking.observed_change_response_ms",
+        "row_field": "observed_change_response_ms",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:change_response",
+        "expected_entry_ref": "knowledge:tracking.reactive-change-response@3",
+        "observation_ref": "event.target_change"
+      },
+      {
+        "signal": "correction burden high",
+        "metric": "continuous_tracking.correction_direction_reversal_count",
+        "row_field": "correction_burden",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:correction_burden",
+        "expected_entry_ref": "knowledge:tracking.control-smoothness@3",
+        "observation_ref": "metric.smoothness",
+        "guardrails": {
+          "all": [
+            {"metric": "continuous_tracking.target_relative_error_px", "op": "<=baseline"},
+            {"metric": "continuous_tracking.time_in_radius_ratio", "op": ">=baseline"}
+          ]
+        }
+      },
+      {
+        "signal": "sparc low",
+        "metric": "continuous_tracking.sparc",
+        "row_field": "sparc",
+        "direction": "lower",
+        "knowledge_metric_ref": "metric:sparc",
+        "expected_entry_ref": "knowledge:tracking.control-smoothness@3",
+        "observation_ref": "metric.smoothness",
+        "guardrails": {
+          "all": [
+            {"metric": "continuous_tracking.target_relative_error_px", "op": "<=baseline"},
+            {"metric": "continuous_tracking.time_in_radius_ratio", "op": ">=baseline"}
+          ]
+        }
+      }
+    ],
+    "dynamic_clicking": [
+      {
+        "signal": "dynamic click error high",
+        "metric": "dynamic_clicking.normalized_click_error",
+        "row_field": "normalized_click_error",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:normalized_click_error",
+        "observation_ref": "event.dynamic_click",
+        "blocking_limitations": [
+          "click_geometry_visible_radius_conditioned",
+          "target_identity_unresolved",
+          "identity_continuity_not_observed",
+          "outcome_association_unavailable",
+          "target_click_association_unavailable"
+        ]
+      },
+      {
+        "signal": "dynamic acquisition slow",
+        "metric": "dynamic_clicking.acquisition_time_ms",
+        "row_field": "acquisition_time_ms",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:acquisition_time_ms",
+        "observation_ref": "event.dynamic_click",
+        "blocking_limitations": [
+          "target_identity_unresolved",
+          "identity_continuity_not_observed",
+          "outcome_association_unavailable",
+          "target_click_association_unavailable"
+        ]
+      },
+      {
+        "signal": "relative velocity mismatch",
+        "metric": "dynamic_clicking.relative_velocity",
+        "row_field": "relative_velocity_magnitude",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:relative_velocity_magnitude",
+        "observation_ref": "field.relative_velocity",
+        "blocking_limitations": [
+          "target_identity_unresolved",
+          "identity_continuity_not_observed",
+          "target_click_association_unavailable"
+        ]
+      }
+    ],
+    "target_switching": [
+      {
+        "signal": "switch transition slow",
+        "metric": "target_switching.transition_time_ms",
+        "row_field": "transition_time_ms",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:inter_target_transition",
+        "expected_entry_ref": "knowledge:switching.transition-and-arrival@3",
+        "observation_ref": "event.switch_chain",
+        "row_filter": "observable_switch_chain",
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "near_transfer_retest",
+          "stop_adjust_rule"
+        ]
+      },
+      {
+        "signal": "switch arrival error high",
+        "metric": "target_switching.settle_duration_ms",
+        "row_field": "settle_duration_ms",
+        "direction": "higher",
+        "knowledge_metric_ref": "metric:next_target_acquisition",
+        "expected_entry_ref": "knowledge:switching.transition-and-arrival@3",
+        "observation_ref": "event.switch_chain",
+        "row_filter": "observable_switch_chain",
+        "requested_knowledge_sections": [
+          "definition",
+          "mechanisms",
+          "alternative_explanations",
+          "cue",
+          "dose_guardrail",
+          "matched_retest",
+          "near_transfer_retest",
+          "stop_adjust_rule"
+        ]
+      }
+    ]
+  },
+  "archetypes": [
+    {
+      "id": "long_decel",
+      "label": "急加速-长减速型",
+      "conditions": {"decel_frac high": 1.0, "peak_position low": 0.5},
+      "positive": false
+    },
+    {
+      "id": "decel_jitter",
+      "label": "减速抖动型",
+      "conditions": {"sparc low": 1.0, "reverse_ratio high": 0.7},
+      "positive": false
+    },
+    {
+      "id": "two_stage",
+      "label": "两段式型",
+      "conditions": {"submovement two-stage": 1.0},
+      "positive": false
+    },
+    {
+      "id": "underpowered",
+      "label": "参考速度效率偏低型",
+      "conditions": {"peak_speed below reference": 1.0, "throughput below reference": 1.0},
+      "positive": false
+    },
+    {
+      "id": "inefficient_path",
+      "label": "路径低效型",
+      "conditions": {"path_efficiency low": 1.0},
+      "positive": false
+    },
+    {
+      "id": "fluid_precise",
+      "label": "流体精度型",
+      "conditions": {},
+      "positive": true
+    },
+    {
+      "id": "tension_locked",
+      "label": "高 PTC 观察型",
+      "conditions": {"ptc high": 1.0, "accuracy low": 0.5},
+      "positive": false
+    },
+    {
+      "id": "reactive_loser",
+      "label": "反应滞后型",
+      "conditions": {"loss count high": 1.0, "off target long": 0.7},
+      "positive": false
+    },
+    {
+      "id": "precision_borderline",
+      "label": "临界精度型",
+      "conditions": {"avg error high": 1.0},
+      "positive": false
+    },
+    {
+      "id": "speed_overmatched",
+      "label": "速度超纲型",
+      "conditions": {"speed mismatch high": 1.0, "accel mismatch high": 0.7},
+      "positive": false
+    },
+    {
+      "id": "fluid_tracker",
+      "label": "流体追踪型",
+      "conditions": {},
+      "positive": true
+    }
+  ],
+  "root_causes": {
+    "decel_frac high": ["减速阶段偏长", "证据只能说明减速阶段偏长", "练完整加减速，在接近目标时果断完成制动"],
+    "decel_frac low": ["减速段占比过低，撞墙式制动", "输入数据能观察到减速段被压缩，但不能单独证明减速不足或制动粗暴", "练匀减速，把减速段当独立动作"],
+    "sparc low": ["减速速度轮廓有较多快速波动", "输入数据支持减速轮廓不够连续，但不能单独证明握持张力或其他身体原因", "减速段控制稳定性"],
+    "reverse_ratio high": ["减速段反复修正", "证据只能说明反向修正偏多", "把修正并入减速过程，避免停住后再二次修正"],
+    "submovement two-stage": ["主要移动和后续修正呈较分离的两个阶段", "证据只能说明主要移动和后续修正较分离", "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正"],
+    "peak_speed below reference": ["峰值速度低于当前参考", "具体动作原因未被输入数据直接测量", "在可控精度下逐步提高速度"],
+    "throughput below reference": ["速度-精度综合效率低于当前参考", "输入数据能观察到参考效率偏低，但不能单独证明具体动作原因", "在可比场景中练速度-精度转换"],
+    "linearity high": ["制动不匀", "输入数据能观察到减速节奏不匀，但不能单独证明具体的身体控制原因", "匀速制动练习"],
+    "path_efficiency low": ["flick 路径绕", "输入数据能观察到 flick 路径效率偏低，但不能单独证明动作不直的身体原因", "linetrace 直线练习"],
+    "peak_position low": ["峰值位置偏前", "输入数据能观察到速度峰值出现较早，但不能单独证明加速过猛或减速段拖沓", "平衡加减速"],
+    "peak_position high": ["峰值位置偏后", "输入数据能观察到速度峰值出现较晚，但不能单独证明加速不足或启动拖沓", "果断加速"],
+    "sensitivity high": ["当前 cm/360 较小", "输入数据能记录当前灵敏度，但不能单独证明它是否造成控制问题", "只做可撤销的 sens 实验并复测"],
+    "accuracy low": ["命中率低", "输入数据能观察到命中率偏低，但不能单独证明是速度匹配或微调精度的哪一项造成", "pasu + VT Multiclick 落点"],
+    "loss count high": ["频繁脱靶", "输入数据能观察到脱靶次数偏多，但不能单独证明是目标变向读取或速度匹配造成", "VT reactive tracking"],
+    "off target long": ["脱靶后回位慢", "输入数据能观察到脱靶持续时间偏长，但不能单独证明是视觉重新锁定延迟", "VT evasive + Clover Raw Control"],
+    "avg error high": ["误差大", "输入数据能观察到平均误差偏大，但不能单独证明具体的准星控制原因", "VT precise tracking + crosshair gap 意识"],
+    "speed mismatch high": ["高速段失手", "输入数据能观察到高速段误差增加，但不能单独证明 speed matching 的身体或视觉原因", "VT control tracking"],
+    "accel mismatch high": ["变向段失手", "输入数据能观察到加速度变化段误差增加，但不能单独证明 reactive tracking 的具体原因", "VT reactive tracking"],
+    "ptc high": ["可能张力偏大", "输入数据只能显示 PTC 偏高；发力密集或张力偏大是未被 EMG 验证的假设", "暴露疗法 + 侧向挤压"]
+  }
+}

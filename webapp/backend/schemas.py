@@ -797,3 +797,48 @@ class ExternalRunDetailResponse(BaseModel):
     run: dict
 
 
+# 知识包管理（kb-sdk plan C6；WP-10）。官方档置顶语义由前端处理，
+# 列表只含已安装的第三方包。
+
+class KnowledgePackImportRequest(BaseModel):
+    """Frontend native picker hands over a local pack directory or zip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_path: str
+
+
+class KnowledgePackItem(BaseModel):
+    pack_id: str
+    display_name: str
+    author: str
+    pack_version: str
+    homepage: Optional[str] = None
+    installed_at: str
+    has_mapping: bool
+    valid: bool
+
+
+class KnowledgePacksResponse(BaseModel):
+    """GET /knowledge-packs; activate/delete also return this list shape."""
+
+    active: str
+    packs: list[KnowledgePackItem] = Field(default_factory=list)
+
+
+class KnowledgePackImportResponse(BaseModel):
+    pack_id: str
+    pack_version: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class KnowledgePackActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    active: str  # "official" | "<pack_id>"
+
+
+class KnowledgePackActivateResponse(KnowledgePacksResponse):
+    warnings: list[str] = Field(default_factory=list)
+
+
