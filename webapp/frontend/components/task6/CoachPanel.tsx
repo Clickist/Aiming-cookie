@@ -22,6 +22,7 @@ import { MEMBER_COPY, bothPoolsEmpty, classifyMemberGatewayError, formatMemberDa
 import { useMemberState } from "@/lib/member-state";
 import { MemberNotice, memberEndDate, memberNotice, memberNoticeText } from "@/components/task3/MemberChrome";
 import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
+import { activeRunRefForSession, clearActiveRunRef, pinActiveRunRef } from "@/lib/coach-run-resume";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
   activeMentionQuery,
@@ -535,6 +536,11 @@ function useExitAnimation<K extends number | string>(
   return { exitingKeys, requestExit, finalize };
 }
 
+/** 404＝run 已不存在（如 sidecar 重启）：立即收敛为中断终态，不再无谓重试。 */
+function isMissingRunError(error: unknown): boolean {
+  return error instanceof Error && error.name === "ApiError_404";
+}
+
 export function CoachPanel({
   capability,
   draftSession = false,
@@ -986,6 +992,96 @@ export function CoachPanel({
     }
   }, [run]);
 
+  // ── 在途 run 钉扎与刷新复接（0919 P2）───────────────────────────────────
+  // run 只活在内存里：受理发送即把 run_ref 钉进 localStorage（终态解除），否则
+  // 刷新/应用重启后界面无从知道本会话还有 in-flight 回合——停止按钮、流式、
+  // 终态收敛（含把落库回复拉上屏）整链无人接管，实测表现为「这个 run 彻底从
+  // 界面消失、回复石沉大海，须切走再切回」。自动开讲与首条发送都经 setRun
+  // 入位，钉扎挂在 run 状态上即天然覆盖两条来源。
+  const activeRunRefKey = run?.run_ref ?? null;
+  const activeRunSessionId = run?.session_id ?? null;
+  const activeRunStatus = run?.status ?? null;
+  // 本生命周期钉过的那条（解除时机判断用，也兼作「已钉」短路——流式帧会换
+  // run 对象，但三个 dep 不变，正常不会重跑；真重跑也不重复写 localStorage）。
+  const pinnedRunRef = useRef<{ sessionId: number; runRef: string } | null>(null);
+  useEffect(() => {
+    if (activeRunRefKey != null && activeRunSessionId != null) {
+      if (activeRunStatus === "queued" || activeRunStatus === "running") {
+        const already = pinnedRunRef.current;
+        if (already && already.sessionId === activeRunSessionId && already.runRef === activeRunRefKey) return;
+        pinActiveRunRef(window.localStorage, activeRunSessionId, activeRunRefKey);
+        pinnedRunRef.current = { sessionId: activeRunSessionId, runRef: activeRunRefKey };
+        return;
+      }
+      // 终态：解除这条 run 的钉扎，刷新时不再复接一个死回合。
+      if (pinnedRunRef.current?.runRef === activeRunRefKey) {
+        clearActiveRunRef(window.localStorage, pinnedRunRef.current.sessionId);
+        pinnedRunRef.current = null;
+      }
+      return;
+    }
+    // run 被清空：只有「收束的正是当前会话」（成功归档 settleSucceeded 会把
+    // run 置回 null）或当前已无会话（删除/归档）才解除；用户切到别的会话时
+    // 不动钉扎——切走 ≠ 终态，那个回合还在服务端跑。
+    const pinned = pinnedRunRef.current;
+    if (pinned && (sessionId == null || pinned.sessionId === sessionId)) {
+      clearActiveRunRef(window.localStorage, pinned.sessionId);
+      pinnedRunRef.current = null;
+    }
+  }, [activeRunRefKey, activeRunSessionId, activeRunStatus, sessionId]);
+
+  // 会话绑定/页面加载时复接：钉扎命中拉一次 run 状态——queued/running 直接
+  // setRun 复接（既有 liveRunRef 效果据此续订 SSE/轮询，终态收敛、归档与落库
+  // 消息接管全部复用同一条链路，不另起一套）；已终态则解除钉扎，交由 refresh
+  // 的落库消息接管（失败态仍挂出错卡，重试入口不丢）。
+  const resumedRunKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (capability !== "ready" || draftSession || sessionId == null) return undefined;
+    const pinned = activeRunRefForSession(window.localStorage, sessionId);
+    if (!pinned) return undefined;
+    // 同一生命周期内切回本会话：内存里的活跃 run 已在跑，无需复接。
+    if (activeRunRefKey === pinned && (activeRunStatus === "queued" || activeRunStatus === "running")) {
+      return undefined;
+    }
+    // 每条钉扎每个生命周期只复接一次（失败留给下一次会话绑定/刷新，不空转）。
+    // 标记在请求落地后才置位：in-flight 期间 dep 变化会重跑本效果，若提前标记
+    // 就会把唯一一次复接机会吞掉（重跑的那次直接早退，run 永不回接）。
+    const resumeKey = `${sessionId}:${pinned}`;
+    if (resumedRunKeyRef.current === resumeKey) return undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const restored = await getCoachAgentRun(pinned, { sessionId });
+        if (cancelled) return;
+        // 复接 GET 在飞的窗口里用户可能已发出新回合（发送路径会把钉扎覆写成
+        // 新 run）：钉扎现值不再是本条时放弃复接——把旧 run setRun 回去会把
+        // 新回合顶出 run，变成无 SSE、无停止按钮的孤儿（石沉大海的变体）。
+        if (activeRunRefForSession(window.localStorage, sessionId) !== pinned) return;
+        resumedRunKeyRef.current = resumeKey;
+        if (["queued", "running"].includes(restored.status)) {
+          stickToBottomRef.current = true;
+          setRun(restored);
+          return;
+        }
+        clearActiveRunRef(window.localStorage, sessionId);
+        // 失败回合照旧挂出错卡（含重试入口）；其余终态交刷新拉落库消息。
+        if (restored.status === "failed") setRun(restored);
+        void refresh();
+      } catch (error) {
+        if (cancelled) return;
+        // run 已不存在（如 sidecar 重启）：钉扎失效，落库消息接管即可；其余
+        // 错误（连接瞬断）保留钉扎与重试机会，留给下一次会话绑定。
+        if (isMissingRunError(error)) {
+          clearActiveRunRef(window.localStorage, sessionId);
+          void refresh();
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunRefKey, activeRunStatus, capability, draftSession, refresh, sessionId]);
+
   // Coach's `navigation.open` may emit a video_time UI event; forward it to the
   // video pane exactly once per event so streaming and polling both resolve it.
   const handledVideoEventsRef = useRef(new Set<string>());
@@ -1343,10 +1439,6 @@ export function CoachPanel({
     const POLL_BASE_INTERVAL_MS = 1000;
     const POLL_MAX_INTERVAL_MS = 10_000;
     let pollFailures = 0;
-
-    // 404 表示 run 已不存在（如 sidecar 重启）：立即置中断终态，不再无谓重试。
-    const isMissingRunError = (error: unknown) =>
-      error instanceof Error && error.name === "ApiError_404";
 
     const finalizeRun = async () => {
       // 收敛目标会话键：await 期间不能再用 cancelled 判活——终态 setRun 会让

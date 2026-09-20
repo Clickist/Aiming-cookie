@@ -325,11 +325,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, !shellHidden);
 
 
+  // 会话列表是否已完成首次加载：列表是「这条会话是否存在」的唯一信号，
+  // 但它慢（大会话量实测 12–32s），不能成为会话绑定的前置门槛。
+  const coachSessionsLoadedRef = useRef(false);
   useEffect(() => {
     if (shellHidden) return undefined;
     const controller = new AbortController();
     void listCoachSessions({ signal: controller.signal }).then((result) => {
       if (controller.signal.aborted) return;
+      coachSessionsLoadedRef.current = true;
       setCoachSessions(result.sessions as SessionRailSession[]);
     }).catch(() => undefined);
     return () => controller.abort();
@@ -366,15 +370,23 @@ export function AppShell({ children }: { children: ReactNode }) {
         return;
       }
     }
-    if (routeSessionId !== null && coachSessions.some((session) => Number(session.id) === routeSessionId)) {
-      setSelectedCoachSessionId(routeSessionId);
+    // 路由指向哪条会话就绑哪条。路由是用户意图的权威表达，不该等列表追平：
+    // 大会话量下 listCoachSessions 实测 12–32s，等它等于让每次刷新都长时间停在
+    // 空首页上——在途 run 没有指示、消息不显示，正是「发出消息后石沉大海」
+    //（0919 P2）。列表只补标题/摘要等元数据，绑定后自然补齐。
+    if (routeSessionId !== null) {
+      if (coachSessions.some((session) => Number(session.id) === routeSessionId)
+        || !coachSessionsLoadedRef.current) {
+        setSelectedCoachSessionId(routeSessionId);
+        return;
+      }
+      // 列表已加载且里面没有这条（删除/归档后残留的死 id）：回到空选择
+      //（顶栏自然渲染「新对话」占位），绝不落到下面的 lastViewed/primary
+      // 兜底——回落会把顶栏/消息区闪成旧会话再自愈，删除当前会话后跳陈旧
+      // 会话（§12.5 补遗）同此根。
+      setSelectedCoachSessionId((current) => (current === routeSessionId ? null : current));
       return;
     }
-    // 路由指向的会话还没出现在已加载列表里：保持当前选择（null＝顶栏自然
-    // 渲染「新对话」占位），等 reloadCoachSessions 把列表追平后再绑定。
-    // 绝不落到下面的 lastViewed/primary 兜底——回落会把顶栏/消息区闪成旧
-    // 会话再自愈，删除当前会话后跳陈旧会话（§12.5 补遗）同此根。
-    if (routeSessionId !== null) return;
     if (selectedCoachSessionId !== null && coachSessions.some((session) => Number(session.id) === selectedCoachSessionId)) {
       return;
     }
@@ -425,6 +437,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const reloadCoachSessions = useCallback(async (nextSelectedId?: number | null) => {
     const result = await listCoachSessions();
     const sessions = result.sessions as SessionRailSession[];
+    // 事件驱动的重拉同样算「列表已加载」：冷启动首拉失败（sidecar 未就绪）
+    // 而 reload 成功的时序完全可达，不置位会让死路由 id 的收敛防线整生命周期失效。
+    coachSessionsLoadedRef.current = true;
     setCoachSessions(sessions);
     if (sessions.some((session) => (session as CoachSessionOut).title_pending) && titlePendingTimerRef.current === null) {
       titlePendingTimerRef.current = window.setTimeout(() => {
