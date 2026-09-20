@@ -562,4 +562,18 @@ export const task6Zh = {
   "settings.language.choiceAria": "界面语言",
   "settings.language.zh": "简体中文",
   "settings.language.en": "English",
+
+  // ── lib/desktop.ts —— Rust invoke 错误码 / KovaaK 场景启动状态（批 6 外围）──
+  // src-tauri 命令 Err(String) 只回稳定码（src-tauri/src/lib.rs 的 diag.* /
+  // frontend_log.*）；scenario_open 只回 status 枚举。文案单一事实源在这里，
+  // 码表见 lib/desktop.ts。zh 值为 Rust 原中文逐字（不含原拼在后面的 OS 错误详情）。
+  "desktop.diag.pathNotAbsolute": "诊断包保存路径必须是绝对路径",
+  "desktop.diag.serializeFailed": "诊断包序列化失败",
+  "desktop.diag.writeFailed": "诊断包写入失败",
+  "desktop.frontendLog.dirCreateFailed": "前端日志目录创建失败",
+  "desktop.frontendLog.rotateFailed": "前端日志轮转失败",
+  "desktop.frontendLog.openFailed": "前端日志打开失败",
+  "desktop.frontendLog.writeFailed": "前端日志写入失败",
+  "desktop.kovaak.scenarioDispatched": "已请求打开 KovaaK，请确认目标场景已加载。",
+  "desktop.kovaak.scenarioDispatchFailed": "未能请求打开 KovaaK，请确认 Steam 已安装后重试。",
 } as const;

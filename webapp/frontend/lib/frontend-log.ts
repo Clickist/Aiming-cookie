@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { isDesktopRuntime } from "./desktop";
+import { desktopErrorMessage, isDesktopRuntime } from "./desktop";
 
 /**
  * 前端错误环形日志：打包版 WebView 的 console 不可见也不持久，
@@ -44,7 +44,8 @@ export function logFrontendError(source: string, message: string): void {
   if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
   if (!isDesktopRuntime()) return;
   void invoke("desktop_append_frontend_log", { entry: formatLine(entry) }).catch((error) => {
-    console.error("[frontend-log] 前端错误落盘失败", error);
+    // Rust 只回稳定错误码（frontend_log.*），经 desktopErrorMessage 译成当前语言。
+    console.error("[frontend-log] 前端错误落盘失败", desktopErrorMessage(error));
   });
 }
 

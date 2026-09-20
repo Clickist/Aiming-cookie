@@ -49,7 +49,7 @@
         "uninstallerHeaderImage": "nsis/header.bmp",
         "sidebarImage": "nsis/sidebar.bmp",
         "installerHooks": "nsis/installer-hooks.nsh",
-        "languages": ["SimpChinese"]
+        "languages": ["SimpChinese", "English"]
       }
     }
   },

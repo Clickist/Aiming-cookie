@@ -1,9 +1,46 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
-import { t } from "./i18n/core";
+import { t, type MessageKey } from "./i18n/core";
 
-import type { DesktopCaptureCoordinatorStatus, ScenarioOpenResultV1 } from "./types";
+import type {
+  DesktopCaptureCoordinatorStatus,
+  ScenarioOpenResultV1,
+  ScenarioOpenStatus,
+} from "./types";
+
+// Rust invoke 错误码 → 字典键：src-tauri 命令的 Err(String) 只回稳定码
+// （src-tauri/src/lib.rs 的 diag.* / frontend_log.*），文案单一事实源在
+// 前端字典。未知码原样输出——裸码可捕获，与后端过渡期兜底双保险。
+const DESKTOP_ERROR_KEYS: Record<string, MessageKey> = {
+  "diag.path_not_absolute": "desktop.diag.pathNotAbsolute",
+  "diag.serialize_failed": "desktop.diag.serializeFailed",
+  "diag.write_failed": "desktop.diag.writeFailed",
+  "frontend_log.dir_create_failed": "desktop.frontendLog.dirCreateFailed",
+  "frontend_log.rotate_failed": "desktop.frontendLog.rotateFailed",
+  "frontend_log.open_failed": "desktop.frontendLog.openFailed",
+  "frontend_log.write_failed": "desktop.frontendLog.writeFailed",
+};
+
+/** 把 invoke 错误码译成当前语言文案；未知错误转为字符串（原样可见）。 */
+export function desktopErrorMessage(reason: unknown): string {
+  const key = typeof reason === "string" ? DESKTOP_ERROR_KEYS[reason] : undefined;
+  return key ? t(key) : String(reason);
+}
+
+function localizeInvokeError(reason: unknown): never {
+  throw new Error(desktopErrorMessage(reason));
+}
+
+// KovaaK 场景启动状态 → 字典键：scenario_open 只回 status 枚举（Rust 不持
+// 自然语言），桌面回包与下方浏览器兜底共用这一张表——五处重复文案归一。
+// unmapped / webPreviewBlocked 复用 shared 冻结键（文本与 Rust 原句一致）。
+const SCENARIO_STATUS_KEYS: Record<ScenarioOpenStatus, MessageKey> = {
+  scenario_dispatched: "desktop.kovaak.scenarioDispatched",
+  scenario_unmapped: "desktop.kovaak.scenarioUnmapped",
+  desktop_unavailable: "desktop.kovaak.webPreviewBlocked",
+  deep_link_dispatch_failed: "desktop.kovaak.scenarioDispatchFailed",
+};
 
 export interface DesktopRuntimeConnection {
   baseUrl: string;
@@ -64,7 +101,9 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
   if (typeof path !== "string" || !path) return null;
-  return invoke<string>("desktop_export_capture_diagnostics", { path });
+  return invoke<string>("desktop_export_capture_diagnostics", { path }).catch(
+    localizeInvokeError,
+  );
 }
 
 // 诊断包直传（ac-logs，logs.aimingcookie.com）。
@@ -83,7 +122,9 @@ export async function uploadDesktopCaptureDiagnostics(): Promise<string> {
   if (!DIAGNOSTICS_UPLOAD_TOKEN) {
     throw new Error(DIAGNOSTICS_UPLOAD_NOT_CONFIGURED);
   }
-  const bundle = await invoke<string>("desktop_collect_capture_diagnostics");
+  const bundle = await invoke<string>("desktop_collect_capture_diagnostics").catch(
+    localizeInvokeError,
+  );
   const response = await fetch(DIAGNOSTICS_UPLOAD_URL, {
     method: "POST",
     headers: {
@@ -115,7 +156,7 @@ export async function openKovaakScenario(
       status: "scenario_unmapped",
       scenario_name: null,
       display_name: null,
-      message: t("desktop.kovaak.scenarioUnmapped"),
+      message: t(SCENARIO_STATUS_KEYS.scenario_unmapped),
     };
   }
   if (!isDesktopRuntime()) {
@@ -123,12 +164,15 @@ export async function openKovaakScenario(
       status: "desktop_unavailable",
       scenario_name: trimmed,
       display_name: null,
-      message: t("desktop.kovaak.webPreviewBlocked"),
+      message: t(SCENARIO_STATUS_KEYS.desktop_unavailable),
     };
   }
-  return invoke<ScenarioOpenResultV1>("scenario_open", {
+  // Rust 侧只回 status 枚举码（wire 无 message 字段），展示文案在此查字典补齐，
+  // 对外类型 ScenarioOpenResultV1 保持不变（消费方无需感知）。
+  const result = await invoke<Omit<ScenarioOpenResultV1, "message">>("scenario_open", {
     scenarioName: trimmed,
   });
+  return { ...result, message: t(SCENARIO_STATUS_KEYS[result.status]) };
 }
 
 async function pickSinglePath(

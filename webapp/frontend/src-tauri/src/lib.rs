@@ -687,6 +687,9 @@ fn desktop_capture_coordinator_status(
     state.status()
 }
 
+// 桌面命令错误合同：invoke 的 Err(String) 只回稳定错误码（diag.* /
+// frontend_log.*），不带自然语言句子——中英文案的单一事实源在前端字典
+// （lib/desktop.ts 的码表），未知码由前端原样抛出。
 #[tauri::command]
 fn desktop_export_capture_diagnostics(
     app: tauri::AppHandle,
@@ -697,12 +700,12 @@ fn desktop_export_capture_diagnostics(
 ) -> Result<String, String> {
     let path = PathBuf::from(path.trim());
     if !path.is_absolute() {
-        return Err("诊断包保存路径必须是绝对路径".to_string());
+        return Err("diag.path_not_absolute".to_string());
     }
     let bundle = build_capture_diagnostics_bundle(&app, &coordinator, &raw_input, &window_capture)?;
     let payload =
-        serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
-    atomic_write_file(&path, &payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
+        serde_json::to_vec_pretty(&bundle).map_err(|_| "diag.serialize_failed".to_string())?;
+    atomic_write_file(&path, &payload).map_err(|_| "diag.write_failed".to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -715,7 +718,7 @@ fn desktop_collect_capture_diagnostics(
     window_capture: State<'_, Arc<Mutex<WindowCaptureState>>>,
 ) -> Result<String, String> {
     let bundle = build_capture_diagnostics_bundle(&app, &coordinator, &raw_input, &window_capture)?;
-    serde_json::to_string(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))
+    serde_json::to_string(&bundle).map_err(|_| "diag.serialize_failed".to_string())
 }
 
 fn build_capture_diagnostics_bundle(
@@ -799,14 +802,14 @@ fn desktop_append_frontend_log(
 fn append_frontend_log(data_root: &Path, entry: &str) -> Result<(), String> {
     use std::io::Write;
     let logs_dir = data_root.join("logs");
-    fs::create_dir_all(&logs_dir).map_err(|error| format!("前端日志目录创建失败: {error}"))?;
+    fs::create_dir_all(&logs_dir).map_err(|_| "frontend_log.dir_create_failed".to_string())?;
     let path = logs_dir.join("frontend.log");
     if fs::metadata(&path)
         .map(|meta| meta.len() >= FRONTEND_LOG_MAX_BYTES as u64)
         .unwrap_or(false)
     {
         atomic_replace(&path, &logs_dir.join("frontend.log.1"))
-            .map_err(|error| format!("前端日志轮转失败: {error}"))?;
+            .map_err(|_| "frontend_log.rotate_failed".to_string())?;
     }
     // 一行一条：bounded_diagnostic_text 过滤控制字符（保留 \n/\t），再把
     // 换行/制表折成空格，避免多行错误文本破坏行结构。
@@ -815,8 +818,8 @@ fn append_frontend_log(data_root: &Path, entry: &str) -> Result<(), String> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|error| format!("前端日志打开失败: {error}"))?;
-    writeln!(file, "{line}").map_err(|error| format!("前端日志写入失败: {error}"))?;
+        .map_err(|_| "frontend_log.open_failed".to_string())?;
+    writeln!(file, "{line}").map_err(|_| "frontend_log.write_failed".to_string())?;
     Ok(())
 }
 

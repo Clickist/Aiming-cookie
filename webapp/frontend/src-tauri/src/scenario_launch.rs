@@ -7,12 +7,15 @@ const STEAM_APP_ID: &str = "824270";
 const SCENARIOS_RELATIVE: &str = "FPSAimTrainer/Saved/SaveGames/Scenarios";
 const MAX_SCENARIO_NAME_LEN: usize = 200;
 
+/// KovaaK 场景启动结果：`status` 是稳定枚举码（scenario_dispatched /
+/// desktop_unavailable / scenario_unmapped / deep_link_dispatch_failed）。
+/// 展示文案按 status 在前端字典查表（lib/desktop.ts 的 SCENARIO_STATUS_KEYS），
+/// Rust 不持自然语言句子——与浏览器兜底文案共用同一事实源。
 #[derive(Debug, Serialize)]
 pub struct ScenarioOpenResult {
     pub status: String,
     pub scenario_name: Option<String>,
     pub display_name: Option<String>,
-    pub message: String,
 }
 
 /// Case- and whitespace-tolerant key: collapse whitespace runs, trim, lowercase.
@@ -259,7 +262,6 @@ pub fn scenario_open(scenario_name: String) -> ScenarioOpenResult {
             status: "scenario_unmapped".to_string(),
             scenario_name: None,
             display_name: None,
-            message: "本机 KovaaK 没有这个场景，需要先订阅/下载。".to_string(),
         };
     };
 
@@ -269,19 +271,16 @@ pub fn scenario_open(scenario_name: String) -> ScenarioOpenResult {
             status: "scenario_dispatched".to_string(),
             scenario_name: Some(display_name.clone()),
             display_name: Some(display_name),
-            message: "已请求打开 KovaaK，请确认目标场景已加载。".to_string(),
         },
         Err(error) if error == "desktop_unavailable" => ScenarioOpenResult {
             status: "desktop_unavailable".to_string(),
             scenario_name: Some(display_name.clone()),
             display_name: Some(display_name),
-            message: "当前网页预览不能启动 KovaaK，请在桌面版中操作。".to_string(),
         },
         Err(_) => ScenarioOpenResult {
             status: "deep_link_dispatch_failed".to_string(),
             scenario_name: Some(display_name.clone()),
             display_name: Some(display_name),
-            message: "未能请求打开 KovaaK，请确认 Steam 已安装后重试。".to_string(),
         },
     }
 }

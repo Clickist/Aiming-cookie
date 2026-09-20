@@ -558,4 +558,17 @@ export const task6En = {
   "settings.language.choiceAria": "Interface language",
   "settings.language.zh": "简体中文",
   "settings.language.en": "English",
+
+  // ── lib/desktop.ts —— Rust invoke 错误码 / KovaaK 场景启动状态（批 6 外围）──
+  // Codes come from src-tauri (diag.* / frontend_log.* / scenario_open status);
+  // these entries are the single source of the display text.
+  "desktop.diag.pathNotAbsolute": "The diagnostics bundle save path must be absolute",
+  "desktop.diag.serializeFailed": "Failed to serialize the diagnostics bundle",
+  "desktop.diag.writeFailed": "Failed to write the diagnostics bundle",
+  "desktop.frontendLog.dirCreateFailed": "Failed to create the frontend log directory",
+  "desktop.frontendLog.rotateFailed": "Failed to rotate the frontend log",
+  "desktop.frontendLog.openFailed": "Failed to open the frontend log",
+  "desktop.frontendLog.writeFailed": "Failed to write the frontend log",
+  "desktop.kovaak.scenarioDispatched": "KovaaK launch requested. Make sure the target scenario has loaded.",
+  "desktop.kovaak.scenarioDispatchFailed": "Couldn't open KovaaK. Make sure Steam is installed, then try again.",
 } as const;
