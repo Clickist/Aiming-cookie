@@ -22,7 +22,11 @@ async def check_db_ready() -> bool:
 
 
 async def build_coach_runtime_status() -> dict[str, object]:
-    """Coach UI / dev: sidecar readiness without failing like readyz."""
+    """Coach UI / dev: sidecar readiness without failing like readyz.
+
+    B1：code 是稳定枚举（ready/warming_up），message 保留 zh 原文——前端
+    状态条本波仍读 message，code 供下一波按码查字典。
+    """
     sidecar_up = await check_sidecar_ready()
     if sidecar_up:
         return {
@@ -30,6 +34,7 @@ async def build_coach_runtime_status() -> dict[str, object]:
             "runtime": "pi",
             "sidecar": "up",
             "ready_for_fast_path": True,
+            "code": "ready",
             "message": "教练引擎已就绪",
         }
     return {
@@ -37,6 +42,7 @@ async def build_coach_runtime_status() -> dict[str, object]:
         "runtime": "pi",
         "sidecar": "down",
         "ready_for_fast_path": False,
+        "code": "warming_up",
         "message": (
             "教练引擎准备中；首次回复可能较慢"
             "（将连接常驻 sidecar 或走冷启动/较慢路径）"

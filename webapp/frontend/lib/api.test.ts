@@ -20,6 +20,7 @@ import {
   createCoachAgentRun,
   followUpCoachAgentRun,
   steerCoachAgentRun,
+  getSession,
   importKnowledgePack,
   KnowledgePackImportError,
   listCoachSessions,
@@ -32,13 +33,14 @@ import {
   switchProviderModel,
   syncKovaaKScores,
   uninstallKnowledgePack,
+  uploadVideo,
 } from "./api";
 import {
   getManagedVideoUrl,
   openKovaakScenario,
   resetDesktopRuntimeConnection,
 } from "./desktop";
-import { translate } from "./i18n/core";
+import { setLocale, translate } from "./i18n/core";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = Reflect.get(globalThis, "window");
@@ -57,6 +59,8 @@ afterEach(() => {
   resetDesktopRuntimeConnection();
   restoreGlobal("window", originalWindow);
   restoreGlobal("isTauri", originalIsTauri);
+  // B0/B1 管道测试会切 locale；恢复默认，避免泄漏到其他用例。
+  setLocale("zh-CN");
 });
 
 test("desktop API requests include the in-memory launch token by default", async () => {
@@ -381,6 +385,95 @@ test("Composer steer adapters forward queue requests to the sidecar queue verbs"
     kind: "follow_up",
     queued: true,
   });
+});
+
+test("browser API requests carry the current locale in X-Locale", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  setLocale("en-US");
+  await listSessions();
+
+  assert.equal(new Headers(requests[0]?.init?.headers).get("X-Locale"), "en-US");
+
+  setLocale("zh-CN");
+  await listSessions();
+  assert.equal(new Headers(requests[1]?.init?.headers).get("X-Locale"), "zh-CN");
+});
+
+test("sidecar API requests carry the current locale in X-Locale", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({
+        baseUrl: "http://127.0.0.1:43127",
+        sidecarUrl: "http://127.0.0.1:43128",
+        token: "test-launch-token",
+      }),
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  setLocale("en-US");
+  await listCoachSessions();
+
+  assert.equal(requests[0]?.input, "http://127.0.0.1:43128/v1/sessions");
+  assert.equal(new Headers(requests[0]?.init?.headers).get("X-Locale"), "en-US");
+});
+
+test("coded API errors localize through the dictionary with args interpolation", async () => {
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    detail: {
+      code: "upload.disk_space_insufficient",
+      message: "数据盘可用空间不足，无法接收上传（需至少 450MB 空闲）",
+      args: { required_mb: 450 },
+    },
+  }), { status: 507, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+
+  setLocale("en-US");
+  await assert.rejects(
+    () => uploadVideo(new File(["x"], "v.mp4"), { csv: new File(["y"], "s.csv") }),
+    (error: unknown) => error instanceof Error
+      && error.name === "ApiError_507"
+      && error.message === translate("en-US", "api.error.upload.diskSpaceInsufficient", { required_mb: 450 })
+      && error.message.includes("450MB"),
+  );
+});
+
+test("coded API errors localize to zh by default and fall back to the message for unknown codes", async () => {
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  let body: Record<string, unknown> = {
+    detail: { code: "session.not_found", message: "session 不存在" },
+  };
+  globalThis.fetch = (async () => new Response(JSON.stringify(body), {
+    status: 404,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+
+  // zh 默认：字典 zh 与后端原文一致。
+  await assert.rejects(
+    () => getSession(999),
+    (error: unknown) => error instanceof Error && error.message === "session 不存在",
+  );
+
+  // 缺码：字典无该键 → 回落后端 message（过渡期兜底不破）。
+  body = { detail: { code: "totally_unknown_code", message: "后端原文兜底" } };
+  await assert.rejects(
+    () => getSession(999),
+    (error: unknown) => error instanceof Error && error.message === "后端原文兜底",
+  );
 });
 
 test("structured API errors expose the server message instead of object coercion", async () => {

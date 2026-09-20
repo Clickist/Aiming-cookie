@@ -36,6 +36,15 @@ export function ownerIdFromRequest(req: http.IncomingMessage): string {
   return "desktop-local";
 }
 
+/**
+ * B0 locale 管道：请求级 X-Locale 头（与 ownerIdFromRequest 同构）。默认
+ * zh-CN，非法值回落——与前端 lib/i18n normalizeLocale、Python 侧
+ * normalize_locale_header 保持同一口径。纯管道，本波不接消费方。
+ */
+export function localeFromRequest(req: http.IncomingMessage): "zh-CN" | "en-US" {
+  return req.headers["x-locale"] === "en-US" ? "en-US" : "zh-CN";
+}
+
 export class CoachDataError extends Error {
   constructor(public statusCode: number, message: string) {
     super(message);

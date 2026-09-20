@@ -114,6 +114,8 @@ interface RunRecord {
   content: string;
   /** 结构化分析引用（前端引用菜单选择），随回合传给 turn 钉主题。 */
   contextRefs: string[] | null;
+  /** B0 locale 管道：创建该 run 的请求 locale，随 turnRequest 透传（B5 消费）。 */
+  locale: "zh-CN" | "en-US";
   stopRequested: boolean;
   /** Test seam: fake provider stream, threaded to runCoachTurn. */
   streamFn?: StreamFn;
@@ -289,6 +291,8 @@ async function runAgentTurn(
       messages: [...priorMessages, { role: "user" as const, content }],
       // 结构化分析引用（前端引用菜单选择）：turn 侧与文本 analysis:N 同效钉主题。
       context_refs: record.contextRefs ?? undefined,
+      // B0 locale 管道：随请求 locale 透传；turn 侧本波只解析不消费。
+      locale: record.locale,
       model: providerResult.profile,
     };
 
@@ -480,6 +484,8 @@ export function createAgentRun(
     contextRefs?: string[] | null;
     sessionId?: number;
     streamFn?: StreamFn;
+    /** B0 locale 管道：随 run 记录透传给 turn 请求；本波无消费方（B5 选提示词）。 */
+    locale?: "zh-CN" | "en-US";
   } = {},
 ): AgentRunState {
   if (!content || !content.trim()) {
@@ -513,6 +519,7 @@ export function createAgentRun(
     },
     ownerId,
     threadId,
+    locale: options.locale ?? "zh-CN",
     content: safeContent,
     // 结构化引用：只保留合法 analysis:N，封顶 10 条（与 turn 侧解析同规则）。
     contextRefs: (options.contextRefs ?? [])

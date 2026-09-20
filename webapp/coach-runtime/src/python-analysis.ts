@@ -93,6 +93,7 @@ async function triggerAnalysis(
   config: { baseUrl: string; token: string },
   params: AnyDict,
   idempotencyKey: string,
+  locale: "zh-CN" | "en-US",
   signal?: AbortSignal,
 ): Promise<number> {
   const body: AnyDict = {};
@@ -104,6 +105,8 @@ async function triggerAnalysis(
     headers: {
       "Content-Type": "application/json",
       "X-Aiming-Cookie-Desktop-Token": config.token,
+      // B0 locale 管道：sidecar → Python 桥原样转发请求 locale。
+      "X-Locale": locale,
       "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify(body),
@@ -136,6 +139,7 @@ async function waitForOverviewFile(sessionId: number, signal?: AbortSignal): Pro
 async function pollAnalysisStatus(
   sessionId: number,
   config: { baseUrl: string; token: string },
+  locale: "zh-CN" | "en-US",
   signal?: AbortSignal,
 ): Promise<{ status: string; error?: AnyDict }> {
   const deadline = Date.now() + ANALYZE_TIMEOUT_MS;
@@ -147,6 +151,7 @@ async function pollAnalysisStatus(
       headers: {
         "X-Aiming-Cookie-Desktop-Token": config.token,
         "X-User-Id": DESKTOP_USER_ID,
+        "X-Locale": locale,
       },
       signal: requestSignal(signal),
     });
@@ -178,6 +183,9 @@ export async function executeNativePythonAnalysis(
   _ownerId: string,
   idempotencyKey: string,
   signal?: AbortSignal,
+  /** B0 locale 管道：桥接请求转发 X-Locale（默认 zh-CN）。调用链（turn →
+      product-command-tools）目前无请求上下文可传，待 B3/B5 接线。 */
+  locale: "zh-CN" | "en-US" = "zh-CN",
 ): Promise<NativeWriteResult> {
   const commandId = newCommandId();
   const auditRef = newAuditRef();
@@ -194,8 +202,8 @@ export async function executeNativePythonAnalysis(
     if (!config) {
       throw new PythonAnalysisError("python_backend_unavailable", "Python 分析后端未就绪，请稍后重试");
     }
-    const sessionId = await triggerAnalysis(runId, config, params, idempotencyKey, signal);
-    const outcome = await pollAnalysisStatus(sessionId, config, signal);
+    const sessionId = await triggerAnalysis(runId, config, params, idempotencyKey, locale, signal);
+    const outcome = await pollAnalysisStatus(sessionId, config, locale, signal);
     if (outcome.status === "done") {
       await waitForOverviewFile(sessionId, signal);
     }

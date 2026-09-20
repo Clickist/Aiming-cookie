@@ -576,4 +576,57 @@ export const task6Zh = {
   "desktop.frontendLog.writeFailed": "前端日志写入失败",
   "desktop.kovaak.scenarioDispatched": "已请求打开 KovaaK，请确认目标场景已加载。",
   "desktop.kovaak.scenarioDispatchFailed": "未能请求打开 KovaaK，请确认 Steam 已安装后重试。",
+
+  // ── lib/api.ts —— 后端错误码（B1 错误码化）─────────────────────────────
+  // 键 = "api.error." + 后端 detail.code 的 snake_case 段转驼峰（如
+  // upload.video_too_large → api.error.upload.videoTooLarge，api.ts 内做同一转换）。
+  // zh = 后端现行中文逐字（动态部分为 {占位符}，名字对应 detail.args 键）；
+  // 缺码时 api.ts 回落后端 zh 原文 message，未映射错误永远有兜底。
+  "api.error.session.notFound": "session 不存在",
+  "api.error.session.forbidden": "无权访问此 session",
+  "api.error.session.contractVersionUnsupported": "分析结果版本不受支持",
+  "api.error.session.deleteActive": "分析进行中，请等完成或失败后再删除",
+  "api.error.upload.analysisActive": "已有分析进行中,等完成再提交",
+  "api.error.upload.stateLost": "上传状态已失效，请重新提交",
+  "api.error.upload.diskSpaceInsufficient": "数据盘可用空间不足，无法接收上传（需至少 {required_mb}MB 空闲）",
+  "api.error.upload.videoTooLarge": "视频超过 100MB 限制",
+  "api.error.upload.csvTooLarge": "CSV 超过 {limit_mb}MB 限制",
+  "api.error.upload.videoExtUnsupported": "视频扩展名不支持(仅 .mp4): {ext}",
+  "api.error.upload.csvExtUnsupported": "CSV 扩展名不支持(仅 .csv): {ext}",
+  "api.error.upload.video.pathInvalid": "视频 路径必须是存在的绝对普通文件",
+  "api.error.upload.video.pathUnreadable": "视频 文件不可读",
+  "api.error.upload.video.pathExtUnsupported": "视频 扩展名不支持（仅 {allowed}）",
+  "api.error.upload.csv.pathInvalid": "CSV 路径必须是存在的绝对普通文件",
+  "api.error.upload.csv.pathUnreadable": "CSV 文件不可读",
+  "api.error.upload.csv.pathExtUnsupported": "CSV 扩展名不支持（仅 {allowed}）",
+  "api.error.storage.revealForbidden": "无权访问此条目",
+  "api.error.storage.revealItemUnavailable": "条目不存在或证据已不可用",
+  "api.error.storage.revealFileMissing": "文件已不在磁盘上，请刷新存储列表",
+  "api.error.storage.revealFailed": "无法在本机打开文件位置",
+  "api.error.kovaak.runNotFound": "KovaaK run 不存在",
+  "api.error.kovaak.runForbidden": "无权访问此 Run",
+  "api.error.kovaak.evidenceRemoveFailed": "Run evidence 无法安全移除",
+  "api.error.analysis.notDone": "分析未完成",
+  "api.error.analysis.dataUnavailable": "Analysis Data 不可用",
+  "api.error.evidence.unavailable": "Evidence 不可用",
+  "api.error.pack.sourcePathInvalid": "source_path 必须是本地目录或 zip 的绝对路径",
+  "api.error.auth.proxyUserMissing": "未认证：预览/生产环境需由 VPN/SSO 反代注入用户头（X-Forwarded-User 或 Remote-User）",
+  "api.error.auth.userIdInvalid": "用户标识含非法字符(只允许字母数字_-)",
+  "api.error.auth.desktopTokenInvalid": "桌面运行时令牌无效或缺失",
+  // 产品命令/队列既有稳定码（ProductCommandError / RetryNotAllowed 经 routes 透传）。
+  // 同码跨端点语义略有差异（如 not_found 兼指 session/Run），en 取通用表述，zh 保主场景原文。
+  "api.error.notFound": "session 不存在",
+  "api.error.forbidden": "无权访问此 Run",
+  "api.error.activeAnalysis": "已有 Analysis 正在进行",
+  "api.error.invalidStatus": "仅 failed 状态可重试，当前为 {status}",
+  "api.error.missingVideo": "输入视频已不存在，请重新上传分析",
+  "api.error.missingCsv": "输入 CSV 已不存在，请重新上传分析",
+  "api.error.missingSnapshot": "分析输入快照不存在，请重新提交分析",
+  "api.error.uploadStateLost": "分析输入状态已失效，请重新提交",
+  "api.error.inputSetupFailed": "无法建立分析输入快照",
+  // error.v1 存储型既有码（session.error.message 消费点本波不改；键先就位供下一波按码映射）。
+  "api.error.sourceUnavailable": "分析输入源已不可用或已变更，请重新提交分析。",
+  "api.error.analysisFailed": "分析失败，请重试；若持续失败请联系维护者。",
+  "api.error.staleLeaseExhausted": "分析中断且重试次数已用尽，请重新提交或点击重试。",
+  "api.error.legacyError": "分析失败，请重试；若持续失败请联系维护者。",
 } as const;

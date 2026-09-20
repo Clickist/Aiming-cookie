@@ -16,6 +16,16 @@ from .routes import router
 
 log = logging.getLogger(__name__)
 
+# B0 locale 管道：请求级 X-Locale 头（与 X-User-Id 惯例同构），中间件解析后
+# 存入 request.state.locale，投影层（read_models/contracts/queue）后续按需读取。
+# 默认恒 zh-CN；非法值回落（与前端 lib/i18n normalizeLocale 同一口径）。
+SUPPORTED_LOCALES = ("zh-CN", "en-US")
+DEFAULT_LOCALE = "zh-CN"
+
+
+def normalize_locale_header(value: str | None) -> str:
+    return value if value in SUPPORTED_LOCALES else DEFAULT_LOCALE
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +54,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aiming Cookie API", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def store_request_locale(request: Request, call_next):
+    """B0 纯管道：只存不消费（默认 zh-CN，行为不变）。"""
+    request.state.locale = normalize_locale_header(request.headers.get("x-locale"))
+    return await call_next(request)
 
 
 @app.middleware("http")

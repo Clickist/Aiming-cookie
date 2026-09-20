@@ -374,7 +374,9 @@ async def test_analyze_rejects_low_disk_before_enqueue(monkeypatch, tmp_path):
             headers={"X-User-Id": "u_disk"},
         )
     assert resp.status_code == 507
-    assert "空间" in resp.json()["detail"]
+    # B1 错误码化：detail 是 {code, message[, args]}，断稳定码而非中文文案。
+    assert resp.json()["detail"]["code"] == "upload.disk_space_insufficient"
+    assert resp.json()["detail"]["args"]["required_mb"] == min_free // (1024 * 1024)
     sessions_root = tmp_path / "sessions"
     assert not sessions_root.exists() or list(sessions_root.iterdir()) == []
     assert await queue.list_sessions("u_disk") == []
@@ -661,7 +663,8 @@ async def test_retry_rejects_reused_idempotency_key_for_different_session(tmp_pa
 
     assert first.status_code == 200
     assert conflict.status_code == 409
-    assert "Analysis" in conflict.json()["detail"]
+    # B1：ProductCommandError 稳定码经 _raise_product_command_error 原样透传。
+    assert conflict.json()["detail"]["code"] == "active_analysis"
 
 
 @pytest.mark.asyncio
@@ -730,7 +733,7 @@ async def test_retry_rejects_missing_files(tmp_path):
     ) as client:
         resp = await client.post(f"/api/sessions/{sid}/retry")
     assert resp.status_code == 409
-    assert "视频" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "missing_video"
 
 
 @pytest.mark.asyncio

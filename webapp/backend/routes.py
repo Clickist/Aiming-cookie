@@ -133,6 +133,52 @@ from kovaak_tracker.coach import knowledge_pack
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
 
+# ── B1 错误码表 ─────────────────────────────────────────────────────────────
+# HTTPException detail 从裸中文字符串升级为 {code, message[, args]}：
+# - code 是稳定标识符（<域>.<语义>，snake_case 段），前端字典键
+#   api.error.<code 转驼峰段>（lib/i18n/dict/task6.*.ts）；
+# - message 是现行中文原文逐字保留——老客户端（不认 code）与前端缺码兜底都读它；
+# - args 携带动态值（磁盘 MB、扩展名等），供前端字典 {占位符} 插值。
+# 带动态文案的 raise 用 message= 覆盖表值并传 args。
+_ERROR_TEXT: dict[str, str] = {
+    "session.not_found": "session 不存在",
+    "session.forbidden": "无权访问此 session",
+    "session.contract_version_unsupported": "分析结果版本不受支持",
+    "session.delete_active": "分析进行中，请等完成或失败后再删除",
+    "upload.analysis_active": "已有分析进行中,等完成再提交",
+    "upload.state_lost": "上传状态已失效，请重新提交",
+    "upload.video_too_large": "视频超过 100MB 限制",
+    "upload.video.path_invalid": "视频 路径必须是存在的绝对普通文件",
+    "upload.video.path_unreadable": "视频 文件不可读",
+    "upload.video.path_ext_unsupported": "视频 扩展名不支持（仅 {allowed}）",
+    "upload.csv.path_invalid": "CSV 路径必须是存在的绝对普通文件",
+    "upload.csv.path_unreadable": "CSV 文件不可读",
+    "upload.csv.path_ext_unsupported": "CSV 扩展名不支持（仅 {allowed}）",
+    "storage.reveal_forbidden": "无权访问此条目",
+    "storage.reveal_item_unavailable": "条目不存在或证据已不可用",
+    "storage.reveal_file_missing": "文件已不在磁盘上，请刷新存储列表",
+    "storage.reveal_failed": "无法在本机打开文件位置",
+    "kovaak.run_not_found": "KovaaK run 不存在",
+    "kovaak.run_forbidden": "无权访问此 Run",
+    "kovaak.evidence_remove_failed": "Run evidence 无法安全移除",
+    "analysis.not_done": "分析未完成",
+    "analysis.data_unavailable": "Analysis Data 不可用",
+    "evidence.unavailable": "Evidence 不可用",
+    "pack.source_path_invalid": "source_path 必须是本地目录或 zip 的绝对路径",
+}
+
+
+def _error_detail(
+    code: str,
+    args: dict[str, object] | None = None,
+    *,
+    message: str | None = None,
+) -> dict:
+    detail: dict[str, object] = {"code": code, "message": message or _ERROR_TEXT[code]}
+    if args:
+        detail["args"] = args
+    return detail
+
 # user_id 经 auth.get_request_user_id 校验(路径安全字符集)。
 _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
@@ -147,20 +193,46 @@ def _require_upload_disk_space(required_bytes: int = 0) -> None:
         need_mb = required // (1024 * 1024)
         raise HTTPException(
             507,
-            f"数据盘可用空间不足，无法接收上传（需至少 {need_mb}MB 空闲）",
+            _error_detail(
+                "upload.disk_space_insufficient",
+                {"required_mb": need_mb},
+                message=f"数据盘可用空间不足，无法接收上传（需至少 {need_mb}MB 空闲）",
+            ),
         )
 
 
-def _validate_local_input_path(raw_path: str, *, allowed_exts: set[str], label: str):
+def _validate_local_input_path(
+    raw_path: str,
+    *,
+    allowed_exts: set[str],
+    label: str,
+    code_prefix: str,
+):
     path = os.path.abspath(raw_path)
     if not os.path.isabs(raw_path) or not os.path.isfile(path):
-        raise HTTPException(400, f"{label} 路径必须是存在的绝对普通文件")
+        raise HTTPException(
+            400,
+            _error_detail(
+                f"{code_prefix}.path_invalid",
+                message=f"{label} 路径必须是存在的绝对普通文件",
+            ),
+        )
     if not os.access(path, os.R_OK):
-        raise HTTPException(400, f"{label} 文件不可读")
+        raise HTTPException(
+            400,
+            _error_detail(f"{code_prefix}.path_unreadable", message=f"{label} 文件不可读"),
+        )
     ext = os.path.splitext(path)[1].lower()
     if ext not in allowed_exts:
         allowed = ", ".join(sorted(allowed_exts))
-        raise HTTPException(400, f"{label} 扩展名不支持（仅 {allowed}）")
+        raise HTTPException(
+            400,
+            _error_detail(
+                f"{code_prefix}.path_ext_unsupported",
+                {"allowed": allowed},
+                message=f"{label} 扩展名不支持（仅 {allowed}）",
+            ),
+        )
     return os.path.realpath(path)
 
 
@@ -169,7 +241,7 @@ def _assert_session_owner(s: dict, x_user_id: str) -> None:
     防 session_id 枚举读他人数据/花他人 budget);切片 3 换 Clerk session token
     + 服务端验签后由鉴权中间件取代。"""
     if s["user_id"] != x_user_id:
-        raise HTTPException(403, "无权访问此 session")
+        raise HTTPException(403, _error_detail("session.forbidden"))
 
 
 async def _get_owned_session(session_id: int, x_user_id: str) -> dict:
@@ -181,9 +253,11 @@ async def _get_owned_session(session_id: int, x_user_id: str) -> dict:
             session_id,
             exc,
         )
-        raise HTTPException(500, "分析结果版本不受支持") from exc
+        raise HTTPException(
+            500, _error_detail("session.contract_version_unsupported"),
+        ) from exc
     if s is None:
-        raise HTTPException(404, "session 不存在")
+        raise HTTPException(404, _error_detail("session.not_found"))
     _assert_session_owner(s, x_user_id)
     return s
 
@@ -215,13 +289,15 @@ async def analyze_paths(
     """Import desktop-selected local files into a managed session workspace."""
     user_id = config.DESKTOP_LOCAL_PROFILE
     if await queue.has_active(user_id):
-        raise HTTPException(429, "已有分析进行中,等完成再提交")
+        raise HTTPException(429, _error_detail("upload.analysis_active"))
 
     video_path = _validate_local_input_path(
         request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
+        code_prefix="upload.video",
     )
     csv_path = _validate_local_input_path(
         request.csv_path, allowed_exts=_ALLOWED_CSV_EXTS, label="CSV",
+        code_prefix="upload.csv",
     )
     video_size = os.path.getsize(video_path)
     csv_size = os.path.getsize(csv_path)
@@ -240,7 +316,7 @@ async def analyze_paths(
             require_no_active=True,
         )
     except queue.ActiveSessionExists as exc:
-        raise HTTPException(429, "已有分析进行中,等完成再提交") from exc
+        raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
     workspace = session_dir(sid)
     managed_video = workspace / "video.mp4"
     managed_csv = workspace / "stats.csv"
@@ -256,7 +332,7 @@ async def analyze_paths(
             sid, config.DESKTOP_LOCAL_PROFILE, str(managed_video), str(managed_csv),
         )
         if not await queue.finish_upload(sid):
-            raise HTTPException(409, "上传状态已失效，请重新提交")
+            raise HTTPException(409, _error_detail("upload.state_lost"))
     except HTTPException:
         await _abort_uploading_session(sid)
         raise
@@ -351,13 +427,13 @@ async def reveal_storage_item(
         )
         await asyncio.to_thread(_reveal_in_explorer, path)
     except PermissionError as exc:
-        raise HTTPException(403, "无权访问此条目") from exc
+        raise HTTPException(403, _error_detail("storage.reveal_forbidden")) from exc
     except LookupError as exc:
-        raise HTTPException(404, "条目不存在或证据已不可用") from exc
+        raise HTTPException(404, _error_detail("storage.reveal_item_unavailable")) from exc
     except FileNotFoundError as exc:
-        raise HTTPException(404, "文件已不在磁盘上，请刷新存储列表") from exc
+        raise HTTPException(404, _error_detail("storage.reveal_file_missing")) from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(409, "无法在本机打开文件位置") from exc
+        raise HTTPException(409, _error_detail("storage.reveal_failed")) from exc
     return StorageRevealResponse(revealed=True, kind=request.kind)
 
 
@@ -520,22 +596,40 @@ async def analyze(
     user_id 由 get_request_user_id 解析(dev: X-User-Id; trust: 反代用户头)。
     """
     if await queue.has_active(x_user_id):
-        raise HTTPException(429, "已有分析进行中,等完成再提交")
+        raise HTTPException(429, _error_detail("upload.analysis_active"))
 
     if video.size is not None and video.size > config.MAX_VIDEO_BYTES:
-        raise HTTPException(413, "视频超过 100MB 限制")
+        raise HTTPException(413, _error_detail("upload.video_too_large"))
     if csv.size is not None and csv.size > config.MAX_CSV_BYTES:
         raise HTTPException(
             413,
-            f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+            _error_detail(
+                "upload.csv_too_large",
+                {"limit_mb": config.MAX_CSV_BYTES // 1024 // 1024},
+                message=f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+            ),
         )
 
     video_ext = os.path.splitext(video.filename or "video.mp4")[1].lower()
     if video_ext not in _ALLOWED_VIDEO_EXTS:
-        raise HTTPException(400, f"视频扩展名不支持(仅 .mp4): {video_ext or '(无)'}")
+        raise HTTPException(
+            400,
+            _error_detail(
+                "upload.video_ext_unsupported",
+                {"ext": video_ext or "(无)"},
+                message=f"视频扩展名不支持(仅 .mp4): {video_ext or '(无)'}",
+            ),
+        )
     csv_ext = os.path.splitext(csv.filename or "stats.csv")[1].lower()
     if csv_ext not in _ALLOWED_CSV_EXTS:
-        raise HTTPException(400, f"CSV 扩展名不支持(仅 .csv): {csv_ext or '(无)'}")
+        raise HTTPException(
+            400,
+            _error_detail(
+                "upload.csv_ext_unsupported",
+                {"ext": csv_ext or "(无)"},
+                message=f"CSV 扩展名不支持(仅 .csv): {csv_ext or '(无)'}",
+            ),
+        )
 
     _require_upload_disk_space()
 
@@ -562,7 +656,7 @@ async def analyze(
             require_no_active=True,
         )
     except queue.ActiveSessionExists as exc:
-        raise HTTPException(429, "已有分析进行中,等完成再提交") from exc
+        raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
     ws = session_dir(sid)
     ws.mkdir(parents=True, exist_ok=True)
     video_path = ws / f"video{video_ext}"
@@ -589,10 +683,14 @@ async def analyze(
     except UploadSizeExceeded as exc:
         await _abort_uploading_session(sid)
         if exc.field == "video":
-            raise HTTPException(413, "视频超过 100MB 限制") from exc
+            raise HTTPException(413, _error_detail("upload.video_too_large")) from exc
         raise HTTPException(
             413,
-            f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+            _error_detail(
+                "upload.csv_too_large",
+                {"limit_mb": config.MAX_CSV_BYTES // 1024 // 1024},
+                message=f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+            ),
         ) from exc
     except HTTPException:
         await _abort_uploading_session(sid)
@@ -603,7 +701,7 @@ async def analyze(
 
     if not await queue.finish_upload(sid):
         await _abort_uploading_session(sid)
-        raise HTTPException(409, "上传状态已失效，请重新提交")
+        raise HTTPException(409, _error_detail("upload.state_lost"))
 
     return AnalyzeResponse(session_id=sid)
 
@@ -660,7 +758,9 @@ def _raise_product_command_error(
         "internal_error": 500,
     }
     status = (status_overrides or {}).get(code, default_statuses.get(code, 409))
-    raise HTTPException(status, message)
+    # B1：ProductCommandError/RetryNotAllowed 已带稳定英文 code，转换点原样透传
+    # （前端字典键 api.error.<code>）；message 保留 zh 供老客户端与缺码兜底。
+    raise HTTPException(status, _error_detail(code, message=message))
 
 
 @router.get("/sessions", response_model=SessionListResponse)
@@ -1005,7 +1105,9 @@ async def get_kovaak_run(
         run = await analysis_service.get_run(config.DESKTOP_LOCAL_PROFILE, run_id)
     except analysis_service.ProductCommandError as exc:
         status = 403 if exc.code == "forbidden" else 404
-        raise HTTPException(status, exc.message) from exc
+        # 与 evidence 移除路径同码同文案（kovaak.run_*），跨端点一键一义。
+        code = "kovaak.run_forbidden" if exc.code == "forbidden" else "kovaak.run_not_found"
+        raise HTTPException(status, _error_detail(code, message=exc.message)) from exc
     return KovaaKRunItem(**run)
 
 
@@ -1026,11 +1128,11 @@ async def remove_kovaak_run_evidence(
             config.DATA_ROOT,
         )
     except LookupError as exc:
-        raise HTTPException(404, "KovaaK run 不存在") from exc
+        raise HTTPException(404, _error_detail("kovaak.run_not_found")) from exc
     except PermissionError as exc:
-        raise HTTPException(403, "无权访问此 Run") from exc
+        raise HTTPException(403, _error_detail("kovaak.run_forbidden")) from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(409, "Run evidence 无法安全移除") from exc
+        raise HTTPException(409, _error_detail("kovaak.evidence_remove_failed")) from exc
     return RunEvidenceRemovalResponse(**result)
 
 
@@ -1046,6 +1148,7 @@ async def analyze_kovaak_run(
     if request.video_path:
         video_source = FilePath(_validate_local_input_path(
             request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
+            code_prefix="upload.video",
         ))
     result = await analysis_service.execute_trusted_analysis_create(
         config.DESKTOP_LOCAL_PROFILE,
@@ -1093,11 +1196,12 @@ async def delete_session(
     try:
         out = await queue.delete_session(session_id, x_user_id)
     except SessionNotFound as exc:
-        raise HTTPException(404, "session 不存在") from exc
+        raise HTTPException(404, _error_detail("session.not_found")) from exc
     except SessionForbidden as exc:
-        raise HTTPException(403, "无权访问此 session") from exc
+        raise HTTPException(403, _error_detail("session.forbidden")) from exc
     except SessionNotDeletable as exc:
-        raise HTTPException(409, exc.message) from exc
+        # queue 内部码是泛化的 "active"；对外转成 session 域稳定码。
+        raise HTTPException(409, _error_detail("session.delete_active", message=exc.message)) from exc
     return DeleteSessionResponse(**out)
 
 
@@ -1118,7 +1222,7 @@ async def retry_session(
     returned_id = retried.get("id") if isinstance(retried, dict) else None
     session = await queue.get_session(returned_id if isinstance(returned_id, int) else session_id)
     if session is None:  # Defensive: retry handler succeeded only for an existing session.
-        raise HTTPException(404, "session 不存在")
+        raise HTTPException(404, _error_detail("session.not_found"))
     return _session_status_response(session)
 
 
@@ -1253,11 +1357,11 @@ async def get_session_analysis_data(
     """Return the bounded, path-free data projection for one owned Analysis."""
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
-        raise HTTPException(409, "分析未完成")
+        raise HTTPException(409, _error_detail("analysis.not_done"))
     result = s.get("result") or {}
     safe_ref = (result.get("evidence") or {}).get("derived_artifact")
     if not isinstance(safe_ref, dict):
-        raise HTTPException(404, "Analysis Data 不可用")
+        raise HTTPException(404, _error_detail("analysis.data_unavailable"))
     try:
         artifact = await evidence_store.read_analysis_evidence_artifact(
             owner_id=x_user_id,
@@ -1270,7 +1374,7 @@ async def get_session_analysis_data(
             artifact=artifact,
         )
     except (ValueError, OSError):
-        raise HTTPException(404, "Analysis Data 不可用") from None
+        raise HTTPException(404, _error_detail("analysis.data_unavailable")) from None
     return FrontendAnalysisDataResponse(**projection)
 
 
@@ -1287,7 +1391,7 @@ async def get_session_analysis_family_data(
     """Return a version-dispatched, paginated family detail projection."""
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
-        raise HTTPException(409, "分析未完成")
+        raise HTTPException(409, _error_detail("analysis.not_done"))
     result = s.get("result") or {}
     analysis_ref = f"analysis:{session_id}"
     analysis_type = result.get("analysis_type")
@@ -1298,7 +1402,7 @@ async def get_session_analysis_family_data(
         or not isinstance(analysis_version, str)
         or not isinstance(input_mode, str)
     ):
-        raise HTTPException(404, "Analysis Data 不可用")
+        raise HTTPException(404, _error_detail("analysis.data_unavailable"))
     safe_ref = (result.get("evidence") or {}).get("derived_artifact")
     artifact = None
     if isinstance(safe_ref, dict):
@@ -1310,7 +1414,7 @@ async def get_session_analysis_family_data(
                 evidence_revision=safe_ref.get("evidence_revision"),
             )
         except (ValueError, OSError):
-            raise HTTPException(404, "Analysis Data 不可用") from None
+            raise HTTPException(404, _error_detail("analysis.data_unavailable")) from None
     projection = build_frontend_analysis_family_data_v1(
         analysis_ref=analysis_ref,
         analysis_type=analysis_type,
@@ -1381,7 +1485,7 @@ async def list_session_evidence_segments(
     """Return bounded EvidenceSegment metadata and local MP4 seek anchors."""
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
-        raise HTTPException(409, "分析未完成")
+        raise HTTPException(409, _error_detail("analysis.not_done"))
     result = s.get("result") or {}
     safe_ref = (result.get("evidence") or {}).get("derived_artifact")
 
@@ -1414,7 +1518,7 @@ async def list_session_evidence_segments(
             evidence_revision=safe_ref.get("evidence_revision"),
         )
     except (ValueError, OSError):
-        raise HTTPException(404, "Evidence 不可用") from None
+        raise HTTPException(404, _error_detail("evidence.unavailable")) from None
 
     projected: list[FrontendEvidenceSegment] = []
     # MP4 PTS 0 sits preroll ms inside the canonical window start; without
@@ -1474,7 +1578,7 @@ async def get_session_timeline(
     """
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
-        raise HTTPException(409, "分析未完成")
+        raise HTTPException(409, _error_detail("analysis.not_done"))
 
     result = s.get("result") or {}
     if not isinstance(result, dict):
@@ -1825,7 +1929,7 @@ async def import_knowledge_pack(
 ):
     """Validate (Python + sidecar TS parity) then install a local pack."""
     if not os.path.isabs(request.source_path):
-        raise HTTPException(400, "source_path 必须是本地目录或 zip 的绝对路径")
+        raise HTTPException(400, _error_detail("pack.source_path_invalid"))
     source = FilePath(request.source_path)
     result = await asyncio.to_thread(knowledge_pack.validate_pack, source)
     if not result["valid"]:

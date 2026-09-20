@@ -18,6 +18,7 @@ import {
   deleteCoachSession,
   getCoachSessionDetail,
   listCoachSessions,
+  localeFromRequest,
   ownerIdFromRequest,
   truncateCoachSession,
   updateCoachSession,
@@ -115,7 +116,7 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 function writeJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
-    "Access-Control-Allow-Headers": "content-type,x-user-id",
+    "Access-Control-Allow-Headers": "content-type,x-user-id,x-locale",
     "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
@@ -232,7 +233,7 @@ export async function handleSidecarRequest(
 
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Headers": "content-type,x-user-id",
+      "Access-Control-Allow-Headers": "content-type,x-user-id,x-locale",
       "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
       "Access-Control-Allow-Origin": "*",
     });
@@ -546,7 +547,9 @@ export async function handleSidecarRequest(
       const contextRefs = Array.isArray(body.context_refs)
         ? body.context_refs.filter((ref): ref is string => typeof ref === "string")
         : undefined;
-      const result = createAgentRun(ownerId, content, { sessionId, contextRefs });
+      // B0 locale 管道：读请求 X-Locale 存进 run 记录（随 turnRequest 透传）。
+      const locale = localeFromRequest(req);
+      const result = createAgentRun(ownerId, content, { sessionId, contextRefs, locale });
       writeJson(res, 202, result);
     } catch (error) {
       if (error instanceof AgentRunError) {

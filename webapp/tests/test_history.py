@@ -948,7 +948,8 @@ async def test_delete_running_session_rejected():
         resp = await client.delete(f"/api/sessions/{sid}")
 
     assert resp.status_code == 409
-    assert "分析进行中" in resp.json()["detail"]
+    # B1：SessionNotDeletable 对外转 session 域稳定码。
+    assert resp.json()["detail"]["code"] == "session.delete_active"
     assert await queue.get_session(sid) is not None
 
     with pytest.raises(SessionNotDeletable) as exc_info:
@@ -968,7 +969,8 @@ async def test_delete_queued_session_rejected():
         resp = await client.delete(f"/api/sessions/{sid}")
 
     assert resp.status_code == 409
-    assert "分析进行中" in resp.json()["detail"]
+    # B1：SessionNotDeletable 对外转 session 域稳定码。
+    assert resp.json()["detail"]["code"] == "session.delete_active"
     assert await queue.get_session(sid) is not None
 
     with pytest.raises(SessionNotDeletable):

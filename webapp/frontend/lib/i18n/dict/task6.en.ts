@@ -571,4 +571,58 @@ export const task6En = {
   "desktop.frontendLog.writeFailed": "Failed to write the frontend log",
   "desktop.kovaak.scenarioDispatched": "KovaaK launch requested. Make sure the target scenario has loaded.",
   "desktop.kovaak.scenarioDispatchFailed": "Couldn't open KovaaK. Make sure Steam is installed, then try again.",
+
+  // ── lib/api.ts —— backend error codes (B1) ─────────────────────────────
+  // Key = "api.error." + backend detail.code with snake_case segments
+  // camelCased (upload.video_too_large → api.error.upload.videoTooLarge;
+  // api.ts performs the same conversion). Unknown codes fall back to the
+  // backend zh message.
+  "api.error.session.notFound": "Session not found",
+  "api.error.session.forbidden": "You don't have access to this session",
+  "api.error.session.contractVersionUnsupported": "Unsupported analysis result version",
+  "api.error.session.deleteActive": "An analysis is in progress. Wait until it completes or fails before deleting.",
+  "api.error.upload.analysisActive": "An analysis is already in progress. Wait for it to finish before submitting another.",
+  "api.error.upload.stateLost": "The upload state is no longer valid. Please submit again.",
+  "api.error.upload.diskSpaceInsufficient": "Not enough free disk space to accept the upload ({required_mb}MB required)",
+  "api.error.upload.videoTooLarge": "Video exceeds the 100MB limit",
+  "api.error.upload.csvTooLarge": "CSV exceeds the {limit_mb}MB limit",
+  "api.error.upload.videoExtUnsupported": "Unsupported video extension (only .mp4): {ext}",
+  "api.error.upload.csvExtUnsupported": "Unsupported CSV extension (only .csv): {ext}",
+  "api.error.upload.video.pathInvalid": "The video path must be an existing absolute file",
+  "api.error.upload.video.pathUnreadable": "The video file is not readable",
+  "api.error.upload.video.pathExtUnsupported": "Unsupported video extension (only {allowed})",
+  "api.error.upload.csv.pathInvalid": "The CSV path must be an existing absolute file",
+  "api.error.upload.csv.pathUnreadable": "The CSV file is not readable",
+  "api.error.upload.csv.pathExtUnsupported": "Unsupported CSV extension (only {allowed})",
+  "api.error.storage.revealForbidden": "You don't have access to this item",
+  "api.error.storage.revealItemUnavailable": "This item no longer exists or its evidence is unavailable",
+  "api.error.storage.revealFileMissing": "The file is no longer on disk. Refresh the storage list.",
+  "api.error.storage.revealFailed": "Couldn't open the file location on this machine",
+  "api.error.kovaak.runNotFound": "KovaaK run not found",
+  "api.error.kovaak.runForbidden": "You don't have access to this Run",
+  "api.error.kovaak.evidenceRemoveFailed": "Run evidence couldn't be removed safely",
+  "api.error.analysis.notDone": "The analysis isn't finished yet",
+  "api.error.analysis.dataUnavailable": "Analysis data is unavailable",
+  "api.error.evidence.unavailable": "Evidence is unavailable",
+  "api.error.pack.sourcePathInvalid": "source_path must be an absolute path to a local directory or zip",
+  "api.error.auth.proxyUserMissing": "Unauthenticated: preview/production requires a VPN/SSO reverse proxy to inject the user header (X-Forwarded-User or Remote-User)",
+  "api.error.auth.userIdInvalid": "User id contains invalid characters (letters, digits, _ and - only)",
+  "api.error.auth.desktopTokenInvalid": "The desktop runtime token is invalid or missing",
+  // Stable product-command / queue codes (ProductCommandError / RetryNotAllowed
+  // passed through routes). Shared across endpoints, so en stays generic.
+  "api.error.notFound": "Not found",
+  "api.error.forbidden": "You don't have access to this item",
+  "api.error.activeAnalysis": "An Analysis is already in progress",
+  "api.error.invalidStatus": "Only failed analyses can be retried; the current status is {status}",
+  "api.error.missingVideo": "The input video no longer exists. Please upload it again.",
+  "api.error.missingCsv": "The input CSV no longer exists. Please upload it again.",
+  "api.error.missingSnapshot": "The analysis input snapshot no longer exists. Please submit the analysis again.",
+  "api.error.uploadStateLost": "The analysis input state is no longer valid. Please submit again.",
+  "api.error.inputSetupFailed": "Couldn't set up the analysis input snapshot",
+  // Existing error.v1 stored codes (session.error.message consumers stay
+  // untouched this wave; keys are in place for the next wave's code mapping).
+  "api.error.sourceUnavailable": "The analysis input source is no longer available or has changed. Please submit the analysis again.",
+  "api.error.analysisFailed": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
+  "api.error.staleLeaseExhausted": "The analysis was interrupted and its retry attempts are exhausted. Please submit again or hit retry.",
+  "api.error.legacyError": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
 } as const;

@@ -38,16 +38,25 @@ def get_request_user_id(request: Request) -> str:
     if _trust_proxy_enabled():
         user_id = _proxy_user_from_headers(request)
         if not user_id:
+            # B1 错误码化：code 供前端字典映射，message 保留 zh 原文兜底（同 routes._ERROR_TEXT 口径）。
             raise HTTPException(
                 401,
-                "未认证：预览/生产环境需由 VPN/SSO 反代注入用户头"
-                "（X-Forwarded-User 或 Remote-User）",
+                {
+                    "code": "auth.proxy_user_missing",
+                    "message": (
+                        "未认证：预览/生产环境需由 VPN/SSO 反代注入用户头"
+                        "（X-Forwarded-User 或 Remote-User）"
+                    ),
+                },
             )
     else:
         user_id = request.headers.get("X-User-Id", "dev")
 
     if not _USER_ID_RE.match(user_id):
-        raise HTTPException(400, "用户标识含非法字符(只允许字母数字_-)")
+        raise HTTPException(
+            400,
+            {"code": "auth.user_id_invalid", "message": "用户标识含非法字符(只允许字母数字_-)"},
+        )
 
     return user_id
 
@@ -57,4 +66,7 @@ def require_desktop_token(request: Request) -> None:
     expected = config.DESKTOP_LAUNCH_TOKEN
     provided = request.headers.get("X-Aiming-Cookie-Desktop-Token", "")
     if not expected or not hmac.compare_digest(provided, expected):
-        raise HTTPException(401, "桌面运行时令牌无效或缺失")
+        raise HTTPException(
+            401,
+            {"code": "auth.desktop_token_invalid", "message": "桌面运行时令牌无效或缺失"},
+        )

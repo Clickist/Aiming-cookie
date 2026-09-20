@@ -47,6 +47,9 @@ type ParsedRequest = {
   /** 结构化分析引用（前端引用菜单选择）：与消息文本里的 analysis:N 同效，
       但用户界面不再出现机器码（0911 点点）。 */
   context_refs?: string[];
+  /** B0 locale 管道：请求级展示语言（X-Locale 头经 agent run 透传）。
+      本波只解析不消费——B5 用它选 system prompt / skills 的 locale 变体。 */
+  locale?: "zh-CN" | "en-US";
   model: CoachRuntimeProviderProfile;
   tool_bridge?: import("./contracts.ts").CoachToolBridge;
 };
@@ -303,6 +306,8 @@ function parseRequest(raw: unknown): ParsedRequest {
         (ref): ref is string => typeof ref === "string" && /^analysis:[1-9][0-9]*$/.test(ref),
       ).slice(0, 10))
     : undefined;
+  // B0 locale 管道：非法值静默回落缺省（undefined → B5 消费侧按 zh-CN 处理）。
+  const locale = raw.locale === "en-US" || raw.locale === "zh-CN" ? raw.locale : undefined;
 
   return {
     schema_version: schemaVersion,
@@ -312,6 +317,7 @@ function parseRequest(raw: unknown): ParsedRequest {
     session_id: sessionId,
     system_prompt: systemPrompt,
     context_refs: contextRefs,
+    locale,
     model,
     tool_bridge: toolBridge as ParsedRequest["tool_bridge"],
   };

@@ -11,7 +11,7 @@ import {
   isDesktopRuntime,
   resetDesktopRuntimeConnection,
 } from "./desktop";
-import { t } from "./i18n/core";
+import { DICTIONARIES, getLocale, interpolate, t, type MessageKey, type TranslateParams } from "./i18n/core";
 import type { IntroSessionCreated, IntroSessionStatus } from "./intro-session";
 import type {
   AnalyzeResponse,
@@ -125,6 +125,7 @@ async function apiFetch(
     }
     const headers = new Headers(init.headers);
     headers.set("X-User-Id", opts.userId ?? DEFAULT_USER_ID);
+    headers.set("X-Locale", getLocale());
     return fetch(`${API_BASE}${path}`, { ...init, headers, signal: opts.signal });
   }
 
@@ -132,6 +133,7 @@ async function apiFetch(
     const headers = new Headers(init.headers);
     headers.set("X-User-Id", DESKTOP_USER_ID);
     headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
+    headers.set("X-Locale", getLocale());
     return fetch(`${connection.baseUrl}${path}`, { ...init, headers, signal: opts.signal });
   };
   const connection = await getDesktopRuntimeConnection();
@@ -185,6 +187,7 @@ async function apiFetchSidecar(
   const request = async (connection: Awaited<ReturnType<typeof getDesktopRuntimeConnection>>) => {
     const headers = new Headers(init.headers);
     headers.set("X-User-Id", DESKTOP_USER_ID);
+    headers.set("X-Locale", getLocale());
     return fetch(`${connection.sidecarUrl}${path}`, {
       ...init,
       headers,
@@ -504,24 +507,66 @@ export async function retrySession(
   return (await res.json()) as SessionStatus;
 }
 
+/** 后端稳定错误码（detail.code）→ 字典键前缀；码表见 dict/task6.*.ts 的 api.error.* 区块。 */
+const API_ERROR_KEY_PREFIX = "api.error.";
+
+/**
+ * 后端 code 的 snake_case 段转字典键的驼峰段（键名规范段内驼峰）：
+ * upload.video_too_large → upload.videoTooLarge，not_found → notFound。
+ * 确定性转换，与后端码表一一对应（见 dict/task6.*.ts 区块注释）。
+ */
+function errorCodeToKey(code: string): MessageKey {
+  const camelCased = code
+    .split(".")
+    .map((segment) => segment.replace(/_([a-z0-9])/g, (_, char: string) => char.toUpperCase()))
+    .join(".");
+  return `${API_ERROR_KEY_PREFIX}${camelCased}` as MessageKey;
+}
+
+/**
+ * 按 code 查当前 locale 的字典并插值；缺码（字典无该键）回落后端 zh 原文
+ * message——过渡期双保险，未映射的错误永远有兜底文案。
+ */
+function localizeApiErrorCode(code: string, args: TranslateParams | undefined, fallback: string): string {
+  const template = DICTIONARIES[getLocale()][errorCodeToKey(code)];
+  if (typeof template !== "string") return fallback;
+  return interpolate(template, args);
+}
+
 async function apiError(res: Response): Promise<Error> {
   let detail = `${res.status} ${res.statusText}`;
+  let code: string | undefined;
+  let args: TranslateParams | undefined;
   try {
     const body = await res.json();
     if (typeof body?.detail === "string") {
       detail = body.detail;
     } else if (body?.detail && typeof body.detail === "object") {
-      const structured = body.detail as { message?: unknown; code?: unknown };
+      const structured = body.detail as {
+        message?: unknown;
+        code?: unknown;
+        args?: unknown;
+      };
+      if (typeof structured.code === "string" && structured.code.trim()) {
+        code = structured.code;
+      }
+      if (
+        structured.args && typeof structured.args === "object"
+        && !Array.isArray(structured.args)
+      ) {
+        args = structured.args as TranslateParams;
+      }
       if (typeof structured.message === "string" && structured.message.trim()) {
         detail = structured.message;
-      } else if (typeof structured.code === "string" && structured.code.trim()) {
-        detail = structured.code;
+      } else if (code) {
+        detail = code;
       }
     }
   } catch {
     // Not JSON — keep status text.
   }
-  const err = new Error(detail);
+  // 结构化错误优先按稳定 code 本地化；无 code / 缺码回落原文（后端 message 过渡期保留 zh）。
+  const err = new Error(code ? localizeApiErrorCode(code, args, detail) : detail);
   err.name = `ApiError_${res.status}`;
   return err;
 }
