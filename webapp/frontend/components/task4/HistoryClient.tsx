@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import { finalizationPendingText } from "@/lib/capture-events";
-import { t, useT, type MessageKey } from "@/lib/i18n";
+import { getLocale, t, useT, type MessageKey } from "@/lib/i18n";
 import {
   buildCoachAnalysisDraft,
   buildHistorySections,
@@ -141,7 +141,9 @@ function trainingTimeLabel(iso: string | null | undefined): string {
   if (!iso) return "--:--";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "--:--";
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  // 时间格式跟随当前 locale（批 1 formatHistoryDate 同款改法）。
+  const timeLocale = getLocale() === "en-US" ? "en-US" : "zh-CN";
+  return date.toLocaleTimeString(timeLocale, { hour: "2-digit", minute: "2-digit" });
 }
 
 /** 千分位（0911 点点第三批 E）：41,250；显示层最多 1 位小数（wire 保留全精度）。 */

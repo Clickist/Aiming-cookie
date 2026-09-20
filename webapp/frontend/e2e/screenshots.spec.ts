@@ -148,7 +148,8 @@ test.describe("Coach-first desktop screenshot baselines", () => {
   test("Settings 1920 light", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "light", width: 1920, height: 1080 });
     await page.goto("/settings");
-    await expect(page.locator(".task6-settings-layout")).toBeVisible();
+    // 设置页重设计后旧 .task6-settings-layout 骨架退役：与 1280 用例同锚（左栏标题）。
+    await expect(page.locator(".task6-settings-nav-title", { hasText: "设置" })).toBeVisible();
     await expect(page).toHaveScreenshot("settings-1920-light.png", { animations: "disabled", fullPage: true });
   });
 

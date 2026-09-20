@@ -1262,9 +1262,19 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
 
 export async function installDesktopBridge(page: Page): Promise<void> {
   await page.addInitScript(({ origin }) => {
+    // 兜底 tsx/esbuild（keepNames）注入的 __name(fn, "name") 调用：init script
+    // 在浏览器里没有 helper 定义，缺它时整个 bridge 在第一个被包裹的函数表达式
+    // 处 ReferenceError（isTauri 已设、__TAURI_INTERNALS__ 没装上，AppShell 随即
+    // 读 metadata 崩溃）。局部绑定会被 esbuild 改名（__name → __name2），shim
+    // 必须挂到 globalThis，让裸 __name(...) 沿作用域链解析到它。
+    (globalThis as { __name?: unknown }).__name = new Function("target", "return target");
     type TauriFixtureWindow = Window & {
       isTauri: boolean;
       __TAURI_INTERNALS__: {
+        // @tauri-apps/api 2.11+ 的 getCurrentWindow() 同步读取 metadata.currentWindow.label；
+        // 事件系统（onResized/listen）用 transformCallback 注册回调。
+        metadata: { currentWindow: { label: string } };
+        transformCallback: (callback: (...args: unknown[]) => void) => number;
         invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
         convertFileSrc: (path: string, protocol?: string) => string;
       };
@@ -1272,9 +1282,21 @@ export async function installDesktopBridge(page: Page): Promise<void> {
     const fixtureWindow = window as unknown as TauriFixtureWindow;
     fixtureWindow.isTauri = true;
     let dialogOpens = 0;
+    let callbackSeq = 0;
     fixtureWindow.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: "fixture-window" } },
+      transformCallback: (callback) => {
+        callbackSeq += 1;
+        (window as unknown as Record<string, unknown>)[`_${callbackSeq}`] = callback;
+        return callbackSeq;
+      },
       invoke: async (command, args) => {
         if (command === "desktop_runtime_connection") return { baseUrl: origin, token: "task7-fixture-token", sidecarUrl: origin };
+        if (command === "desktop_append_frontend_log") return null;
+        // 窗口/事件插件兜底：AppShell 桌面 effect 会调 isMaximized/onResized。
+        if (command === "plugin:window|is_maximized") return false;
+        if (command === "plugin:event|listen") return 0;
+        if (command === "plugin:event|unlisten") return undefined;
         if (command === "desktop_capture_coordinator_status" || command === "desktop_capture_coordinator_set_enabled") {
           return {
             enabled: true,

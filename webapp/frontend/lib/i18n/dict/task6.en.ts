@@ -550,4 +550,12 @@ export const task6En = {
   "settings.knowledge.checkingInstalling": "Validating and installing…",
   "settings.knowledge.finishAndActivate": "Finish and activate",
   "settings.knowledge.activating": "Activating…",
+
+  // ── SettingsWorkspace.tsx —— 通用屏语言选择（i18n 收尾批） ──────────────
+  // 语言名固定用各自语言书写（简体中文 / English），不随当前界面语言翻译。
+  "settings.language.title": "Language",
+  "settings.language.desc": "Pick the interface language; the change applies immediately.",
+  "settings.language.choiceAria": "Interface language",
+  "settings.language.zh": "简体中文",
+  "settings.language.en": "English",
 } as const;

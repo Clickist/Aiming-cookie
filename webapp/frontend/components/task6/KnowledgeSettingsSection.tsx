@@ -13,7 +13,7 @@ import {
   type KnowledgePacksResponseV1,
 } from "@/lib/api";
 import { isDesktopRuntime, pickDesktopDirectory } from "@/lib/desktop";
-import { t, useT, type MessageKey } from "@/lib/i18n";
+import { getLocale, t, useT, type MessageKey } from "@/lib/i18n";
 import { Badge, Button, Dialog, FieldControl, Loading, Notice, Panel } from "@/ui/primitives";
 
 type ConfirmAction = {
@@ -46,7 +46,8 @@ const SOURCE_KIND_KEYS: Record<SourceKind, { label: MessageKey; sub: MessageKey 
 function formatInstalledDay(iso: string): string | null {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric" }).format(date);
+  // 日期格式跟随当前 locale（批 1 formatHistoryDate 同款改法）。
+  return new Intl.DateTimeFormat(getLocale() === "en-US" ? "en-US" : "zh-CN", { month: "long", day: "numeric" }).format(date);
 }
 
 /** 校验清单行（线框 check-row 语言）：语义符号 + 文本。 */

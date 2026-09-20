@@ -9,7 +9,7 @@ import {
   refreshKovaaKConnection,
   saveKovaaKConnection,
 } from "@/lib/api";
-import { useT } from "@/lib/i18n";
+import { getLocale, useT } from "@/lib/i18n";
 import type { KovaaKScoresV1 } from "@/lib/types";
 import { Button, Dialog, Field, FieldControl, Notice, Status } from "@/ui/primitives";
 
@@ -52,7 +52,8 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
     if (!value) return t("kovaak.connection.observedNone");
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return t("kovaak.connection.observedFallback");
-    return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
+    // 时间格式跟随当前 locale（批 1 formatHistoryDate 同款改法）。
+    return new Intl.DateTimeFormat(getLocale() === "en-US" ? "en-US" : "zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
   }, [t]);
 
   const load = useCallback(async () => {

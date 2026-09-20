@@ -21,7 +21,7 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
-import { t, useT, type MessageKey } from "@/lib/i18n";
+import { getLocale, t, useLocale, useT, type Locale, type MessageKey } from "@/lib/i18n";
 import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
@@ -178,7 +178,8 @@ function formatDay(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric" }).format(date);
+  // 日期格式跟随当前 locale（批 1 formatHistoryDate 同款改法）。
+  return new Intl.DateTimeFormat(getLocale() === "en-US" ? "en-US" : "zh-CN", { month: "long", day: "numeric" }).format(date);
 }
 
 function captureLabel(value: boolean | null | undefined, yes: string, no: string): string {
@@ -250,6 +251,7 @@ export function SettingsWorkspace() {
   const router = useRouter();
   const t = useT();
   const { preference, setPreference } = useTheme();
+  const { locale, setLocale: applyLocale } = useLocale();
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
   const [calibration, setCalibration] = useState<CalibrationProfileV1 | null>(null);
@@ -540,6 +542,13 @@ export function SettingsWorkspace() {
     { value: "system", label: t("settings.theme.system") },
   ] as const;
 
+  // 界面语言两档（i18n 收尾批）：applyLocale = setLocale，切换立即生效
+  // （订阅通知触发所有 useT 组件重渲染）并持久化到 localStorage。
+  const languageOptions = [
+    { value: "zh-CN", label: t("settings.language.zh") },
+    { value: "en-US", label: t("settings.language.en") },
+  ] as const satisfies ReadonlyArray<{ value: Locale; label: string }>;
+
   // 渐进渲染：页面框架常驻，不再整页 return Loading。各分区（Provider /
   // 采集 / 存储）在各自数据到达前显示局部 skeleton，数据先到先显示。
   if (loadError && !catalog && profiles.length === 0) {
@@ -598,6 +607,22 @@ export function SettingsWorkspace() {
                     <input checked={preference === mode.value} name="theme" onChange={() => setPreference(mode.value)} type="radio" value={mode.value} />
                     <span aria-hidden="true" className="task6-theme-card-swatch" data-mode={mode.value} />
                     <span className="task6-theme-card-name">{mode.label}</span>
+                  </label>
+                ))}
+              </div>
+            </Panel>
+          </div>
+          <div className="task6-settings-subsection">
+            <Panel>
+              <h3 className="task6-profile-group-title">{t("settings.language.title")}</h3>
+              <p className="task6-card-desc">{t("settings.language.desc")}</p>
+              {/* 语言两档单选：视觉复用知识库向导来源选择的 task6-mode-card
+                  单选卡（i18n 收尾批，零新增 CSS）；语言名固定各自语言书写。 */}
+              <div className="task6-theme-cards" role="radiogroup" aria-label={t("settings.language.choiceAria")}>
+                {languageOptions.map((option) => (
+                  <label className="task6-mode-card" data-selected={locale === option.value || undefined} key={option.value}>
+                    <input checked={locale === option.value} name="ui-language" onChange={() => applyLocale(option.value)} type="radio" value={option.value} />
+                    <span className="task6-mode-card-name">{option.label}</span>
                   </label>
                 ))}
               </div>

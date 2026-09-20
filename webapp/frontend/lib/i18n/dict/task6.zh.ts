@@ -554,4 +554,12 @@ export const task6Zh = {
   "settings.knowledge.checkingInstalling": "校验并安装中…",
   "settings.knowledge.finishAndActivate": "完成并激活",
   "settings.knowledge.activating": "正在激活…",
+
+  // ── SettingsWorkspace.tsx —— 通用屏语言选择（i18n 收尾批） ──────────────
+  // 语言名固定用各自语言书写（简体中文 / English），不随当前界面语言翻译。
+  "settings.language.title": "语言",
+  "settings.language.desc": "选择界面显示语言，切换立即生效。",
+  "settings.language.choiceAria": "界面语言",
+  "settings.language.zh": "简体中文",
+  "settings.language.en": "English",
 } as const;
