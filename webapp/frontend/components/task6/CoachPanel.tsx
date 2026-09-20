@@ -2557,7 +2557,8 @@ export function CoachPanel({
 
   // ── 空对话首页（点点 0910 拍板）─────────────────────────────────────────
   const homeGreeting = coachGreeting(new Date());
-  const homeChips = useMemo(() => coachHomeChips(), []);
+  // 不缓存：chips 文案经 t() 跟随当前 locale，useMemo 空依赖会把挂载时的语言定格。
+  const homeChips = coachHomeChips();
   // 纯空对话（无消息、无 run、非过渡帧）才显示首页；发送首条后由常规消息流接管。
   const homeMode = messages.length === 0 && !run && !homeExit;
   // 空对话首页壳层（点点 0910 拍板）：header 状态行与"本次讨论"条是上次会话的
