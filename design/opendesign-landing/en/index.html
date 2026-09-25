@@ -273,6 +273,7 @@
     .hero .lead    { margin-bottom: var(--gap-lg); margin-inline: auto; }
     .hero-cta      { display: inline-flex; gap: var(--gap-sm); flex-wrap: wrap; }
     .hero-center .hero-cta { justify-content: center; }
+    .hero-note     { margin: 14px auto 0; font-size: 13px; color: var(--muted); }
     @media (min-width: 721px) { .single-line-heading { white-space: nowrap; } }
     @media (max-width: 560px) {
       :root { --gutter: 20px; }
@@ -351,7 +352,7 @@
         "@id": "https://aimingcookie.com/en/#faq",
         "mainEntity": [
           { "@type": "Question", "name": "Is Aiming Cookie an aimbot?", "acceptedAnswer": { "@type": "Answer", "text": "No. It doesn't read game memory, doesn't inject, and never aims for you — it works outside the game: recording mouse raw input, screen capture, KovaaK's own stats and engine telemetry, then analyzing after you're done training. If you searched for 'AI aim assist', rest assured: this is a different thing entirely." } },
-          { "@type": "Question", "name": "Is Aiming Cookie free?", "acceptedAnswer": { "@type": "Answer", "text": "The product is free. The AI coach requires you to bring your own LLM provider (official APIs like DeepSeek, or a relay) — model costs are between you and that provider." } },
+          { "@type": "Question", "name": "Is Aiming Cookie free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Sign up and verify for free — one full training analysis plus two follow-up questions, so you can confirm Aiming Cookie runs well on your PC first. After that, subscribe (model calls included) or keep using your own API key for free." } },
           { "@type": "Question", "name": "Do I need to own KovaaK's?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Aiming Cookie is the analysis and coaching layer for KovaaK's (FPSAimTrainer on Steam); the training itself still happens in KovaaK's." } },
           { "@type": "Question", "name": "Does my data get uploaded?", "acceptedAnswer": { "@type": "Answer", "text": "Training data — mouse input, screen recordings, analysis results — stays on your own PC. Data only leaves in two cases: you actively chat with the AI coach (sending the content you select), or you actively upload logs to report a problem." } },
           { "@type": "Question", "name": "How is this better than reviewing my demos?", "acceptedAnswer": { "@type": "Answer", "text": "Demo review is guessing from pixels. Aiming Cookie computes: true angular error per shot (measured median 0.2–0.5° on kill clicks), deceleration share, path smoothness — off-screen targets included. None of that is visible in footage." } },
@@ -868,8 +869,13 @@
         <h1>Run a drill. Ask your AI coach.</h1>
         <p class="lead">Aiming Cookie reads first-party data while you train — mouse Raw Input, your screen recording, KovaaK's Stats, plus <span class="truth-tip" tabindex="0">engine-level ground-truth telemetry<span class="truth-tip__pop" role="tooltip">Internal ground truth read straight from the game engine — target positions, crosshair angles — no pixel recognition involved. It lets the Coach compute the true angular error of your crosshair shot by shot (measured median 0.2–0.5° on kill clicks) and attribute every miss to a specific motion.</span></span> — diagnoses your aiming with physics and kinematics informed by community experience, and an AI coach explains what to change, then tracks you over time.</p>
         <div class="hero-cta">
+          <button class="btn btn-secondary" id="changelogBtn" type="button">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 9.6 6H14l-3.4 3 1.2 4.5L8 11l-3.8 2.5L5.4 9 2 6h4.4L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            What's new
+          </button>
           <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>Download for Windows</a>
         </div>
+        <p class="hero-note" id="clVerNote" hidden></p>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
         <!-- 手机（≤640px）：产品窗口等比缩到过小失去意义，改用静态截图（跟随主题） -->
@@ -2288,7 +2294,7 @@
           </details>
           <details class="faq-item">
             <summary>Is Aiming Cookie free?</summary>
-            <p>The product is free. The AI coach requires you to bring your own LLM provider (official APIs like DeepSeek, or a relay) — model costs are between you and that provider.</p>
+            <p>Yes. Sign up and verify for free — one full training analysis plus two follow-up questions, so you can confirm Aiming Cookie runs well on your PC first. After that, subscribe (model calls included) or keep using your own API key for free.</p>
           </details>
           <details class="faq-item">
             <summary>Do I need to own KovaaK's?</summary>
@@ -2323,7 +2329,7 @@
   
 
   <div class="container meta-notice" data-od-id="notice">
-    <p>Note: the Coach requires your own LLM provider — the product is free; model costs are between you and your provider.</p>
+    <p>Note: subscriptions include model calls; you can also bring your own API key and use it for free.</p>
     <p>Your data never leaves your PC.</p>
   </div>
 
@@ -2621,6 +2627,146 @@
           })
           .catch(() => {});
       } catch (e) {}
+    })();
+  </script>
+
+  <style id="changelog-style">
+    /* ══════════════════════════════════════════════════════════════════
+       Release-notes modal (cl- prefix, fully scoped)
+       Form source of truth: .zcode/wireframes/release-announce-2026-09-24.html (view B)
+       All colors use the page's existing tokens (--surface/--fg/--muted/--border/--accent);
+       light/dark follows html.dark — no new theme mechanism.
+       Data: same JSON as the Chinese page, fetched from the site root (/changelog.json).
+       ══════════════════════════════════════════════════════════════════ */
+    .cl-scrim {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(36, 33, 29, .4);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 9% 16px 24px;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    html.dark .cl-scrim { background: rgba(0, 0, 0, .55); }
+    .cl-scrim.show { opacity: 1; pointer-events: auto; }
+    .changelog-modal {
+      width: 640px; max-width: 100%; max-height: 74vh;
+      display: flex; flex-direction: column;
+      background: var(--surface); border-radius: 16px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+      transform: translateY(10px) scale(.98); transition: transform .2s ease-out;
+    }
+    .cl-scrim.show .changelog-modal { transform: translateY(0) scale(1); }
+    .cl-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; }
+    .cl-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+    .cl-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    .cl-close {
+      margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 8px;
+      border: none; cursor: pointer; background: transparent; color: var(--muted);
+      font-size: 18px; line-height: 1;
+    }
+    .cl-close:hover { background: var(--fg-soft); color: var(--fg); }
+    .cl-body { padding: 0 24px 20px; overflow-y: auto; }
+    .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
+    .cl-rel:last-child { margin-bottom: 0; }
+    .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-badge {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
+    }
+    .cl-date { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+    .cl-rel ul { list-style: none; margin: 0; padding: 0; }
+    .cl-item { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; padding: 3px 0; }
+    .cl-tag { flex: none; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-top: 3px; }
+    .cl-new .cl-tag { background: var(--accent-soft); color: var(--accent); }
+    .cl-imp .cl-tag { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+    .cl-fix .cl-tag { border: 1px solid var(--border); color: var(--muted); }
+    .cl-rel details { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 8px; }
+    .cl-rel summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
+    .cl-rel summary::-webkit-details-marker { display: none; }
+    .cl-rel summary:hover { color: var(--fg); }
+    .cl-rel details[open] summary { margin-bottom: 6px; }
+    .cl-error { margin: 8px 0 12px; font-size: 14px; color: var(--muted); }
+  </style>
+
+  <!-- Release-notes modal: content rendered from /changelog.json (same source as the Chinese page) -->
+  <div class="cl-scrim" id="clScrim" aria-hidden="true">
+    <div class="changelog-modal" role="dialog" aria-modal="true" aria-label="Release notes">
+      <div class="cl-head">
+        <div>
+          <div class="cl-title">Release notes</div>
+          <div class="cl-sub">Every change to Aiming Cookie, in one place.</div>
+        </div>
+        <button class="cl-close" id="clClose" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="cl-body" id="clBody"></div>
+    </div>
+  </div>
+
+  <script>
+    // ─── Release-notes modal (single source changelog.json; #changelog hash opens it) ───
+    (function () {
+      var scrim = document.getElementById('clScrim');
+      var body = document.getElementById('clBody');
+      var btn = document.getElementById('changelogBtn');
+      var closeBtn = document.getElementById('clClose');
+      var T = {
+        new: 'New', imp: 'Improved', fix: 'Fixed', latest: 'Latest',
+        show: function (n) { return n === 1 ? 'Show 1 update' : 'Show ' + n + ' updates'; },
+        err: "Couldn't load release notes"
+      };
+      var esc = function (s) {
+        var d = document.createElement('div');
+        d.textContent = String(s == null ? '' : s);
+        return d.innerHTML;
+      };
+      var TAG = { new: 'cl-new', imp: 'cl-imp', fix: 'cl-fix' };
+      var item = function (it) {
+        var cls = TAG[it && it.type] || 'cl-imp';
+        var label = T[it && it.type] || T.imp;
+        return '<li class="' + cls + '"><span class="cl-tag">' + label + '</span><span>' + esc(it && it.en) + '</span></li>';
+      };
+      var render = function (data) {
+        var vs = data && Array.isArray(data.versions) ? data.versions : [];
+        if (!vs.length) { fail(); return; }
+        var note = document.getElementById('clVerNote');
+        if (note && vs[0] && vs[0].version) {
+          note.textContent = 'v' + vs[0].version + ' · Windows 10/11 64-bit';
+          note.hidden = false;
+        }
+        body.innerHTML = vs.map(function (v, i) {
+          var items = Array.isArray(v.items) ? v.items : [];
+          var head = '<div class="cl-rel-head"><span class="cl-rel-ver">v' + esc(v.version) + '</span>'
+            + (i === 0 ? '<span class="cl-badge">' + T.latest + '</span>' : '')
+            + '<span class="cl-date">' + esc(v.date) + '</span></div>';
+          var list = '<ul>' + items.map(item).join('') + '</ul>';
+          if (i === 0) return '<div class="cl-rel">' + head + list + '</div>';
+          return '<div class="cl-rel">' + head
+            + '<details><summary>' + T.show(items.length) + '</summary>' + list + '</details></div>';
+        }).join('');
+      };
+      var fail = function () {
+        body.innerHTML = '<p class="cl-error">' + T.err + '</p>';
+      };
+      // 英文页在 /en/ 下，绝对路径取站点根的同一份 JSON，避免两份漂移
+      fetch('/changelog.json', { headers: { Accept: 'application/json' } })
+        .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
+        .then(render)
+        .catch(fail);
+
+      var open = function (show) {
+        scrim.classList.toggle('show', show);
+        scrim.setAttribute('aria-hidden', String(!show));
+        if (!show && location.hash === '#changelog') {
+          history.replaceState(null, '', location.pathname + location.search);
+        }
+      };
+      btn.addEventListener('click', function () { open(true); });
+      closeBtn.addEventListener('click', function () { open(false); });
+      scrim.addEventListener('click', function (e) { if (e.target === scrim) open(false); });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && scrim.classList.contains('show')) open(false);
+      });
+      if (location.hash === '#changelog') open(true);
     })();
   </script>
 

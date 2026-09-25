@@ -272,6 +272,7 @@
     .hero .lead    { margin-bottom: var(--gap-lg); margin-inline: auto; }
     .hero-cta      { display: inline-flex; gap: var(--gap-sm); flex-wrap: wrap; }
     .hero-center .hero-cta { justify-content: center; }
+    .hero-note     { margin: 14px auto 0; font-size: 13px; color: var(--muted); }
     @media (min-width: 721px) { .single-line-heading { white-space: nowrap; } }
     @media (max-width: 560px) {
       :root { --gutter: 20px; }
@@ -350,7 +351,7 @@
         "@id": "https://aimingcookie.com/#faq",
         "mainEntity": [
           { "@type": "Question", "name": "Aiming Cookie 是自瞄外挂吗？", "acceptedAnswer": { "@type": "Answer", "text": "不是。它不读游戏内存、不注入、更不会替你瞄准——它在游戏外面工作：记录鼠标原始输入、录屏、KovaaK's 自带统计和引擎遥测，只在训练结束后做分析。搜「AI 瞄准辅助」搜到这里的人请放心，这和自瞄是两码事。" } },
-          { "@type": "Question", "name": "Aiming Cookie 免费吗？", "acceptedAnswer": { "@type": "Answer", "text": "产品免费。AI 教练需要你自备一个 LLM provider（DeepSeek 等官方 API 或中转站均可），模型调用费用是你与所选服务商之间的事。" } },
+          { "@type": "Question", "name": "Aiming Cookie 免费吗？", "acceptedAnswer": { "@type": "Answer", "text": "免费。注册即可免费验证——完整体验一局训练分析加两次追问，确认 Aiming Cookie 在你的电脑上运行正常；之后可以订阅会员（模型调用已包含），也可以一直免费使用自己的 API Key。" } },
           { "@type": "Question", "name": "需要先买 KovaaK's 吗？", "acceptedAnswer": { "@type": "Answer", "text": "需要。Aiming Cookie 是 KovaaK's（Steam 上的 FPSAimTrainer）的分析和教练层，训练本身还是在 KovaaK's 里打。" } },
           { "@type": "Question", "name": "我的数据会上传吗？", "acceptedAnswer": { "@type": "Answer", "text": "训练数据——鼠标输入、录屏、分析结果——只保存在你自己的电脑上。只有两种情况会发数据出去：你主动和 AI 教练对话（发送你选中的内容）、你主动一键上传日志报障。" } },
           { "@type": "Question", "name": "和看录像复盘比，强在哪？", "acceptedAnswer": { "@type": "Answer", "text": "看录像是凭画面猜。Aiming Cookie 直接算：每一发的真实角误差（击杀点击实测中位 0.2–0.5°）、减速占比、轨迹平滑度，连屏幕外的目标都算在内——这些从画面上看不出来。" } },
@@ -1006,8 +1007,13 @@
         <h1 class="single-line-heading">练一局，向AI教练提问</h1>
         <p class="lead">Aiming Cookie 在你训练时读取一手数据——鼠标 Raw Input、录屏、KovaaK Stats，以及<span class="truth-tip" tabindex="0">引擎级真值遥测<span class="truth-tip__pop" role="tooltip">直接从游戏引擎读取目标位置、准星视角等内部真值数据，不需要识别画面。有了它，Coach 能逐发计算准星到目标的真实角误差（击杀点击实测中位 0.2–0.5°），把每一发的问题归因到具体动作。</span></span>——用物理与运动学指标结合社区经验诊断你的瞄准，再由 AI 瞄准教练为您讲解，并持续训练。</p>
         <div class="hero-cta">
+          <button class="btn btn-secondary" id="changelogBtn" type="button">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 9.6 6H14l-3.4 3 1.2 4.5L8 11l-3.8 2.5L5.4 9 2 6h4.4L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            更新日志
+          </button>
           <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.2.4_x64-setup.exe" download>下载 Windows 版</a>
         </div>
+        <p class="hero-note" id="clVerNote" hidden></p>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
         <!-- 手机（≤640px）：产品窗口等比缩到过小失去意义，改用静态截图（跟随主题） -->
@@ -2434,7 +2440,7 @@
           </details>
           <details class="faq-item">
             <summary>Aiming Cookie 免费吗？</summary>
-            <p>产品免费。AI 教练需要你自备一个 LLM provider（DeepSeek 等官方 API 或中转站均可），模型调用费用是你与所选服务商之间的事。</p>
+            <p>免费。注册即可免费验证——完整体验一局训练分析加两次追问，确认 Aiming Cookie 在你的电脑上运行正常；之后可以订阅会员（模型调用已包含），也可以一直免费使用自己的 API Key。</p>
           </details>
           <details class="faq-item">
             <summary>需要先买 KovaaK's 吗？</summary>
@@ -2469,7 +2475,7 @@
   
 
   <div class="container meta-notice" data-od-id="notice">
-    <p>须知：Coach 需要自备 LLM provider——免费的是产品，模型费用属于你与所选 provider 的关系。</p>
+    <p>须知：订阅已包含模型调用；也可以自带 API Key 免费使用。</p>
     <p>数据只留在你的电脑上。</p>
   </div>
 
@@ -2649,6 +2655,144 @@
         head.setAttribute('aria-expanded', String(open));
       });
     }
+  </script>
+
+  <style id="changelog-style">
+    /* ══════════════════════════════════════════════════════════════════
+       更新日志弹窗（cl- 前缀，全部 scoped）
+       形态真值：.zcode/wireframes/release-announce-2026-09-24.html 视图 B
+       颜色全部走页面既有 token（--surface/--fg/--muted/--border/--accent），
+       深浅色自动跟随 html.dark，不新造主题机制。
+       ══════════════════════════════════════════════════════════════════ */
+    .cl-scrim {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(36, 33, 29, .4);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 9% 16px 24px;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    html.dark .cl-scrim { background: rgba(0, 0, 0, .55); }
+    .cl-scrim.show { opacity: 1; pointer-events: auto; }
+    .changelog-modal {
+      width: 640px; max-width: 100%; max-height: 74vh;
+      display: flex; flex-direction: column;
+      background: var(--surface); border-radius: 16px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+      transform: translateY(10px) scale(.98); transition: transform .2s ease-out;
+    }
+    .cl-scrim.show .changelog-modal { transform: translateY(0) scale(1); }
+    .cl-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; }
+    .cl-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+    .cl-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    .cl-close {
+      margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 8px;
+      border: none; cursor: pointer; background: transparent; color: var(--muted);
+      font-size: 18px; line-height: 1;
+    }
+    .cl-close:hover { background: var(--fg-soft); color: var(--fg); }
+    .cl-body { padding: 0 24px 20px; overflow-y: auto; }
+    .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
+    .cl-rel:last-child { margin-bottom: 0; }
+    .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-badge {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
+    }
+    .cl-date { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+    .cl-rel ul { list-style: none; margin: 0; padding: 0; }
+    .cl-item { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; padding: 3px 0; }
+    .cl-tag { flex: none; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-top: 3px; }
+    .cl-new .cl-tag { background: var(--accent-soft); color: var(--accent); }
+    .cl-imp .cl-tag { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+    .cl-fix .cl-tag { border: 1px solid var(--border); color: var(--muted); }
+    .cl-rel details { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 8px; }
+    .cl-rel summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
+    .cl-rel summary::-webkit-details-marker { display: none; }
+    .cl-rel summary:hover { color: var(--fg); }
+    .cl-rel details[open] summary { margin-bottom: 6px; }
+    .cl-error { margin: 8px 0 12px; font-size: 14px; color: var(--muted); }
+  </style>
+
+  <!-- 更新日志弹窗：内容由下方脚本从 /changelog.json 同源渲染 -->
+  <div class="cl-scrim" id="clScrim" aria-hidden="true">
+    <div class="changelog-modal" role="dialog" aria-modal="true" aria-label="更新日志">
+      <div class="cl-head">
+        <div>
+          <div class="cl-title">更新日志</div>
+          <div class="cl-sub">Aiming Cookie 每个版本更新了什么，都在这里。</div>
+        </div>
+        <button class="cl-close" id="clClose" type="button" aria-label="关闭">✕</button>
+      </div>
+      <div class="cl-body" id="clBody"></div>
+    </div>
+  </div>
+
+  <script>
+    // ─── 更新日志弹窗（单一事实源 changelog.json；#changelog hash 直开）───
+    (function () {
+      var scrim = document.getElementById('clScrim');
+      var body = document.getElementById('clBody');
+      var btn = document.getElementById('changelogBtn');
+      var closeBtn = document.getElementById('clClose');
+      var T = {
+        new: '新增', imp: '改进', fix: '修复', latest: '最新',
+        show: function (n) { return '展开 ' + n + ' 条更新'; },
+        err: '暂时无法加载更新日志'
+      };
+      var esc = function (s) {
+        var d = document.createElement('div');
+        d.textContent = String(s == null ? '' : s);
+        return d.innerHTML;
+      };
+      var TAG = { new: 'cl-new', imp: 'cl-imp', fix: 'cl-fix' };
+      var item = function (it) {
+        var cls = TAG[it && it.type] || 'cl-imp';
+        var label = T[it && it.type] || T.imp;
+        return '<li class="' + cls + '"><span class="cl-tag">' + label + '</span><span>' + esc(it && it.zh) + '</span></li>';
+      };
+      var render = function (data) {
+        var vs = data && Array.isArray(data.versions) ? data.versions : [];
+        if (!vs.length) { fail(); return; }
+        var note = document.getElementById('clVerNote');
+        if (note && vs[0] && vs[0].version) {
+          note.textContent = 'v' + vs[0].version + ' · Windows 10/11 64 位';
+          note.hidden = false;
+        }
+        body.innerHTML = vs.map(function (v, i) {
+          var items = Array.isArray(v.items) ? v.items : [];
+          var head = '<div class="cl-rel-head"><span class="cl-rel-ver">v' + esc(v.version) + '</span>'
+            + (i === 0 ? '<span class="cl-badge">' + T.latest + '</span>' : '')
+            + '<span class="cl-date">' + esc(v.date) + '</span></div>';
+          var list = '<ul>' + items.map(item).join('') + '</ul>';
+          if (i === 0) return '<div class="cl-rel">' + head + list + '</div>';
+          return '<div class="cl-rel">' + head
+            + '<details><summary>' + T.show(items.length) + '</summary>' + list + '</details></div>';
+        }).join('');
+      };
+      var fail = function () {
+        body.innerHTML = '<p class="cl-error">' + T.err + '</p>';
+      };
+      fetch('changelog.json', { headers: { Accept: 'application/json' } })
+        .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
+        .then(render)
+        .catch(fail);
+
+      var open = function (show) {
+        scrim.classList.toggle('show', show);
+        scrim.setAttribute('aria-hidden', String(!show));
+        if (!show && location.hash === '#changelog') {
+          history.replaceState(null, '', location.pathname + location.search);
+        }
+      };
+      btn.addEventListener('click', function () { open(true); });
+      closeBtn.addEventListener('click', function () { open(false); });
+      scrim.addEventListener('click', function (e) { if (e.target === scrim) open(false); });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && scrim.classList.contains('show')) open(false);
+      });
+      if (location.hash === '#changelog') open(true);
+    })();
   </script>
 
 </body></html>
