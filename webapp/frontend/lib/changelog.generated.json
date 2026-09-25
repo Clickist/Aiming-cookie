@@ -1,0 +1,52 @@
+{
+  "versions": [
+    {
+      "version": "1.2.5",
+      "date": "2026-09-24",
+      "items": [
+        {
+          "type": "new",
+          "zh": "自定义知识库——导入第三方知识包，训练讲解随包更新",
+          "en": "Custom knowledge packs — import third-party packs, coaching notes update with them"
+        },
+        {
+          "type": "new",
+          "zh": "更新公告——升级后第一时间告诉你这次更新了什么",
+          "en": "Release notes — see what's new right after each update"
+        },
+        {
+          "type": "imp",
+          "zh": "错误提示与界面细节改进",
+          "en": "Clearer error messages and UI polish"
+        }
+      ]
+    },
+    {
+      "version": "1.2.2",
+      "date": "2026-09-18",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "顶栏讨论条防遮挡三键",
+          "en": "Top-bar discussion chips no longer overlap the three window buttons"
+        },
+        {
+          "type": "imp",
+          "zh": "安装与更新流程稳定性",
+          "en": "More stable install and update flow"
+        }
+      ]
+    },
+    {
+      "version": "1.2.1",
+      "date": "2026-09-14",
+      "items": [
+        {
+          "type": "new",
+          "zh": "官方场景库搜索（17.5 万场景模糊匹配）",
+          "en": "Official scenario library search (fuzzy match across 175k scenarios)"
+        }
+      ]
+    }
+  ]
+}
