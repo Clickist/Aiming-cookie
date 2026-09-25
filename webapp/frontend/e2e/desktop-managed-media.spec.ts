@@ -81,7 +81,9 @@ test("real Tauri WebView plays managed media from Coach evidence and degrades a 
   await page!.goto(new URL("/", appUrl).toString());
 
   // Open the video from the Coach discussion chip (v6 起证据卡退役，视频入口=顶栏讨论 chip)。
-  const videoButton = page!.locator('button.task6-discussion-chip[title="打开视频讲解"]').first();
+  // ae6c696（0918 防遮三键）起平铺 chip 的 title=场景名（悬停认局），「打开视频讲解」
+  // 只在溢出菜单项上；这里点第一个平铺局 chip（pending 是 span、▾ 是 .task6-discussion-toggle，都会被排除）。
+  const videoButton = page!.locator("button.task6-discussion-chip:not(.task6-discussion-toggle)").first();
   await expect(videoButton).toBeVisible();
 
   const rangeResponse = page!.waitForResponse((response) =>

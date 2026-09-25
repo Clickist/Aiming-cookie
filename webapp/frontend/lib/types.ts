@@ -1005,6 +1005,13 @@ export interface MemberMe {
   current_pool: "sub" | "boost" | null;
   boost_buyable: boolean;
   server_time: string;
+  /** 验证闸试用态（sidecar 宽松透传；缺席或 null = 无试用态，消费见 lib/trial）。 */
+  trial?: {
+    active: boolean;
+    analyses_remaining: number;
+    questions_remaining: number;
+    verified_at: string | null;
+  } | null;
 }
 
 export interface MemberPool {

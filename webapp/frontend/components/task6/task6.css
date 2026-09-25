@@ -2026,6 +2026,15 @@ button.task6-discussion-chip:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* 验证闸付费墙的双出口按钮行（订阅 / BYOK），沿用状态卡居中节奏。 */
+.task6-coach-panel > .task6-coach-state .task6-coach-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
 /* Challenge action card */
 
 .task6-action-card {

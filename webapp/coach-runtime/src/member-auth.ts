@@ -136,6 +136,13 @@ export type MemberMe = {
   current_pool: "sub" | "boost" | null;
   boost_buyable: boolean;
   server_time: string;
+  /** 验证闸试用态（契约 §7.1-8 v2.1）：宽松透传——字段不齐 = null，前端 fail-open。 */
+  trial: {
+    active: boolean;
+    analyses_remaining: number;
+    questions_remaining: number;
+    verified_at: string | null;
+  } | null;
 };
 
 export type MemberExchangeResult =
@@ -457,6 +464,17 @@ export async function fetchMemberMe(): Promise<
     || body.status === "refunded" || body.status === "none"
     ? body.status
     : "none";
+  const trialRaw = isRecord(body.trial) ? body.trial : null;
+  const trial = trialRaw && trialRaw.active === true
+    && typeof trialRaw.analyses_remaining === "number"
+    && typeof trialRaw.questions_remaining === "number"
+    ? {
+        active: true,
+        analyses_remaining: trialRaw.analyses_remaining,
+        questions_remaining: trialRaw.questions_remaining,
+        verified_at: typeof trialRaw.verified_at === "string" ? trialRaw.verified_at : null,
+      }
+    : null;
   return {
     ok: true,
     me: {
@@ -476,8 +494,37 @@ export async function fetchMemberMe(): Promise<
       current_pool: body.current_pool === "sub" || body.current_pool === "boost" ? body.current_pool : null,
       boost_buyable: body.boost_buyable === true,
       server_time: typeof body.server_time === "string" ? body.server_time : new Date().toISOString(),
+      trial,
     },
   };
+}
+
+/**
+ * `/api/trial-events`（契约 §7.1-15）：验证闸计数上报。幂等与扣减下限都在服务端，
+ * 客户端只关心送达；失败由前端 pending 补报兜底，这里不做重试。
+ */
+export async function reportTrialEvent(
+  type: "analysis_done" | "question_answered",
+): Promise<
+  { ok: true } | { ok: false; code: "unauthorized" | "bad_request" | "unavailable"; message: string }
+> {
+  const jwt = storedMemberJwt();
+  if (!jwt) return { ok: false, code: "unauthorized", message: "尚未登录 Aiming Cookie。" };
+  let status: number;
+  try {
+    const result = await requestJson("/api/trial-events", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}` },
+      body: { type },
+    });
+    status = result.status;
+  } catch {
+    return { ok: false, code: "unavailable", message: "无法连接账号服务。" };
+  }
+  if (status === 401) return { ok: false, code: "unauthorized", message: "登录状态已过期。" };
+  if (status === 400) return { ok: false, code: "bad_request", message: "事件类型无效。" };
+  if (status !== 200) return { ok: false, code: "unavailable", message: `上报失败（HTTP ${status}）。` };
+  return { ok: true };
 }
 
 /**

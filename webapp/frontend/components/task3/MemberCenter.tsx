@@ -19,6 +19,7 @@ import { openExternalUrl } from "@/lib/desktop";
 import { useT } from "@/lib/i18n";
 import { notifyMemberStateChanged } from "@/lib/member-state";
 import { MEMBER_COPY, formatMemberDate, planLabel } from "@/lib/member";
+import { parseTrialState } from "@/lib/trial";
 import type { MemberMe } from "@/lib/types";
 import { IconChevronLeft } from "@/ui/icons";
 import { Button, IconButton, Notice } from "@/ui/primitives";
@@ -78,6 +79,8 @@ export function MemberCenter({
   const boostPct = me?.pools.boost?.pct ?? 0;
   const boostRemaining = me?.pools.boost?.remaining ?? 0;
   const endDate = formatMemberDate(me?.period_end ?? null);
+  // AC 验证闸试用卡（宽松解析，缺失=不渲染；verified=「已验证 ✓ 可订阅」）。
+  const trial = parseTrialState(me);
 
   return (
     <div className="task3-member-center">
@@ -92,15 +95,30 @@ export function MemberCenter({
 
       <div className="task3-member-center-body">
         {me && unsubscribed ? (
-          <div className="task3-member-card-row">
-            <div>
-              <strong>{MEMBER_COPY.notSubscribedTitle}</strong>
-              <p>{MEMBER_COPY.notSubscribedCenterBody}</p>
+          <>
+            {trial ? (
+              <div className="task3-member-card-row" data-trial-verified={trial.verified || undefined}>
+                <div>
+                  <strong>{t("trial.center.title")}</strong>
+                  <p>
+                    {trial.verified
+                      ? t("trial.center.verified")
+                      : t("trial.center.remaining", { analyses: trial.analysesRemaining, questions: trial.questionsRemaining })}
+                  </p>
+                  <p>{trial.verified ? t("trial.center.verifiedHint") : t("trial.center.hint")}</p>
+                </div>
+              </div>
+            ) : null}
+            <div className="task3-member-card-row">
+              <div>
+                <strong>{MEMBER_COPY.notSubscribedTitle}</strong>
+                <p>{MEMBER_COPY.notSubscribedCenterBody}</p>
+              </div>
+              <Button onClick={() => void openExternalUrl(PAY_URL)} size="compact" variant="primary">
+                {MEMBER_COPY.openSubscribePage}
+              </Button>
             </div>
-            <Button onClick={() => void openExternalUrl(PAY_URL)} size="compact" variant="primary">
-              {MEMBER_COPY.openSubscribePage}
-            </Button>
-          </div>
+          </>
         ) : me ? (
           <>
             <div className="task3-member-hero">

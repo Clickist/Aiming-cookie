@@ -193,4 +193,27 @@ export const task3Zh = {
   "kovaak.telemetry.matchedRun": " · 已配对 Run {runId}",
   "kovaak.telemetry.recentOnly": "仅显示最近 10 条，共 {count} 条。",
   "kovaak.telemetry.proposalNote": "自动场景标签仅为提案（uncertain 显示 \"?\"），不会写入已确认的场景记忆。详见 docs/EXTERNAL_TELEMETRY_IMPORT.md。",
+
+  // components/task3/ReleaseNoticeCard.tsx —— 更新公告右下通知卡（0924 线框 v2）
+  "release.notice.ariaLabel": "本次更新",
+  "release.notice.kicker": "{version} 已更新",
+  "release.notice.title": "本次更新",
+  "release.notice.tagNew": "新增",
+  "release.notice.tagImp": "改进",
+  "release.notice.tagFix": "修复",
+  "release.notice.dismiss": "知道了",
+  "release.notice.fullLog": "查看完整更新日志",
+
+  // AC 客户端试用态（验证闸）：免费「一局分析 + 两问」先确认能用再放行订阅。
+  // 用 cards：components/task3/MemberCenter.tsx（用户中心试用卡）；
+  // components/task6/CoachPanel.tsx（余量烧完后的付费墙，正向收尾，不写「试用过期」）。
+  "trial.center.title": "免费验证",
+  "trial.center.remaining": "剩余 {analyses} 次分析 / {questions} 次提问",
+  "trial.center.hint": "先跑一局分析、问问 Coach，确认 AC 在你的电脑上一切正常，再决定订阅。",
+  "trial.center.verified": "已验证 ✓ 可订阅",
+  "trial.center.verifiedHint": "AC 已在你的电脑上正常运行，随时可以订阅。",
+  "trial.paywall.title": "验证完成——AC 已在你的电脑上正常运行",
+  "trial.paywall.body": "想继续和 Coach 对话，订阅 AC 会员，或改用自己的 API Key（BYOK）。",
+  "trial.paywall.subscribe": "订阅 AC 会员",
+  "trial.paywall.byok": "使用自己的 API Key（BYOK）",
 } as const;

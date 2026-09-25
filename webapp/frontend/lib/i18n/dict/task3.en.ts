@@ -192,4 +192,27 @@ export const task3En = {
   "kovaak.telemetry.matchedRun": " · Paired run {runId}",
   "kovaak.telemetry.recentOnly": "Showing the latest 10 of {count} total.",
   "kovaak.telemetry.proposalNote": "Automatic scenario labels are proposals only (uncertain ones show \"?\") and are never written into confirmed scenario memory. See docs/EXTERNAL_TELEMETRY_IMPORT.md.",
+
+  // components/task3/ReleaseNoticeCard.tsx —— 更新公告右下通知卡（0924 线框 v2）
+  "release.notice.ariaLabel": "What's new",
+  "release.notice.kicker": "Updated to {version}",
+  "release.notice.title": "What's new",
+  "release.notice.tagNew": "New",
+  "release.notice.tagImp": "Improved",
+  "release.notice.tagFix": "Fixed",
+  "release.notice.dismiss": "Got it",
+  "release.notice.fullLog": "View full changelog",
+
+  // AC 客户端试用态（验证闸）：免费「一局分析 + 两问」先确认能用再放行订阅。
+  // Used by components/task3/MemberCenter.tsx (user center trial card) and
+  // components/task6/CoachPanel.tsx (paywall after the free fuel is spent).
+  "trial.center.title": "Free verification",
+  "trial.center.remaining": "{analyses} analyses / {questions} questions left",
+  "trial.center.hint": "Run one analysis and ask Coach a couple of questions to confirm everything works on your PC before subscribing.",
+  "trial.center.verified": "Verified ✓ ready to subscribe",
+  "trial.center.verifiedHint": "AC runs normally on your computer. Subscribe whenever you're ready.",
+  "trial.paywall.title": "Verification complete — AC runs on your computer",
+  "trial.paywall.body": "To keep talking with Coach, subscribe to AC membership or use your own API key (BYOK).",
+  "trial.paywall.subscribe": "Subscribe to AC membership",
+  "trial.paywall.byok": "Use your own API key (BYOK)",
 } as const;

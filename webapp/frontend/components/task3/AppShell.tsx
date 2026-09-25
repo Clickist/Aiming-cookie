@@ -18,6 +18,7 @@ import {
 import {
   ANALYSIS_AUTO_TEACH_EVENT,
   COACH_SESSION_UPDATED_EVENT,
+  TRIAL_QUESTION_ANSWERED_EVENT,
   buildAnalysisAutoTeachContent,
   markAnalysisAutoTaught,
   readAutoTaughtAnalyses,
@@ -28,14 +29,25 @@ import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import { useT } from "@/lib/i18n";
 import { memberChipView } from "@/lib/member";
+import { OFFICIAL_RELAY_PROVIDER_ID } from "@/lib/provider-helpers";
 import { notifyMemberStateChanged, useMemberState } from "@/lib/member-state";
 import { useMemberDeepLinks } from "@/lib/member-deeplink";
+import { flushPendingTrialEvents, parseTrialState, reportTrialEvent, setActiveTrialState } from "@/lib/trial";
 import { triggerIntroSession } from "@/lib/intro-session";
+import {
+  findReleaseEntry,
+  readReleaseNoticeSeen,
+  shouldShowReleaseNotice,
+  writeReleaseNoticeSeen,
+  type ReleaseNoticeEntry,
+} from "@/lib/release-notice";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CoachAgentRunV1, CoachSessionOut, ProviderProfileState } from "@/lib/types";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { ErrorBoundary } from "@/components/task3/ErrorBoundary";
 import { MemberCenter } from "@/components/task3/MemberCenter";
+import { ReleaseNoticeCard } from "@/components/task3/ReleaseNoticeCard";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane, invalidateAnalysisPresentationCache } from "@/components/task7/CoachVideoPane";
 import SessionRail, { NEW_SESSION_TITLE, type SessionRailSession } from "@/components/task7/SessionRail";
@@ -72,6 +84,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 会员态（②/②c/④/⑧/⑨ 的唯一数据源）：60s 轮询 + 聚焦 + 变更广播，见 member-state.ts。
   const member = useMemberState();
   const [providerName, setProviderName] = useState<string | null>(null);
+  // 用户自配档（BYOK）是否存在：付费墙豁免判断用。会员登录会自动创建官方
+  // relay 托管档（aiming-cookie-relay），它不是用户自己配的，不能算 BYOK——
+  // 否则「试用耗尽且没配 BYOK」的付费墙条件永远不成立（0926 串测实锤）。
+  const [hasUserProvider, setHasUserProvider] = useState(false);
   // onboarding 完成度由启动路由的 getProductState 解析；未完成/未知一律 false，
   // 首启「开场分析」触发据此门控（未走完 onboarding 不触发）。
   const [onboardingResolved, setOnboardingResolved] = useState(false);
@@ -177,6 +193,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
   // 桌面端更新可用提示：启动静默检查命中后由右下角 UpdatePrompt 呈现。
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
+  // 更新公告卡（0924 拍板线框 v2）：版本块与版本号一起持有，「知道了」时写 lastSeen。
+  const [releaseNotice, setReleaseNotice] = useState<{ entry: ReleaseNoticeEntry; version: string } | null>(null);
   const settingsChildrenRef = useRef<ReactNode>(null);
   const settingsPresence = useAnimatedPresence(settingsRoute, 160);
   // 常规页路由（历史 / 用户中心）的面板存在态：两个路由共用一套进出场，
@@ -293,6 +311,31 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // 更新公告卡（0924 拍板线框 v2）：升级后首次启动进主界面弹一次。版本取自
+  // 桌面壳 getVersion（与设置页「应用更新」同源），纯浏览器预览拿不到版本即
+  // 静默不弹；changelog 没有当前版本块时同样不弹（fail-closed）。onboarding
+  // 期间（shellHidden）不弹——「进入主界面」才弹出。
+  useEffect(() => {
+    if (shellHidden || !isDesktopRuntime()) return undefined;
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (cancelled || !version) return;
+        const entry = findReleaseEntry(version);
+        if (!entry) return;
+        if (!shouldShowReleaseNotice(readReleaseNoticeSeen(window.localStorage), version)) return;
+        setReleaseNotice({ entry, version });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [shellHidden]);
+  const dismissReleaseNotice = useCallback(() => {
+    if (releaseNotice) writeReleaseNoticeSeen(window.localStorage, releaseNotice.version);
+    setReleaseNotice(null);
+  }, [releaseNotice]);
+
   useEffect(() => {
     if (shellHidden) return undefined;
     const controller = new AbortController();
@@ -315,6 +358,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         const profiles = Array.isArray(result?.profiles) ? result.profiles : [];
         const active = profiles.find((profile) => profile.is_default) ?? profiles[0] ?? null;
         setProviderName(active && active.name ? active.name : null);
+        setHasUserProvider(profiles.some((profile) => profile.provider_id !== OFFICIAL_RELAY_PROVIDER_ID));
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -325,6 +369,35 @@ export function AppShell({ children }: { children: ReactNode }) {
   useMemberDeepLinks({
     onRefreshed: () => notifyMemberStateChanged(),
   }, !shellHidden);
+
+  // ── AC 试用态（验证闸）：/me 的 trial 字段宽松解析（缺失=fail-open 无试用态）。
+  // 分析终态 done / 教练回复成功落地时按余量上报（服务端记账；本地去重 + 失败
+  // 补报），见 lib/trial.ts。上报本身不挑路由：分析完成事件可从分析页或 Coach
+  // 列表轮询发出，监听挂在壳层。
+  const trial = parseTrialState(member.me);
+  const trialFlushedRef = useRef(false);
+  useEffect(() => {
+    setActiveTrialState(parseTrialState(member.me));
+    if (trialFlushedRef.current) return;
+    trialFlushedRef.current = true;
+    void flushPendingTrialEvents();
+  }, [member.me]);
+  useEffect(() => {
+    const reportAnalysisDone = (event: Event) => {
+      const ref = (event as CustomEvent<{ analysis_ref?: unknown }>).detail?.analysis_ref;
+      if (typeof ref === "string" && ref) void reportTrialEvent("analysis_done", ref);
+    };
+    const reportQuestionAnswered = (event: Event) => {
+      const runRef = (event as CustomEvent<{ run_ref?: unknown }>).detail?.run_ref;
+      if (typeof runRef === "string" && runRef) void reportTrialEvent("question_answered", runRef);
+    };
+    window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, reportAnalysisDone);
+    window.addEventListener(TRIAL_QUESTION_ANSWERED_EVENT, reportQuestionAnswered);
+    return () => {
+      window.removeEventListener(ANALYSIS_AUTO_TEACH_EVENT, reportAnalysisDone);
+      window.removeEventListener(TRIAL_QUESTION_ANSWERED_EVENT, reportQuestionAnswered);
+    };
+  }, []);
 
 
   // 会话列表是否已完成首次加载：列表是「这条会话是否存在」的唯一信号，
@@ -646,6 +719,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
   const chipEmail = chip.email;
 
+  // 付费墙（验证闸收口）：试用两项余量皆 0、无订阅、也没配过自己的 Provider
+  // （BYOK 只读判断；官方 relay 托管档不算——它随会员登录自动创建，见上）时，
+  // Coach 输入区呈现付费墙。已有订阅或已配 BYOK 的用户一律豁免。
+  const trialPaywall = trial !== null
+    && trial.analysesRemaining <= 0
+    && trial.questionsRemaining <= 0
+    && member.me?.member !== true
+    && !hasUserProvider;
+
   // 顶栏会话标题：NEW_SESSION_TITLE 哨兵是稳定标识符，不得 t() 化；
   // 只在展示处映射为展示键（与 SessionRail 的 rail 标题同款边界）。
   const topbarSessionTitle = draftSession
@@ -773,6 +855,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
                     softStartRun={softStartRun}
+                    trialPaywall={trialPaywall}
                   />
                 </div>
                 {/* 对话列左缘拖拽把手（0827）：仅视频面板开启时存在，横向拖动
@@ -817,6 +900,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
       {desktopUpdate ? (
         <UpdatePrompt onDismiss={() => setDesktopUpdate(null)} update={desktopUpdate} />
+      ) : null}
+      {/* 与 UpdatePrompt 同为右下 fixed 定位，同屏会重叠：更新提示优先，关掉后公告卡再出场。 */}
+      {releaseNotice && !desktopUpdate ? (
+        <ReleaseNoticeCard entry={releaseNotice.entry} onDismiss={dismissReleaseNotice} />
       ) : null}
       {sessionFeedback ? (
         <Toast key={sessionFeedback.seq} onClose={() => setSessionFeedback((current) => (current && current.seq === sessionFeedback.seq ? null : current))}>

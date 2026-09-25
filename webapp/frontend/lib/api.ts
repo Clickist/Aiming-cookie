@@ -913,6 +913,27 @@ export async function fetchMemberStatus(
   return (await res.json()) as MemberStatusResponse;
 }
 
+/**
+ * 试用事件上报（AC 验证闸；accounts `POST /api/trial-events`，JWT 由代理附带，
+ * 服务端幂等记账）。body 只带 `{ type }`（跨端契约，不可单方面扩）；失败由
+ * lib/trial 的 pending 队列补报，这里不做重试。
+ */
+export async function postTrialEvent(
+  type: "analysis_done" | "question_answered",
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<void> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/member/trial-events",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+}
+
 /** 连通测试（①b 态3 重试 / 态2 直连快路径）。 */
 export async function testMemberConnection(
   opts: { signal?: AbortSignal; userId?: string } = {},

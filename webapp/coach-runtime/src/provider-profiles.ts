@@ -38,6 +38,7 @@ import {
   fetchMemberMe,
   logoutMember,
   relayProfileId,
+  reportTrialEvent,
   startMemberLogin,
   testMemberConnection,
 } from "./member-auth.ts";
@@ -482,6 +483,27 @@ export async function handleProviderProfileRequest(
     try {
       const result = await testMemberConnection();
       writeJson(res, 200, result);
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** 验证闸计数上报（契约 §7.1-15 的 sidecar 代理）：body {type} → accounts /api/trial-events。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/trial-events") {
+    try {
+      const body = await readJsonBody(req);
+      const type = isRecord(body) ? body.type : null;
+      if (type !== "analysis_done" && type !== "question_answered") {
+        writeJson(res, 200, { ok: false, code: "bad_request", message: "事件类型无效。" });
+        return true;
+      }
+      const result = await reportTrialEvent(type);
+      if (!result.ok) {
+        writeJson(res, 200, { ok: false, code: result.code, message: result.message });
+        return true;
+      }
+      writeJson(res, 200, { ok: true });
     } catch (error) {
       writeProfileError(res, error);
     }

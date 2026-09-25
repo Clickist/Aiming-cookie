@@ -16,8 +16,8 @@ import {
   retryCoachAgentRun,
   stopCoachAgentRun,
 } from "@/lib/api";
-import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
-import { ANALYSIS_AUTO_TEACH_EVENT, COACH_PENDING_INTENT_KEY, COACH_SESSION_UPDATED_EVENT, computeAnalysisEtaSeconds, formatHistoryDate } from "@/lib/contracts";
+import { isDesktopRuntime, openExternalUrl, openKovaakScenario } from "@/lib/desktop";
+import { ANALYSIS_AUTO_TEACH_EVENT, COACH_PENDING_INTENT_KEY, COACH_SESSION_UPDATED_EVENT, TRIAL_QUESTION_ANSWERED_EVENT, computeAnalysisEtaSeconds, formatHistoryDate } from "@/lib/contracts";
 import { discussionChipLabel, groupDiscussionChips, DISCUSSION_BAR_MAX_PINNED } from "@/lib/discussion-bar";
 import { MEMBER_COPY, bothPoolsEmpty, classifyMemberGatewayError, formatMemberDate, gatewayErrorNotice } from "@/lib/member";
 import { useMemberState } from "@/lib/member-state";
@@ -70,6 +70,9 @@ import { IconChevronDown, IconClose, IconHistory, IconPlus, IconSend, IconStop }
 import { Button, ErrorState, IconButton, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
+
+/** 验证闸付费墙的「订阅 AC 会员」出口：与用户中心 ①b 态1/②c 同一个订阅页。 */
+const TRIAL_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
 
 function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready">): string {
   switch (capability) {
@@ -565,6 +568,7 @@ export function CoachPanel({
   softStartRun = null,
   onActiveRunChange,
   onCoachMessagesChange,
+  trialPaywall = false,
 }: {
   capability: CoachCapability;
   draftSession?: boolean;
@@ -580,6 +584,12 @@ export function CoachPanel({
   onActiveRunChange?: (active: boolean) => void;
   /** 当前会话 assistant 讲解文本上报：视频面板底部回看 chips 跟随正文 @time。 */
   onCoachMessagesChange?: (texts: ReadonlyArray<string>) => void;
+  /**
+   * 验证闸付费墙（AppShell 压好的布尔）：试用两项余量皆 0 且无订阅、没配
+   * BYOK 时，Coach 输入区呈现付费墙（订阅 / BYOK 两出口）。订阅与 BYOK
+   * 用户恒 false，不受影响。
+   */
+  trialPaywall?: boolean;
 }) {
   const router = useRouter();
   const t = useT();
@@ -1425,6 +1435,9 @@ export function CoachPanel({
     // 成功终态统一收敛：回合工作流时序归档（思考段/工具段交错，思考段在
     // 归档时刻统一冻结），实时段清空，本地 run 解除以落库消息接管对话。
     const settleSucceeded = (next: CoachAgentRunV1) => {
+      // 试用闸「回复落地」：run succeeded 且消息已落盘才算一问（流中断/失败
+      // 回合不走这里）；AppShell 监听后过闸上报，run_ref 作本地去重键。
+      window.dispatchEvent(new CustomEvent(TRIAL_QUESTION_ANSWERED_EVENT, { detail: { run_ref: next.run_ref } }));
       const settledAt = Date.now();
       // SSE 模式用实时段；轮询兜底（无 activity 直送）从 events 重建。
       // 立即快照冻结：下面 clearThinkingStream 会同步清空实时状态，任何
@@ -2512,6 +2525,8 @@ export function CoachPanel({
             return;
           }
           if (resynced.status === "succeeded") {
+            // 回复其实已落库：同样算一次「回复落地」上报，再解除错误卡拉取消息。
+            window.dispatchEvent(new CustomEvent(TRIAL_QUESTION_ANSWERED_EVENT, { detail: { run_ref: resynced.run_ref } }));
             setRun(null); // 回复其实已落库：解除错误卡，拉取消息接管对话。
             setFailedCard(null);
             void refresh();
@@ -2890,6 +2905,28 @@ export function CoachPanel({
   const header = trainingChip ? (
     <div className="task6-coach-floating">{trainingChip}</div>
   ) : null;
+
+  // 验证闸付费墙：免费「一局分析 + 两问」烧完后的正向收口——先说「验证完成」，
+  // 再给两出口（订阅 / 自己的 API Key）。不拦订阅与 BYOK 用户（AppShell 已豁免）；
+  // 版式与未配置态同款（task6-coach-state），替代 composer 占住输入区位置。
+  if (trialPaywall) {
+    return (
+      <div className="task6-coach-panel">
+        {header}
+        <div className="task6-coach-state" data-trial-paywall="true">
+          <Status>{t("trial.center.title")}</Status>
+          <h2>{t("trial.paywall.title")}</h2>
+          <p>{t("trial.paywall.body")}</p>
+          <div className="task6-coach-state-actions">
+            <Button onClick={() => void openExternalUrl(TRIAL_SUBSCRIBE_URL)} variant="primary">
+              {t("trial.paywall.subscribe")}
+            </Button>
+            <Button href="/settings" variant="secondary">{t("trial.paywall.byok")}</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (capability === "loading") {
     return (

@@ -21,6 +21,8 @@ import type {
   KovaaKRunListItem,
   KovaaKScoresV1,
   KovaaKLocalDirectoriesV1,
+  MemberMe,
+  MemberStatusResponse,
   ProductStateV1,
   ProviderAuthCapabilitiesV1,
   ProviderCatalogV1,
@@ -890,6 +892,56 @@ export interface ApiScenario {
   kovaakScores: KovaaKScoresV1;
   kovaakDirectories: KovaaKLocalDirectoriesV1;
   failures: Record<string, number>;
+  /**
+   * `/api/provider-profiles/member/me` 的 mock（MemberStatusResponse，可带 trial
+   * 试用态，见 memberTrialMe）。null = 不模拟（请求落 501，等价会员服务不可达，
+   * 与既有场景一致）；给出后由 trial-events 处理器镜像服务端记账扣减。
+   */
+  memberMe: MemberStatusResponse | null;
+  /** 已收到的试用事件上报（trial-events POST），供 e2e 断言上报行为。 */
+  trialEvents: { type: string }[];
+}
+
+/** MemberMe 的试用态扩展（accounts 契约：/me 在无有效订阅但有试用令牌时附带）。 */
+export interface TrialFixtureState {
+  active: boolean;
+  analyses_remaining: number;
+  questions_remaining: number;
+  verified_at: string | null;
+}
+
+/** 未订阅 + 试用态（AC 验证闸）的 /me mock；analyses/questions 为下发余量。 */
+export function memberTrialMe(analyses = 1, questions = 2): MemberStatusResponse {
+  return {
+    ok: true,
+    logged_in: true,
+    profile_id: null,
+    active_profile_id: null,
+    me: {
+      user: { id: "trial-user", email: "trial@gearclickist.com", name: "Trial" },
+      member: false,
+      plan: null,
+      status: "none",
+      cancel_at_period_end: false,
+      period_start: null,
+      period_end: null,
+      dunning: false,
+      pools: { sub: null, boost: null },
+      current_pool: null,
+      boost_buyable: false,
+      server_time: NOW,
+      trial: { active: true, analyses_remaining: analyses, questions_remaining: questions, verified_at: analyses <= 0 ? "2026-09-24T12:00:00.000Z" : null },
+    } as MemberMe,
+  };
+}
+
+/** trial-events 处理器的服务端记账镜像：扣减余量、分析烧完即置 verified_at。 */
+function accountTrialEvent(me: MemberMe, type: string): void {
+  const trial = (me as MemberMe & { trial?: TrialFixtureState }).trial;
+  if (!trial) return;
+  if (type === "analysis_done") trial.analyses_remaining = Math.max(0, trial.analyses_remaining - 1);
+  if (type === "question_answered") trial.questions_remaining = Math.max(0, trial.questions_remaining - 1);
+  trial.verified_at = trial.analyses_remaining <= 0 ? trial.verified_at ?? "2026-09-24T12:00:00.000Z" : trial.verified_at;
 }
 
 export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
@@ -918,6 +970,8 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     kovaakScores: KOVAAK_SCORES,
     kovaakDirectories: KOVAAK_DIRECTORIES,
     failures: {},
+    memberMe: null,
+    trialEvents: [],
     ...overrides,
   };
 }
@@ -1183,6 +1237,19 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
     return response({ schema_version: "coach_context_mutation.v1", action: "attached", context });
   }
   if (path === "/api/coach/primary") return response(scenario.coachPrimary);
+  // 会员状态 / 试用事件（AC 验证闸）：memberMe 为 null 时不模拟（落 501，等价
+  // 会员服务不可达）；trial-events 镜像服务端记账（幂等由真实 accounts 兜底）。
+  if (path === "/api/provider-profiles/member/me" && scenario.memberMe) return response(scenario.memberMe);
+  if (path === "/api/provider-profiles/member/trial-events" && method === "POST") {
+    const body = requestBody(request.body);
+    if (body.type !== "analysis_done" && body.type !== "question_answered") {
+      return response({ detail: { code: "invalid_trial_event", message: "trial event type is invalid" } }, 400);
+    }
+    scenario.trialEvents.push({ type: body.type });
+    const me = scenario.memberMe?.ok === true && scenario.memberMe.logged_in === true ? scenario.memberMe.me : null;
+    if (me) accountTrialEvent(me, body.type);
+    return response({ ok: true });
+  }
   if (path === "/api/current-training" && method === "GET") return response(scenario.currentTraining);
   if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, analysis_refs: [], events: [], created_at: NOW, started_at: NOW, finished_at: null });
   if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return response({ session_id: 42 });
@@ -1258,6 +1325,15 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
   };
   await page.route("**/api/**", fulfillFixture);
   await page.route("**/v1/**", fulfillFixture);
+  // 更新公告卡预静默：fixture 场景模拟的是「已用过应用的老用户」，预置 lastSeen=
+  // 当前版本让右下公告卡不弹（否则全新隔离 profile 每次都弹卡，遮挡/干扰断言；
+  // 首启弹卡行为由打包版专项 e2e 覆盖）。版本随 package.json 自动跟随。
+  // （fixture 在 Node 侧执行，用 process.cwd() 定位——playwright 始终从本目录起跑；
+  //  不要用 import.meta，会把 playwright 的 TS→CJS 变换搞成 ESM/CJS 混载崩溃。）
+  const pkg = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as { version: string };
+  await page.addInitScript((version) => {
+    try { localStorage.setItem("releaseNotice.lastSeenVersion", version); } catch { /* ignore */ }
+  }, pkg.version);
 }
 
 export async function installDesktopBridge(page: Page): Promise<void> {
@@ -1330,6 +1406,9 @@ export async function installDesktopBridge(page: Page): Promise<void> {
           dialogOpens += 1;
           return dialogOpens === 1 ? "C:\\Task7Fixture\\KovaaK\\stats" : "C:\\Task7Fixture\\KovaaK\\performances";
         }
+        // AppShell 更新公告卡启动查询（@tauri-apps/api/app getVersion）。
+        // 返回一个 changelog 里不存在的版本号 → fail-closed 不弹卡，浏览器系用例零干扰。
+        if (command === "plugin:app|version") return "0.0.0-fixture";
         throw new Error(`Unhandled desktop fixture command: ${command}`);
       },
       convertFileSrc: (path, protocol = "asset") =>

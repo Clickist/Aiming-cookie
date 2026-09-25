@@ -1105,6 +1105,11 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
     animation: none;
   }
 
+  /* 更新公告通知卡进场动画同关。 */
+  .task3-release-notice {
+    animation: none;
+  }
+
   /* composer 引用块／@引用 chip 的加/减动效一并关闭（0912）。 */
   .task6-quote-list > .task6-quote-block,
   .task6-quote-list > .task6-quote-block[data-exiting],
@@ -1164,6 +1169,129 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
 .task3-update-prompt-busy {
   font-size: var(--text-caption);
   color: var(--on-surface-variant);
+}
+
+/* ── 更新公告通知卡（右下角浮层，task3/ReleaseNoticeCard）──────────────
+   形态照线框 release-announce-2026-09-24.html 视图 A（0924 拍板）：宽 380、
+   距右/下 20、surface-container-high 底、radius-lg 圆角、overlay 阴影；
+   入场 translateY(12px)→0 淡入。 */
+.task3-release-notice {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  width: 380px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  box-shadow: var(--shadow-overlay);
+  animation: task3-release-notice-in var(--duration-surface) var(--ease-out);
+}
+
+@keyframes task3-release-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.task3-release-notice-head {
+  padding: var(--space-4) 18px var(--space-2);
+}
+
+.task3-release-notice-kicker {
+  margin: 0 0 5px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--primary);
+}
+
+.task3-release-notice-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.task3-release-notice-list {
+  max-height: 40vh;
+  margin: 0;
+  padding: 0 18px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.task3-release-notice-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--outline) 25%, transparent);
+}
+
+.task3-release-notice-item:last-child {
+  border-bottom: none;
+}
+
+.task3-release-notice-tag {
+  flex: none;
+  margin-top: 1px;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  color: var(--on-surface-variant);
+}
+
+.task3-release-notice-tag[data-type="new"] {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+
+.task3-release-notice-tag[data-type="imp"] {
+  background: color-mix(in srgb, var(--on-surface-variant) 14%, transparent);
+  color: var(--on-surface-variant);
+}
+
+.task3-release-notice-tag[data-type="fix"] {
+  border: 1px solid var(--outline);
+  color: var(--on-surface-variant);
+}
+
+.task3-release-notice-item p {
+  margin: 0;
+  font-size: var(--text-ui);
+  line-height: 1.5;
+}
+
+.task3-release-notice-item p small {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--text-caption);
+  color: var(--on-surface-variant);
+}
+
+.task3-release-notice-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 18px 14px;
+}
+
+.task3-release-notice-link {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-ui);
+  color: var(--on-surface-variant);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.task3-release-notice-link:hover {
+  color: var(--on-surface);
 }
 
 /* ── Aiming Cookie 会员档（WP-C）：chip / 提示条 / 用户中心 / 会员连接流 ──

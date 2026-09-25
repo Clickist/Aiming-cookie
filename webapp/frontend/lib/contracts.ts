@@ -818,6 +818,12 @@ export const ANALYSIS_AUTO_TEACH_KEY = "aiming-cookie.analysis-auto-teach";
 export const ANALYSIS_AUTO_TEACH_EVENT = "aiming-cookie:analysis-auto-teach";
 /** Coach 会话变更事件：CoachPanel 派发，AppShell 监听后刷新会话列表。 */
 export const COACH_SESSION_UPDATED_EVENT = "aiming-cookie:coach-session-updated";
+/**
+ * 试用闸「回复落地」事件（AC 验证闸）：教练回复成功落地（run succeeded 收敛）
+ * 时 CoachPanel 派发，AppShell 监听后上报 question_answered（过闸/去重/补报
+ * 见 lib/trial；流中断与失败回合不派发）。detail 携带 `{ run_ref }` 作去重键。
+ */
+export const TRIAL_QUESTION_ANSWERED_EVENT = "aiming-cookie:trial-question-answered";
 
 /** 读取已自动开讲的 analysis ref 集合（损坏数据按空集处理）。 */
 export function readAutoTaughtAnalyses(storage: Storage | null | undefined): Set<string> {
