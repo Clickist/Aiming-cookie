@@ -554,7 +554,8 @@ test("v0 Python provider catalog and connection-test aliases remain compatible",
       }),
     );
     assert.equal(failed.statusCode, 200);
-    assert.equal((failed.json as { status: string }).status, "connection_failed");
+    // 夹具端点返回 401：按新分类（401/403 → needs_reauth）不再显示"连接失败"。
+    assert.equal((failed.json as { status: string }).status, "needs_reauth");
     assert.ok(!JSON.stringify(failed.json).includes(failureSecret));
     assert.ok(!JSON.stringify(failed.json).includes("api_key"));
   } finally {

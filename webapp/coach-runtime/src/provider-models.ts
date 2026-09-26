@@ -133,7 +133,12 @@ async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> 
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: catalogHit?.contextWindow ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
       maxTokens: catalogHit?.maxTokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
-      ...(catalogHit?.compat ? { compat: catalogHit.compat } : {}),
+      // 同自定义档（issue #2）：推荐档端点不含厂商特征串，vendored pi 对推理模型
+      // 兜底 supportsDeveloperRole:true 会发 role:"developer"，DeepSeek 等严格网关
+      // 422 整包拒收。目录未收录时显式关掉 developer（getCompat 只合并这一个键）。
+      ...(catalogHit?.compat
+        ? { compat: catalogHit.compat }
+        : { compat: { supportsDeveloperRole: false } }),
       ...(catalogHit?.thinkingLevelMap ? { thinkingLevelMap: catalogHit.thinkingLevelMap } : {}),
     };
   });
@@ -239,7 +244,9 @@ export async function fetchCustomProviderModels(
   timeout.unref?.();
   try {
     const response = await fetch(`${normalizedBase}${modelPath}`, { headers, signal: controller.signal });
-    if (!response.ok) throw new Error("custom provider models request failed");
+    // 状态码编进文本（形如 "(HTTP 401)"），上游探针据此把 401/403/404 分类成
+    // needs_reauth / model_unavailable，不再一律显示"连接失败"。
+    if (!response.ok) throw new Error(`custom provider models request failed (HTTP ${response.status})`);
     const body = await response.json();
     if (!isRecord(body) || !Array.isArray(body.data)) {
       throw new Error("custom provider models response is invalid");
@@ -346,7 +353,13 @@ async function resolveCustomProfile(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: profile.context_window ?? catalogHit?.contextWindow ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
     maxTokens: profile.max_tokens ?? catalogHit?.maxTokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
-    ...(catalogHit?.compat ? { compat: catalogHit.compat } : {}),
+    // 目录未收录时不带 compat 会让 vendored pi 对推理模型兜底
+    // supportsDeveloperRole:true（非 OpenRouter 端点），给 DeepSeek 等严格网关
+    // 发 role:"developer" 而 422 整包拒收。system 角色是 OpenAI 兼容网关的
+    // 最大公约数，这里显式关掉 developer（pi 的 getCompat 只合并这一个键）。
+    ...(catalogHit?.compat
+      ? { compat: catalogHit.compat }
+      : { compat: { supportsDeveloperRole: false } }),
     ...(catalogHit?.thinkingLevelMap ? { thinkingLevelMap: catalogHit.thinkingLevelMap } : {}),
   };
   const provider = ai.createProvider({
@@ -423,8 +436,13 @@ export async function probeBuiltinProvider(
   const protocol = firstModel?.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions";
   try {
     await fetchCustomProviderModels(protocol, baseUrl, apiKey, timeoutMs);
-  } catch {
-    throw new Error("Provider 端点连接失败，请检查网络与 API Key");
+  } catch (error) {
+    // 探针失败不再吞底层错误：透传原始文本（上游统一脱敏后上报），拿不到才回退固定文案。
+    throw new Error(
+      error instanceof Error && error.message
+        ? error.message
+        : "Provider 端点连接失败，请检查网络与 API Key",
+    );
   }
 }
 
@@ -449,15 +467,21 @@ export async function probeCustomProvider(
   }
   // 协议各自的 base_url 归一（去尾部 /v1 与否）由 fetchCustomProviderModels
   // 内部处理，这里不预裁剪，避免 OpenAI 兼容端点丢掉 /v1 前缀。
+  let lastError: unknown;
   for (const protocol of ["openai-completions", "anthropic-messages"] as const) {
     try {
       await fetchCustomProviderModels(protocol, rawBaseUrl, apiKey, timeoutMs);
       return;
-    } catch {
-      // 换下一种协议重试；两种都失败才按连通失败上报。
+    } catch (error) {
+      // 换下一种协议重试；两种都失败才按连通失败上报（透传最后一次底层错误）。
+      lastError = error;
     }
   }
-  throw new Error("Provider 端点连接失败，请检查 Base URL 与 API Key");
+  throw new Error(
+    lastError instanceof Error && lastError.message
+      ? lastError.message
+      : "Provider 端点连接失败，请检查 Base URL 与 API Key",
+  );
 }
 
 export function createModelsStreamFn(models: PiModels): StreamFn {

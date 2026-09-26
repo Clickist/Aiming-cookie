@@ -5,6 +5,7 @@ import {
   type CoachReasoningEffort,
   type CoachRuntimeProviderProfile,
   type ProviderCredential,
+  type ProviderProfileStatus,
   type ProviderProfileStatusResponse,
 } from "./contracts.ts";
 import { parseProviderCredential, ProviderAuthRequestError } from "./provider-auth.ts";
@@ -355,11 +356,60 @@ function connectionTimeout(timeoutMs: number | undefined): number {
   return Math.max(1, Math.min(timeoutMs, CONNECTION_TEST_TIMEOUT_MS));
 }
 
+/**
+ * 从探针错误文本提取 HTTP 状态码。pi 的 formatProviderError 形如
+ * `"401: {body}"` 或 `"prefix (403): msg"`；探针自身的 fetch 错误形如
+ * `"(HTTP 401)"`。要求前后边界，避免误抓正文里的普通数字。
+ */
+function httpStatusOf(message: string): string | null {
+  return /(?:^|[\s(])(?:HTTP )?(\d{3})(?=[\s):])/.exec(message)?.[1] ?? null;
+}
+
+/** 探针失败状态分类：401/403 → needs_reauth，404 → model_unavailable，其余维持现状。 */
+function probeFailureStatus(
+  code: ProviderProfileErrorCode | "connection_failed",
+  message: string,
+): ProviderProfileStatus {
+  if (code === "unknown_provider" || code === "unknown_model") return "model_unavailable";
+  if (code === "invalid_profile") return "unconfigured";
+  const httpStatus = httpStatusOf(message);
+  if (httpStatus === "401" || httpStatus === "403") return "needs_reauth";
+  if (httpStatus === "404") return "model_unavailable";
+  return "connection_failed";
+}
+
+function baseUrlHost(base_url: unknown): string {
+  if (typeof base_url !== "string" || base_url.length === 0) return "";
+  try {
+    return new URL(base_url).host;
+  } catch {
+    return "";
+  }
+}
+
+/** 探针失败统一日志：只打脱敏后的文本，绝不带 API key。 */
+function logProbeFailure(
+  target: { provider_id?: unknown; model_id?: unknown; base_url?: unknown },
+  startedAt: number,
+  status: string,
+  redactedMessage: string,
+): void {
+  console.error(
+    `[provider-probe] failed provider_id=${typeof target.provider_id === "string" ? target.provider_id : ""}`
+      + ` model_id=${typeof target.model_id === "string" ? target.model_id : ""}`
+      + ` host=${baseUrlHost(target.base_url)}`
+      + ` duration_ms=${Date.now() - startedAt}`
+      + ` status=${status}`
+      + ` error=${redactedMessage}`,
+  );
+}
+
 export async function testProviderConnection(
   rawProfile: unknown,
   options: ConnectionTestOptions = {},
 ): Promise<ProviderProfileStatusResponse> {
   const secrets = extractRuntimeSecrets({ profile: rawProfile });
+  const startedAt = Date.now();
   let profile: CoachRuntimeProviderProfile | undefined;
   const controller = new AbortController();
   const timeoutMs = connectionTimeout(options.timeoutMs);
@@ -388,7 +438,13 @@ export async function testProviderConnection(
       .result();
     const message = await Promise.race([result, timeoutResult]);
     if (message.stopReason === "error" || message.stopReason === "aborted") {
-      throw new Error("Provider connection test failed");
+      // 底层错误不再吞：error 时带出 pi 的 errorMessage（含 HTTP 状态码文本，
+      // 供下方状态分类）；aborted（超时）保持现有语义。
+      throw new Error(
+        message.stopReason === "error" && message.errorMessage
+          ? message.errorMessage
+          : "Provider connection test failed",
+      );
     }
     return {
       schema_version: PROVIDER_PROFILE_STATUS_SCHEMA,
@@ -401,12 +457,12 @@ export async function testProviderConnection(
     };
   } catch (error) {
     const code = error instanceof ProviderProfileError ? error.code : "connection_failed";
-    const status =
-      code === "unknown_provider" || code === "unknown_model"
-        ? "model_unavailable"
-        : code === "invalid_profile"
-          ? "unconfigured"
-          : "connection_failed";
+    const message = redactRuntimeSecrets(
+      error instanceof Error && error.message ? error.message : "Provider connection test failed",
+      secrets,
+    );
+    const status = probeFailureStatus(code, message);
+    logProbeFailure(profile ?? {}, startedAt, status, message);
     return {
       schema_version: PROVIDER_PROFILE_STATUS_SCHEMA,
       ok: false,
@@ -417,10 +473,7 @@ export async function testProviderConnection(
       error: makeError({
         category: "provider_connection",
         code,
-        message: redactRuntimeSecrets(
-          error instanceof ProviderProfileError ? error.message : "Provider connection test failed",
-          secrets,
-        ),
+        message,
         retryable: status === "connection_failed",
       }),
     };
@@ -440,6 +493,7 @@ export async function probeProviderConnection(
   options: ConnectionTestOptions = {},
 ): Promise<ProviderProfileStatusResponse> {
   const secrets = extractRuntimeSecrets({ profile: rawProfile });
+  const startedAt = Date.now();
   const timeoutMs = connectionTimeout(options.timeoutMs);
   try {
     if (!isRecord(rawProfile)) {
@@ -483,12 +537,12 @@ export async function probeProviderConnection(
     };
   } catch (error) {
     const code = error instanceof ProviderProfileError ? error.code : "connection_failed";
-    const status =
-      code === "unknown_provider" || code === "unknown_model"
-        ? "model_unavailable"
-        : code === "invalid_profile"
-          ? "unconfigured"
-          : "connection_failed";
+    const message = redactRuntimeSecrets(
+      error instanceof Error && error.message ? error.message : "Provider connection probe failed",
+      secrets,
+    );
+    const status = probeFailureStatus(code, message);
+    logProbeFailure(isRecord(rawProfile) ? rawProfile : {}, startedAt, status, message);
     return {
       schema_version: PROVIDER_PROFILE_STATUS_SCHEMA,
       ok: false,
@@ -499,10 +553,7 @@ export async function probeProviderConnection(
       error: makeError({
         category: "provider_connection",
         code,
-        message: redactRuntimeSecrets(
-          error instanceof Error ? error.message : "Provider connection probe failed",
-          secrets,
-        ),
+        message,
         retryable: status === "connection_failed",
       }),
     };

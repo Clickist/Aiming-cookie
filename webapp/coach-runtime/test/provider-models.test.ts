@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import {
@@ -10,6 +12,7 @@ import {
 import {
   getProviderProfileStatus,
   parseProviderProfile,
+  probeProviderConnection,
   testProviderConnection,
   ProviderProfileError,
 } from "../src/provider-profile.ts";
@@ -459,6 +462,8 @@ test("explicit provider connection test aborts at the 30-second ceiling (using a
 
   assert.equal(status.status, "connection_failed");
   assert.equal(receivedSignal?.aborted, true);
+  // 超时语义不丢：固定超时文案必须保留（不被吞成通用失败文案）。
+  assert.equal(status.error?.message, "Provider connection test timed out");
   assert.ok(Date.now() - started < 500);
   assert.ok(!JSON.stringify(status).includes(SECRET));
 });
@@ -555,4 +560,200 @@ test("custom profile capabilities resolve from the pi catalog by model_id, defau
     model_id: "gpt-4o-mini",
   });
   assert.equal(catalogPlain.model.reasoning, false);
+});
+
+test("catalog-miss custom models default to compat.supportsDeveloperRole:false (no role:developer to strict gateways)", async () => {
+  // 粉丝案例（0924 核实）：目录外模型（deepseek-flash）此前 reasoning:true 且不带
+  // compat → vendored pi 对非 OpenRouter 端点兜底 supportsDeveloperRole:true →
+  // 推理模型发 role:"developer" → DeepSeek 等严格网关 422 unknown variant 'developer'。
+  const unknown = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "unknown-custom-provider",
+    provider_name: "Unknown Custom Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "deepseek-flash",
+  });
+  assert.equal(unknown.model.reasoning, true);
+  const compat = (unknown.model as { compat?: Record<string, unknown> }).compat;
+  assert.equal(compat?.supportsDeveloperRole, false);
+
+  // 目录命中仍整体继承目录 compat（deepseek-v4-flash 目录自带
+  // supportsDeveloperRole:false 与 thinkingFormat），不被兜底覆盖或收窄。
+  const catalogHit = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "reasoning-catalog-provider",
+    provider_name: "Reasoning Catalog Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "deepseek-v4-flash",
+  });
+  const catalogCompat = (catalogHit.model as { compat?: Record<string, unknown> }).compat;
+  assert.equal(catalogCompat?.supportsDeveloperRole, false);
+  assert.equal(catalogCompat?.thinkingFormat, "deepseek");
+});
+
+/** OpenAI-compatible endpoint whose /models always answers with the given HTTP status. */
+function withFakeOpenAIModelsStatus(
+  status: number,
+  run: (baseUrl: string) => Promise<void>,
+): Promise<void> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "gateway rejected the request" } }));
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", async () => {
+      const port = (server.address() as AddressInfo).port;
+      try {
+        await run(`http://127.0.0.1:${port}/v1`);
+        resolve();
+      } catch (error) {
+        reject(error);
+      } finally {
+        await new Promise<void>((closeResolve) => server.close(() => closeResolve()));
+      }
+    });
+  });
+}
+
+function strictGatewayMock(stopReason: string, errorMessage?: string) {
+  return {
+    resolveProviderModel: async () => ({
+      model: {
+        id: "deepseek-flash",
+        name: "deepseek-flash",
+        api: "openai-completions",
+        provider: "strict-gateway",
+        baseUrl: "https://api.deepseek.com/v1",
+        reasoning: true,
+        input: ["text"],
+        contextWindow: 1,
+        maxTokens: 1,
+      },
+      models: {
+        getAuth: async () => ({ auth: { apiKey: SECRET }, source: "stored credential" }),
+        streamSimple: () => ({
+          result: async () => ({ stopReason, ...(errorMessage !== undefined ? { errorMessage } : {}) }),
+        }),
+      },
+      hasRuntimeCredential: true,
+    }) as never,
+  };
+}
+
+for (const [httpStatus, expectedStatus] of [
+  ["401", "needs_reauth"],
+  ["403", "needs_reauth"],
+  ["404", "model_unavailable"],
+] as const) {
+  test(`connection test surfaces pi's underlying error and maps HTTP ${httpStatus} to ${expectedStatus}`, async () => {
+    const status = await testProviderConnection(
+      {
+        kind: "custom_openai_compatible",
+        provider_name: "Strict Gateway",
+        base_url: "https://api.deepseek.com/v1",
+        api_key: SECRET,
+        model_id: "deepseek-flash",
+      },
+      strictGatewayMock("error", `${httpStatus}: {"error":{"message":"Authentication Fails, your api key: ${SECRET} is invalid"}}`),
+    );
+
+    assert.equal(status.ok, false);
+    assert.equal(status.status, expectedStatus);
+    // code 语义保持现状：状态分类只改 status 与 message。
+    assert.equal(status.error?.code, "connection_failed");
+    // 底层错误文本带出（经脱敏：key 换 [REDACTED]，非密文本保留）。
+    assert.ok(status.error?.message.includes(httpStatus));
+    assert.ok(status.error?.message.includes("Authentication Fails"));
+    assert.ok(!JSON.stringify(status).includes(SECRET));
+  });
+}
+
+test("connection test failure without an HTTP status stays connection_failed with redacted text", async () => {
+  const status = await testProviderConnection(
+    {
+      kind: "custom_openai_compatible",
+      provider_name: "Strict Gateway",
+      base_url: "https://api.deepseek.com/v1",
+      api_key: SECRET,
+      model_id: "deepseek-flash",
+    },
+    strictGatewayMock("error", `upstream exploded for key ${SECRET}`),
+  );
+
+  assert.equal(status.status, "connection_failed");
+  assert.ok(status.error?.message.includes("upstream exploded for key"));
+  assert.ok(!JSON.stringify(status).includes(SECRET));
+});
+
+test("aborted stopReason keeps the existing connection-failed semantics", async () => {
+  const status = await testProviderConnection(
+    {
+      kind: "custom_openai_compatible",
+      provider_name: "Strict Gateway",
+      base_url: "https://api.deepseek.com/v1",
+      api_key: SECRET,
+      model_id: "deepseek-flash",
+    },
+    strictGatewayMock("aborted"),
+  );
+
+  assert.equal(status.status, "connection_failed");
+  assert.equal(status.error?.message, "Provider connection test failed");
+});
+
+test("connection test failure logs provider/model/host/duration/status without secrets", async () => {
+  const logs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+  try {
+    const status = await testProviderConnection(
+      {
+        kind: "custom_openai_compatible",
+        provider_id: "strict-gateway",
+        provider_name: "Strict Gateway",
+        base_url: "https://api.deepseek.com/v1",
+        api_key: SECRET,
+        model_id: "deepseek-flash",
+      },
+      strictGatewayMock("error", `401: your api key: ${SECRET} is invalid`),
+    );
+    assert.equal(status.status, "needs_reauth");
+  } finally {
+    console.error = originalError;
+  }
+
+  const line = logs.find((entry) => entry.includes("[provider-probe]"));
+  assert.ok(line, "probe failure log line emitted");
+  assert.ok(line.includes("provider_id=strict-gateway"), line);
+  assert.ok(line.includes("model_id=deepseek-flash"), line);
+  assert.ok(line.includes("host=api.deepseek.com"), line);
+  assert.ok(line.includes("duration_ms="), line);
+  assert.ok(line.includes("status=needs_reauth"), line);
+  assert.ok(!line.includes(SECRET), line);
+});
+
+test("model-less probe maps HTTP 401/403 to needs_reauth and 404 to model_unavailable instead of swallowing", async () => {
+  for (const [httpStatus, expectedStatus] of [
+    [401, "needs_reauth"],
+    [403, "needs_reauth"],
+    [404, "model_unavailable"],
+  ] as const) {
+    await withFakeOpenAIModelsStatus(httpStatus, async (baseUrl) => {
+      const status = await probeProviderConnection({
+        kind: "custom_openai_compatible",
+        provider_name: "Strict Gateway",
+        base_url: baseUrl,
+        api_key: SECRET,
+        model_id: "",
+      });
+      assert.equal(status.status, expectedStatus, `HTTP ${httpStatus}`);
+      assert.equal(status.error?.code, "connection_failed");
+      assert.ok(status.error?.message.includes(String(httpStatus)), status.error?.message);
+      assert.ok(!JSON.stringify(status).includes(SECRET));
+    });
+  }
 });
