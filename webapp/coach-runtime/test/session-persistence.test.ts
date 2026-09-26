@@ -146,7 +146,9 @@ test("wrapped session persists assistant text even when the provider errored mid
   assert.equal(msgs[1].content, "被中断前已经生成的正文");
 });
 
-test("wrapped session truncates buildContext to the recent window", async () => {
+test("wrapped session keeps the full history in buildContext (no count window)", async () => {
+  // 2026-09-24：40 条滑窗已移除——滑窗每轮前移一条，DeepSeek 前缀缓存全量
+  // 作废（见 turn.ts 缓存注）。长上下文由 pi token 级 compaction 管理。
   const session = await ensureSession(102);
   for (let i = 0; i < 50; i++) {
     await session.appendMessage({ role: "user", content: [{ type: "text", text: `u${i}` }], timestamp: Date.now() });
@@ -154,8 +156,8 @@ test("wrapped session truncates buildContext to the recent window", async () => 
   }
   const wrapped = wrapCoachSession(session, []);
   const ctx = await wrapped.buildContext();
-  assert.equal(ctx.messages.length, 40);
-  assert.equal((ctx.messages[0] as { content: Array<{ text: string }> }).content[0].text, "u30");
+  assert.equal(ctx.messages.length, 100);
+  assert.equal((ctx.messages[0] as { content: Array<{ text: string }> }).content[0].text, "u0");
   assert.equal(
     (ctx.messages[ctx.messages.length - 1] as { content: Array<{ text: string }> }).content[0].text,
     "a49",

@@ -244,7 +244,8 @@ export function extractUsage(message: unknown): CoachRuntimeUsage | null {
 /**
  * 长会话压缩判定（审计#18）：用 pi 内建的 estimateContextTokens + shouldCompact
  * 按 token 余量判断是否该让 harness.compact() 压缩。contextWindow 未知（≤0）
- * 时明确返回 false——宁可用 40 条兜底也不盲目压缩每一轮。
+ * 时明确返回 false；模型目录与自定义档都兜底 128K（provider-models），正常
+ * 不会走到该分支。这是唯一的上下文窗口管理，没有条数级兜底（见上方缓存注）。
  */
 export async function shouldCompactNow(session: unknown, contextWindow: number): Promise<boolean> {
   if (typeof contextWindow !== "number" || contextWindow <= 0) return false;
@@ -388,15 +389,19 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 
 // ── Persistent session wrapper ───────────────────────────────────────────
 
-/** Upper bound on context messages so long conversations don't grow unbounded. */
-const MAX_CONTEXT_MESSAGES = 40;
-
-// 曾有 microcompact：总字符超 40 万时把旧 toolResult 替换成占位符，治
-// 2026-09-06 内测大请求被免费商汤通道 429/空回复的事故。2026-09-19 移除：
-// 清除会打碎上下文前缀，DeepSeek 前缀缓存全量作废（实测命中率仅 33%），
-// 而谷段缓存命中价 ¥0.007/M 只有未命中 ¥0.22/M 的 3%，保历史反而便宜；
-// 大请求 429 由重试落 OPC 兜底。真实 token 压缩仍由 pi compaction
-// （contextWindow−16K 触发，shouldCompactNow）负责。
+// 上下文窗口管理只有一种：pi compaction（contextWindow−16K 触发，
+// shouldCompactNow）。任何我们自己发明的「截断/清除」都会移动请求前缀，
+// 让 DeepSeek 前缀缓存全量作废——谷段缓存命中价 ¥0.007/M 只有未命中
+// ¥0.22/M 的 3%，保历史反而便宜。前车之鉴两条：
+//
+// 1. microcompact（2026-09-06 引入，2026-09-19 移除）：总字符超 40 万把旧
+//    toolResult 换占位符，治免费商汤通道 429/空回复；实测缓存命中率仅 33%。
+//    大请求 429 由重试落 OPC 兜底。
+// 2. 40 条滑窗（2026-08-13 引入，2026-09-24 移除）：buildContext 只保留
+//    最近 40 条。教练一轮带工具调用 4-8 条消息，聊 5-10 轮就撞顶，之后每
+//    轮窗口前滑一条 → 第一条消息变化 → system prompt 之后全部缓存作废，
+//    长对话用户命中率极低（「缓存非常低」的根因）。pi 的 Session 本就无
+//    条数上限，token 级 compaction 触发频率低得多（约 128K−16K 才切一次）。
 
 function isMessageEntry(entry: unknown): entry is {
   type: string;
@@ -431,8 +436,9 @@ function redactMessage(message: unknown, secrets: string[]): unknown {
  *   turn, so the harness's fresh copy of the same prompt is skipped.
  * - Assistant replies are redacted at the write boundary and failed / empty
  *   replies are not persisted (mirroring the pre-Pi lifecycle).
- * - buildContext() drops the trailing current user message and caps the
- *   window, keeping long conversations bounded.
+ * - buildContext() drops the trailing current user message; otherwise the
+ *   context is the full history — windowing is pi compaction's job (token
+ *   based), never a message-count cap (see the cache note above).
  */
 export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
   const target = session as {
@@ -483,12 +489,18 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const last = messages[messages.length - 1];
           const withoutCurrent =
             last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
-          let trimmed = withoutCurrent.slice(-MAX_CONTEXT_MESSAGES);
-          // 对齐到 user/system 边界：截断可能切断 assistant(tool_calls)→tool 的配对，
-          // 孤立开头的 tool 消息会触发 Provider "tool must follow tool_calls" 错误。
+          let trimmed = withoutCurrent;
+          // 防御性对齐：上下文必须从「合法起点」开始——孤立开头的 toolResult
+          // 会触发 Provider "tool must follow tool_calls" 错误。合法起点除
+          // user/system 外还包括 compactionSummary/branchSummary（convertToLlm
+          // 把它们都映射为 user 消息）：compaction 后上下文以摘要开头，不能
+          // 把它吃掉。
           while (trimmed.length > 0) {
             const firstRole = (trimmed[0] as { role?: unknown }).role;
-            if (firstRole === "user" || firstRole === "system") break;
+            if (
+              firstRole === "user" || firstRole === "system"
+              || firstRole === "compactionSummary" || firstRole === "branchSummary"
+            ) break;
             trimmed = trimmed.slice(1);
           }
           try {
@@ -863,7 +875,7 @@ export async function runCoachTurn(
       : await (async () => {
           const repo = new InMemorySessionRepo();
           const memorySession = await repo.create();
-          for (const historyMessage of history.slice(-MAX_CONTEXT_MESSAGES)) {
+          for (const historyMessage of history) {
             await memorySession.appendMessage(historyMessage);
           }
           return memorySession;
@@ -1154,8 +1166,8 @@ export async function runCoachTurn(
 
     // 长会话压缩（pi 内建 compaction，审计#18）：token 余量不足时先让 pi 把
     // 旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动
-    // 用摘要替换被压缩历史，查询侧零改动；下方 MAX_CONTEXT_MESSAGES=40 降级
-    // 为极端兜底。压缩失败绝不拦对话，只落诊断日志。
+    // 用摘要替换被压缩历史，查询侧零改动。这是唯一的窗口管理（40 条滑窗已
+    // 移除，见上方缓存注）。压缩失败绝不拦对话，只落诊断日志。
     try {
       const shouldCompact = await shouldCompactNow(
         session,
