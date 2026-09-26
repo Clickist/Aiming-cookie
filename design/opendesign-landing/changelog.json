@@ -1,6 +1,6 @@
 {
   "versions": [
-    { "version": "1.2.5", "date": "2026-09-24", "items": [
+    { "version": "1.3.0", "date": "2026-09-26", "items": [
       { "type": "new", "zh": "自定义知识库——导入第三方知识包，训练讲解随包更新", "en": "Custom knowledge packs — import third-party packs, coaching notes update with them" },
       { "type": "new", "zh": "更新公告——升级后第一时间告诉你这次更新了什么", "en": "Release notes — see what's new right after each update" },
       { "type": "imp", "zh": "错误提示与界面细节改进", "en": "Clearer error messages and UI polish" }
