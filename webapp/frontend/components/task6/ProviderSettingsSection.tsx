@@ -46,7 +46,9 @@ import {
   type WizardDraft,
 } from "@/lib/provider-wizard";
 import { MEMBER_COPY, formatMemberDate, planLabel, poolTier } from "@/lib/member";
+import { MEMBER_STATE_CHANGED_EVENT } from "@/lib/member-state";
 import { t, useT, type MessageKey } from "@/lib/i18n";
+import { parseTrialState } from "@/lib/trial";
 import type {
   MemberMe,
   ProviderAuthOperation,
@@ -72,6 +74,8 @@ function handleExternalClick(event: { preventDefault(): void }, url: string): vo
 
 /** 会员档的账号中心入口（订阅管理与退款都在网页账单子页；客户端无支付界面）。 */
 const ACCOUNT_BILLING_URL = "https://accounts.example.invalid/account/billing";
+/** 已验证待订阅的订阅入口（与付费墙同一落点；客户端内无支付界面）。 */
+const TRIAL_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
 
 /** 订阅池下方的加油包小行（没买过包时不出现——线框：零负担）。 */
 function boosterSubline(me: MemberMe): string {
@@ -239,6 +243,24 @@ export function ProviderSettingsSection({
     loadMemberMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [officialSelected, memberLoaded]);
+
+  // 登录 deep-link 成功后 AppShell 跳 /settings?provider=official#llm-provider：
+  // 挂载时认领 query 参数，直接打开官方档详情（验证闸试用块的收口页）。
+  // 选屏由 SettingsWorkspace 既有的 hash 深链负责。
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("provider") === "official") {
+      setOfficialSelected(true);
+    }
+  }, []);
+
+  // 会员态广播（登录换票成功 / 退出 / 试用上报后的刷新）：官方档详情的会员
+  // 视图与试用块跟上服务端账本，不必重开设置页。
+  useEffect(() => {
+    const onChanged = () => loadMemberMe();
+    window.addEventListener(MEMBER_STATE_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(MEMBER_STATE_CHANGED_EVENT, onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 设置页内的会员登录（①a 同链路）：起 device_code → 系统浏览器 → deep-link 回来刷新。 */
   const startMemberLoginFromSettings = () => {
@@ -626,6 +648,8 @@ export function ProviderSettingsSection({
   // 0911 点点：官方档常驻置顶，未连接（无档案）也可选中查看详情（登录/填 Key）。
   // 无存档时用合成档案渲染完整官方详情（0912 线框：官方档永远有详情）。
   const detail = officialSelected ? (relayArchive ?? syntheticOfficialProfile()) : selectedProfile;
+  // AC 验证闸试用态（与 MemberCenter 同源：/me 的 trial 字段宽松解析）。
+  const trial = memberMe ? parseTrialState(memberMe) : null;
   const lastKeeper = profiles.length <= 1;
   // 官方档（线框 B 形态）：无 Base URL/API Key 常规连接行，走计费/套餐模板。
   const officialDetail = officialSelected || (detail ? isOfficialRelayProfile(detail) : false);
@@ -815,6 +839,36 @@ export function ProviderSettingsSection({
                               : t("settings.provider.noSubscription")}
                           </p>
                         </div>
+                        {/* AC 验证闸试用块（点点 0926：官方档详情也要把免费额度
+                            说清）：未订阅且 /me 带 trial 态才渲染——试用中=剩余
+                            次数+说明+去跑一局；已验证=可订阅+订阅入口。已订阅
+                            （会员视图不变）与无试用态都不渲染。 */}
+                        {!memberMe.member && trial ? (
+                          trial.verified ? (
+                            <div className="task6-provider-plan" data-member="true" data-trial-verified="true">
+                              <div className="task6-provider-plan-head">
+                                <strong>{t("trial.center.verified")}</strong>
+                              </div>
+                              <p className="task6-provider-plan-meta">{t("trial.center.verifiedHint")}</p>
+                              <div className="task6-provider-member-actions">
+                                <Button onClick={() => void openExternalUrl(TRIAL_SUBSCRIBE_URL)} size="compact" variant="primary">
+                                  {t("trial.paywall.subscribe")}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="task6-provider-plan" data-member="true">
+                              <div className="task6-provider-plan-head">
+                                <strong>{t("trial.center.title")}</strong>
+                              </div>
+                              <p className="task6-provider-plan-meta">
+                                {t("trial.center.remaining", { analyses: trial.analysesRemaining, questions: trial.questionsRemaining })}
+                              </p>
+                              <p className="task6-provider-plan-meta">{t("trial.center.hint")}</p>
+                              <p className="task6-provider-plan-meta">{t("trial.settings.guide")}</p>
+                            </div>
+                          )
+                        ) : null}
                         <div className="task6-provider-quota-label">{t("settings.provider.quotaLabel")}</div>
                         <div className="task6-provider-quota" data-member="true">
                           <div className="task6-provider-quota-head">

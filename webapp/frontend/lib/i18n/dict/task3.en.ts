@@ -204,13 +204,16 @@ export const task3En = {
   "release.notice.fullLog": "View full changelog",
 
   // AC 客户端试用态（验证闸）：免费「一局分析 + 两问」先确认能用再放行订阅。
-  // Used by components/task3/MemberCenter.tsx (user center trial card) and
+  // Used by components/task3/AppShell.tsx (post-login welcome toast),
+  // components/task3/MemberCenter.tsx (user center trial card) and
   // components/task6/CoachPanel.tsx (paywall after the free fuel is spent).
+  "trial.welcome.toast": "Welcome! Your new-user free verification is here: 1 full training analysis + 2 questions — run one analysis first to confirm Aiming Cookie works on your computer",
   "trial.center.title": "Free verification",
   "trial.center.remaining": "{analyses} analyses / {questions} questions left",
-  "trial.center.hint": "Run one analysis and ask Coach a couple of questions to confirm everything works on your PC before subscribing.",
+  "trial.center.hint": "New-user free verification: run one full analysis and ask your questions to confirm everything works, then subscribe once verification is complete.",
   "trial.center.verified": "Verified ✓ ready to subscribe",
   "trial.center.verifiedHint": "AC runs normally on your computer. Subscribe whenever you're ready.",
+  "trial.settings.guide": "Go to Training history and run one analysis.",
   "trial.paywall.title": "Verification complete — AC runs on your computer",
   "trial.paywall.body": "To keep talking with Coach, subscribe to AC membership or use your own API key (BYOK).",
   "trial.paywall.subscribe": "Subscribe to AC membership",

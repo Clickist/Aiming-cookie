@@ -18,6 +18,7 @@ import {
 import {
   ANALYSIS_AUTO_TEACH_EVENT,
   COACH_SESSION_UPDATED_EVENT,
+  MEMBER_EXCHANGED_EVENT,
   TRIAL_QUESTION_ANSWERED_EVENT,
   buildAnalysisAutoTeachContent,
   markAnalysisAutoTaught,
@@ -63,6 +64,9 @@ type CoachVideoTarget = { analysisRef: string; timeMs: number; seq: number };
 const CAPTURE_RESTORE_MAX_ATTEMPTS = 10;
 const CAPTURE_RESTORE_FIRST_DELAY_MS = 1_000;
 const CAPTURE_RESTORE_MAX_DELAY_MS = 30_000;
+
+// 试用欢迎提示的一次性去重键（与 lib/trial.ts 去重键同风格）：写 "1" = 已告知。
+const TRIAL_WELCOMED_KEY = "aiming-cookie.trial.welcomed";
 
 function parseSessionId(raw: string | null): number | null {
   if (!raw || !/^[1-9][0-9]*$/.test(raw)) return null;
@@ -370,6 +374,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     onRefreshed: () => notifyMemberStateChanged(),
   }, !shellHidden);
 
+  // 登录成功（device exchange）且未订阅：直达设置页官方档详情——验证闸的
+  // 试用块就收口在那里（点点 0926 验收：登录完不知道去哪看额度）。已订阅不
+  // 跳（保持现有落点）；onboarding 期间由 ①a 流程自行接管，这里不抢导航。
+  useEffect(() => {
+    if (shellHidden) return undefined;
+    const onExchanged = (event: Event) => {
+      if ((event as CustomEvent<{ member?: unknown }>).detail?.member === true) return;
+      router.push("/settings?provider=official#llm-provider");
+    };
+    window.addEventListener(MEMBER_EXCHANGED_EVENT, onExchanged);
+    return () => window.removeEventListener(MEMBER_EXCHANGED_EVENT, onExchanged);
+  }, [router, shellHidden]);
+
   // ── AC 试用态（验证闸）：/me 的 trial 字段宽松解析（缺失=fail-open 无试用态）。
   // 分析终态 done / 教练回复成功落地时按余量上报（服务端记账；本地去重 + 失败
   // 补报），见 lib/trial.ts。上报本身不挑路由：分析完成事件可从分析页或 Coach
@@ -398,6 +415,23 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.removeEventListener(TRIAL_QUESTION_ANSWERED_EVENT, reportQuestionAnswered);
     };
   }, []);
+
+  // 登录完成即告知（点点 0926 实测：登录完不知道免费额度是什么、为什么有）：
+  // /me 带回满额试用态（分析余量还是 1）且主界面可见时，右下 Toast 说清
+  // 「一局 + 两问」的验证闸语义。localStorage 键只弹一次；先写标记再弹，
+  // StrictMode 双跑不重复；余量一旦动过就不再打扰。
+  useEffect(() => {
+    if (shellHidden) return;
+    const welcomeTrial = parseTrialState(member.me);
+    if (welcomeTrial === null || welcomeTrial.analysesRemaining !== 1) return;
+    try {
+      if (window.localStorage.getItem(TRIAL_WELCOMED_KEY) === "1") return;
+      window.localStorage.setItem(TRIAL_WELCOMED_KEY, "1");
+    } catch {
+      return; // 存储不可用/写失败 = 无法去重，宁可静默也不每次启动打扰。
+    }
+    notifySessionFeedback(t("trial.welcome.toast"));
+  }, [member.me, notifySessionFeedback, shellHidden, t]);
 
 
   // 会话列表是否已完成首次加载：列表是「这条会话是否存在」的唯一信号，

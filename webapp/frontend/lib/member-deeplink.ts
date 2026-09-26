@@ -16,6 +16,7 @@
 import { useEffect, useRef } from "react";
 
 import { exchangeMemberTicket, fetchMemberStatus } from "@/lib/api";
+import { MEMBER_EXCHANGED_EVENT } from "@/lib/contracts";
 import { canExchange, firstMemberDeepLink, type MemberDeepLink } from "@/lib/member";
 import { isDesktopRuntime } from "@/lib/desktop";
 
@@ -57,6 +58,11 @@ export async function handleMemberDeepLink(
     }
     if (result.connection_ok === false && handlers.onConnectionFailed) {
       handlers.onConnectionFailed(result.connection_message ?? "连接测试未通过。");
+    }
+    // 登录成功广播（窗口事件，同 lib/contracts 其它内部事件模式）：AppShell
+    // 据此把未订阅用户直达设置页官方档详情。无 window 的测试环境静默跳过。
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(MEMBER_EXCHANGED_EVENT, { detail: { member: result.member } }));
     }
     const outcome: MemberDeepLinkOutcome = {
       kind: "exchanged",

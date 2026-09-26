@@ -205,13 +205,16 @@ export const task3Zh = {
   "release.notice.fullLog": "查看完整更新日志",
 
   // AC 客户端试用态（验证闸）：免费「一局分析 + 两问」先确认能用再放行订阅。
-  // 用 cards：components/task3/MemberCenter.tsx（用户中心试用卡）；
+  // 用 cards：components/task3/AppShell.tsx（登录完成欢迎 Toast）；
+  // components/task3/MemberCenter.tsx（用户中心试用卡）；
   // components/task6/CoachPanel.tsx（余量烧完后的付费墙，正向收尾，不写「试用过期」）。
+  "trial.welcome.toast": "欢迎！已到账新用户免费验证额度：1 次完整训练分析 + 2 次提问——先跑一局确认 Aiming Cookie 在你的电脑上运行正常",
   "trial.center.title": "免费验证",
   "trial.center.remaining": "剩余 {analyses} 次分析 / {questions} 次提问",
-  "trial.center.hint": "先跑一局分析、问问 Coach，确认 AC 在你的电脑上一切正常，再决定订阅。",
+  "trial.center.hint": "新用户免费验证额度：先完整跑一局分析并提问，确认一切正常后再订阅；验证完成后即可购买会员。",
   "trial.center.verified": "已验证 ✓ 可订阅",
   "trial.center.verifiedHint": "AC 已在你的电脑上正常运行，随时可以订阅。",
+  "trial.settings.guide": "去训练历史跑一局分析。",
   "trial.paywall.title": "验证完成——AC 已在你的电脑上正常运行",
   "trial.paywall.body": "想继续和 Coach 对话，订阅 AC 会员，或改用自己的 API Key（BYOK）。",
   "trial.paywall.subscribe": "订阅 AC 会员",

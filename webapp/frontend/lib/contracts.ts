@@ -824,6 +824,12 @@ export const COACH_SESSION_UPDATED_EVENT = "aiming-cookie:coach-session-updated"
  * 见 lib/trial；流中断与失败回合不派发）。detail 携带 `{ run_ref }` 作去重键。
  */
 export const TRIAL_QUESTION_ANSWERED_EVENT = "aiming-cookie:trial-question-answered";
+/**
+ * 会员登录换票成功事件（device exchange）：lib/member-deeplink 在 exchange
+ * 成功时派发，AppShell 监听后把未订阅用户直达设置页官方档详情（验证闸试用块
+ * 的收口页）；已订阅（detail.member === true）不导航，保持现有落点。
+ */
+export const MEMBER_EXCHANGED_EVENT = "aiming-cookie:member-exchanged";
 
 /** 读取已自动开讲的 analysis ref 集合（损坏数据按空集处理）。 */
 export function readAutoTaughtAnalyses(storage: Storage | null | undefined): Set<string> {
