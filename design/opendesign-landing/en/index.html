@@ -2648,14 +2648,14 @@
     html.dark .cl-scrim { background: rgba(0, 0, 0, .55); }
     .cl-scrim.show { opacity: 1; pointer-events: auto; }
     .changelog-modal {
-      width: 640px; max-width: 100%; max-height: 74vh;
+      width: 640px; max-width: 100%; height: 74vh;
       display: flex; flex-direction: column;
       background: var(--surface); border-radius: 16px;
       box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
       transform: translateY(10px) scale(.98); transition: transform .2s ease-out;
     }
     .cl-scrim.show .changelog-modal { transform: translateY(0) scale(1); }
-    .cl-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; }
+    .cl-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; flex: none; }
     .cl-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
     .cl-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
     .cl-close {
@@ -2664,7 +2664,17 @@
       font-size: 18px; line-height: 1;
     }
     .cl-close:hover { background: var(--fg-soft); color: var(--fg); }
-    .cl-body { padding: 0 24px 20px; overflow-y: auto; }
+    /* 固定窗口 + 内容滚动（右侧滚动条常驻可见，点点 0926 拍板） */
+    .cl-body { padding: 0 20px 20px 24px; overflow-y: scroll; flex: 1; min-height: 0; }
+    .cl-body::-webkit-scrollbar { width: 8px; }
+    .cl-body::-webkit-scrollbar-track { background: transparent; }
+    .cl-body::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 4px;
+    }
+    .cl-body::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 32%, transparent); }
+    @supports not selector(::-webkit-scrollbar) {
+      .cl-body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent; }
+    }
     .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
     .cl-rel:last-child { margin-bottom: 0; }
     .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
@@ -2680,11 +2690,6 @@
     .cl-new .cl-tag { background: var(--accent-soft); color: var(--accent); }
     .cl-imp .cl-tag { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
     .cl-fix .cl-tag { border: 1px solid var(--border); color: var(--muted); }
-    .cl-rel details { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 8px; }
-    .cl-rel summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
-    .cl-rel summary::-webkit-details-marker { display: none; }
-    .cl-rel summary:hover { color: var(--fg); }
-    .cl-rel details[open] summary { margin-bottom: 6px; }
     .cl-error { margin: 8px 0 12px; font-size: 14px; color: var(--muted); }
   </style>
 
@@ -2711,7 +2716,6 @@
       var closeBtn = document.getElementById('clClose');
       var T = {
         new: 'New', imp: 'Improved', fix: 'Fixed', latest: 'Latest',
-        show: function (n) { return n === 1 ? 'Show 1 update' : 'Show ' + n + ' updates'; },
         err: "Couldn't load release notes"
       };
       var esc = function (s) {
@@ -2739,9 +2743,7 @@
             + (i === 0 ? '<span class="cl-badge">' + T.latest + '</span>' : '')
             + '<span class="cl-date">' + esc(v.date) + '</span></div>';
           var list = '<ul>' + items.map(item).join('') + '</ul>';
-          if (i === 0) return '<div class="cl-rel">' + head + list + '</div>';
-          return '<div class="cl-rel">' + head
-            + '<details><summary>' + T.show(items.length) + '</summary>' + list + '</details></div>';
+          return '<div class="cl-rel">' + head + list + '</div>';
         }).join('');
       };
       var fail = function () {
