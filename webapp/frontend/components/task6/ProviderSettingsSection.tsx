@@ -77,6 +77,10 @@ const ACCOUNT_BILLING_URL = "https://accounts.example.invalid/account/billing";
 /** 已验证待订阅的订阅入口（与付费墙同一落点；客户端内无支付界面）。 */
 const TRIAL_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
 
+/** 会员态模块级缓存（点点 0927：重进设置/切档回来不重载——详情先用上次数据
+ * 立即呈现，后台静默刷新后就地更新，无空白期）。组件卸载不清空。 */
+let memberMeCache: MemberMe | null = null;
+
 /** 订阅池下方的加油包小行（没买过包时不出现——线框：零负担）。 */
 function boosterSubline(me: MemberMe): string {
   const boost = me.pools.boost;
@@ -217,8 +221,7 @@ export function ProviderSettingsSection({
   // 会员档（aiming-cookie-relay）账号视图（WP-C）：登录 + 会员态。
   // 旧的「会员计划 / API 计费」二选与余额查询已退役——额度只以百分比由
   // `/api/me` 下发（契约 §7.1-8），key 对用户不可见。
-  const [memberMe, setMemberMe] = useState<MemberMe | null>(null);
-  const [memberLoaded, setMemberLoaded] = useState(false);
+  const [memberMe, setMemberMe] = useState<MemberMe | null>(memberMeCache);
   const [memberBusy, setMemberBusy] = useState(false);
   // 已存自定义档详情的模型发现（点「获取模型」后才有内容；内置档走目录刷新）。
   const [detailModels, setDetailModels] = useState<
@@ -231,18 +234,22 @@ export function ProviderSettingsSection({
   const loadMemberMe = () => {
     void fetchMemberStatus()
       .then((status) => {
-        setMemberMe(status.ok && status.logged_in ? status.me : null);
-        setMemberLoaded(true);
+        const next = status.ok && status.logged_in ? status.me : null;
+        memberMeCache = next;
+        setMemberMe(next);
       })
-      .catch(() => setMemberLoaded(true));
+      .catch(() => {
+        // 静默失败：保留现有（缓存的）展示，不打断详情区。
+      });
   };
 
-  // 打开会员档详情即拉一次会员态（幂等：已加载过不重复打）。
+  // 打开会员档详情即静默刷新一次会员态（0927 点点：每次都刷新，数据就地
+  // 更新；展示层用模块级缓存兜底，刷新期间不清空内容）。
   useEffect(() => {
-    if (!officialSelected || memberLoaded) return;
+    if (!officialSelected) return;
     loadMemberMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [officialSelected, memberLoaded]);
+  }, [officialSelected]);
 
   // 登录 deep-link 成功后 AppShell 跳 /settings?provider=official#llm-provider：
   // 挂载时认领 query 参数，直接打开官方档详情（验证闸试用块的收口页）。
