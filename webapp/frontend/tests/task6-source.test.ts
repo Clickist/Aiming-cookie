@@ -477,8 +477,8 @@ test("Coach training chip morphs as one container instead of growing a card unde
   assert.match(coach, /className="task6-training-pop-empty"/);
   assert.match(coach, /setDraft\(t\("coach\.training\.requestPlanDraft"\)\)/);
   assert.match(coach, /requestAnimationFrame\(\(\) => textareaRef\.current\?\.focus\(\)\)/);
-  // 键盘可达才画环（鼠标点击展开不该常驻橙圈）。
-  assert.match(styles, /\.task6-training-pop:has\(:focus-visible\)\s*\{[^}]*outline:\s*2px solid var\(--primary\)/);
+  // 0927 点点拍板：focus 橙圈全部去掉（键盘可达环一并退役）。
+  assert.match(styles, /\.task6-training-pop:has\(:focus-visible\)\s*\{[^}]*outline:\s*none/);
   assert.doesNotMatch(styles, /\.task6-training-pop:focus-within/);
   // reduced-motion 名单含容器形变与 caret 旋转。
   assert.match(styles, /prefers-reduced-motion[\s\S]*\.task6-training-pop,[\s\S]*\.task6-training-chip-caret\s*\{[^}]*transition:\s*none/);

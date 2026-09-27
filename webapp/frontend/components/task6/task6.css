@@ -102,7 +102,7 @@
 
 /* 键盘可达才画环（与旧 chip :focus-visible 一致）：鼠标点击展开不该常驻橙圈。 */
 .task6-training-pop:has(:focus-visible) {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 1px;
 }
 
@@ -793,7 +793,7 @@
 }
 
 .task6-time-link:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 1px;
   border-radius: 2px;
 }
@@ -1243,7 +1243,7 @@
 }
 
 .task6-suggestion:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 1px;
 }
 
@@ -1287,7 +1287,7 @@ button.task6-discussion-chip:active {
 }
 
 button.task6-discussion-chip:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 1px;
 }
 
@@ -1429,7 +1429,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-discussion-item:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: -2px;
 }
 
@@ -1523,7 +1523,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-composer-send:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -1553,7 +1553,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-composer-mention:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 1px;
 }
 
@@ -1617,7 +1617,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-composer-model:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -1674,7 +1674,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-composer-model-item:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: -2px;
 }
 
@@ -1714,7 +1714,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-composer-effort:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -1991,7 +1991,7 @@ button.task6-discussion-chip:focus-visible {
 }
 
 .task6-selection-toolbar > button:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: -1px;
 }
 

@@ -446,7 +446,7 @@
 .task7-session-rail button:focus-visible,
 .task7-session-rail summary:focus-visible,
 .task7-session-rail input:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   /* 内缩贴圆角：列表是滚动容器，外扩 outline 会被裁掉半圈。 */
   outline-offset: -2px;
 }

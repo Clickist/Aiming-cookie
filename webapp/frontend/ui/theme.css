@@ -218,7 +218,7 @@ a {
 .ac-icon-button:focus-visible,
 .ac-field__control:focus-visible,
 .ac-tab:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 

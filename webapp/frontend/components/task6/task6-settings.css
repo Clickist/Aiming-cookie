@@ -950,7 +950,7 @@
 }
 
 .task6-theme-card:focus-within {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 

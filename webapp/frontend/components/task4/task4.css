@@ -129,7 +129,7 @@
 }
 
 .task4-coach-pill:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -153,7 +153,7 @@
 }
 
 .task4-filter-input:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -178,7 +178,7 @@
 }
 
 .task4-refresh-status:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -281,7 +281,7 @@
 }
 
 .task4-sec-caret:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -423,7 +423,7 @@
 }
 
 .task4-check:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -453,7 +453,7 @@
 }
 
 .task4-expand-toggle:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: -2px;
 }
 

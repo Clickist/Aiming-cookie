@@ -327,7 +327,8 @@ test("history rows toggle from the whole row with a custom drawn checkbox (0911 
   assert.match(styles, /\.task4-check\s*\{[^}]*border:\s*1\.5px solid var\(--outline\)/);
   assert.match(styles, /\.task4-check:checked\s*\{[^}]*background-color:\s*var\(--primary\)/);
   assert.doesNotMatch(styles, /\.task4-check:checked\s*\{[^}]*background-image/);
-  assert.match(styles, /\.task4-check:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--primary\)/);
+  // 0927 点点拍板：focus 橙圈全部去掉。
+  assert.match(styles, /\.task4-check:focus-visible\s*\{[^}]*outline:\s*none/);
   assert.match(styles, /\.task4-check:disabled\s*\{[^}]*cursor:\s*default/);
   // 顺手清理旧死样式：.task4-sel-dot 系列（含媒体查询引用）全部移除。
   assert.doesNotMatch(styles, /task4-sel-dot|task4-row-select/);

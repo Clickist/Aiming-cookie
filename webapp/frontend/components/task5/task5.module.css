@@ -110,7 +110,7 @@
 }
 
 .evidenceTrigger:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -237,7 +237,7 @@
 }
 
 .profileLabel:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -1276,7 +1276,7 @@
 }
 
 .timelineMarkerHit:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
@@ -1420,7 +1420,7 @@
 }
 
 .signalButton:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 

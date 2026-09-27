@@ -125,7 +125,7 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
 }
 
 .task3-window-control:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: -2px;
 }
 
@@ -143,7 +143,7 @@ html.ac-window-rounded:not(.ac-window-maximized) .task3-window-control--close::b
 }
 
 .task3-opt-in-row:focus-within {
-  outline: 2px solid var(--primary);
+  outline: none;
   outline-offset: 2px;
 }
 
