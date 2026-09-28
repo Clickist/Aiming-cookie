@@ -22,8 +22,16 @@ import {
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
 import { getLocale, t, useLocale, useT, type Locale, type MessageKey } from "@/lib/i18n";
-import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
+import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, pickDesktopDirectory, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
+import {
+  copyTextToClipboard,
+  getStorageLocationStatus,
+  migrationFailureKey,
+  migrationPercent,
+  setStorageLocation,
+  type StorageLocationStatusV1,
+} from "@/lib/storage-location";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
@@ -171,6 +179,153 @@ function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+// 存储位置卡（自定义数据根，2026-09-28）：生效根由 Rust 壳解析，切换重启才生效、
+// 迁移在重启时后台执行。这里只做三件事：读状态、写位置（先二次确认再写指针）、
+// 迁移进行中轮询进度。位置被拒时只上屏壳的稳定码译出的本地化文案（不伪造成功）。
+function StorageLocationCard({
+  ask,
+  notify,
+}: {
+  ask: (title: string, impact: string, run: () => Promise<void>) => void;
+  notify: (message: string) => void;
+}) {
+  const t = useT();
+  const [status, setStatus] = useState<StorageLocationStatusV1 | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await getStorageLocationStatus());
+    } catch {
+      // 读取失败保留上一份已知状态，不把卡片变成错误页（下面的行按可用数据渲染）。
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // 迁移只在重启时执行：记录处于 planned/running 才需要轮询（done/failed 后停止，
+  // 重启提示本身是静态事实，轮询它也变不出新信息）。
+  const migration = status?.migration ?? null;
+  const migrationActive = migration?.phase === "planned" || migration?.phase === "running";
+  useEffect(() => {
+    if (!migrationActive) return undefined;
+    const timer = window.setInterval(() => void load(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [load, migrationActive]);
+
+  const copyPath = async () => {
+    if (!status) return;
+    notify((await copyTextToClipboard(status.effectiveRoot)) ? t("settings.storage.location.copied") : t("settings.storage.location.copyFailed"));
+  };
+
+  // 位置被拒（盘符不存在 / 无写权限 / 空间不足 / 嵌套）时红字上屏，指针不写：
+  // 文案由 lib/storage-location 把壳的稳定码译成本地语言。
+  const reportFailure = (failure: unknown) => {
+    setError(failure instanceof Error ? failure.message : t("settings.storage.location.errorUnknown"));
+  };
+
+  const pick = async (): Promise<string | null> => {
+    setBusy(true);
+    try {
+      return await pickDesktopDirectory(t("settings.storage.location.pickerTitle"));
+    } catch {
+      setError(t("settings.storage.location.pickerFailed"));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 更改位置：选文件夹 → 二次确认（说明迁移语义）→ 写指针；重启后自动迁移。
+  const changeLocation = async () => {
+    const current = status?.effectiveRoot ?? "";
+    const picked = await pick();
+    if (!picked) return;
+    ask(
+      t("settings.storage.location.changeTitle"),
+      t("settings.storage.location.changeImpact", { from: current, to: picked }),
+      async () => {
+        try {
+          const next = await setStorageLocation(picked);
+          setStatus(next);
+          setError(null);
+          notify(t("settings.storage.location.restartPending", { path: next.customRoot ?? next.defaultRoot }));
+        } catch (failure) {
+          reportFailure(failure);
+        }
+      },
+    );
+  };
+
+  // 恢复默认位置：同一确认与迁移流程，方向相反。
+  const restoreLocation = async () => {
+    const target = status?.defaultRoot ?? "";
+    ask(
+      t("settings.storage.location.restoreTitle"),
+      t("settings.storage.location.restoreImpact", { to: target }),
+      async () => {
+        try {
+          const next = await setStorageLocation(null);
+          setStatus(next);
+          setError(null);
+          notify(t("settings.storage.location.restartPending", { path: next.defaultRoot }));
+        } catch (failure) {
+          reportFailure(failure);
+        }
+      },
+    );
+  };
+
+  const migrationLine = (() => {
+    if (!migration) return null;
+    if (migration.phase === "planned") return t("settings.storage.location.migrationPlanned");
+    if (migration.phase === "running") {
+      const percent = migrationPercent(migration);
+      const values = {
+        moved: migration.movedEntries.length,
+        total: migration.movedEntries.length + migration.pendingEntries.length,
+        copied: formatBytes(migration.copiedBytes),
+        all: formatBytes(migration.totalBytes),
+      };
+      return percent == null
+        ? t("settings.storage.location.migrationRunning", values)
+        : t("settings.storage.location.migrationRunningPercent", { ...values, percent });
+    }
+    if (migration.phase === "failed") {
+      return t("settings.storage.location.migrationFailed", { reason: t(migrationFailureKey(migration)) });
+    }
+    return t("settings.storage.location.migrationDone");
+  })();
+
+  return (
+    <Panel>
+      <h3 className="task6-profile-group-title">{t("settings.storage.location.title")}</h3>
+      <p className="task6-card-desc">{t("settings.storage.location.desc")}</p>
+      <div className="task6-storage-location">
+        <span className="task6-form-row-label">{t("settings.storage.location.current")}</span>
+        <span className="task6-storage-location-path">{status?.effectiveRoot ?? t("settings.storage.loading")}</span>
+        <Button disabled={!status} onClick={() => void copyPath()} size="compact" variant="ghost">{t("settings.storage.location.copy")}</Button>
+      </div>
+      {status?.restartRequired ? (
+        <p className="task6-storage-location-pending">
+          {t("settings.storage.location.restartPending", { path: status.customRoot ?? status.defaultRoot })}
+        </p>
+      ) : null}
+      {migrationLine ? (
+        <p className={migration?.phase === "failed" ? "task6-storage-location-error" : "task6-muted"}>{migrationLine}</p>
+      ) : null}
+      {error ? <p className="task6-storage-location-error">{error}</p> : null}
+      <div className="task6-storage-location-actions">
+        <Button disabled={busy || migration?.phase === "running"} onClick={() => void changeLocation()} size="compact">{t("settings.storage.location.change")}</Button>
+        <Button disabled={busy || !status?.customRoot || migration?.phase === "running"} onClick={() => void restoreLocation()} size="compact" variant="secondary">{t("settings.storage.location.restore")}</Button>
+      </div>
+    </Panel>
+  );
 }
 
 /** 「8月27日」短日期；解析失败返回 null（不渲染，不硬造）。 */
@@ -812,7 +967,8 @@ export function SettingsWorkspace() {
             <span className="task6-settings-section-title">{t("settings.nav.storage")}</span>
             <span className="task6-settings-section-note">{t("settings.storage.note")}</span>
           </div>
-          {/* 0912 线框拍板：总占用与按条目清理拆成两张自包含卡。 */}
+          {/* 0912 线框拍板：总占用与按条目清理拆成两张自包含卡。
+              2026-09-28 在总占用卡之后加一张「存储位置」卡：数据根可迁到非系统盘。 */}
           <div className="task6-settings-subsection">
             <Panel>
             {!desktop ? <Notice className="task6-settings-notice" tone="warning" title={t("settings.storage.desktopOnlyTitle")}>{t("settings.storage.desktopOnlyBody")}</Notice> : null}
@@ -841,6 +997,11 @@ export function SettingsWorkspace() {
             ) : null}
             </Panel>
           </div>
+          {desktop ? (
+            <div className="task6-settings-subsection">
+              <StorageLocationCard ask={ask} notify={setFeedback} />
+            </div>
+          ) : null}
           <div className="task6-settings-subsection">
             <Panel>
               <div className="task6-storage-cleanup">

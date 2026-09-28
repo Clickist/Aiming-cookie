@@ -4,6 +4,8 @@ mod media_protocol;
 mod raw_input;
 mod runtime;
 mod scenario_launch;
+mod storage_location;
+mod webview_cleanup;
 mod window_capture;
 
 use capture_coordinator::{
@@ -22,13 +24,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use storage_location::{StorageLocationError, StorageLocationState, StorageLocationStatus};
 use tauri::{Manager, State};
 use window_capture::{WindowCaptureState, WindowCaptureStatus, DEFAULT_FRAME_QUEUE_CAPACITY};
 
 // GUI 进程没有控制台；spawn 控制台程序（cmd/powershell）时若不加此标志，
 // Windows 会为子进程新建控制台窗口——安装版导出诊断包时黑窗一闪，引发用户恐慌。
 #[cfg(windows)]
-const NO_CHILD_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
+pub(crate) const NO_CHILD_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -687,6 +690,25 @@ fn desktop_capture_coordinator_status(
     state.status()
 }
 
+// 存储位置：状态查询只回结构化事实（路径 / 是否需要重启 / 迁移现场），
+// 文案与格式化在前端（与 diag.* 错误码同一条「Rust 不持自然语言」约定）。
+#[tauri::command]
+fn desktop_storage_location_status(
+    state: State<'_, Arc<StorageLocationState>>,
+) -> StorageLocationStatus {
+    state.status()
+}
+
+/// 设置数据存储位置：`path = null` 即恢复默认位置。拒绝时只回稳定码
+/// （storage_location.*）+ 可选数字，指针不写入。
+#[tauri::command]
+fn desktop_set_storage_location(
+    path: Option<String>,
+    state: State<'_, Arc<StorageLocationState>>,
+) -> Result<StorageLocationStatus, StorageLocationError> {
+    state.set_location(path)
+}
+
 // 桌面命令错误合同：invoke 的 Err(String) 只回稳定错误码（diag.* /
 // frontend_log.*），不带自然语言句子——中英文案的单一事实源在前端字典
 // （lib/desktop.ts 的码表），未知码由前端原样抛出。
@@ -862,7 +884,15 @@ fn log_deep_link_receipt(source: &str, args: impl Iterator<Item = impl AsRef<str
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {    let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
+pub fn run() {
+    // 孤儿 WebView2 清理：必须先于任何 WebView2 环境创建执行——tauri 2 的
+    // setup 钩子是在 config 窗口（含 WebView2 环境）创建之后才运行的，这里
+    // 是唯一够早的位置。异常退出残留的 msedgewebview2 浏览器进程池会让新
+    // 实例并入旧池，WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS（自动化验收的
+    // --remote-debugging-port）随之失效。失败静默，绝不挡启动；计数等
+    // setup 里 diag_log 初始化后再补记日志（此处日志目录尚未就绪）。
+    let cleaned_webview_orphans = webview_cleanup::cleanup_orphans();
+    let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
     let media_handler = Arc::clone(&managed_media);
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -889,8 +919,21 @@ pub fn run() {    let managed_media = Arc::new(media_protocol::ManagedMediaProto
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
-            let app_data_dir = app.path().app_data_dir()?;
+            // 数据根的唯一权威在这里：先解析「生效数据根」（指针合法且自定义根
+            // 可用时用它，否则默认根），壳自身所有写入与子进程的 DATA_ROOT 一律
+            // 用生效根；指针与迁移记录始终留在默认根。
+            let default_app_data_dir = app.path().app_data_dir()?;
+            let storage_location =
+                Arc::new(StorageLocationState::initialize(default_app_data_dir.clone()));
+            let app_data_dir = storage_location.effective_root().to_path_buf();
             diag_log::init(app_data_dir.join("logs"));
+            // 补记 run() 顶部的孤儿 WebView2 清理计数（执行时日志尚未初始化）；
+            // 0 不记，避免每次启动都产生一行噪音。
+            if cleaned_webview_orphans > 0 {
+                diag_log::write_line(&format!(
+                    "webview-cleanup: killed {cleaned_webview_orphans} orphaned msedgewebview2 process(es)"
+                ));
+            }
             #[cfg(desktop)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
@@ -963,6 +1006,10 @@ pub fn run() {    let managed_media = Arc::new(media_protocol::ManagedMediaProto
             app.manage(raw_input);
             app.manage(window_capture);
             app.manage(coordinator);
+            // 生效根已经确定，现在可以搬迁数据了：有未完成的迁移记录就起后台
+            // 线程续迁（对象存储条目可能几十 GB，绝不阻塞主线程与首屏）。
+            storage_location.start_pending_migration();
+            app.manage(Arc::clone(&storage_location));
             // 无边框窗口（decorations:false）在 Windows 上默认是直角；显式请求
             // DWM 画圆角（Win11+，dwmapi.dll）。失败（如 Win10 不支持该属性）
             // 静默忽略——圆角是渐进增强，不能阻塞启动。
@@ -993,6 +1040,8 @@ pub fn run() {    let managed_media = Arc::new(media_protocol::ManagedMediaProto
             desktop_raw_input_status,
             desktop_window_capture_status,
             desktop_capture_coordinator_status,
+            desktop_storage_location_status,
+            desktop_set_storage_location,
             desktop_export_capture_diagnostics,
             desktop_collect_capture_diagnostics,
             desktop_append_frontend_log,
