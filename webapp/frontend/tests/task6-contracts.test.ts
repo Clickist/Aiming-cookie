@@ -62,3 +62,26 @@ test("current training fixture contract stays read-only, bounded, and status-exp
   assert.equal(training.items[0]?.observation, null);
   assert.doesNotMatch(JSON.stringify(training), /diagnosis_ref|metric_ref|execution_ref/);
 });
+
+test("KovaaK scores fixture never fabricates ranks in the unavailable tier", async () => {
+  const fixtures = await import("../fixtures/task7-fixtures");
+  const scores = fixtures.KOVAAK_SCORES;
+  assert.equal(scores.availability, "unavailable");
+  assert.deepEqual(scores.stages, []);
+  assert.deepEqual(scores.items, []);
+  // 0912 拍板：第三方成绩单（S2 段位）有版权不上屏，空语料不得伪造段位名。
+  assert.doesNotMatch(JSON.stringify(scores), /黄金|白银|S2/);
+});
+
+test("review KovaaK refresh reports zero completion for an empty score corpus", async () => {
+  const { apiScenario, handleReviewApiRequest } = await import("../fixtures/task7-fixtures");
+  const result = handleReviewApiRequest(apiScenario(), {
+    method: "POST",
+    path: "/api/kovaak-connection/refresh",
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    (result.body as { difficulty_counts: { easier: number; medium: number } }).difficulty_counts,
+    { easier: 0, medium: 0 },
+  );
+});
