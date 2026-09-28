@@ -1341,6 +1341,62 @@ export interface CoachSessionDetail extends CoachSessionOut {
   messages: import("./types").CoachThreadMessageOut[];
 }
 
+// ── 调用记录（用户中心「调用记录」卡，用户中心线框）─────────────────────────
+//
+// sidecar 契约（coach-runtime 并行实现中，尚未进入后端 OpenAPI，故此处手写局部
+// 类型）：GET /v1/usage/records → 本机 Pi 会话 JSONL 里 assistant 消息自带的
+// model/provider/usage 明细 + 本月汇总。纯本地数据、无 ownerId；数值字段
+// null 表示 provider 没报（0 是真实计量），前端展示时按 0 兜底。契约稳定后并入
+// types.ts。
+
+export interface CoachUsageRecord {
+  session_id: number;
+  /** 从未命名的会话为 null（前端用自己的 i18n 兜底显示「新对话」）。 */
+  session_title: string | null;
+  model: string | null;
+  provider: string | null;
+  timestamp: string;
+  usage: {
+    input: number | null;
+    output: number | null;
+    cache_read: number | null;
+    cache_write: number | null;
+    reasoning: number | null;
+    total_tokens: number | null;
+  };
+}
+
+export interface CoachUsageRecordsResponse {
+  generated_at: string;
+  month: {
+    /** 本地时区当月键，形如 "2026-09"。 */
+    key: string;
+    count: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    /** cache_read/(input+cache_read) 的比例（0..1）；分母 0 时 null。 */
+    cache_hit_rate: number | null;
+  };
+  records: CoachUsageRecord[];
+}
+
+/** 本机 Coach AI 调用记录（逐笔明细 + 本月汇总）；limit 由服务端 clamp [1,200]。 */
+export async function getCoachUsageRecords(
+  opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<CoachUsageRecordsResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const query = params.toString();
+  const res = await apiFetchSidecar(
+    `/v1/usage/records${query ? `?${query}` : ""}`,
+    { method: "GET" },
+    { signal: opts.signal },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachUsageRecordsResponse;
+}
+
 export async function getCoachSession(
   sessionId: number,
   opts: { signal?: AbortSignal } = {},

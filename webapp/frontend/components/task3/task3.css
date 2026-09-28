@@ -1713,3 +1713,129 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   color: var(--on-surface-variant);
   font-size: var(--text-ui);
 }
+
+/* 调用记录卡（用户中心线框）：位置在加油包卡之后、账户卡之前。
+   头行标题 + 当月调用次数；三枚胶囊 chip 是本月汇总；下面是最近记录列表
+   （时间 | 会话 | 模型 | tokens 明细）。取数失败整卡不渲染（组件侧 fail-soft），
+   records 为空时列表区只留一行空态文案。 */
+.task3-member-usage-card {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--surface-container-low);
+}
+
+.task3-member-usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.task3-member-usage-head > strong {
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.task3-member-usage-head > span {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+/* 三枚胶囊 chip（输入 / 输出 / 缓存命中）：与其它 chip 同一视觉语言。 */
+.task3-member-usage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.task3-member-usage-chip {
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task3-member-usage-empty {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+.task3-member-usage-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 每行＝时间 | 会话标题 | 模型 | tokens 明细；时间列定宽（tabular-nums）
+   保证各行对齐，会话标题长时省略（线框）。 */
+.task3-member-usage-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  font-size: var(--text-caption);
+}
+
+.task3-member-usage-time {
+  flex: none;
+  width: 104px;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task3-member-usage-session {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task3-member-usage-model {
+  flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  color: var(--primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task3-member-usage-tokens {
+  flex: none;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task3-member-usage-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  justify-self: start;
+  border: 0;
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-caption);
+  padding: 0;
+}
+
+.task3-member-usage-toggle-icon {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.task3-member-usage-toggle-icon.is-open {
+  transform: rotate(180deg);
+}

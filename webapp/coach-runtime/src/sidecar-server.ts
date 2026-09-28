@@ -18,6 +18,7 @@ import {
   deleteCoachSession,
   getCoachSessionDetail,
   listCoachSessions,
+  listCoachUsageRecords,
   localeFromRequest,
   ownerIdFromRequest,
   truncateCoachSession,
@@ -867,6 +868,19 @@ export async function handleSidecarRequest(
       const body = await parseJsonBody(req);
       const title = isRecord(body) && typeof body.title === "string" ? body.title : undefined;
       writeJson(res, 201, await createCoachSession(ownerId, title));
+    } catch (error) {
+      writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  // 调用记录（用户中心「调用记录」卡的数据源）：本机 Pi 会话 JSONL 里
+  // assistant 消息自带的 model/provider/usage 直读，纯本地、无 ownerId。
+  // limit 由服务端 clamp 到 [1,200]，缺省 50。
+  if (req.method === "GET" && url.pathname === "/v1/usage/records") {
+    try {
+      const rawLimit = url.searchParams.get("limit");
+      writeJson(res, 200, await listCoachUsageRecords(rawLimit === null ? undefined : Number(rawLimit)));
     } catch (error) {
       writeCoachDataError(res, error);
     }

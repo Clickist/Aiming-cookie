@@ -85,6 +85,20 @@ export const task3En = {
   "member.center.openSettings": "Open settings",
   "member.notice.closeAria": "Close notice",
 
+  // components/task3/MemberCenter.tsx —— usage records card (user center wireframe):
+  // device-local Coach AI calls, itemised plus this month's totals
+  // (data source: GET /v1/usage/records, local reads only).
+  "member.center.usage.title": "Usage records",
+  "member.center.usage.monthCount": "{count} calls this month",
+  "member.center.usage.statInput": "{tokens} input",
+  "member.center.usage.statOutput": "{tokens} output",
+  "member.center.usage.statCacheHit": "{rate}% cache hit",
+  "member.center.usage.empty": "No usage this month",
+  "member.center.usage.more": "Show more",
+  "member.center.usage.less": "Show less",
+  "member.center.usage.untitled": "New chat",
+  "member.center.usage.rowTokens": "in {input} · out {output} · cache {cache}",
+
   // components/task3/Task3Shared.tsx —— 证据 chip / 模式徽标（与 history.status.*、
   // analysis.input.* 同码同值条目共用键，此处只放无既有键的两值 + 兜底）
   "analysis.evidence.partial": "Partially available",

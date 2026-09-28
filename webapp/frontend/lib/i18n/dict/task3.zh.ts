@@ -86,6 +86,19 @@ export const task3Zh = {
   "member.center.openSettings": "打开设置",
   "member.notice.closeAria": "关闭提示",
 
+  // components/task3/MemberCenter.tsx —— 调用记录卡（用户中心线框）：本机 Coach AI
+  // 调用的逐笔明细与本月汇总（数据源 GET /v1/usage/records，纯本地读取）。
+  "member.center.usage.title": "调用记录",
+  "member.center.usage.monthCount": "{count} 次调用 · {month}月",
+  "member.center.usage.statInput": "输入 {tokens} tokens",
+  "member.center.usage.statOutput": "输出 {tokens} tokens",
+  "member.center.usage.statCacheHit": "缓存命中 {rate}%",
+  "member.center.usage.empty": "本月还没有调用记录",
+  "member.center.usage.more": "查看更多",
+  "member.center.usage.less": "收起",
+  "member.center.usage.untitled": "新对话",
+  "member.center.usage.rowTokens": "入 {input} · 出 {output} · 缓存 {cache}",
+
   // components/task3/Task3Shared.tsx —— 证据 chip / 模式徽标（与 history.status.*、
   // analysis.input.* 同码同值条目共用键，此处只放无既有键的两值 + 兜底）
   "analysis.evidence.partial": "部分可用",

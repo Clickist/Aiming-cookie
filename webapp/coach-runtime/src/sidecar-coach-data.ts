@@ -7,9 +7,12 @@
  * files directly.
  */
 
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type http from "node:http";
+import { join } from "node:path";
 
-import { ensureAppDataDirs } from "./app-data.ts";
+import { ensureAppDataDirs, getConversationsDir } from "./app-data.ts";
+import { isRecord } from "./contracts.ts";
 import {
   deriveConversationTitle,
   ensureSession,
@@ -17,6 +20,7 @@ import {
   nextSessionIdSync,
   readConversationMeta,
   readSessionMessagesForUi,
+  SESSION_CWD,
   sessionExists,
   deleteSessionFile,
   truncateSessionFromMessage,
@@ -235,6 +239,223 @@ export async function deleteCoachSession(ownerId: string, sessionId: number): Pr
   // Remove conversation content but keep meta for audit
   await deleteSessionFile(sessionId);
   return shapeSession(ownerId, sessionId, meta, []);
+}
+
+// ---------------------------------------------------------------------------
+// Usage records（「调用记录」：本机 Coach AI 调用逐笔明细 + 本月汇总）
+// ---------------------------------------------------------------------------
+
+/** 记录条数上限的服务端 clamp 口径（唯一事实源）。 */
+export const USAGE_RECORDS_DEFAULT_LIMIT = 50;
+export const USAGE_RECORDS_MAX_LIMIT = 200;
+
+/** 单笔调用（一条带 usage 的 assistant 消息）；字段全 snake_case 与其它端点一致。 */
+interface UsageRecordOut {
+  session_id: number;
+  session_title: string | null;
+  model: string | null;
+  provider: string | null;
+  timestamp: string;
+  /** null = provider 没报这个数（0 是真实计量）；前端展示时按 0 兜底。 */
+  usage: {
+    input: number | null;
+    output: number | null;
+    cache_read: number | null;
+    cache_write: number | null;
+    reasoning: number | null;
+    total_tokens: number | null;
+  };
+}
+
+export interface CoachUsageRecordsOut {
+  generated_at: string;
+  month: {
+    /** 本地时区当月键，形如 "2026-09"。 */
+    key: string;
+    count: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    /** cache_read/(input+cache_read) 的比例（0..1）；分母为 0（无计量可算）时 null。 */
+    cache_hit_rate: number | null;
+  };
+  records: UsageRecordOut[];
+}
+
+function usageNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** 本地时区月份键（跨时区不串月：按机器本地日历算，不按 UTC）。 */
+function localMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function clampUsageLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return USAGE_RECORDS_DEFAULT_LIMIT;
+  return Math.min(USAGE_RECORDS_MAX_LIMIT, Math.max(1, Math.trunc(limit)));
+}
+
+/** 会话标题 → 记录标题。readConversationMeta 对「从未命名」的会话返回兜底标题
+ *  「新对话」（meta 缺失或标题为空时都是它），那不是真实命名——按 null 返回，
+ *  由前端用自己的 i18n 兜底（否则 en-US 界面会漏出中文）。 */
+function usageRecordTitle(title: unknown): string | null {
+  if (typeof title !== "string") return null;
+  const trimmed = title.trim();
+  return trimmed && trimmed !== "新对话" ? trimmed : null;
+}
+
+/** 单条 message 条目 → 调用记录；不是「带 usage 的 assistant 消息」时回 null。 */
+function usageRecordFromEntry(
+  sessionId: number,
+  sessionTitle: string | null,
+  entry: { type: string; timestamp?: string; message?: unknown },
+): UsageRecordOut | null {
+  if (entry.type !== "message" || !isRecord(entry.message)) return null;
+  const message = entry.message;
+  if (message.role !== "assistant" || !isRecord(message.usage)) return null;
+  if (typeof entry.timestamp !== "string" || !entry.timestamp) return null;
+  const usage = message.usage;
+  return {
+    session_id: sessionId,
+    session_title: sessionTitle,
+    model: typeof message.model === "string" ? message.model : null,
+    provider: typeof message.provider === "string" ? message.provider : null,
+    timestamp: entry.timestamp,
+    usage: {
+      input: usageNumber(usage.input),
+      output: usageNumber(usage.output),
+      cache_read: usageNumber(usage.cacheRead),
+      cache_write: usageNumber(usage.cacheWrite),
+      reasoning: usageNumber(usage.reasoning),
+      total_tokens: usageNumber(usage.totalTokens),
+    },
+  };
+}
+
+/**
+ * 摊平本机全部 Pi 会话里 assistant 消息自带的 model/provider/usage，供用户中心
+ * 「调用记录」卡展示逐笔明细与本月汇总（用户中心线框）。
+ *
+ * 口径：
+ * - 纯本地 JSONL 直读，不依赖任何服务端：断网、未登录、BYOK 都照常可用，
+ *   也不产生任何上传；
+ * - usage 字段缺失记 null（provider 没报 ≠ 0）；本月合计把 null 当 0 计入；
+ * - 列表按 timestamp 降序后截前 limit 条，本月汇总统计全部记录（不受截断影响）；
+ * - 单个会话读取失败（文件损坏/已删除）只跳过它，不让一个坏文件拖垮整张列表；
+ * - 只统计**活跃分支**：从文件最后一行沿 parentId 回溯到根（与 pi Session 的
+ *   leaf 语义一致）——编辑重发截断留下的孤儿行留在文件里但不计入，否则截断
+ *   过的调用会被重复统计。
+ *
+ * 性能注记（0928 真机）：此前经 openSession()+getBranch() 逐会话读取，190 个
+ * 文件实测 12.5s/次且无缓存，用户中心打开后卡片空等十几秒。改为直读文件 +
+ * 行级 JSON.parse（"usage" 子串预筛），避免为每个会话构建完整 pi Session——
+ * 同数据规模实测 364ms。若未来退化到秒级，须回到缓存/增量方案而不是再调参。
+ *
+ * 统计口径（0928 复核）：只走活跃分支的原始条目（从最后一行沿 parentId 回溯），
+ * 比旧 getBranch 视图**多**计 pi compaction 折叠进摘要的历史调用——那些调用
+ * 真实消耗过额度，账单口径应当计入（实测差 126 条/9 月，全部在 1 号主会话）。
+ */
+export async function listCoachUsageRecords(limit?: number): Promise<CoachUsageRecordsOut> {
+  ensureAppDataDirs();
+  const bounded = clampUsageLimit(limit);
+
+  // 枚举会话文件：--coach--/ 下的 pi 命名（{时间戳}_{id}.jsonl）优先，legacy 根
+  // 目录 {id}.jsonl 兜底；同一 id 只取一份（pi 布局优先于 legacy）。
+  const dir = getConversationsDir();
+  const coachDir = join(dir, `--${SESSION_CWD}--`);
+  const files: Array<{ path: string; id: number }> = [];
+  if (existsSync(coachDir)) {
+    for (const file of readdirSync(coachDir)) {
+      const match = file.match(/_(\d+)\.jsonl$/);
+      if (match) files.push({ path: join(coachDir, file), id: Number(match[1]) });
+    }
+  }
+  if (existsSync(dir)) {
+    for (const file of readdirSync(dir)) {
+      const match = file.match(/^(\d+)\.jsonl$/);
+      if (match) files.push({ path: join(dir, file), id: Number(match[1]) });
+    }
+  }
+
+  const records: UsageRecordOut[] = [];
+  const seenIds = new Set<number>();
+  for (const { path: filePath, id } of files) {
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    let content: string;
+    try {
+      content = readFileSync(filePath, "utf8");
+    } catch {
+      continue; // 坏会话文件：跳过该会话，其余记录照常
+    }
+    // 活跃分支重建：id → 条目 表 + 从最后一行沿 parentId 走到根。中途断链
+    //（parentId 指向的行损坏/缺失）自然停在断点，环状引用由已访问集合兜底。
+    const byId = new Map<string, { entry: Record<string, unknown>; parent: string | null; raw: string }>();
+    let lastId: string | null = null;
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue; // 损坏行：跳过
+      }
+      if (!isRecord(entry) || typeof entry.id !== "string") continue;
+      byId.set(entry.id, {
+        entry,
+        parent: typeof entry.parentId === "string" ? entry.parentId : null,
+        raw: line,
+      });
+      lastId = entry.id;
+    }
+    if (lastId === null) continue; // 全文件无有效条目
+    const branchIds = new Set<string>();
+    let cursor: string | null = lastId;
+    while (cursor !== null && byId.has(cursor) && !branchIds.has(cursor)) {
+      branchIds.add(cursor);
+      cursor = byId.get(cursor)!.parent;
+    }
+
+    const meta = readConversationMeta(id);
+    const title = usageRecordTitle(meta.title);
+    for (const entryId of branchIds) {
+      const item = byId.get(entryId)!;
+      // 预筛用原始行：带 usage 的 assistant 条目必含这两个子串，绝大多数行免判断。
+      if (!item.raw.includes('"assistant"') || !item.raw.includes('"usage"')) continue;
+      const record = usageRecordFromEntry(id, title, item.entry);
+      if (record) records.push(record);
+    }
+  }
+  records.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+
+  const monthKey = localMonthKey(new Date());
+  let count = 0;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  for (const record of records) {
+    const at = new Date(record.timestamp);
+    if (Number.isNaN(at.getTime()) || localMonthKey(at) !== monthKey) continue;
+    count += 1;
+    input += record.usage.input ?? 0;
+    output += record.usage.output ?? 0;
+    cacheRead += record.usage.cache_read ?? 0;
+  }
+  const cacheDenominator = input + cacheRead;
+
+  return {
+    generated_at: new Date().toISOString(),
+    month: {
+      key: monthKey,
+      count,
+      input_tokens: input,
+      output_tokens: output,
+      cache_read_tokens: cacheRead,
+      cache_hit_rate: cacheDenominator > 0 ? cacheRead / cacheDenominator : null,
+    },
+    records: records.slice(0, bounded),
+  };
 }
 
 export async function getCoachPrimary(
