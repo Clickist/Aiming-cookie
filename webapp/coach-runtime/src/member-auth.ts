@@ -257,6 +257,11 @@ export function storedMemberJwt(): string | null {
     : null;
 }
 
+/** fixture 走查模式是否开启（AC_MEMBER_FIXTURE）：usage-reporter 据此跳过真实网络。 */
+export function memberFixtureActive(): boolean {
+  return fixtureMe() !== null;
+}
+
 /** relay 档在档案库中的 id（不存在返回 null）。 */
 export function relayProfileId(): number | null {
   const store = loadProviderStore();

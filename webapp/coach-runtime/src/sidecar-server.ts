@@ -34,6 +34,7 @@ import { loadProfile } from "./provider-store.ts";
 import { readSessionStats, readSessionMessages } from "./session-repo.ts";
 import { ensureIntroSession, readIntroSessionFlag } from "./intro-session.ts";
 import { introKickoffPrompt, type IntroKickoffLocale } from "./intro-kickoff.ts";
+import { notifyTurnConsumed, startUsageReportLoop } from "./usage-reporter.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
@@ -957,8 +958,17 @@ export function createSidecarServer(options: {
 } = {}): http.Server {
   const authOperations = options.authOperations ?? new ProviderAuthOperationManager();
   const ownsAuthOperations = options.authOperations === undefined;
+  // 客户端直推余量：turn 成功结束（= 有真实消耗）后通知 usage-reporter 推一次。
+  // 包在 runner 外层而不是改 runCoachTurn——失败/中止轮不推（60s 循环兜底），
+  // 且测试注入的 turnRunner 语义不变，只是多了一个 best-effort 副作用。
+  const baseTurnRunner = options.turnRunner ?? runCoachTurn;
+  const turnRunner: TurnRunner = async (request, turnOptions) => {
+    const response = await baseTurnRunner(request, turnOptions);
+    if (response.ok) notifyTurnConsumed();
+    return response;
+  };
   const server = http.createServer((req, res) => {
-    handleSidecarRequest(req, res, authOperations, options.turnRunner ?? runCoachTurn).catch((error) => {
+    handleSidecarRequest(req, res, authOperations, turnRunner).catch((error) => {
       console.error("[sidecar] request failed:", error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error);
       try {
         appendFileSync(
@@ -1050,6 +1060,9 @@ export function startSidecarServer(options: {
     console.error("knowledge materialization failed:", error);
   }
   const server = createSidecarServer({ authOperations: options.authOperations });
+  // 客户端直推余量的 60s 定时循环（无会员档时是零网络空转）；close 时一并停。
+  const stopUsageReportLoop = startUsageReportLoop();
+  server.on("close", () => stopUsageReportLoop());
   server.listen(port, host);
   return server;
 }
