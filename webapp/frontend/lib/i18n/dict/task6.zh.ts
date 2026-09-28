@@ -343,6 +343,7 @@ export const task6Zh = {
   "settings.storage.location.migrationRunning": "正在迁移数据：{moved}/{total} 个顶层条目，{copied}/{all}",
   "settings.storage.location.migrationRunningPercent": "正在迁移数据：{percent}%（{copied}/{all}）",
   "settings.storage.location.migrationDone": "数据迁移已完成。",
+  "settings.storage.location.migrationPartial": "{count} 项待迁（文件被占用），重启后自动续迁。",
   "settings.storage.location.migrationFailed": "上次迁移未完成（{reason}）。数据未丢失，下次启动会自动续迁。",
   "settings.storage.location.failureSpace": "目标位置空间不足",
   "settings.storage.location.failureSourceMissing": "找不到原数据目录，外置盘可能未连接",

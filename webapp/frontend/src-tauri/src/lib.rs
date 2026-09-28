@@ -934,6 +934,12 @@ pub fn run() {
                     "webview-cleanup: killed {cleaned_webview_orphans} orphaned msedgewebview2 process(es)"
                 ));
             }
+            // 迁移触发点尽量前移：必须在后端子进程启动之前。后端一启动就会在
+            // 生效根创建并持有 .runtime.lock、打开数据库等文件，迁移引擎若在其
+            // 之后才动身，只能靠排除清单躲开自家句柄（0929 真机 P0 的冲突窗口
+            // 就在这里）。这里只起后台线程，不阻塞主线程：数据条目可能几十 GB，
+            // 绝不等它搬完再放行启动。
+            storage_location.start_pending_migration();
             #[cfg(desktop)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
@@ -1006,9 +1012,7 @@ pub fn run() {
             app.manage(raw_input);
             app.manage(window_capture);
             app.manage(coordinator);
-            // 生效根已经确定，现在可以搬迁数据了：有未完成的迁移记录就起后台
-            // 线程续迁（对象存储条目可能几十 GB，绝不阻塞主线程与首屏）。
-            storage_location.start_pending_migration();
+            // 迁移已在 setup 早期触发（见上方 start_pending_migration）。
             app.manage(Arc::clone(&storage_location));
             // 无边框窗口（decorations:false）在 Windows 上默认是直角；显式请求
             // DWM 画圆角（Win11+，dwmapi.dll）。失败（如 Win10 不支持该属性）

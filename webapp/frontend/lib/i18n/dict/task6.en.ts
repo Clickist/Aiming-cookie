@@ -339,6 +339,7 @@ export const task6En = {
   "settings.storage.location.migrationRunning": "Migrating data: {moved}/{total} top-level entries, {copied}/{all}",
   "settings.storage.location.migrationRunningPercent": "Migrating data: {percent}% ({copied}/{all})",
   "settings.storage.location.migrationDone": "Data migration complete.",
+  "settings.storage.location.migrationPartial": "{count} entries pending (files in use); migration resumes automatically the next time the app starts.",
   "settings.storage.location.migrationFailed": "The last migration did not finish ({reason}). No data was lost; it resumes automatically on the next start.",
   "settings.storage.location.failureSpace": "not enough space at the target",
   "settings.storage.location.failureSourceMissing": "the source data folder is missing, the external drive may be disconnected",

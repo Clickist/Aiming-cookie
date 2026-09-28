@@ -7,6 +7,8 @@
  *
  * 生效根切换要重启才生效（迁移在重启时执行），所以这里没有「立即生效」的假象：
  * `restartRequired` 为真时 UI 只提示重启，迁移进度由 `migration` 现场呈现。
+ * `partial` = 迁移跑完一轮但仍有条目被占用（os error 32/33）留在 pending：
+ * 数据没丢，下次启动自动续迁。
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -14,7 +16,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { isDesktopRuntime } from "./desktop";
 import { t, type MessageKey } from "./i18n/core";
 
-export type StorageMigrationPhase = "planned" | "running" | "done" | "failed";
+export type StorageMigrationPhase =
+  | "planned"
+  | "running"
+  | "done"
+  | "partial"
+  | "failed";
 
 export interface StorageMigrationStatusV1 {
   sourceRoot: string;

@@ -208,8 +208,8 @@ function StorageLocationCard({
     void load();
   }, [load]);
 
-  // 迁移只在重启时执行：记录处于 planned/running 才需要轮询（done/failed 后停止，
-  // 重启提示本身是静态事实，轮询它也变不出新信息）。
+  // 迁移只在重启时执行：记录处于 planned/running 才需要轮询（done/partial/failed
+  // 后停止，重启提示本身是静态事实，轮询它也变不出新信息）。
   const migration = status?.migration ?? null;
   const migrationActive = migration?.phase === "planned" || migration?.phase === "running";
   useEffect(() => {
@@ -295,6 +295,12 @@ function StorageLocationCard({
       return percent == null
         ? t("settings.storage.location.migrationRunning", values)
         : t("settings.storage.location.migrationRunningPercent", { ...values, percent });
+    }
+    if (migration.phase === "partial") {
+      // 部分条目被占用（os error 32/33）留在 pending：数据没丢，重启自动续迁。
+      return t("settings.storage.location.migrationPartial", {
+        count: migration.pendingEntries.length,
+      });
     }
     if (migration.phase === "failed") {
       return t("settings.storage.location.migrationFailed", { reason: t(migrationFailureKey(migration)) });

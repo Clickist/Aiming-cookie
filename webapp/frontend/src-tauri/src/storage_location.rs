@@ -15,13 +15,17 @@
 //! 页改位置时记下 source（当时的生效根，数据实际所在）与 target（新位置），重启
 //! 时按记录执行搬迁。这样「恢复默认位置」也能知道数据原来在哪个自定义根，而不
 //! 必从指针反推。搬迁口径：逐顶层条目「比对目标 → 缺失就整体重拷 → 逐文件对账
-//! （文件数 + 字节数）→ 通过才删源」；任一步失败即停，源目录原样保留，下次启动
-//! 续迁（已搬完的条目跳过）。**绝不删源除非校验通过**。
+//! （文件数 + 字节数）→ 通过才删源」；**绝不删源除非校验通过**。单条目失败分两
+//! 类：文件被占用（os error 32/33，共享冲突/字节锁，自家后端与侧车常态持有）
+//! 只把该条目留在 pending 继续搬其余，收尾时 pending 非空即 `partial`（下次启动
+//! 续迁）；其他失败仍整体停机（`failed`），源原样保留。
 //!
-//! `logs/` 是唯一不搬迁的目录：壳的日志句柄在启动早期就绑定生效根，且壳/Python/
-//! 侧车三进程并发追加，copy + 对账在语义上不成立。作为折中，迁移末尾把旧日志目录
-//! 里目标尚缺的文件**复制**一份过去（不校验、不删源），保住诊断包的历史日志连续性；
-//! 日志有轮转上限（MB 级），留在默认根对磁盘占用可忽略。
+//! 根级**运行时痕迹不参与搬迁**（`MIGRATION_SKIP_ENTRIES` 逐项理由见常量注释）：
+//! 它们要么被本应用进程在启动时创建并持有句柄（搬 = 自锁必败，2026-09-29 真机
+//! P0 的直接成因），要么是每次启动都会重建/重写的瞬态文件，要么是权威位置就在
+//! 默认根的元数据（位置指针、迁移记录）。作为折中，迁移末尾把旧 `logs/` 里目标
+//! 尚缺的文件**复制**一份过去（不校验、不删源），保住诊断包的历史日志连续性；
+//! 日志有轮转上限（MB 级），留在原地对磁盘占用可忽略。
 
 use std::fs;
 use std::io;
@@ -40,15 +44,37 @@ const MIGRATION_FREE_SPACE_HEADROOM_BYTES: u64 = 64 * 1024 * 1024;
 /// 迁移记录写失败时的重试次数与间隔（并发读窗导致的共享冲突是瞬时的）。
 const MIGRATION_WRITE_ATTEMPTS: u8 = 5;
 const MIGRATION_WRITE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
-/// 迁移期间不搬的目录（见模块头注释）。
+/// 迁移期间不搬的目录名（历史日志合并见 `merge_legacy_logs`）。
 const MIGRATION_LOG_DIR_NAME: &str = "logs";
-/// 迁移记录里「留在原地」的顶层文件：指针与迁移记录自身。
-const MIGRATION_SKIP_ENTRIES: &[&str] =
-    &[STORAGE_LOCATION_FILE_NAME, STORAGE_MIGRATION_FILE_NAME];
+/// 迁移不搬的根级条目（目录名含 `logs/`）——壳/后端/侧车的运行时痕迹。
+/// 搬它们只有坏处：要么必然撞上本应用进程自己持有的句柄（自锁必败），
+/// 要么是每次启动都会重建/重写的瞬态文件，要么权威位置就在默认根。
+/// 逐项理由：
+/// - `.runtime.lock`：后端进程启动即创建并持独占字节锁直到退出（防双实例
+///   同根互踩）。迁移与后端同机同时启动，搬它必然以共享冲突/锁定失败收场
+///   （2026-09-29 真机 P0：首个条目即中止，整场迁移永远失败）；新根的锁由
+///   后端启动时自行创建。
+/// - `desktop-runtime.json`：壳写给子进程的运行时配置，每次启动重写。
+/// - `coach-debug.log` / `coach-error.log`：coach 侧车进程持续追加的日志，
+///   句柄常开，copy + 对账在语义上不成立（与 `logs/` 同理）。
+/// - `logs/`：壳的日志句柄启动早期就绑定生效根，壳/Python/侧车三进程并发
+///   追加，无法对账。
+/// - `storage-location.json`：位置指针，权威位置在默认根，自己不能被搬走。
+/// - `storage-migration.json`：迁移记录，续迁的驱动依据，绝不能动。
+const MIGRATION_SKIP_ENTRIES: &[&str] = &[
+    ".runtime.lock",
+    "desktop-runtime.json",
+    "coach-debug.log",
+    "coach-error.log",
+    MIGRATION_LOG_DIR_NAME,
+    STORAGE_LOCATION_FILE_NAME,
+    STORAGE_MIGRATION_FILE_NAME,
+];
 
 pub const MIGRATION_PHASE_PLANNED: &str = "planned";
 pub const MIGRATION_PHASE_RUNNING: &str = "running";
 pub const MIGRATION_PHASE_DONE: &str = "done";
+pub const MIGRATION_PHASE_PARTIAL: &str = "partial";
 pub const MIGRATION_PHASE_FAILED: &str = "failed";
 
 // ── 指针 ────────────────────────────────────────────────────────────────────
@@ -157,12 +183,39 @@ pub fn normalize_custom_root(
     Ok(Some(candidate.to_string_lossy().into_owned()))
 }
 
+/// 剥掉 Windows 扩展路径前缀：`fs::canonicalize()` 在 Windows 上返回
+/// `\\?\E:\ACData`（verbatim）形态，这个形态一旦当生效根传出去（指针文件、
+/// 子进程 `DATA_ROOT`、前端「当前位置」），后端按前缀比对「哪些文件属于数据
+/// 根」就会全部失配（2026-09-29 真机：2.5GB Run 录像从占用分类里消失）。
+/// 统一在这里剥掉：`\\?\E:\ACData` → `E:\ACData`，`\\?\UNC\server\share` →
+/// `\\server\share`，其余形态原样返回。例外：剥完超过 260 字符（MAX_PATH）的
+/// 路径保留前缀——不带 `\\?\` 的 Win32 API 处理不了超长路径，此时前缀是
+/// 功能性的，不是泄漏。
+pub fn strip_extended_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    let stripped = match text.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => Some(format!(r"\\{rest}")),
+        None => text.strip_prefix(r"\\?\").map(str::to_string),
+    };
+    let Some(stripped) = stripped else {
+        return path.to_path_buf();
+    };
+    if stripped.chars().count() > 260 {
+        return path.to_path_buf();
+    }
+    PathBuf::from(stripped)
+}
+
 /// 返回解析后的绝对路径（已确认可写），供直接使用。
 pub fn resolve_custom_root(requested: &str) -> PathBuf {
-    fs::canonicalize(requested).unwrap_or_else(|_| PathBuf::from(requested))
+    strip_extended_prefix(
+        &fs::canonicalize(requested).unwrap_or_else(|_| PathBuf::from(requested)),
+    )
 }
 
 /// 解析「生效数据根」：指针合法 + 自定义根可用 → 自定义根；否则默认根。
+/// 返回值统一过 [`strip_extended_prefix`]：旧版本指针里可能已经落了 `\\?\`
+/// 形态，读出来也必须以干净形态交给子进程与前端。
 pub fn resolve_effective_root(default_root: &Path) -> PathBuf {
     let (pointer, problem) = read_pointer(default_root);
     if let Some(problem) = problem {
@@ -170,10 +223,10 @@ pub fn resolve_effective_root(default_root: &Path) -> PathBuf {
             "storage-location: ignoring pointer ({problem}); using default data root {}",
             default_root.display()
         ));
-        return default_root.to_path_buf();
+        return strip_extended_prefix(default_root);
     }
     let Some(custom_root) = pointer.and_then(|pointer| pointer.custom_root) else {
-        return default_root.to_path_buf();
+        return strip_extended_prefix(default_root);
     };
     let candidate = PathBuf::from(&custom_root);
     if let Err(reason) = custom_root_is_usable(&candidate) {
@@ -181,12 +234,12 @@ pub fn resolve_effective_root(default_root: &Path) -> PathBuf {
             "storage-location: ignoring custom root {custom_root} ({reason}); using default data root {}",
             default_root.display()
         ));
-        return default_root.to_path_buf();
+        return strip_extended_prefix(default_root);
     }
     if same_path(&candidate, default_root) {
-        return default_root.to_path_buf();
+        return strip_extended_prefix(default_root);
     }
-    candidate
+    strip_extended_prefix(&candidate)
 }
 
 /// 路径等价比较（大小写不敏感；不存在时退化为字面比较）。
@@ -377,6 +430,38 @@ fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Windows 共享冲突（32）/ 字节范围锁冲突（33）：文件正被别的句柄占用。
+/// 自家后端（数据库、`.runtime.lock`）与侧车（日志）在迁移期间常态持有这些
+/// 句柄——这是并发运行的常态，不是致命错误。
+fn is_lock_error(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(32) | Some(33))
+}
+
+/// 单条目搬迁的错误。`locked` 标记「文件被占用（os error 32/33）」：该类失败
+/// 只把条目留在 pending、继续搬其余条目，收尾记 `partial`（重启续迁）；其余
+/// 错误仍整体停机（`failed`，源原样保留）。`message` 是记录与日志用的原文。
+#[derive(Debug)]
+struct MigrationEntryError {
+    message: String,
+    locked: bool,
+}
+
+impl MigrationEntryError {
+    fn other(message: String) -> Self {
+        Self {
+            message,
+            locked: false,
+        }
+    }
+
+    fn from_io(context: &str, error: &io::Error) -> Self {
+        Self {
+            message: format!("{context}: {error}"),
+            locked: is_lock_error(error),
+        }
+    }
+}
+
 /// 逐文件对账（任务口径：文件数 + 字节数）：源清单里每个文件都必须在目标存在
 /// 且字节数一致。只比对源清单，目标多出来的文件（迁移期间子进程新写的）不影响
 /// 结论——否则并发写入会让迁移永远无法通过校验。
@@ -413,42 +498,50 @@ fn verify_copy(source: &Path, destination: &Path) -> Result<(u64, u64), String> 
 /// 目标目录**只增不删**：迁移是重启时后台跑的，同一进程的子进程已经把新数据写进
 /// 目标根（新会话、新日志、新的 run），清整目录会把它们一起删掉。所以这里只覆盖
 /// 「源里有、而目标缺失或字节数对不上」的文件，源文件始终是权威版本。
-fn migrate_entry(source: &Path, destination: &Path) -> Result<(u64, u64), String> {
-    let files = relative_files(source, source).map_err(|error| format!("scan: {error}"))?;
+fn migrate_entry(source: &Path, destination: &Path) -> Result<u64, MigrationEntryError> {
+    let files = relative_files(source, source)
+        .map_err(|error| MigrationEntryError::from_io("scan", &error))?;
     for (relative, size) in &files {
         let target = destination.join(relative);
         // 断点续迁：目标已有同名同字节数的文件就跳过（上一轮拷完的结果）。
         if fs::metadata(&target).is_ok_and(|metadata| metadata.len() == *size) {
             continue;
         }
-        copy_file(&source.join(relative), &target)
-            .map_err(|error| format!("copy {}: {error}", relative.display()))?;
+        copy_file(&source.join(relative), &target).map_err(|error| {
+            MigrationEntryError::from_io(&format!("copy {}", relative.display()), &error)
+        })?;
     }
-    let accounting = verify_copy(source, destination)?;
+    let (_, bytes) = verify_copy(source, destination).map_err(MigrationEntryError::other)?;
     // 校验通过（文件数 + 字节数逐文件对上）才允许删源；失败就在这里停，源原样保留。
-    fs::remove_dir_all(source).map_err(|error| format!("remove source: {error}"))?;
-    Ok(accounting)
+    // 删源也可能撞上仍被持有的句柄（如正开着的数据库）→ 同样按锁定类留在 pending。
+    fs::remove_dir_all(source)
+        .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
+    Ok(bytes)
 }
 
 /// 单文件条目的搬迁：同样先校验后删源。
-fn migrate_file(source: &Path, destination: &Path) -> Result<u64, String> {
+fn migrate_file(source: &Path, destination: &Path) -> Result<u64, MigrationEntryError> {
     let size = fs::metadata(source)
-        .map_err(|error| format!("stat: {error}"))?
+        .map_err(|error| MigrationEntryError::from_io("stat", &error))?
         .len();
     if let Ok(metadata) = fs::metadata(destination) {
         if metadata.len() == size {
-            fs::remove_file(source).map_err(|error| format!("remove source: {error}"))?;
+            fs::remove_file(source)
+                .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
             return Ok(size);
         }
     }
-    copy_file(source, destination).map_err(|error| format!("copy: {error}"))?;
+    copy_file(source, destination).map_err(|error| MigrationEntryError::from_io("copy", &error))?;
     let copied = fs::metadata(destination)
-        .map_err(|error| format!("verify: {error}"))?
+        .map_err(|error| MigrationEntryError::from_io("verify", &error))?
         .len();
     if copied != size {
-        return Err(format!("byte mismatch: expected {size}, found {copied}"));
+        return Err(MigrationEntryError::other(format!(
+            "byte mismatch: expected {size}, found {copied}"
+        )));
     }
-    fs::remove_file(source).map_err(|error| format!("remove source: {error}"))?;
+    fs::remove_file(source)
+        .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
     Ok(size)
 }
 
@@ -603,7 +696,7 @@ pub fn run_migration(
             .unwrap_or_default();
         let destination = target_root.join(&name);
         let result = if path.is_dir() {
-            migrate_entry(path, &destination).map(|(_, bytes)| bytes)
+            migrate_entry(path, &destination)
         } else {
             migrate_file(path, &destination)
         };
@@ -611,6 +704,14 @@ pub fn run_migration(
             Ok(bytes) => {
                 copied_bytes += bytes;
                 moved.push(name.clone());
+            }
+            // 文件被占用（os error 32/33）：条目留在 pending、继续搬其余。
+            // 0929 真机的教训：第一个条目失败就全盘放弃，流程每次启动必失败。
+            Err(error) if error.locked => {
+                crate::diag_log::write_line(&format!(
+                    "storage-migration: {name} is in use, left pending for next launch ({})",
+                    error.message
+                ));
             }
             Err(error) => {
                 state.moved_entries = moved;
@@ -620,7 +721,7 @@ pub fn run_migration(
                     .cloned()
                     .collect();
                 state.copied_bytes = copied_bytes;
-                return fail(state, format!("{name}: {error}"));
+                return fail(state, format!("{name}: {}", error.message));
             }
         }
         state.moved_entries = moved.clone();
@@ -634,11 +735,36 @@ pub fn run_migration(
         if let Err(error) = write_migration_state(default_root, &state) {
             return fail(state, error);
         }
+        if moved.contains(&name) {
+            crate::diag_log::write_line(&format!(
+                "storage-migration: moved {name} ({} bytes) to {}",
+                copied_bytes,
+                target_root.display()
+            ));
+        }
+    }
+
+    // 仍有被占用而搬不动的条目：phase=partial，指针保持 set_location 写下的
+    // 目标方向（迁移完成时才会刷新），下次启动 start_pending_migration 续迁。
+    if !state.pending_entries.is_empty() {
+        state.phase = MIGRATION_PHASE_PARTIAL.to_string();
+        state.error = Some(format!(
+            "locked_entries: {}",
+            state.pending_entries.join(", ")
+        ));
+        state.updated_at = now_iso_like();
+        if let Err(error) = write_migration_state(default_root, &state) {
+            crate::diag_log::write_line(&format!(
+                "storage-migration: partial but status write failed: {error}"
+            ));
+        }
         crate::diag_log::write_line(&format!(
-            "storage-migration: moved {name} ({} bytes) to {}",
-            copied_bytes,
+            "storage-migration: partial; {} entries in use, resumes next launch ({} -> {})",
+            state.pending_entries.len(),
+            source_root.display(),
             target_root.display()
         ));
+        return state;
     }
 
     // 日志目录特殊处理：只补目标缺失的历史日志，不搬不删。
@@ -973,6 +1099,76 @@ mod tests {
     }
 
     #[test]
+    fn strip_extended_prefix_strips_verbatim_and_unc_prefixes_but_keeps_long_paths() {
+        // verbatim 盘符路径 → 干净形态
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\E:\ACData")),
+            PathBuf::from(r"E:\ACData")
+        );
+        // verbatim UNC → 普通 UNC
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\server\share")
+        );
+        // 普通路径（盘符 / UNC / 含正斜杠）原样返回
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"E:\ACData")),
+            PathBuf::from(r"E:\ACData")
+        );
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\server\share")),
+            PathBuf::from(r"\\server\share")
+        );
+        assert_eq!(
+            strip_extended_prefix(Path::new("E:/ACData")),
+            PathBuf::from("E:/ACData")
+        );
+        // 长路径（剥完 > 260 字符）：保留前缀，否则 Win32 API 处理不了
+        let long = format!(r"\\?\E:\{}", "a".repeat(300));
+        assert_eq!(
+            strip_extended_prefix(Path::new(&long)),
+            PathBuf::from(&long)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_effective_root_strips_a_verbatim_prefix_stored_in_the_pointer() {
+        // 旧版本写下的指针已经带 \\?\ 前缀：生效根读出来必须是干净形态
+        //（子进程 DATA_ROOT 与前端「当前位置」的出口都在这里）。
+        let root = scratch("verbatim-pointer");
+        let custom = custom_root_outside("verbatim-pointer");
+        fs::create_dir_all(&custom).expect("mkdir");
+        let verbatim = format!(r"\\?\{}", custom.to_string_lossy());
+        write_pointer_json(&root, Some(&verbatim));
+        assert_eq!(resolve_effective_root(&root), custom);
+        let _ = fs::remove_dir_all(&custom);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn set_location_records_a_clean_target_root_without_verbatim_prefix() {
+        // set_location 对目标做 canonicalize（Windows 返回 \\?\ 形态），
+        // 落进迁移记录 target_root 的值必须已剥干净。
+        let root = scratch("set-verbatim");
+        let custom = custom_root_outside("set-verbatim");
+        let state = StorageLocationState::initialize(root.clone());
+        state
+            .set_location(Some(custom.to_string_lossy().into_owned()))
+            .expect("set location");
+        let record = read_migration_state(&root).expect("record");
+        assert!(
+            !record.target_root.starts_with(r"\\?\"),
+            "target_root leaked the verbatim prefix: {}",
+            record.target_root
+        );
+        assert!(same_path(Path::new(&record.target_root), &custom));
+        let _ = fs::remove_dir_all(&custom);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn write_pointer_round_trips_and_leaves_no_temp_artifacts() {
         let root = scratch("write-pointer");
         write_pointer(&root, Some("D:\\ACData")).expect("write custom");
@@ -1080,7 +1276,6 @@ mod tests {
             fs::read(target.join("runs/7/video.mp4")).expect("read"),
             vec![b'v'; 128]
         );
-        assert!(target.join("desktop-runtime.json").is_file());
         assert!(!source.join("runs").exists());
         assert!(source.join(STORAGE_LOCATION_FILE_NAME).is_file());
         assert!(source.join(STORAGE_MIGRATION_FILE_NAME).is_file());
@@ -1213,10 +1408,136 @@ mod tests {
             fs::read(target.join("capture-enabled")).expect("read"),
             br#"{"enabled":true}"#
         );
-        assert!(target.join("coach-error.log").is_file());
         assert!(!source.join("capture-enabled").exists());
-        assert!(!source.join("coach-error.log").exists());
-        assert_eq!(finished.total_bytes, 16 + 5);
+        // coach-error.log 在排除清单里（侧车常开的运行时痕迹）：留在源，不搬。
+        assert!(source.join("coach-error.log").is_file());
+        assert!(!target.join("coach-error.log").exists());
+        // total 只算数据条目（capture-enabled 的 16 字节）。
+        assert_eq!(finished.total_bytes, 16);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_migration_leaves_runtime_trace_entries_at_the_source() {
+        let root = scratch("excluded");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(source.join("runs")).expect("mkdir");
+        fs::write(source.join("runs/meta.json"), b"meta").expect("write");
+        // 运行时痕迹：本应用自己启动就会创建/持有/重写的文件。
+        fs::write(source.join(".runtime.lock"), b"locked").expect("write");
+        fs::write(source.join("desktop-runtime.json"), b"{}").expect("write");
+        fs::write(source.join("coach-debug.log"), b"debug").expect("write");
+        fs::write(source.join("coach-error.log"), b"error").expect("write");
+        fs::create_dir_all(source.join("logs")).expect("mkdir");
+        fs::write(source.join("logs/native.log"), b"log").expect("write");
+        // 指针与迁移记录（源 = 默认根方向的镜像）：权威位置在默认根，绝不搬。
+        fs::write(source.join(STORAGE_LOCATION_FILE_NAME), b"{}").expect("write");
+        fs::write(source.join(STORAGE_MIGRATION_FILE_NAME), b"{}").expect("write");
+
+        let state = StorageMigrationState {
+            source_root: source.to_string_lossy().into_owned(),
+            target_root: target.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_PLANNED.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            total_bytes: 0,
+            copied_bytes: 0,
+            error: None,
+            updated_at: String::new(),
+        };
+
+        let finished = run_migration(&root, &source, &target, state);
+
+        assert_eq!(finished.phase, MIGRATION_PHASE_DONE, "{:?}", finished.error);
+        assert_eq!(finished.pending_entries, Vec::<String>::new());
+        // 数据条目正常搬迁。
+        assert!(target.join("runs/meta.json").is_file());
+        assert!(!source.join("runs").exists());
+        // 运行时痕迹一项都不搬：留在源，目标不出现。
+        for name in [
+            ".runtime.lock",
+            "desktop-runtime.json",
+            "coach-debug.log",
+            "coach-error.log",
+            STORAGE_LOCATION_FILE_NAME,
+            STORAGE_MIGRATION_FILE_NAME,
+        ] {
+            assert!(source.join(name).is_file(), "{name} stays at source");
+            assert!(!target.join(name).exists(), "{name} must not migrate");
+        }
+        assert!(source.join("logs/native.log").is_file());
+        // total 只算数据条目（runs/meta.json 的 4 字节），运行时痕迹不计入。
+        assert_eq!(finished.total_bytes, 4);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_migration_keeps_a_locked_entry_pending_and_finishes_partial() {
+        use std::os::windows::io::AsRawHandle;
+        use winapi::shared::ntdef::HANDLE;
+        use winapi::um::fileapi::LockFileEx;
+        use winapi::um::minwinbase::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, OVERLAPPED};
+
+        let root = scratch("locked");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(source.join("runs")).expect("mkdir");
+        fs::write(source.join("runs/meta.json"), b"meta").expect("write");
+        fs::write(source.join("aiming_cookie.db"), vec![b'd'; 32]).expect("write");
+
+        // 模拟自家后端持有的字节范围锁：对 db 首字节加排他锁（LockFileEx），
+        // 迁移复制读取该区域即触发 os error 33（ERROR_LOCK_VIOLATION）路径。
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .open(source.join("aiming_cookie.db"))
+            .expect("open");
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let handle = held.as_raw_handle() as HANDLE;
+        let locked = unsafe {
+            LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut overlapped,
+            )
+        };
+        assert_ne!(locked, 0, "LockFileEx must succeed");
+
+        let state = StorageMigrationState {
+            source_root: source.to_string_lossy().into_owned(),
+            target_root: target.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_RUNNING.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            total_bytes: 0,
+            copied_bytes: 0,
+            error: None,
+            updated_at: String::new(),
+        };
+
+        let finished = run_migration(&root, &source, &target, state);
+
+        // 被锁条目留在 pending（phase=partial），其余条目照常搬完——这正是
+        // 0929 真机 P0 的场景：不能因第一个条目被占用就放弃整场迁移。
+        assert_eq!(finished.phase, MIGRATION_PHASE_PARTIAL, "{:?}", finished.error);
+        assert_eq!(
+            finished.pending_entries,
+            vec!["aiming_cookie.db".to_string()]
+        );
+        assert_eq!(finished.moved_entries, vec!["runs".to_string()]);
+        assert!(target.join("runs/meta.json").is_file());
+        assert!(!source.join("runs").exists());
+        // 锁住的源文件原地保留，目标侧没有它的半份拷贝。
+        assert!(source.join("aiming_cookie.db").is_file());
+        assert!(!target.join("aiming_cookie.db").exists());
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PARTIAL);
+        assert_eq!(record.pending_entries, vec!["aiming_cookie.db".to_string()]);
+        drop(held);
         let _ = fs::remove_dir_all(&root);
     }
 
