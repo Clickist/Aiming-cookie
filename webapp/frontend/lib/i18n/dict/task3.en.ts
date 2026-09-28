@@ -81,6 +81,7 @@ export const task3En = {
   "member.center.logoutFailed": "Sign-out didn't complete. Please try again later.",
   "member.center.boosterBuyAction": "Buy a booster",
   "member.center.emptyBody": "You haven't signed in to Aiming Cookie yet. Connect the subscription or a custom Provider in the settings below to use Coach.",
+"member.center.loading": "Fetching your membership status…",
   "member.center.openSettings": "Open settings",
   "member.notice.closeAria": "Close notice",
 

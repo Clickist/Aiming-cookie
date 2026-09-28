@@ -82,6 +82,7 @@ export const task3Zh = {
   "member.center.logoutFailed": "退出登录未完成，请稍后重试。",
   "member.center.boosterBuyAction": "购买加油包",
   "member.center.emptyBody": "还没有登录 Aiming Cookie。在下方设置里连接会员档或自定义 Provider 后即可使用 Coach。",
+"member.center.loading": "正在获取会员状态…",
   "member.center.openSettings": "打开设置",
   "member.notice.closeAria": "关闭提示",
 

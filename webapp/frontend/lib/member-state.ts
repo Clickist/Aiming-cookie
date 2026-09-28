@@ -32,18 +32,48 @@ export function notifyMemberStateChanged(): void {
 export interface MemberState {
   /** null = 未登录 / 尚未取到（未登录是常态，不是错误）。 */
   me: MemberMe | null;
+  /** 服务端已给出确定答案（登录与否）。false + me=null = 还在加载，UI 应显示加载态。 */
+  resolved: boolean;
   /** 最后一次读取是否失败（账号服务不可达）；UI 不必展示，供诊断。 */
   unavailable: boolean;
   /** 手动刷新（deep-link 回归、退出登录后、教练回合结束后调用）。 */
   refresh: () => Promise<MemberMe | null>;
 }
 
-/** 模块级缓存（点点 0928：用户中心/官方档打开即显示上次数据，不闪「未订阅」骨架；
- * 所有 useMemberState 实例共享同一份，60s 轮询与事件刷新后就地更新）。 */
-let memberMeCache: MemberMe | null = null;
+/** 模块级缓存 + localStorage 持久化（点点 0928：用户中心打开即显示上次数据，不闪
+ * 「未登录/未订阅」骨架——含应用重启后；本地单用户应用，member/plan/pct 无密钥，
+ * 与会话 JSONL 同级敏感度）。所有 useMemberState 实例共享；损坏一律静默降级。 */
+const MEMBER_CACHE_KEY = "aiming-cookie.member.cache";
+
+function readMemberCache(): MemberMe | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MEMBER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || typeof (parsed as { member?: unknown }).member !== "boolean") return null;
+    return parsed as MemberMe;
+  } catch {
+    return null;
+  }
+}
+
+function writeMemberCache(me: MemberMe | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (me === null) window.localStorage.removeItem(MEMBER_CACHE_KEY);
+    else window.localStorage.setItem(MEMBER_CACHE_KEY, JSON.stringify(me));
+  } catch {
+    // 写失败不影响展示（内存缓存仍在）。
+  }
+}
+
+let memberMeCache: MemberMe | null = typeof window === "undefined" ? null : readMemberCache();
 
 export function useMemberState(enabled = true): MemberState {
   const [me, setMe] = useState<MemberMe | null>(memberMeCache);
+  // 服务端是否已给出确定答案（登录与否）：false 期间 UI 应显示加载态而非「未登录」。
+  const [resolved, setResolved] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const mountedRef = useRef(true);
 
@@ -51,8 +81,10 @@ export function useMemberState(enabled = true): MemberState {
     try {
       const status = await fetchMemberStatus();
       if (!mountedRef.current) return null;
+      setResolved(true);
       if (status.ok && status.logged_in) {
         memberMeCache = status.me;
+        writeMemberCache(status.me);
         setMe(status.me);
         setUnavailable(false);
         return status.me;
@@ -60,6 +92,7 @@ export function useMemberState(enabled = true): MemberState {
       // 未登录（ok:false + unauthorized）与不可用（unavailable）都收敛为 null；
       // 两者的差别只在诊断字段，UI 一律降级未登录态。
       memberMeCache = null;
+      writeMemberCache(null);
       setMe(null);
       setUnavailable(!status.ok && status.logged_in);
       return null;
@@ -98,5 +131,5 @@ export function useMemberState(enabled = true): MemberState {
     };
   }, [enabled, load]);
 
-  return { me, unavailable, refresh: load };
+  return { me, resolved, unavailable, refresh: load };
 }

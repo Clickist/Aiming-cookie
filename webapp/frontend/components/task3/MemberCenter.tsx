@@ -33,9 +33,12 @@ const PAY_URL = "https://accounts.example.invalid/pay";
 
 export function MemberCenter({
   me,
+  resolved = true,
   onLogout,
 }: {
   me: MemberMe | null;
+  /** 服务端已给出确定答案；false + me=null = 加载中，显示获取态而非「未登录」引导（点点 0928）。 */
+  resolved?: boolean;
   /** 退出登录完成后回调（AppShell 负责刷新 Provider 能力状态）。 */
   onLogout?: () => Promise<void> | void;
 }) {
@@ -216,10 +219,14 @@ export function MemberCenter({
               </div>
             </div>
           </>
-        ) : (
+        ) : resolved ? (
           <div className="task3-member-empty">
             <p>{t("member.center.emptyBody")}</p>
             <Button onClick={() => router.push("/settings")} variant="secondary">{t("member.center.openSettings")}</Button>
+          </div>
+        ) : (
+          <div className="task3-member-empty">
+            <p>{t("member.center.loading")}</p>
           </div>
         )}
         {message ? <Notice tone="warning">{message}</Notice> : null}

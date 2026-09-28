@@ -5,6 +5,6 @@ import { useMemberState } from "@/lib/member-state";
 
 /** `/account` 路由壳：拉会员态并渲染用户中心（②c）。 */
 export function MemberCenterPage() {
-  const { me } = useMemberState();
-  return <MemberCenter me={me} />;
+  const { me, resolved } = useMemberState();
+  return <MemberCenter me={me} resolved={resolved} />;
 }
