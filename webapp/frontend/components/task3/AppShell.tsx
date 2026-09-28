@@ -671,6 +671,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pendingBindSessionIdRef = useRef<number | null>(null);
   const ensureCoachSession = useCallback((): Promise<number | null> => {
     if (ensureSessionInFlightRef.current) return ensureSessionInFlightRef.current;
+    // 交接窗复用（0928 压测：新会话快速连发 17 条散进 3 个会话）：in-flight 去重
+    // 只盖「同时在飞」的窗口；创建已完成、路由提交与列表刷新仍在途时，pendingBind
+    // 钉扎的会话就是本窗口的唯一归属——后续发送必须复用它，不能再建。
+    if (pendingBindSessionIdRef.current !== null) return Promise.resolve(pendingBindSessionIdRef.current);
     const promise = (async () => {
       try {
         const session = await createCoachSession();

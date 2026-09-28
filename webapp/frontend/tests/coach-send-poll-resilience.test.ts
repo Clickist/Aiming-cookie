@@ -54,6 +54,27 @@ test("AppShell dedupes concurrent coach session creation through an in-flight pr
   assert.match(shell, /ensureSessionInFlightRef\.current = promise;\s*return promise;/);
 });
 
+test("AppShell reuses the pinned handover session instead of creating a second one", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  // 0928 压测回归：新会话快速连发 17 条散进 3 个会话。in-flight 去重只盖
+  //「同时在飞」的窗口；创建完成到路由/列表落地之间 pendingBind 已钉扎会话 id，
+  // 后续发送必须复用它（顺序：in-flight 检查 → 钉扎复用 → createCoachSession）。
+  const fnAt = shell.indexOf("const ensureCoachSession = useCallback(");
+  assert.notEqual(fnAt, -1, "ensureCoachSession must exist");
+  const pinAt = shell.indexOf(
+    "if (pendingBindSessionIdRef.current !== null) return Promise.resolve(pendingBindSessionIdRef.current);",
+    fnAt,
+  );
+  const flightAt = shell.indexOf(
+    "if (ensureSessionInFlightRef.current) return ensureSessionInFlightRef.current;",
+    fnAt,
+  );
+  const createAt = shell.indexOf("await createCoachSession()", fnAt);
+  assert.notEqual(pinAt, -1, "pinned handover reuse guard must exist in ensureCoachSession");
+  assert.ok(flightAt !== -1 && flightAt < pinAt, "pinned reuse must sit after the in-flight check");
+  assert.ok(createAt !== -1 && pinAt < createAt, "pinned reuse must sit before the create call");
+});
+
 test("Coach polling fallback retries with backoff instead of dying after one failure", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   assert.match(panel, /POLL_MAX_FAILURES = 8;/);
