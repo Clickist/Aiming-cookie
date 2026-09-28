@@ -38,8 +38,12 @@ export interface MemberState {
   refresh: () => Promise<MemberMe | null>;
 }
 
+/** 模块级缓存（点点 0928：用户中心/官方档打开即显示上次数据，不闪「未订阅」骨架；
+ * 所有 useMemberState 实例共享同一份，60s 轮询与事件刷新后就地更新）。 */
+let memberMeCache: MemberMe | null = null;
+
 export function useMemberState(enabled = true): MemberState {
-  const [me, setMe] = useState<MemberMe | null>(null);
+  const [me, setMe] = useState<MemberMe | null>(memberMeCache);
   const [unavailable, setUnavailable] = useState(false);
   const mountedRef = useRef(true);
 
@@ -48,12 +52,14 @@ export function useMemberState(enabled = true): MemberState {
       const status = await fetchMemberStatus();
       if (!mountedRef.current) return null;
       if (status.ok && status.logged_in) {
+        memberMeCache = status.me;
         setMe(status.me);
         setUnavailable(false);
         return status.me;
       }
       // 未登录（ok:false + unauthorized）与不可用（unavailable）都收敛为 null；
       // 两者的差别只在诊断字段，UI 一律降级未登录态。
+      memberMeCache = null;
       setMe(null);
       setUnavailable(!status.ok && status.logged_in);
       return null;
