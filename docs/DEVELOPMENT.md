@@ -140,6 +140,20 @@ Desktop 的打包与自动更新链路已经 v0.1.10–v1.0.1 七个版本实测
 2. **tauri 增量打包可能不重嵌前端资产**：只改前端时，build 指纹可能不触发，exe 里烧的是上一轮 `out/`。重打包前先删 `webapp/frontend/src-tauri/target/release/build/aiming-cookie-desktop-*` 强制重嵌。改 Python 后端（`webapp/backend/**`）则必须先跑 `scripts/build-windows-runtime.ps1` 重建 runtime 并镜像到 `src-tauri/target/release/runtime/`，再打 exe。
 3. **排查"代码没生效"先验包再疑码**：Turbopack chunk 名不是内容哈希（同名不同内容），WebView2 又与已装版共享数据目录缓存。在活页面里 `fetch` 它自己加载的 chunk 对字节数/搜标记串，能一锤定音是旧包、旧缓存还是真 bug。
 
+#### 基础设施域名注入（构建期）
+
+打包产物要用的真实域名（accounts 会员站、member 网关）不进仓库：在仓库根建 `infra-urls.local.txt`（已被 .gitignore），每行 `KEY=VALUE`：
+
+```text
+ACCOUNTS_BASE_URL=https://accounts.example.invalid
+MEMBER_GATEWAY_BASE_URL=https://member-gateway.example.invalid:8443/member/v1
+AFFILIATE_BASE_URL=https://affiliate.example.invalid
+```
+
+- `scripts/build-windows-runtime.ps1` 读它，经 bun `--define` 注入 `AC_ACCOUNTS_BASE_URL` / `AC_MEMBER_GATEWAY_BASE_URL`（coach-runtime 内回落各自占位常量）；affiliate 不走构建注入，运行期读配置目录 `affiliate-service.json`（见 `affiliate-native.ts`）。
+- `webapp/frontend/next.config.ts` 读它，经 `env` 键内联 `NEXT_PUBLIC_ACCOUNTS_BASE_URL` 等三个（前端常量集中在 `lib/infra-urls.ts` 回落占位）。
+- 缺文件或缺键：构建照常成功，产物用 `example.invalid` 占位（公开源码构建即此形态，会员外链打不开、其余功能不受影响）。
+
 ### 真实 Tauri E2E
 
 真实 Tauri E2E 由 `scripts\run-tauri-e2e.ps1` 统一启动。该脚本会：

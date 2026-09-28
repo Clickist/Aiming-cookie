@@ -80,10 +80,37 @@ if (-not (Test-Path -LiteralPath $relayUrlFile)) {
 $relayBaseUrl = (Get-Content -LiteralPath $relayUrlFile -Raw).Trim()
 if (-not $relayBaseUrl) { throw "relay-base-url.local.txt is empty" }
 
+# 基础设施域名（accounts 会员站 / member 网关）与 relay 同款构建期注入：读仓库根
+# infra-urls.local.txt（gitignore 的本地文件，KEY=VALUE 每行一对）。缺文件或缺键
+# 不报错，回落 example.invalid 占位——公开源码构建即此形态（会员外链打不开，
+# 其余功能不受影响）。affiliate 不在这里注入：affiliate-native.ts 走运行期
+# 配置文件 config/affiliate-service.json，本就没有仓库内域名。
+$infraUrlFile = Join-Path $RepoRoot "infra-urls.local.txt"
+$infraUrls = @{}
+if (Test-Path -LiteralPath $infraUrlFile) {
+    foreach ($line in Get-Content -LiteralPath $infraUrlFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+        $separator = $trimmed.IndexOf("=")
+        if ($separator -lt 1) { continue }
+        $infraUrls[$trimmed.Substring(0, $separator).Trim()] = $trimmed.Substring($separator + 1).Trim()
+    }
+}
+$infraDefines = @(
+    @{ Define = "AC_ACCOUNTS_BASE_URL"; Key = "ACCOUNTS_BASE_URL"; Placeholder = "https://accounts.example.invalid" },
+    @{ Define = "AC_MEMBER_GATEWAY_BASE_URL"; Key = "MEMBER_GATEWAY_BASE_URL"; Placeholder = "https://member-gateway.example.invalid:8443/member/v1" }
+)
+$infraDefineArgs = @()
+foreach ($entry in $infraDefines) {
+    $value = $infraUrls[$entry.Key]
+    if (-not $value) { $value = $entry.Placeholder }
+    $infraDefineArgs += @("--define", "process.env.$($entry.Define)=`"$value`"")
+}
+
 try {
     # Bun 1.3 on Windows cannot compile from the WinGet shim under this user's Unicode profile path.
     Copy-Item -LiteralPath $bunSource -Destination $stagedBun -Force
-    & $stagedBun build (Join-Path $RepoRoot "webapp\coach-runtime\start-sidecar.ts") --compile --outfile $coachExe --define "process.env.AC_RELAY_BASE_URL=`"$relayBaseUrl`""
+    & $stagedBun build (Join-Path $RepoRoot "webapp\coach-runtime\start-sidecar.ts") --compile --outfile $coachExe --define "process.env.AC_RELAY_BASE_URL=`"$relayBaseUrl`"" @infraDefineArgs
     if ($LASTEXITCODE -ne 0) { throw "Bun Coach compilation failed with exit code $LASTEXITCODE" }
 } finally {
     if (Test-Path -LiteralPath $bunStageRoot) {

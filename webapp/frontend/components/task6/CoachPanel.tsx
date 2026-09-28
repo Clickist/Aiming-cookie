@@ -23,6 +23,7 @@ import { MEMBER_COPY, bothPoolsEmpty, classifyMemberGatewayError, formatMemberDa
 import { useMemberState } from "@/lib/member-state";
 import { MemberNotice, memberEndDate, memberNotice, memberNoticeText } from "@/components/task3/MemberChrome";
 import { t, useT, type MessageKey } from "@/lib/i18n";
+import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
 import { activeRunRefForSession, clearActiveRunRef, pinActiveRunRef } from "@/lib/coach-run-resume";
 import {
@@ -72,7 +73,7 @@ import { Button, ErrorState, IconButton, Status, Toast, useAnimatedPresence } fr
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 
 /** 验证闸付费墙的「订阅 AC 会员」出口：与用户中心 ①b 态1/②c 同一个订阅页。 */
-const TRIAL_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
+const TRIAL_SUBSCRIBE_URL = `${ACCOUNTS_BASE_URL}/pay`;
 
 function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready">): string {
   switch (capability) {

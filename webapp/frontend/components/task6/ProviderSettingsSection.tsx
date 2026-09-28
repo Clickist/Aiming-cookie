@@ -48,6 +48,7 @@ import {
 import { MEMBER_COPY, formatMemberDate, planLabel, poolTier } from "@/lib/member";
 import { MEMBER_STATE_CHANGED_EVENT } from "@/lib/member-state";
 import { t, useT, type MessageKey } from "@/lib/i18n";
+import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { parseTrialState } from "@/lib/trial";
 import type {
   MemberMe,
@@ -73,9 +74,9 @@ function handleExternalClick(event: { preventDefault(): void }, url: string): vo
 }
 
 /** 会员档的账号中心入口（订阅管理与退款都在网页账单子页；客户端无支付界面）。 */
-const ACCOUNT_BILLING_URL = "https://accounts.example.invalid/account/billing";
+const ACCOUNT_BILLING_URL = `${ACCOUNTS_BASE_URL}/account/billing`;
 /** 已验证待订阅的订阅入口（与付费墙同一落点；客户端内无支付界面）。 */
-const TRIAL_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
+const TRIAL_SUBSCRIBE_URL = `${ACCOUNTS_BASE_URL}/pay`;
 
 /** 会员态模块级缓存（点点 0927：重进设置/切档回来不重载——详情先用上次数据
  * 立即呈现，后台静默刷新后就地更新，无空白期）。组件卸载不清空。 */

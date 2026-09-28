@@ -35,6 +35,7 @@ import {
 } from "@/lib/api";
 import { isDesktopRuntime, openExternalUrl, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { useT, type TranslateFn } from "@/lib/i18n";
+import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { MEMBER_COPY, maskEmail } from "@/lib/member";
 import { isMemberWizardType, wizardTypeOptions } from "@/lib/provider-wizard";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
@@ -70,7 +71,7 @@ type MemberStage = "waiting" | "not_subscribed" | "member" | "test_failed";
 
 const CUSTOM_PROVIDER_ID = "custom";
 /** 订阅页（契约 §0：落地页 origin 白名单含 accounts）。①b 态1 一键回订阅页。 */
-const MEMBER_SUBSCRIBE_URL = "https://accounts.example.invalid/pay";
+const MEMBER_SUBSCRIBE_URL = `${ACCOUNTS_BASE_URL}/pay`;
 const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: CustomProviderProtocol }> = {
   custom_openai_compatible: {
     label: "OpenAI-compatible",

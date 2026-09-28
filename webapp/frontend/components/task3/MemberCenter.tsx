@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getCoachUsageRecords, logoutMemberAccount, type CoachUsageRecordsResponse } from "@/lib/api";
 import { openExternalUrl } from "@/lib/desktop";
 import { useLocale, useT } from "@/lib/i18n";
+import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { notifyMemberStateChanged } from "@/lib/member-state";
 import { MEMBER_COPY, formatMemberDate, planLabel } from "@/lib/member";
 import { cacheHitRate, formatTokenCount, formatUsageTime, usageNumbers } from "@/lib/member-usage";
@@ -26,11 +27,11 @@ import { IconChevronDown, IconChevronLeft } from "@/ui/icons";
 import { Button, IconButton, Notice } from "@/ui/primitives";
 import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
-/** 账号中心网址（契约 §7.1-12；②c 的「管理订阅 / 申请退款」都跳这里）。 */
-const ACCOUNT_CENTER_URL = "https://accounts.example.invalid/account";
-const ACCOUNT_BILLING_URL = "https://accounts.example.invalid/account/billing";
-const PAY_BOOSTER_URL = "https://accounts.example.invalid/pay#booster";
-const PAY_URL = "https://accounts.example.invalid/pay";
+/** 账号中心网址（契约 §7.1-12；②c 的「管理订阅 / 申请退款」都跳这里）。域名构建期注入。 */
+const ACCOUNT_CENTER_URL = `${ACCOUNTS_BASE_URL}/account`;
+const ACCOUNT_BILLING_URL = `${ACCOUNTS_BASE_URL}/account/billing`;
+const PAY_BOOSTER_URL = `${ACCOUNTS_BASE_URL}/pay#booster`;
+const PAY_URL = `${ACCOUNTS_BASE_URL}/pay`;
 
 /** 调用记录默认显示前 5 条（更多记录由「查看更多」展开，服务端最多给 200 条）。 */
 const USAGE_VISIBLE_ROWS = 5;

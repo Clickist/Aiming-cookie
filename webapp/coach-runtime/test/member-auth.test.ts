@@ -224,10 +224,12 @@ test("testMemberConnection maps 401 to the re-login branch and 5xx to unreachabl
 test("testMemberConnection must hit the member gateway, never the relay base", async () => {
   resetDataRoot();
   memberAuth.storeMemberJwt(JWT);
-  // 模拟打包构建环境：AC_MEMBER_GATEWAY_BASE_URL 未注入、AC_RELAY_BASE_URL 被
+  // 模拟未注入的打包构建：AC_MEMBER_GATEWAY_BASE_URL 未注入、AC_RELAY_BASE_URL 被
   // --define 内联为中转站直连地址。历史上 relayBaseUrl() 兜底让连通测试把网关
   // JWT 打到中转站、恒 401 误报「凭证已失效」——普通测试环境两个 base 同值测不
   // 出分歧，故此处改写 env 并锁完整 URL（fetch 已被 stub 替换，无真实网络）。
+  // 期望基址 = 网关占位回落（provider-models.ts 常量）：真实域名由打包构建读
+  // infra-urls.local.txt 经 --define 注入，不入库；锁占位基址同时证明没打 relay 内联值。
   const savedGateway = process.env.AC_MEMBER_GATEWAY_BASE_URL;
   const savedRelay = process.env.AC_RELAY_BASE_URL;
   delete process.env.AC_MEMBER_GATEWAY_BASE_URL;
@@ -237,7 +239,7 @@ test("testMemberConnection must hit the member gateway, never the relay base", a
     const result = await memberAuth.testMemberConnection();
     assert.equal(result.ok, true);
     assert.ok(
-      stub.urls[0]!.startsWith("https://token.gearclickist.com:8443/member/v1/"),
+      stub.urls[0]!.startsWith("https://member-gateway.example.invalid:8443/member/v1/"),
       `member gateway base expected, got: ${stub.urls[0]}`,
     );
   } finally {

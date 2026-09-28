@@ -80,3 +80,6 @@ webapp/coach-runtime/relay-base-url.local.txt
 
 # wrangler 本地状态缓存（ac-downloads Worker，0918）
 ac-downloads-worker/.wrangler/
+
+# 构建期注入值（开源仓库不含真实会员/联盟域名，见 next.config.ts / build-windows-runtime.ps1 / docs/DEVELOPMENT.md）
+infra-urls.local.txt
