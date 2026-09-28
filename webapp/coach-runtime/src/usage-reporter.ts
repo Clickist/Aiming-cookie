@@ -18,7 +18,7 @@
  */
 
 import { ACCOUNTS_BASE_URL, memberFixtureActive, storedMemberJwt } from "./member-auth.ts";
-import { relayBaseUrl } from "./provider-models.ts";
+import { MEMBER_GATEWAY_BASE_URL } from "./provider-models.ts";
 
 /** 中转站计费换算刻度（契约 §0：500,000 quota = 1 单位）。 */
 export const QUOTA_PER_UNIT = 500_000;
@@ -62,8 +62,10 @@ async function fetchBillingRemaining(jwt: string): Promise<number | null> {
   const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   timeout.unref?.();
   try {
-    // relayBaseUrl() 已带 /v1（会员档端点口径，provider-models.ts）。
-    const response = await fetch(`${relayBaseUrl()}/dashboard/billing/subscription`, {
+    // 计费查询走会员网关（member-gateway.example.invalid:8443/member/v1），JWT 是网关签发的：
+    // relayBaseUrl() 被构建期 --define 内联为中转站直连地址，JWT 查它必 401（0928 实测）。
+    const billingBase = (process.env.AC_MEMBER_GATEWAY_BASE_URL ?? MEMBER_GATEWAY_BASE_URL).replace(/\/+$/, "");
+    const response = await fetch(`${billingBase}/dashboard/billing/subscription`, {
       headers: { Authorization: `Bearer ${jwt}` },
       signal: controller.signal,
     });
