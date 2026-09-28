@@ -1,16 +1,62 @@
 {
   "versions": [
-    { "version": "1.3.0", "date": "2026-09-26", "items": [
-      { "type": "new", "zh": "自定义知识库——导入第三方知识包，训练讲解随包更新", "en": "Custom knowledge packs — import third-party packs, coaching notes update with them" },
-      { "type": "new", "zh": "更新公告——升级后第一时间告诉你这次更新了什么", "en": "Release notes — see what's new right after each update" },
-      { "type": "imp", "zh": "错误提示与界面细节改进", "en": "Clearer error messages and UI polish" }
-    ]},
-    { "version": "1.2.2", "date": "2026-09-18", "items": [
-      { "type": "fix", "zh": "顶栏讨论条防遮挡三键", "en": "Top-bar discussion chips no longer overlap the three window buttons" },
-      { "type": "imp", "zh": "安装与更新流程稳定性", "en": "More stable install and update flow" }
-    ]},
-    { "version": "1.2.1", "date": "2026-09-14", "items": [
-      { "type": "new", "zh": "官方场景库搜索（17.5 万场景模糊匹配）", "en": "Official scenario library search (fuzzy match across 175k scenarios)" }
-    ]}
+    {
+      "version": "1.3.0",
+      "date": "2026-09-28",
+      "items": [
+        {
+          "type": "new",
+          "zh": "自定义数据存储位置——录像与遥测可一键迁到非系统盘，C 盘不再被占满",
+          "en": "Custom data location — move recordings and telemetry off your system drive"
+        },
+        {
+          "type": "new",
+          "zh": "用户中心新增「调用记录」——每次 AI 调用的时间、模型与 token 用量一目了然",
+          "en": "Usage records in Account Center — time, model and tokens for every AI call"
+        },
+        {
+          "type": "imp",
+          "zh": "长对话记忆修复——历史不丢、上下文更连贯、回复更省额度",
+          "en": "Long-conversation memory fix — full history retained with cache-backed replies"
+        },
+        {
+          "type": "fix",
+          "zh": "修复新对话快速连发消息被拆散到多个会话的问题",
+          "en": "Fixed rapid-fire messages in a new chat being split across sessions"
+        },
+        {
+          "type": "fix",
+          "zh": "修复连通测试误报「登录凭证已失效」的问题",
+          "en": "Fixed connection test falsely reporting expired credentials"
+        }
+      ]
+    },
+    {
+      "version": "1.2.2",
+      "date": "2026-09-18",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "顶栏讨论条防遮挡三键",
+          "en": "Top-bar discussion chips no longer overlap the three window buttons"
+        },
+        {
+          "type": "imp",
+          "zh": "安装与更新流程稳定性",
+          "en": "More stable install and update flow"
+        }
+      ]
+    },
+    {
+      "version": "1.2.1",
+      "date": "2026-09-14",
+      "items": [
+        {
+          "type": "new",
+          "zh": "官方场景库搜索（17.5 万场景模糊匹配）",
+          "en": "Official scenario library search (fuzzy match across 175k scenarios)"
+        }
+      ]
+    }
   ]
 }
