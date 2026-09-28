@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import config, queue
+from . import config, queue, storage_path_rewrite
 from .auth import require_desktop_token
 from .health import router as health_router
 from .routes import router
@@ -30,6 +31,13 @@ def normalize_locale_header(value: str | None) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时执行 reconciliation（DB schema 初始化已移除）。"""
+    # 存储迁移后的库内绝对路径一次性重写（0929 真机 40 行断链的永久机制）。
+    # 必须在对外服务前完成；fail-soft，结果只进日志。
+    rewrite_status = await asyncio.to_thread(
+        storage_path_rewrite.run_startup_path_rewrite
+    )
+    if rewrite_status:
+        log.info("storage path rewrite: %s", rewrite_status)
     reconciliation = await queue.reconcile_analysis_deletions()
     error_code = (
         "workspace_cleanup_failed"
