@@ -28,23 +28,26 @@ function writeMemberState(pending: { device_code: string; login_url: string; sta
 
 const JWT = "eyJhbGciOiJIUzI1NiJ9.stub.signature";
 
-/** 账号服务 stub：按路径给 JSON，记录调用次数。 */
+/** 账号服务 stub：按路径给 JSON，记录调用次数与完整 URL（供基址断言）。 */
 function stubAccounts(routes: Record<string, { status: number; body: unknown }>): {
   calls: string[];
+  urls: string[];
   restore: () => void;
 } {
   const calls: string[] = [];
+  const urls: string[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const path = new URL(url).pathname;
     calls.push(path);
+    urls.push(url);
     const hit = routes[path];
     const status = hit ? hit.status : 404;
     const body = hit ? hit.body : { error: { code: "not_found", message: "no route" } };
     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return { calls, urls, restore: () => { globalThis.fetch = original; } };
 }
 
 const START_BODY = {
@@ -215,6 +218,34 @@ test("testMemberConnection maps 401 to the re-login branch and 5xx to unreachabl
     } finally {
       stub.restore();
     }
+  }
+});
+
+test("testMemberConnection must hit the member gateway, never the relay base", async () => {
+  resetDataRoot();
+  memberAuth.storeMemberJwt(JWT);
+  // 模拟打包构建环境：AC_MEMBER_GATEWAY_BASE_URL 未注入、AC_RELAY_BASE_URL 被
+  // --define 内联为中转站直连地址。历史上 relayBaseUrl() 兜底让连通测试把网关
+  // JWT 打到中转站、恒 401 误报「凭证已失效」——普通测试环境两个 base 同值测不
+  // 出分歧，故此处改写 env 并锁完整 URL（fetch 已被 stub 替换，无真实网络）。
+  const savedGateway = process.env.AC_MEMBER_GATEWAY_BASE_URL;
+  const savedRelay = process.env.AC_RELAY_BASE_URL;
+  delete process.env.AC_MEMBER_GATEWAY_BASE_URL;
+  process.env.AC_RELAY_BASE_URL = "http://relay-station-direct.example";
+  const stub = stubAccounts({ "/member/v1/models": { status: 200, body: { data: [] } } });
+  try {
+    const result = await memberAuth.testMemberConnection();
+    assert.equal(result.ok, true);
+    assert.ok(
+      stub.urls[0]!.startsWith("https://token.gearclickist.com:8443/member/v1/"),
+      `member gateway base expected, got: ${stub.urls[0]}`,
+    );
+  } finally {
+    stub.restore();
+    if (savedGateway === undefined) delete process.env.AC_MEMBER_GATEWAY_BASE_URL;
+    else process.env.AC_MEMBER_GATEWAY_BASE_URL = savedGateway;
+    if (savedRelay === undefined) delete process.env.AC_RELAY_BASE_URL;
+    else process.env.AC_RELAY_BASE_URL = savedRelay;
   }
 });
 

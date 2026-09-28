@@ -23,7 +23,6 @@ import {
   AIMING_COOKIE_RELAY_MODEL_ID,
   AIMING_COOKIE_RELAY_PROVIDER_ID,
   MEMBER_GATEWAY_BASE_URL,
-  relayBaseUrl,
 } from "./provider-models.ts";
 import {
   findStoredProfile,
@@ -543,10 +542,14 @@ export async function testMemberConnection(): Promise<
   const jwt = storedMemberJwt();
   if (!jwt) return { ok: false, code: "unauthorized", message: "没有可用的登录凭证。" };
   try {
+    // 网关连通测试只能打会员网关（JWT 是网关签发的）。不能用 relayBaseUrl()：
+    // 打包构建用 --define 把 process.env.AC_RELAY_BASE_URL 内联为中转站直连地址，
+    // 网关 JWT 打中转站必 401 → 恒误报「凭证已失效」（0928 usage-reporter 同族坑）。
+    const gatewayBase = (process.env.AC_MEMBER_GATEWAY_BASE_URL ?? MEMBER_GATEWAY_BASE_URL).replace(/\/+$/, "");
     const { status } = await requestJson("/models", {
       method: "GET",
       headers: { Authorization: `Bearer ${jwt}` },
-      baseUrl: relayBaseUrl() || MEMBER_GATEWAY_BASE_URL,
+      baseUrl: gatewayBase,
     });
     if (status === 401) return { ok: false, code: "unauthorized", message: "登录凭证已失效，请重新登录。" };
     if (status < 200 || status >= 300) {
