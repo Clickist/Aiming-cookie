@@ -288,10 +288,7 @@ fn resized_video_degraded_status(
     Some(CaptureCoordinatorStatus {
         video: CaptureSourceStatus {
             state: CaptureSourceState::Degraded,
-            reason: Some(
-                "capture_resized_unsupported: recording pipeline is fixed to the capture session start size"
-                    .to_string(),
-            ),
+            reason: Some("capture_resized_unsupported".to_string()),
         },
         ..current.clone()
     })
