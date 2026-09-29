@@ -1441,7 +1441,10 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		// DeepSeek 官方端点不接受 `developer` 角色（HTTP 422 unknown variant，
+		// 2026-09-24 GitHub issue #2）：即便被判为"标准端点"，系统提示词也必须回落 system。
+		supportsDeveloperRole:
+			isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter && !isDeepSeek),
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
