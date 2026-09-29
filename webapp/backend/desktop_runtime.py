@@ -403,6 +403,30 @@ def persist_kovaak_ingestion_diagnostics(
     file_store.write_json("diagnostics/kovaak-watcher.json", snapshot)
 
 
+def attempt_kovaak_watcher_self_heal(
+    ingestion_service: kovaak_ingest.KovaaKIngestionService,
+) -> bool:
+    """Rebuild watchers from freshly resolved directories (zero-watchers self-heal).
+
+    Caller gates on ``watcher_count == 0``; startup-time directory resolution
+    may fail transiently (e.g. Steam updating KovaaK) and never retries on its
+    own. Confirmed directories keep their built-in priority inside
+    ``resolve_kovaak_data_dir_candidates``.
+    """
+    stats_dirs, performance_dirs = config.resolve_kovaak_data_dir_candidates()
+    if not stats_dirs and not performance_dirs:
+        return False
+    # source 与启动路径的 automatic 语义保持一致。
+    ingestion_service.reconfigure(
+        stats_dirs, performance_dirs, source="automatic",
+    )
+    log.info(
+        "KovaaK ingestion watcher self-healed watcher_count=%s",
+        ingestion_service.watcher_count,
+    )
+    return True
+
+
 async def monitor_kovaak_ingestion_diagnostics(
     ingestion_service: kovaak_ingest.KovaaKIngestionService,
     stop_event: asyncio.Event,
@@ -436,6 +460,20 @@ async def monitor_kovaak_ingestion_diagnostics(
                 )
             except Exception:
                 log.exception("Periodic KovaaK stats export recheck failed")
+            if ingestion_service.watcher_count == 0:
+                # 启动时目录解析可能因环境原因短暂失败（如 Steam 更新中），
+                # zero watchers 后不会自愈；这里按同一节流周期重试解析，
+                # 恢复后重建 watcher。幂等：watcher 已 >0 时只空转本次检查。
+                # fail-soft：失败只记日志，下个周期再试，不中断周期任务。
+                try:
+                    # 目录解析与 reconfigure 都是阻塞调用，放线程避免卡住事件循环。
+                    await asyncio.to_thread(
+                        attempt_kovaak_watcher_self_heal, ingestion_service,
+                    )
+                except Exception as error:
+                    log.warning(
+                        "KovaaK ingestion watcher self-heal failed: %s", error,
+                    )
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=5.0)
         except asyncio.TimeoutError:

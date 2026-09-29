@@ -790,7 +790,7 @@ async def test_diagnostics_monitor_rechecks_kovaak_export_settings(
     calls: list[str] = []
 
     class FakeIngestionService:
-        pass
+        watcher_count = 1
 
     async def fake_expire(_user_id: str) -> list[int]:
         return []
@@ -828,6 +828,139 @@ async def test_diagnostics_monitor_rechecks_kovaak_export_settings(
                 break
             await asyncio.sleep(0.01)
         assert calls == ["None"]
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_monitor_self_heals_zero_watchers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """启动时目录解析失败留下 zero watchers，恢复后按周期自愈重建（只重建一次）。"""
+    stop = asyncio.Event()
+    reconfigure_calls: list[tuple[list[Path], list[Path], str]] = []
+
+    class FakeIngestionService:
+        watcher_count = 0
+
+        def reconfigure(
+            self,
+            stats_dirs: list[Path],
+            performance_dirs: list[Path],
+            *,
+            source: str,
+        ) -> bool:
+            reconfigure_calls.append(
+                (list(stats_dirs), list(performance_dirs), source),
+            )
+            self.watcher_count = 2
+            return True
+
+    async def fake_expire(_user_id: str) -> list[int]:
+        return []
+
+    monkeypatch.setattr(desktop_runtime, "KOVAAK_EXPORT_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_run_store,
+        "expire_stale_pending_runs",
+        fake_expire,
+    )
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_stats_export_setup,
+        "ensure_kovaak_stats_export",
+        lambda _install_root: "already_ok",
+    )
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "resolve_kovaak_install_dir",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "resolve_kovaak_data_dir_candidates",
+        lambda: (
+            [Path("C:/kovaak/FPSAimTrainer/stats")],
+            [Path("C:/kovaak/FPSAimTrainer/performances")],
+        ),
+    )
+
+    service = FakeIngestionService()
+    task = asyncio.create_task(
+        desktop_runtime.monitor_kovaak_ingestion_diagnostics(service, stop),
+    )
+    try:
+        for _ in range(200):
+            if reconfigure_calls:
+                break
+            await asyncio.sleep(0.01)
+        assert reconfigure_calls == [(
+            [Path("C:/kovaak/FPSAimTrainer/stats")],
+            [Path("C:/kovaak/FPSAimTrainer/performances")],
+            "automatic",
+        )]
+        # 重建后 watcher_count > 0：后续周期必须空转，不得重复重建。
+        await asyncio.sleep(0.05)
+        assert len(reconfigure_calls) == 1
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_monitor_self_heal_failure_is_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """自愈时目录解析仍失败：不抛异常、不重建，周期任务继续存活。"""
+    stop = asyncio.Event()
+
+    class FakeIngestionService:
+        watcher_count = 0
+
+        def reconfigure(self, *_args, **_kwargs) -> bool:
+            raise AssertionError("reconfigure must not be called")
+
+    async def fake_expire(_user_id: str) -> list[int]:
+        return []
+
+    monkeypatch.setattr(desktop_runtime, "KOVAAK_EXPORT_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_run_store,
+        "expire_stale_pending_runs",
+        fake_expire,
+    )
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_stats_export_setup,
+        "ensure_kovaak_stats_export",
+        lambda _install_root: "already_ok",
+    )
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "resolve_kovaak_install_dir",
+        lambda: None,
+    )
+
+    def still_failing() -> tuple[list[Path], list[Path]]:
+        raise OSError("libraryfolders.vdf unavailable")
+
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "resolve_kovaak_data_dir_candidates",
+        still_failing,
+    )
+
+    task = asyncio.create_task(
+        desktop_runtime.monitor_kovaak_ingestion_diagnostics(
+            FakeIngestionService(), stop,
+        )
+    )
+    try:
+        # 走过至少一个自愈周期且循环未被杀死。
+        for _ in range(200):
+            if task.done():
+                break
+            await asyncio.sleep(0.01)
+        assert not task.done()
     finally:
         stop.set()
         await asyncio.wait_for(task, timeout=2)
