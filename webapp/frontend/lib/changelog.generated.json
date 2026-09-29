@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.3.1",
+      "date": "2026-09-29",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复训练途中调整窗口大小后，之后所有对局都无法分析的问题",
+          "en": "Fixed all later runs failing to analyze after resizing the game window mid-session"
+        },
+        {
+          "type": "fix",
+          "zh": "修复 Steam 正在更新 KovaaK 时启动本软件，导致对局记录丢失的问题",
+          "en": "Fixed run tracking going silent when the app starts while Steam is updating KovaaK"
+        }
+      ]
+    },
+    {
       "version": "1.3.0",
       "date": "2026-09-28",
       "items": [
