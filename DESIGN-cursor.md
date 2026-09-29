@@ -42,7 +42,7 @@ The executable scales and usage rules live in `docs/design-system.md` and are en
 - Geometry: six-step type scale (`--text-micro..display`), four-step radius scale (`--radius-sm..xl`; xl=16 is the chat-bubble pill tier from frontend-parity digests §8), 4px spacing grid, two control heights (36/32). Components invent no one-off sizes.
 - Primary stays scarce: true CTAs and `:focus-visible` only. Identity, selection, hover, and badges ride the neutral surface ladder; informational/busy states use tertiary; success reads as event-kill text; `event-*` colors mark data only.
 - Motion: three transition durations (150ms state, 200ms open/close, 300ms panel) plus the 120ms reduced-motion override, one easing family. Loops (loading pulses, caret blink) are exempt.
-- Depth: two shadow tokens (a general overlay shadow and a menu shadow) and one focus ring token; elevation otherwise comes from surface steps and hairlines.
+- Depth: three shadow tokens (a general overlay shadow, a menu shadow, and a black-based lifted shadow for floating cards that must not bloom in dark theme) and one focus ring token; elevation otherwise comes from surface steps and hairlines.
 
 ### Theme behavior
 

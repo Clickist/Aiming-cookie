@@ -41,6 +41,8 @@ test("更新公告卡样式：only semantic tokens（无裸色值），reduced-m
   const styles = await source("components/task3/task3.css");
   const notice = styles.slice(styles.indexOf(".task3-release-notice"));
   assert.match(notice, /\.task3-release-notice \{[\s\S]*?position:\s*fixed/);
+  assert.match(notice, /box-shadow:\s*var\(--shadow-lifted\)/);
+  assert.doesNotMatch(notice.slice(0, 400), /--shadow-overlay/);
   assert.match(notice, /animation: task3-release-notice-in var\(--duration-surface\) var\(--ease-out\)/);
   assert.match(styles, /@keyframes task3-release-notice-in[\s\S]*?opacity:\s*0;[\s\S]*?translateY\(12px\)/);
   const reduced = styles.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/);

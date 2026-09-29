@@ -194,6 +194,7 @@ test("shared motion uses the approved curves and accessible press feedback", () 
   assert.match(css, /--duration-surface:\s*200ms/);
   assert.match(css, /--duration-reduced-motion:\s*120ms/);
   assert.match(css, /--shadow-overlay:\s*0 8px 24px color-mix\(in srgb, var\(--on-surface\) 14%, transparent\)/);
+  assert.match(css, /--shadow-lifted:\s*0 12px 28px color-mix\(in srgb, black 38%, transparent\)/);
   assert.match(css, /--ring:\s*0 0 0 3px var\(--primary-container\)/);
   assert.match(css, /\.ac-button:active[^}]+\.ac-icon-button:active[^}]+transform:\s*scale\(0\.97\)/s);
   assert.match(css, /prefers-reduced-motion:\s*reduce[\s\S]+transition-property:\s*opacity, color, background-color, border-color/);

@@ -6,6 +6,11 @@
       "items": [
         {
           "type": "fix",
+          "zh": "兼容部分 AMD 老显卡——视频录制初始化失败时自动切换软件编码，不再整体失效",
+          "en": "Compatibility fix for some older AMD GPUs — recording now falls back to software encoding instead of failing entirely"
+        },
+        {
+          "type": "fix",
           "zh": "修复训练途中调整窗口大小后，之后所有对局都无法分析的问题",
           "en": "Fixed all later runs failing to analyze after resizing the game window mid-session"
         },

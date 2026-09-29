@@ -884,7 +884,13 @@ impl CaptureCoordinatorState {
             return;
         }
         if let Err(error) = self.raw_input.set_enabled(true) {
-            let reason = format!("raw_input_unavailable: {}", bounded_diagnostic_text(&error));
+            // reason 只放纯错误码（Python 控制面合同 ^[a-z][a-z0-9_]{0,63}$），
+            // 人类可读细节进 native 日志，不得拼进 reason（0929 合同违规整改）。
+            crate::dlog!(
+                "[capture-coordinator] raw input enable failed: {}",
+                bounded_diagnostic_text(&error)
+            );
+            let reason = "raw_input_unavailable".to_string();
             self.replace_status(CaptureCoordinatorStatus {
                 enabled: true,
                 phase: CapturePhase::Error,
@@ -936,10 +942,15 @@ impl CaptureCoordinatorState {
                 },
             }),
             Err(error) => {
-                let reason = format!(
-                    "video_capture_unavailable: {}",
+                // reason 只放纯错误码（Python 控制面合同 ^[a-z][a-z0-9_]{0,63}$），
+                // 人类可读细节进 native 日志，不得拼进 reason（0929 合同违规整改：
+                // 带文案 reason 曾使后端判 schema_invalid，连锁导致死会话不释放、
+                // 后续每局视频轨迹全灭）。
+                crate::dlog!(
+                    "[capture-coordinator] window capture start failed: {}",
                     bounded_diagnostic_text(&error)
                 );
+                let reason = "video_capture_unavailable".to_string();
                 self.replace_status(CaptureCoordinatorStatus {
                     enabled: true,
                     phase: CapturePhase::Degraded,
@@ -2373,5 +2384,28 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn coordinator_reason_codes_stay_machine_readable() {
+        // 0929 合同违规整改的回归锁：Python 控制面校验器要求 reason 是纯
+        // snake_case 错误码（^[a-z][a-z0-9_]{0,63}$）。带文案的拼接 reason
+        // 曾使后端判 schema_invalid，连锁导致死会话不释放、后续每局视频
+        // 轨迹全灭（线上报障）。禁止这两个 code 再以 format! 拼接形态出现。
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/capture_coordinator.rs"
+        ))
+        .expect("read own source");
+        assert!(
+            !source.contains("format!(\"raw_input_unavailable"),
+            "raw_input_unavailable reason must stay a bare code (no message suffix)"
+        );
+        assert!(
+            !source.contains("format!(\"video_capture_unavailable"),
+            "video_capture_unavailable reason must stay a bare code (no message suffix)"
+        );
+        assert!(source.contains("\"raw_input_unavailable\".to_string()"));
+        assert!(source.contains("\"video_capture_unavailable\".to_string()"));
     }
 }

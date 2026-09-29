@@ -11,6 +11,11 @@
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-fast: 150ms;
   --shadow-overlay: 0 8px 24px color-mix(in srgb, var(--on-surface) 14%, transparent);
+  /* 悬浮卡下沉影（0929 点点拍板）：黑系下坠投影——shadow-overlay 的 on-surface
+     色混在深色主题下是浅色辉散，右下浮层卡片用它四周泛白光像发光；黑系影
+     两主题下都是自然悬浮影，上/左/右无辉散。物理投影非主题颜色角色，
+     不进 tokens.ts 双主题表，恒定 black。 */
+  --shadow-lifted: 0 12px 28px color-mix(in srgb, black 38%, transparent);
   --ring: 0 0 0 3px var(--primary-container);
   /* frontend-parity digests §9 的六枚 token 缺口（本文件只承载派生/规格型五枚；
      颜色角色 --ring-color 与其它语义色一起住在 ui/tokens.ts 双主题表中）。

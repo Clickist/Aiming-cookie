@@ -1184,7 +1184,7 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   border-radius: var(--radius-lg);
   background: var(--surface-container-high);
   color: var(--on-surface);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-lifted);
   animation: task3-release-notice-in var(--duration-surface) var(--ease-out);
 }
 

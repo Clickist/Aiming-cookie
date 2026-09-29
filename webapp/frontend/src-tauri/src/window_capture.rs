@@ -4057,6 +4057,20 @@ enum AutomaticH264Encoder {
     Software(SoftwareH264Encoder),
 }
 
+/// 硬编装配失败中允许降级到软件编码的类别。GPU 转换装配失败（部分 AMD 老
+/// 驱动对 NV12+RENDER_TARGET+VIDEO_ENCODER 纹理组合返回 E_INVALIDARG）自
+/// 0929 起同列：软编走 staging BGRA 读回，不依赖该转换（线上报障原路径
+/// 整体失败导致录制永远不可用）。
+#[cfg(windows)]
+fn encoder_failure_allows_software_fallback(failure: HardwareEncoderFailure) -> bool {
+    matches!(
+        failure,
+        HardwareEncoderFailure::HardwareUnavailable
+            | HardwareEncoderFailure::AdapterMismatch
+            | HardwareEncoderFailure::GpuConversionFailure
+    )
+}
+
 #[cfg(windows)]
 impl AutomaticH264Encoder {
     fn new(
@@ -4077,15 +4091,11 @@ impl AutomaticH264Encoder {
         }
         match HardwareH264Encoder::new(device, context, width, height, Arc::clone(&queue)) {
             Ok(encoder) => Ok(Self::Hardware(encoder)),
-            // 硬件编码器不可用（两级硬件枚举都为空）或全局枚举有编码器但
-            // 都不匹配采集适配器（hybrid 机器）时回退软件编码；其余装配
-            // 错误保持原样上报。
+            // 硬件编码器不可用（两级硬件枚举都为空）、全局枚举有编码器但
+            // 都不匹配采集适配器（hybrid 机器）、或 GPU 侧转换装配失败时
+            // 回退软件编码；其余装配错误保持原样上报。
             Err(error)
-                if matches!(
-                    error.failure,
-                    HardwareEncoderFailure::HardwareUnavailable
-                        | HardwareEncoderFailure::AdapterMismatch
-                ) =>
+                if encoder_failure_allows_software_fallback(error.failure) =>
             {
                 Ok(Self::Software(SoftwareH264Encoder::new(
                     device, context, width, height, queue,
@@ -6843,6 +6853,21 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn gpu_conversion_failure_falls_back_to_software_encoder() {
+        // 0929 线上报障回归锁：GPU 侧转换装配失败（AMD 老驱动 NV12 纹理
+        // E_INVALIDARG）必须降级软件编码，不得整体失败。
+        assert!(encoder_failure_allows_software_fallback(
+            HardwareEncoderFailure::GpuConversionFailure
+        ));
+        assert!(encoder_failure_allows_software_fallback(
+            HardwareEncoderFailure::HardwareUnavailable
+        ));
+        assert!(encoder_failure_allows_software_fallback(
+            HardwareEncoderFailure::AdapterMismatch
+        ));
+    }
+
     #[test]
     fn force_software_encoder_env_selects_software_path() {
         use windows::Win32::Foundation::HMODULE;
