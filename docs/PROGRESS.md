@@ -1,6 +1,19 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-09-20. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-09-21. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-09-21 — i18n 双语收官：英文体验全链可用（前端 1359+53 键/侧 + 后端三波）
+
+一天内完成「完整英文体验」（点点拍板）全部可自主施工的部分，19 个 commit（`209e782`..`5c98060`，含双语 README）。架构决策（点点拍板）：**自建轻量字典**（无第三方 i18n 库，静态导出单页用不上路由级 i18n）；**知识库 921 条不翻**（教练读中文库、按语言转述，跨语言 RAG 标准做法）；**教练语言与提示词解耦**——语言指令块恒定注入、跟随用户消息语言，不维护英文提示词全家桶。
+
+- **前端（批 0-5 + 收尾）**：字典底座 `lib/i18n/`（zh-CN 源语言 / en-US `satisfies` 编译期键校验 / `t()` 插值 / `useT()` 静态导出水合安全），分片机制支撑多批并行施工；55 个含中文源文件全量抽取 **1359 键/侧** + 错误码 53 键；设置页语言切换（两档单选、即时生效+持久化）、**首次启动按系统语言预选**（zh*→中文/其余→英文，手动选择后不再跟随）、4 处日期格式随 locale。
+- **耦合雷全拆**：capture-events 显示词枚举化（`CaptureEvidenceStatus`）、「新对话」跨层哨兵常量化、kovaak feedback tone 结构化、CoachPanel:104 中文标点字符串手术改插值、contracts.ts 对后端文本的中文正则分类改稳定键、RSC import 红线（Server Component 直连 core）。
+- **后端**：X-Locale 管道（前端→Python→coach-runtime，RunRecord 带 locale）；**104 条报错错误码化**（api 层 code 优先查字典，老客户端 message 兼容通道保留）；**诊断/指标文案双语目录化**（82 指标×2 语言、mapping 官方 en 变体、labels 目录、训练卡/timeline/warnings 双目录；worker 落盘带 locale，**结果语言=生成时语言，读侧不回翻**）；教练语言指令块（含 24 条术语中英映射）+ teaching-policy 双语校验 + timepoints/rich-text 英文解析 + intro 开场与会话自动命名跟随消息语言 + 兜底话术双目录。
+- **Rust/NSIS**：invoke 错误码化 8 码（与 `lib/desktop.ts` 重复文案定单一事实源）；安装器 LangString 双语（跟随系统语言，SimpChinese 为回落档）。
+
+测试基线（收盘实测）：pytest **1621 过 / 5 跳**；coach-runtime **470 过 / 2 跳**；前端 unit **185** + contracts **349**，tsc 0 错；Rust **139 过**。安装包 `Aiming Cookie_1.2.5_x64-setup.exe`（09-21 00:21 重打，含全量改动）已产出，待点点真机验收。
+
+遗留（未做/待拍板）：e2e 全量 28 个失败均为 09-06~09-13 界面改版后的过期基线（独立工单；i18n 改动已逐条洗清，且顺手修复了 fixtures bridge 被 esbuild `__name` 注入破坏的基建断裂）；真实 LLM 英文会话冒烟待真机走查；安装器双语未做双系统实机安装；第三方知识包（pack 模式）诊断 copy 保持 zh 语料（与 registry 同口径，拍板跳过，前端 `presentDisplayText` 已透传）。
 
 ## 2026-09-20 — 知识库 SDK 一期收官（16 包完工 + 深夜 review 修复）
 

@@ -57,6 +57,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - **Button patterns:** 交互按钮统一走 ac-button 形态——高度/圆角/字重用 token；hover：填充变体（primary/danger）`color-mix 90% 暗化`，ghost/默认升一档 surface；active `translateY(1px)`；disabled `opacity: 0.55`；`:focus-visible` 2px primary outline（光环 `--ring`）。
 - **Border semantics:** 分界线与面板边 = 1px `outline-variant`；强调/选中边框 = `outline`；边框不承担 hover 强调（hover 走 surface 阶梯）。
 - **Accessibility:** 正文、状态、图表标注、focus 和 disabled 状态在两种主题下都需可读；颜色不能作为唯一信息载体。
+- **Localization（i18n，2026-09-21 落地）:** UI 文案一律经 `lib/i18n/` 字典（`t()` / `useT()`），组件里不得直接写中文或任何语言的字面量。zh-CN 是源语言与默认 locale，en-US 由 `satisfies Record<MessageKey, string>` 在编译期强制逐键对齐。新键按批次写入 `lib/i18n/dict/<批>.zh.ts` 与 `<批>.en.ts`（双侧同步，只填一侧 tsc 直接红），聚合文件（`zh-CN.ts` / `en-US.ts`）只做机械 spread。**Server Component（layout/metadata 层）必须直连 `@/lib/i18n/core`**，不得走 `@/lib/i18n` barrel——barrel 携带 hooks，会连带进 RSC 编译图导致构建失败。带语言的内容**不得被 `useMemo` 空依赖缓存**（会把挂载时的语言定格；应直调或把 locale 放进依赖）。豁免面：源码注释、LLM 输出、后端透传 message、知识库语料。语言决策：UI 语言跟设置（首次启动按系统语言预选，手动选择后不再跟随）；**教练回复语言跟随用户消息语言**（提示词侧语言指令块恒定注入，不维护多语言提示词）；后端结果语言＝生成时语言（读侧不回翻）。施工手册见 `.zcode/i18n-conventions.md`。
 
 ## 5. Component governance
 
