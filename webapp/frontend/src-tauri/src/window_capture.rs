@@ -4528,6 +4528,224 @@ fn run_mp4_writer(
     Ok(())
 }
 
+/// 一次成功的 WGC 会话启动产物：默认适配器路径与逐适配器重试路径共用，
+/// 解构后 device/context/size/frame_pool/session 交给既有录制管线。
+#[cfg(windows)]
+struct WgcSessionStart {
+    device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    direct3d_device: windows::Graphics::DirectX::Direct3D11::IDirect3DDevice,
+    item: windows::Graphics::Capture::GraphicsCaptureItem,
+    size: windows::Graphics::SizeInt32,
+    frame_pool: windows::Graphics::Capture::Direct3D11CaptureFramePool,
+    session: windows::Graphics::Capture::GraphicsCaptureSession,
+}
+
+/// 链上单步错误：WinRT/D3D 调用携带原始 error（供 HRESULT 判定），纯校验类
+/// 失败（如窗口尺寸非法）携带文案。
+#[cfg(windows)]
+enum WgcStepError {
+    Win(windows::core::Error),
+    Msg(String),
+}
+
+#[cfg(windows)]
+impl std::fmt::Display for WgcStepError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WgcStepError::Win(error) => write!(formatter, "{error}"),
+            WgcStepError::Msg(message) => write!(formatter, "{message}"),
+        }
+    }
+}
+
+/// 仅 E_INVALIDARG 族触发逐适配器重试：0x80070057 = E_INVALIDARG，
+/// 0xC000000D = STATUS_INVALID_PARAMETER（28000 Insider 上
+/// CreateCaptureSession 观察到的原始 NTSTATUS 形态）。
+#[cfg(windows)]
+fn wgc_step_error_is_invalid_parameter(error: &WgcStepError) -> bool {
+    match error {
+        WgcStepError::Win(error) => {
+            let code = error.code().0 as u32;
+            code == 0x8007_0057 || code == 0xC000_000D
+        }
+        WgcStepError::Msg(_) => false,
+    }
+}
+
+/// 在给定 D3D 设备上走完 item → frame pool → session 启动链。任一步失败
+/// 返回（步骤名, 错误），中间产物靠 drop 释放，调用方可换设备整链重试。
+#[cfg(windows)]
+fn try_start_wgc_with_device(
+    hwnd: usize,
+    device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+) -> Result<WgcSessionStart, (String, WgcStepError)> {
+    use windows::core::Interface;
+    use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
+    use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
+    use windows::Graphics::DirectX::DirectXPixelFormat;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+
+    let step = |name: &str, error: WgcStepError| (name.to_string(), error);
+
+    let dxgi_device = device
+        .cast::<windows::Win32::Graphics::Dxgi::IDXGIDevice>()
+        .map_err(|error| step("IDXGIDevice cast", WgcStepError::Win(error)))?;
+    let inspectable = unsafe {
+        windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice(
+            &dxgi_device,
+        )
+    }
+    .map_err(|error| step("CreateDirect3D11DeviceFromDXGIDevice", WgcStepError::Win(error)))?;
+    let direct3d_device: IDirect3DDevice = inspectable
+        .cast()
+        .map_err(|error| step("IDirect3DDevice cast", WgcStepError::Win(error)))?;
+    let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
+        .map_err(|error| step("GraphicsCaptureItem factory", WgcStepError::Win(error)))?;
+    let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(HWND(hwnd as *mut _)) }
+        .map_err(|error| step("CreateForWindow", WgcStepError::Win(error)))?;
+    let size = item
+        .Size()
+        .map_err(|error| step("capture item size", WgcStepError::Win(error)))?;
+    if size.Width <= 0 || size.Height <= 0 {
+        return Err(step(
+            "capture window size check",
+            WgcStepError::Msg("capture window has an invalid size".to_string()),
+        ));
+    }
+    let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+        &direct3d_device,
+        DirectXPixelFormat::B8G8R8A8UIntNormalized,
+        // 4 个 buffer：软编路径编码期间持有帧表面，2 buffer 会让 WGC
+        // 帧池枯竭、实际送达率被编码时长封顶（2026-08-21 实测 ~6fps）。
+        4,
+        size,
+    )
+    .map_err(|error| {
+        step(
+            "Direct3D11CaptureFramePool::CreateFreeThreaded",
+            WgcStepError::Win(error),
+        )
+    })?;
+    let session = frame_pool
+        .CreateCaptureSession(&item)
+        .map_err(|error| step("CreateCaptureSession", WgcStepError::Win(error)))?;
+    Ok(WgcSessionStart {
+        device,
+        context,
+        direct3d_device,
+        item,
+        size,
+        frame_pool,
+        session,
+    })
+}
+
+/// 默认设备报 E_INVALIDARG 后的兜底：枚举 DXGI 适配器，跳过 WARP/无驱动
+/// 适配器，逐个以 D3D_DRIVER_TYPE_UNKNOWN + 显式 adapter 重建设备整链
+/// 重试（ScreenRecorderLib #141 / WebRTC wgc_capturer_win.cc 同款）。
+/// E_INVALIDARG 换下一个适配器；非参数类错误视为环境级问题终止枚举。
+/// 返回的错误里带每个适配器的尝试结果，方便用户日志直接定位。
+#[cfg(windows)]
+fn try_start_wgc_with_enumerated_adapters(
+    hwnd: usize,
+    feature_levels: &[windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL],
+) -> Result<WgcSessionStart, String> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+        D3D11_SDK_VERSION,
+    };
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIFactory1, IDXGIAdapter, DXGI_ADAPTER_FLAG_SOFTWARE,
+    };
+    use windows::Win32::Foundation::HMODULE;
+
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }
+        .map_err(|error| format!("CreateDXGIFactory1 failed: {error}"))?;
+    let mut tried: Vec<String> = Vec::new();
+    let mut index = 0u32;
+    loop {
+        let adapter = match unsafe { factory.EnumAdapters1(index) } {
+            Ok(adapter) => adapter,
+            Err(_) => break, // DXGI_ERROR_NOT_FOUND：枚举结束
+        };
+        index += 1;
+        let desc = match unsafe { adapter.GetDesc1() } {
+            Ok(desc) => desc,
+            Err(error) => {
+                tried.push(format!("adapter[{index}] GetDesc1 failed: {error}"));
+                continue;
+            }
+        };
+        let name = String::from_utf16_lossy(&desc.Description)
+            .trim_end_matches('\0')
+            .to_string();
+        // 无驱动适配器（"Microsoft 基本显示适配器"）与 WARP 没有可用的硬件
+        // 设备，对它们整链重试只会复现同一错误。
+        if desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0
+            || desc.DedicatedVideoMemory == 0
+        {
+            tried.push(format!("{name}: skipped (software/no-driver adapter)"));
+            continue;
+        }
+        // D3D11CreateDevice 的参数绑定要基类接口 IDXGIAdapter。
+        let adapter_base: IDXGIAdapter = adapter
+            .cast()
+            .map_err(|error| format!("{name}: IDXGIAdapter cast failed: {error}"))?;
+        let mut device = None;
+        let mut context = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        let created = unsafe {
+            D3D11CreateDevice(
+                Some(&adapter_base),
+                D3D_DRIVER_TYPE_UNKNOWN,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                Some(feature_levels),
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                Some(&mut feature_level),
+                Some(&mut context),
+            )
+        };
+        let (device, context) = match created {
+            Ok(()) => match (device, context) {
+                (Some(device), Some(context)) => (device, context),
+                _ => {
+                    tried.push(format!("{name}: device creation returned no device"));
+                    continue;
+                }
+            },
+            Err(error) => {
+                tried.push(format!("{name}: device creation failed ({error})"));
+                continue;
+            }
+        };
+        match try_start_wgc_with_device(hwnd, device, context) {
+            Ok(started) => return Ok(started),
+            Err((step_name, error)) => {
+                let line = format!("{name}: {step_name} failed ({error})");
+                let retryable = wgc_step_error_is_invalid_parameter(&error);
+                tried.push(line);
+                if !retryable {
+                    // 设备/适配器身份之外的错误（窗口消失、帧池枯竭等）不是
+                    // 换适配器能解决的，终止并交出已尝试清单。
+                    break;
+                }
+            }
+        }
+    }
+    Err(if tried.is_empty() {
+        "no hardware adapter available to retry".to_string()
+    } else {
+        format!("tried: {}", tried.join("; "))
+    })
+}
+
 #[cfg(windows)]
 fn run_wgc_window_capture(
     hwnd: usize,
@@ -4540,12 +4758,8 @@ fn run_wgc_window_capture(
 ) -> Result<(), String> {
     use windows::core::{IInspectable, Interface};
     use windows::Foundation::TypedEventHandler;
-    use windows::Graphics::Capture::{
-        Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
-    };
-    use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
-    use windows::Graphics::DirectX::DirectXPixelFormat;
-    use windows::Win32::Foundation::{HMODULE, HWND};
+    use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureSession};
+    use windows::Win32::Foundation::HMODULE;
     use windows::Win32::Graphics::Direct3D::{
         D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0,
         D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
@@ -4554,7 +4768,6 @@ fn run_wgc_window_capture(
         D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
         D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
     };
-    use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
     use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
 
     if hwnd == 0 {
@@ -4572,68 +4785,94 @@ fn run_wgc_window_capture(
             );
         }
 
+        // 28000 Insider 上 CreateCaptureSession 报 E_INVALIDARG 的经典机理
+        // = D3D 设备所在适配器与采集目标所属适配器不一致（ScreenRecorderLib
+        // #141、Chromium wgc_capturer_win.cc 同款结论）。默认路径保持第一
+        // 优先（正式版行为零变化）；默认设备在会话创建处报 E_INVALIDARG
+        // 族错误时，再按 LUID 逐适配器显式重建设备重试。非参数类错误
+        // （设备创建失败、窗口无效等）不进重试环，直接终态。
         let feature_levels = [
             D3D_FEATURE_LEVEL_11_1,
             D3D_FEATURE_LEVEL_11_0,
             D3D_FEATURE_LEVEL_10_1,
             D3D_FEATURE_LEVEL_10_0,
         ];
-        let mut device: Option<ID3D11Device> = None;
-        let mut context: Option<ID3D11DeviceContext> = None;
-        let mut feature_level = D3D_FEATURE_LEVEL::default();
-        unsafe {
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                Some(&feature_levels),
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                Some(&mut feature_level),
-                Some(&mut context),
-            )
-        }
-        .map_err(|error| format!("D3D11CreateDevice failed: {error}"))?;
-        let device = device.ok_or_else(|| "D3D11 device was not returned".to_string())?;
-        let context = context.ok_or_else(|| "D3D11 context was not returned".to_string())?;
-        let dxgi_device = device
-            .cast::<windows::Win32::Graphics::Dxgi::IDXGIDevice>()
-            .map_err(|error| format!("D3D11 device did not expose IDXGIDevice: {error}"))?;
-        let inspectable = unsafe {
-            windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice(
-                &dxgi_device,
-            )
-        }
-        .map_err(|error| format!("CreateDirect3D11DeviceFromDXGIDevice failed: {error}"))?;
-        let direct3d_device: IDirect3DDevice = inspectable
-            .cast()
-            .map_err(|error| format!("IDirect3DDevice cast failed: {error}"))?;
-        let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
-            .map_err(|error| format!("GraphicsCaptureItem factory failed: {error}"))?;
-        let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(HWND(hwnd as *mut _)) }
-            .map_err(|error| format!("CreateForWindow failed: {error}"))?;
-        let size = item
-            .Size()
-            .map_err(|error| format!("capture item size failed: {error}"))?;
-        if size.Width <= 0 || size.Height <= 0 {
-            return Err("capture window has an invalid size".to_string());
-        }
+        let create_default_device = || {
+            let mut device: Option<ID3D11Device> = None;
+            let mut context: Option<ID3D11DeviceContext> = None;
+            let mut feature_level = D3D_FEATURE_LEVEL::default();
+            unsafe {
+                D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    HMODULE::default(),
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                    Some(&feature_levels),
+                    D3D11_SDK_VERSION,
+                    Some(&mut device),
+                    Some(&mut feature_level),
+                    Some(&mut context),
+                )
+            }
+            .map_err(|error| format!("D3D11CreateDevice failed: {error}"))?;
+            Ok((
+                device.ok_or_else(|| "D3D11 device was not returned".to_string())?,
+                context.ok_or_else(|| "D3D11 context was not returned".to_string())?,
+            ))
+        };
 
-        let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
-            &direct3d_device,
-            DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            // 4 个 buffer：软编路径编码期间持有帧表面，2 buffer 会让 WGC
-            // 帧池枯竭、实际送达率被编码时长封顶（2026-08-21 实测 ~6fps）。
-            4,
+        enum DefaultDeviceOutcome {
+            Started(WgcSessionStart),
+            // E_INVALIDARG 族：值得逐适配器显式重试；携带默认路径错误文案。
+            RetryEnumerated(String),
+            // 不可重试失败（设备创建失败、窗口无效等）：直接终态。
+            Fatal(String),
+        }
+        let default_outcome = match create_default_device() {
+            Ok((device, context)) => match try_start_wgc_with_device(hwnd, device, context) {
+                Ok(started) => DefaultDeviceOutcome::Started(started),
+                Err((step_name, error)) => {
+                    let text = format!("{step_name} failed: {error}");
+                    if wgc_step_error_is_invalid_parameter(&error) {
+                        DefaultDeviceOutcome::RetryEnumerated(text)
+                    } else {
+                        DefaultDeviceOutcome::Fatal(text)
+                    }
+                }
+            },
+            Err(error) => DefaultDeviceOutcome::Fatal(error),
+        };
+
+        let started = match default_outcome {
+            DefaultDeviceOutcome::Started(started) => started,
+            DefaultDeviceOutcome::Fatal(text) => return Err(text),
+            DefaultDeviceOutcome::RetryEnumerated(default_error) => {
+                match try_start_wgc_with_enumerated_adapters(hwnd, &feature_levels) {
+                    Ok(started) => {
+                        crate::dlog!(
+                            "[wgc-capture] default adapter path hit E_INVALIDARG, \
+                             enumerated adapter retry succeeded (default path: {default_error})"
+                        );
+                        started
+                    }
+                    Err(fallback_error) => {
+                        return Err(format!(
+                            "default adapter path: {default_error}; enumerated adapters: \
+                             {fallback_error}"
+                        ));
+                    }
+                }
+            }
+        };
+        let WgcSessionStart {
+            device,
+            context,
+            direct3d_device: _direct3d_device,
+            item: _item,
             size,
-        )
-        .map_err(|error| {
-            format!("Direct3D11CaptureFramePool::CreateFreeThreaded failed: {error}")
-        })?;
-        let session = frame_pool
-            .CreateCaptureSession(&item)
-            .map_err(|error| format!("CreateCaptureSession failed: {error}"))?;
+            frame_pool,
+            session,
+        } = started;
         let recording_failed = Arc::new(AtomicBool::new(false));
         let mut automatic_encoder = if recording_path.is_none() {
             // 三级回退：全局硬件枚举 → LUID 定点枚举 → 软件 H.264 MFT，
