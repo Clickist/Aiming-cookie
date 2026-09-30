@@ -88,6 +88,11 @@ class RunEvidenceRemovalResponse(BaseModel):
     ]
 
 
+class KovaaKRunDeleteResponse(BaseModel):
+    deleted_run_id: int
+    reclaimed_bytes: int
+
+
 class TraceQualityOut(BaseModel):
     state: str
     availability: str

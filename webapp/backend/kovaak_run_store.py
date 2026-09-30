@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import stat
 import threading
 import time
@@ -110,6 +111,7 @@ _COUNTER_PATH = "runs/_counter.json"
 _RUN_ID_LOCK = threading.Lock()
 _EVIDENCE_TOMBSTONES = "runs/_evidence_tombstones.json"
 _INCOMPLETE_TOMBSTONES = "runs/_incomplete_tombstones.json"
+_DELETED_SOURCE_KEYS = "runs/_deleted_source_keys.json"
 
 # runs/*/meta.json 的内存派生缓存（queue._SESSION_CACHE 同款模式）。文件仍是
 # 唯一事实源：写入经 _save_run 落盘后同步更新缓存；扫描时按 (mtime_ns, size)
@@ -1992,6 +1994,67 @@ async def remove_run_evidence(
         reclaimed if completed else 0,
         artifact_ref,
     )
+
+
+def is_kovaak_run_source_deleted(user_id: str, source_key: str) -> bool:
+    """run 删除后的 source_key 抑制：KovaaK 源 CSV 仍在游戏目录，不抑制的话
+    周期扫描会按同一 source_key 把它重新导入成新 run（删除等于没删）。"""
+    if not source_key:
+        return False
+    entries = file_store.read_json(_DELETED_SOURCE_KEYS) or []
+    return any(
+        isinstance(e, dict)
+        and e.get("user_id") == user_id
+        and e.get("source_key") == source_key
+        for e in entries
+    )
+
+
+async def delete_kovaak_run(
+    run_id: int,
+    user_id: str,
+    data_root: str | Path,
+) -> dict[str, object]:
+    """删除整个 run：证据文件（走证据墓碑，失败留待对账）→ source_key 抑制
+    → 移除 run 目录。已产生分析的 run 拒绝（ValueError）：分析是更贵的产物，
+    误删连带不可回退，提示先删分析。"""
+    run = _load_run(run_id)
+    if run is None:
+        raise LookupError("kovaak run not found")
+    if run.get("user_id") != user_id:
+        raise PermissionError("kovaak run is not owned by this user")
+    if _get_analysis_count_for_run(run_id, user_id) > 0:
+        raise ValueError("kovaak run has analyses; delete them first")
+
+    reclaimed = 0
+    for evidence_kind in ("video", "raw"):
+        removal = await remove_run_evidence(run_id, user_id, evidence_kind, data_root)
+        reclaimed += int(removal.get("reclaimed_bytes", 0))
+
+    source_key = run.get("source_key")
+    if isinstance(source_key, str) and source_key and not is_kovaak_run_source_deleted(user_id, source_key):
+        entries = file_store.read_json(_DELETED_SOURCE_KEYS) or []
+        entries.append({
+            "user_id": user_id,
+            "source_key": source_key,
+            "deleted_at": _utc_now(),
+        })
+        file_store.write_json(_DELETED_SOURCE_KEYS, entries)
+
+    # run 记录（meta.json，file_store 根）与证据目录（data_root 根）分属两处，
+    # 分别移除：记录先删（列表即时消失），证据目录再整体清理。
+    meta_rel = _run_meta_path(run_id)
+    if file_store.stat_json(meta_rel) is not None:
+        file_store.delete_file(meta_rel)
+    _RUN_META_CACHE.pop(run_id, None)
+
+    run_dir = Path(data_root) / _RUNS_DIR / str(run_id)
+    if run_dir.is_dir():
+        # 证据墓碑已把 video/trace 删掉，这里兜底清走残余（receipt、空目录等）；
+        # 被占用等失败往上抛（路由转 409）：记录与抑制已生效，重试只剩余目录
+        # 清理，可收敛。
+        shutil.rmtree(run_dir)
+    return {"deleted_run_id": run_id, "reclaimed_bytes": reclaimed}
 
 
 async def reconcile_run_evidence_deletions(

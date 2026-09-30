@@ -1634,6 +1634,20 @@ export async function removeRunEvidence(
   return (await res.json()) as RunEvidenceRemovalResponse;
 }
 
+/** 删除整个 run（证据走墓碑 + source_key 抑制再导入）。已分析 run 会 409。 */
+export async function deleteKovaakRun(
+  runId: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ deleted_run_id: number; reclaimed_bytes: number }> {
+  const res = await apiFetch(
+    `/api/kovaak-runs/${runId}`,
+    { method: "DELETE" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as { deleted_run_id: number; reclaimed_bytes: number };
+}
+
 // ── 知识包管理（kb-sdk plan C6；WP-12 设置页「知识库」栏）──────────────────
 // 四个端点都在 Python backend（/api/knowledge-packs*），desktop token 门禁一致。
 // 官方档常驻置顶语义由前端处理：active 为 "official" 或已装包 pack_id。

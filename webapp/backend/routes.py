@@ -84,6 +84,7 @@ from .schemas import (
     StorageRevealRequest,
     StorageRevealResponse,
     RunEvidenceRemovalResponse,
+    KovaaKRunDeleteResponse,
     DeleteSessionResponse,
     KovaaKRunItem,
     KovaaKRunListItem,
@@ -161,6 +162,7 @@ _ERROR_TEXT: dict[str, str] = {
     "kovaak.run_not_found": "KovaaK run 不存在",
     "kovaak.run_forbidden": "无权访问此 Run",
     "kovaak.evidence_remove_failed": "Run evidence 无法安全移除",
+    "kovaak.run_delete_failed": "Run 无法安全删除（文件可能被占用），请稍后重试",
     "analysis.not_done": "分析未完成",
     "analysis.data_unavailable": "Analysis Data 不可用",
     "evidence.unavailable": "Evidence 不可用",
@@ -1151,6 +1153,35 @@ async def remove_kovaak_run_evidence(
     except (OSError, ValueError) as exc:
         raise HTTPException(409, _error_detail("kovaak.evidence_remove_failed")) from exc
     return RunEvidenceRemovalResponse(**result)
+
+
+@router.delete(
+    "/kovaak-runs/{run_id}",
+    response_model=KovaaKRunDeleteResponse,
+)
+async def delete_kovaak_run_by_id(
+    run_id: int = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    """删除整个 run：证据文件走证据墓碑，source_key 写抑制清单防止随源 CSV
+    重新导入；已产生分析的 run 拒绝（先删分析），误删不可回退。"""
+    try:
+        result = await kovaak_run_store.delete_kovaak_run(
+            run_id,
+            config.DESKTOP_LOCAL_PROFILE,
+            config.DATA_ROOT,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, _error_detail("kovaak.run_not_found")) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, _error_detail("kovaak.run_forbidden")) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            409, _error_detail("kovaak.run_delete_blocked", message=str(exc))
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(409, _error_detail("kovaak.run_delete_failed")) from exc
+    return KovaaKRunDeleteResponse(**result)
 
 
 @router.post("/kovaak-runs/{run_id}/analyze", response_model=AnalyzeResponse)

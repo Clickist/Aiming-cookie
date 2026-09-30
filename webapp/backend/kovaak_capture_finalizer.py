@@ -183,6 +183,16 @@ class KovaaKCaptureFinalizer:
         )
 
     async def finalize(self, discovery: KovaaKFileDiscovery) -> dict:
+        source_key = _source_key(discovery)
+        if kovaak_run_store.is_kovaak_run_source_deleted(self._user_id, source_key):
+            # 用户已删除该 run：源 CSV 仍在游戏目录，不再重新导入。
+            log.info(
+                "KovaaK ingestion skipped stem=%s phase=finalize code=source_deleted_by_user",
+                source_key,
+            )
+            raise NonRetryableIngestionError(
+                "source deleted by user", code="source_deleted_by_user",
+            )
         merged = await self._merge_discovery(discovery)
         trace_pending: RetryableIngestionError | None = None
         try:

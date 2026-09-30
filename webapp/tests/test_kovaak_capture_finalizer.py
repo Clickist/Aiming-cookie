@@ -1505,3 +1505,27 @@ async def test_finalize_fires_telemetry_cut_hook_with_challenge_window(
     assert end_ms == 61_000  # challenge_start + time_limit(60s)
 
 
+@pytest.mark.asyncio
+async def test_finalize_skips_reimport_of_user_deleted_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_parsers(monkeypatch)
+    stats = tmp_path / "Deleted Scenario Stats.csv"
+    performance = tmp_path / "Deleted Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client)
+    stem = "deleted-scenario - challenge - 2026.09.30-00.00.00"
+    file_store.write_json("runs/_deleted_source_keys.json", [
+        {"user_id": "u1", "source_key": stem, "deleted_at": "2026-09-30 12:00"},
+    ])
+
+    with pytest.raises(NonRetryableIngestionError) as exc_info:
+        await finalizer.finalize(KovaaKFileDiscovery(
+            stem=stem, stats_path=stats, performance_path=performance,
+        ))
+
+    assert exc_info.value.code == "source_deleted_by_user"
+    assert await kovaak_run_store.list_kovaak_runs("u1") == []

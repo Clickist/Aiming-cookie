@@ -397,7 +397,12 @@ export interface paths {
         get: operations["get_kovaak_run_api_kovaak_runs__run_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Kovaak Run By Id
+         * @description 删除整个 run：证据文件走证据墓碑，source_key 写抑制清单防止随源 CSV
+         *     重新导入；已产生分析的 run 拒绝（先删分析），误删不可回退。
+         */
+        delete: operations["delete_kovaak_run_by_id_api_kovaak_runs__run_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1705,6 +1710,13 @@ export interface components {
              * @enum {string}
              */
             source: "environment" | "confirmed" | "automatic" | "unavailable";
+        };
+        /** KovaaKRunDeleteResponse */
+        KovaaKRunDeleteResponse: {
+            /** Deleted Run Id */
+            deleted_run_id: number;
+            /** Reclaimed Bytes */
+            reclaimed_bytes: number;
         };
         /** KovaaKRunItem */
         KovaaKRunItem: {
@@ -3162,6 +3174,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KovaaKRunItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_kovaak_run_by_id_api_kovaak_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KovaaKRunDeleteResponse"];
                 };
             };
             /** @description Validation Error */

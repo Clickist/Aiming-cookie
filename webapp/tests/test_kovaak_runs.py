@@ -3488,3 +3488,51 @@ async def test_public_run_read_models_project_video_error_code_for_capture_event
     assert listed["video_error"] == "video_capture_unavailable"
     assert listed["trace_error"] is None
     assert detail_response.json()["video_error"] == "video_capture_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_delete_run_removes_directory_evidence_and_suppresses_reimport(
+    tmp_path: Path,
+) -> None:
+    data_root, run, stats, performance, trace, receipt = await _seed_removable_run(
+        tmp_path,
+    )
+    run_dir = data_root / "runs" / str(run["id"])
+    video_bytes = Path(run["video_path"]).stat().st_size + receipt.stat().st_size
+    trace_bytes = trace.stat().st_size
+
+    result = await kovaak_run_store.delete_kovaak_run(run["id"], "u1", data_root)
+
+    assert result["deleted_run_id"] == run["id"]
+    assert result["reclaimed_bytes"] >= video_bytes + trace_bytes
+    assert not run_dir.exists()
+    assert await kovaak_run_store.get_kovaak_run(run["id"], "u1") is None
+    assert kovaak_run_store.is_kovaak_run_source_deleted(
+        "u1", "removable-u1",
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_delete_run_rejects_missing_owner_mismatch_and_analyzed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root, run, *_ = await _seed_removable_run(tmp_path)
+
+    with pytest.raises(LookupError):
+        await kovaak_run_store.delete_kovaak_run(run["id"] + 999, "u1", data_root)
+    with pytest.raises(PermissionError):
+        await kovaak_run_store.delete_kovaak_run(run["id"], "other-owner", data_root)
+    with monkeypatch.context() as m:
+        m.setattr(
+            kovaak_run_store, "_get_analysis_count_for_run", lambda rid, uid: 1,
+        )
+        with pytest.raises(ValueError, match="analyses"):
+            await kovaak_run_store.delete_kovaak_run(run["id"], "u1", data_root)
+    # 拒绝路径不产生副作用：run 记录与证据原样保留。
+    persisted = await kovaak_run_store.get_kovaak_run(run["id"], "u1")
+    assert persisted is not None
+    assert persisted["video_state"] == "attached"
+    assert kovaak_run_store.is_kovaak_run_source_deleted(
+        "u1", "removable-u1",
+    ) is False

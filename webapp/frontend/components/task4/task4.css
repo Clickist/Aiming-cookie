@@ -617,3 +617,39 @@
     transition: none;
   }
 }
+
+/* 行尾删除（与 Coach 会话删除同款两段式）：hover 行才现身，确认态用错误
+   容器色提示下一步是删除——视觉语言与 task7 会话删除一致。 */
+.task4-row-delete {
+  flex: none;
+  display: none;
+}
+
+.task4-run-row:hover .task4-row-delete,
+.task4-row-delete:focus-within {
+  display: inline-flex;
+}
+
+.task4-row-delete__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.task4-row-delete__button:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.task4-row-delete__button--confirm,
+.task4-row-delete__button--confirm:hover {
+  background: var(--error-container);
+  color: var(--on-error-container);
+}

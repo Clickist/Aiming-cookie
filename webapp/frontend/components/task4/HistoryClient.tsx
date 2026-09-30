@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
-import { getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
+import { deleteKovaakRun, getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import { finalizationPendingText } from "@/lib/capture-events";
 import { getLocale, t, useT, type MessageKey } from "@/lib/i18n";
@@ -16,7 +16,7 @@ import {
   presentRecordLabel,
 } from "@/lib/contracts";
 import type { KovaaKLocalDirectoriesV1, KovaaKRunListItem, KovaaKWatcherStatusV1, SessionListItem } from "@/lib/types";
-import { IconAlertCircle, IconChevronDown, IconChevronLeft, IconRefresh } from "@/ui/icons";
+import { IconAlertCircle, IconCheck, IconChevronDown, IconChevronLeft, IconRefresh, IconTrash } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
 import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
@@ -196,14 +196,19 @@ function RunRow({
   run,
   disabled,
   onToggle,
+  onDelete,
   selected,
 }: {
   run: KovaaKRunListItem;
   disabled?: boolean;
   onToggle?: (run: KovaaKRunListItem) => void;
+  onDelete?: (run: KovaaKRunListItem) => void;
   selected?: boolean;
 }) {
   const t = useT();
+  // 两段式删除（与会话删除同款交互）：第一次点出确认态，再点才真删；
+  // 点击别处不主动重置——行级瞬时态，悬停离开即视觉隐藏。
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const isPending = run.readiness_state === "pending_analysis";
   // 对局时间优先 source_key 解析值；created_at 是批次发现时间，同批多局共享
   // （曾把不同对局渲染成"完全重复卡"，0911 审计 §12.6）。
@@ -214,6 +219,7 @@ function RunRow({
   // 整行可点勾选（0911 点点第二批）：disabled 行不接管点击、cursor 默认；
   // 键盘仍走原生 checkbox（Tab + 空格切换）。
   const interactive = Boolean(onToggle) && !disabled;
+  const deleteLabel = presentRecordLabel({ scenario: run.scenario, titleOnly: true });
   return (
     <div
       className="task4-rowline task4-run-row"
@@ -251,6 +257,34 @@ function RunRow({
         >
           <IconAlertCircle height={14} width={14} />
         </span>
+      ) : null}
+      {onDelete && !disabled ? (
+        <div className="task4-row-delete" onClick={(event) => event.stopPropagation()}>
+          {deleteArmed ? (
+            <button
+              aria-label={t("history.run.deleteConfirmAria", { scenario: deleteLabel })}
+              className="task4-row-delete__button task4-row-delete__button--confirm"
+              onClick={() => {
+                setDeleteArmed(false);
+                onDelete(run);
+              }}
+              title={t("history.run.deleteConfirmTitle")}
+              type="button"
+            >
+              <IconCheck height={14} width={14} />
+            </button>
+          ) : (
+            <button
+              aria-label={t("history.run.deleteAria", { scenario: deleteLabel })}
+              className="task4-row-delete__button"
+              onClick={() => setDeleteArmed(true)}
+              title={t("history.run.deleteTitle")}
+              type="button"
+            >
+              <IconTrash height={14} width={14} />
+            </button>
+          )}
+        </div>
       ) : null}
     </div>
   );
@@ -500,6 +534,17 @@ export function HistoryClient() {
     });
   }, []);
 
+  const handleDeleteRun = useCallback(async (run: KovaaKRunListItem) => {
+    try {
+      await deleteKovaakRun(run.id);
+      setSelectedRunIds((ids) => ids.filter((id) => id !== run.id));
+      setSelectionNotice(t("history.run.deletedNotice"));
+      await loadHistory();
+    } catch {
+      setSelectionNotice(t("history.run.deleteFailedNotice"));
+    }
+  }, [loadHistory, t]);
+
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
 
   // 场景名过滤（0911 点点第二批）：不区分大小写的子串匹配，空输入 = 全部。
@@ -723,6 +768,7 @@ export function HistoryClient() {
                 {group.items.map((run) => (
                   <RunRow
                     key={run.run_ref}
+                    onDelete={handleDeleteRun}
                     onToggle={toggleRun}
                     run={run}
                     selected={selectedRunIds.includes(run.id)}
@@ -839,6 +885,7 @@ export function HistoryClient() {
                     <RunRow
                       disabled={run.supported_input_modes.length === 0}
                       key={run.run_ref}
+                      onDelete={handleDeleteRun}
                       onToggle={toggleRun}
                       run={run}
                       selected={selectedRunIds.includes(run.id)}
