@@ -19,6 +19,7 @@ import struct
 import sys
 import threading
 import time
+import traceback
 
 import tp1 as t
 import names as nm
@@ -506,20 +507,49 @@ def main():
     scale = "--scale" in args
     if "--out-dir" in args:
         out_dir = args[args.index("--out-dir") + 1]
-    pid = t.find_pid()
-    while pid is None:
+    # [fix 2026-09-30] 初次路径加固（对齐 camera_probe 同款修复；B机实证 target
+    # rc=1 死于此段）：find_pid / Proc 构造 / parse_object_array 原先裸奔——
+    # OpenProcess 竞态 OSError、模块枚举失败、apply_offsets fail-fast、
+    # GUObjectArray 布局未匹配 RuntimeError 任何一个都直接炸进程。Proc 附着
+    # 重试 3 次×2s；全败回落等游戏循环（本脚本原本就无论 --wait 都等游戏）。
+    pid = None
+    try:
+        pid = t.find_pid()
+    except Exception as e:
+        print("[pid] 进程枚举失败: %s" % e)
+    p = None
+    if pid is not None:
+        for attempt in range(3):
+            try:
+                p = t.Proc(pid)
+                break
+            except Exception as e:
+                print("[proc] 附着失败(%d/3): %s" % (attempt + 1, e))
+                if attempt < 2:
+                    time.sleep(2)
+    while p is None:
         print("[wait] 游戏未运行，每 10s 检查（Ctrl+C 退出）...")
         time.sleep(10)
-        pid = t.find_pid()
-    p = t.Proc(pid)
+        try:
+            pid = t.find_pid()
+        except Exception:
+            pid = None
+        if pid is None:
+            continue
+        try:
+            p = t.Proc(pid)
+        except Exception as e:
+            print("[wait] 附着失败: %s" % e)
     print("[proc] pid=%d base=0x%x" % (pid, p.base))
     cal = None
     attempts = 40 if wait else 1
     for i in range(attempts):
-        items, nume = t.parse_object_array(p)
         try:
+            # [fix 2026-09-30] parse_object_array 挪进 try：游戏启动窗口期布局
+            # 校验失败是瞬态，原先在 try 外直接 rc=1 死。
+            items, nume = t.parse_object_array(p)
             cal = calibrate(p, items, nume)
-        except RuntimeError as e:
+        except (RuntimeError, OSError) as e:
             print("[calib] 失败: %s" % e)
             cal = None
         if cal:
@@ -531,10 +561,20 @@ def main():
         return
     while True:
         if cal:
+            # [fix 2026-09-30] 热自旋防护 + traceback 落盘：本段采样存活 <5s
+            # （附着即崩）→ 下次重试前强制 sleep ≥10s，防"附着→秒崩→紧循环
+            # 疯狂 calibrate"每圈产一个垃圾 jsonl + 一次全量校准；异常先打印
+            # traceback 摘要再走既有的一行提示。
+            seg_t0 = time.time()
             try:
                 run(p, cal, hz, scale, out_dir)
             except Exception as e:
+                traceback.print_exc()
                 print("[run] 采样中断（%s），可能是游戏退出" % e)
+            seg_alive = time.time() - seg_t0
+            if seg_alive < 5.0:
+                print("[wait] 本段仅存活 %.1fs，10s 后再重附着（防热自旋）" % seg_alive)
+                time.sleep(10)
         print("[wait] 等待游戏进程出现（每 10s 检查，Ctrl+C 退出）...")
         pid = None
         while pid is None:

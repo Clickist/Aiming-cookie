@@ -24,6 +24,7 @@ import os
 import struct
 import sys
 import time
+import traceback
 
 import tp1 as t
 import names as nm
@@ -418,20 +419,46 @@ def main():
                     help="[产品化 2026-09-06] 产物目录（默认仍脚本目录）")
     args = ap.parse_args()
 
-    pid = t.find_pid()
-    if pid is None:
+    # [fix 2026-09-30] 初次路径加固：find_pid / Proc 构造原先裸奔——pid 到手与
+    # OpenProcess/模块枚举/apply_offsets 之间有竞态（游戏正在退出/权限窗口），
+    # 任何一个 raise 都让子进程 rc=1 静默死。Proc 附着重试 3 次×2s；全败时
+    # --wait 回落等游戏循环自愈，非 --wait 打印清晰原因后退出。
+    pid = None
+    try:
+        pid = t.find_pid()
+    except Exception as e:
+        print("[pid] 进程枚举失败: %s" % e)
+    p = None
+    if pid is not None:
+        for attempt in range(3):
+            try:
+                p = t.Proc(pid)
+                break
+            except Exception as e:
+                print("[proc] 附着失败(%d/3): %s" % (attempt + 1, e))
+                if attempt < 2:
+                    time.sleep(2)
+    if p is None:
         if not args.wait:
-            print("!! 游戏副本未运行（先启动 FPSAimTrainer-Win64-Shipping.exe）")
-            sys.exit(2)
+            if pid is None:
+                print("!! 游戏副本未运行（先启动 FPSAimTrainer-Win64-Shipping.exe）")
+                sys.exit(2)
+            print("!! 连续 3 次附着失败（pid=%d，原因见上），退出" % pid)
+            sys.exit(1)
         # [v2.1] --wait 时初始也等游戏出现（此前只重试校准，不等进程）
-        print("[wait] 游戏未运行，每 10s 检查（Ctrl+C 退出）...")
-        while pid is None:
+        print("[wait] 游戏未运行或初次附着未成，每 10s 检查（Ctrl+C 退出）...")
+        while p is None:
             time.sleep(10)
             try:
                 pid = t.find_pid()
             except Exception:
                 pid = None
-    p = t.Proc(pid)
+            if pid is None:
+                continue
+            try:
+                p = t.Proc(pid)
+            except Exception as e:
+                print("[wait] 附着失败: %s" % e)
     print("[proc] pid=%d base=0x%x" % (pid, p.base))
 
     scan_secs = args.secs if args.secs > 0 else 10.0
@@ -460,9 +487,23 @@ def main():
         # [v2.1] 重附着循环（对齐 target_poll2 main；此前采样中断即退出，FORMAT §2.4-5）。
         # 每次重新附着 = 新文件新 clock_map；--secs>0 定长验证模式不循环。
         while True:
-            run(p, cal, args.hz, args.secs, args.out_dir)
+            # [fix 2026-09-30] run() 未捕获异常防护：打印 traceback 摘要后落入
+            # 等待游戏→重附着循环（run 内 finally 已收尾输出文件）。只捕
+            # Exception，KeyboardInterrupt 等 BaseException 照常穿透。
+            seg_t0 = time.time()
+            try:
+                run(p, cal, args.hz, args.secs, args.out_dir)
+            except Exception:
+                traceback.print_exc()
             if args.secs > 0:
                 break
+            # [fix 2026-09-30] 热自旋防护：本段采样存活 <5s（附着即崩/秒断）→
+            # 下次重试前强制 sleep ≥10s，防"附着→采样→秒崩→紧循环疯狂 calibrate"
+            # 每圈产一个垃圾 jsonl + 一次全量校准。
+            seg_alive = time.time() - seg_t0
+            if seg_alive < 5.0:
+                print("[wait] 本段仅存活 %.1fs，10s 后再重附着（防热自旋）" % seg_alive)
+                time.sleep(10)
             cal = None
             while cal is None:
                 pid = None

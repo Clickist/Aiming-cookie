@@ -42,6 +42,9 @@ _CAMERA_GLOB = "camera_probe_out_*.jsonl"
 _INPUT_NAME = "input_log.jsonl"
 _PROCESSED_SUBDIR = "processed"
 _PIDS_FILE = "pids.json"
+# [fix 2026-09-30] 子进程合并日志 {role}.log 的死亡尾部截取上限（对齐本文件
+# finalize.log 尾部截 8000 字符的既有先例；.log 命名避免撞三个数据 glob）。
+_CHILD_LOG_TAIL_CHARS = 8000
 _FINALIZE_TIMEOUT_SECONDS = 300.0
 _TERMINATE_TIMEOUT_SECONDS = 5.0
 # 按局增量切窗（2026-09-29）：stats 局窗口 → 冻结活文件窗口切片 → cleaner/merge
@@ -206,6 +209,8 @@ class TelemetryCaptureService:
         self._children: dict[str, subprocess.Popen] = {}
         # 已上报死亡的子进程 role：避免每次轮询重复 log/落盘。
         self._dead_children: set[str] = set()
+        # [fix 2026-09-30] 死亡子进程的 {role}.log 尾部（diagnostics 的 child_log_tail）。
+        self._child_log_tails: dict[str, str] = {}
         self._session_dir: Path | None = None
         self._game_present = False
         self._state = "idle"
@@ -273,6 +278,8 @@ class TelemetryCaptureService:
             "session": session,
             "children": sorted(self._children),
             "last_error": self._last_error,
+            # [fix 2026-09-30] 死亡子进程的合并日志尾部（可选：无死亡/无日志时 None）。
+            "child_log_tail": dict(self._child_log_tails) if self._child_log_tails else None,
             "last_finalize": self._last_finalize,
             "last_cut": dict(self._last_cut) if self._last_cut else None,
             "run_cuts_total": len(self._run_cuts),
@@ -316,10 +323,10 @@ class TelemetryCaptureService:
     def _check_children_alive(self) -> None:
         """采集子进程死亡的可见性（只记录不重启）。
 
-        子进程 stdout/stderr 都是 DEVNULL，任何崩溃（未知 exe 版本、缺 numpy 等）
-        本会完全静默消失，设置页诊断看不出异常。这里在轮询里主动 poll：退出即
-        log.error 落盘 + 记入 _last_error + 持久化诊断。重启语义需产品决定，不在
-        此处自动重启。
+        [fix 2026-09-30] 子进程 stdout/stderr 已合并落会话目录 {role}.log（此前
+        DEVNULL 吞掉一切未捕获异常，rc=1 无从定位）；死亡时把该日志尾部（≤8000
+        字符）记入 diagnostics 的 child_log_tail，设置页诊断可见。重启语义需产品
+        决定，不在此处自动重启。
         """
         for role, child in self._children.items():
             if role in self._dead_children:
@@ -329,6 +336,12 @@ class TelemetryCaptureService:
                 continue
             self._dead_children.add(role)
             self._last_error = f"child_exited: {role} rc={returncode}"
+            tail = (
+                _read_log_tail(self._session_dir / f"{role}.log")
+                if self._session_dir is not None else None
+            )
+            if tail:
+                self._child_log_tails[role] = tail
             log.error(
                 "telemetry capture child exited role=%s pid=%s returncode=%s",
                 role, child.pid, returncode,
@@ -512,15 +525,24 @@ class TelemetryCaptureService:
             return False
         spawned: dict[str, subprocess.Popen] = {}
         try:
-            spawned["target"] = self._spawn_process(self._child_argv("target_poll2.py") + [
-                "--run", "--wait", "--out-dir", str(session_dir),
-            ])
-            spawned["camera"] = self._spawn_process(self._child_argv("camera_probe.py") + [
-                "--run", "--wait", "--out-dir", str(session_dir),
-            ])
-            spawned["input"] = self._spawn_process(self._child_argv("input_logger.py") + [
-                str(session_dir / _INPUT_NAME),
-            ])
+            spawned["target"] = self._spawn_process(
+                self._child_argv("target_poll2.py") + [
+                    "--run", "--wait", "--out-dir", str(session_dir),
+                ],
+                session_dir=session_dir, role="target",
+            )
+            spawned["camera"] = self._spawn_process(
+                self._child_argv("camera_probe.py") + [
+                    "--run", "--wait", "--out-dir", str(session_dir),
+                ],
+                session_dir=session_dir, role="camera",
+            )
+            spawned["input"] = self._spawn_process(
+                self._child_argv("input_logger.py") + [
+                    str(session_dir / _INPUT_NAME),
+                ],
+                session_dir=session_dir, role="input",
+            )
         except OSError as error:
             self._last_error = f"spawn_failed: {error}"
             for child in spawned.values():
@@ -528,6 +550,7 @@ class TelemetryCaptureService:
             return False
         self._children = spawned
         self._dead_children = set()
+        self._child_log_tails = {}
         self._session_dir = session_dir
         self._write_pids_file()
         log.info(
@@ -536,20 +559,41 @@ class TelemetryCaptureService:
         )
         return True
 
-    def _spawn_process(self, argv: list[str]) -> subprocess.Popen:
+    def _spawn_process(
+        self, argv: list[str], session_dir: Path, role: str,
+    ) -> subprocess.Popen:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         # 自适应偏移表的用户缓存必须落用户数据目录：打包版内嵌表只读，写不进去
         child_env = dict(os.environ,
-                         AIMING_COOKIE_OFFSETS_CACHE=str(config.DATA_ROOT / "offsets.local.json"))
-        return subprocess.Popen(  # noqa: S603 - argv 由本模块固定拼装
-            argv,
-            cwd=str(self.scripts_dir),
-            env=child_env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=flags,
-        )
+                         AIMING_COOKIE_OFFSETS_CACHE=str(config.DATA_ROOT / "offsets.local.json"),
+                         # [fix 2026-09-30] 子进程输出恒 utf-8：中文 Windows 默认
+                         # cp936 会把崩溃 traceback 打成乱码，日志文件按 utf-8 解不开。
+                         PYTHONIOENCODING="utf-8")
+        # [fix 2026-09-30] 子进程 stdout/stderr 合并落会话目录 {role}.log（此前
+        # DEVNULL 吞掉一切未捕获异常，rc=1 无从定位）。开不出来（如用户数据目录
+        # 在已拔出的移动盘）就降级回 DEVNULL + warning，绝不让拉起整体失败。
+        try:
+            log_stream = (session_dir / f"{role}.log").open("a", encoding="utf-8")
+        except OSError as error:
+            log.warning(
+                "telemetry capture role log unavailable role=%s (%s); "
+                "falling back to DEVNULL", role, error,
+            )
+            log_stream = None
+        try:
+            return subprocess.Popen(  # noqa: S603 - argv 由本模块固定拼装
+                argv,
+                cwd=str(self.scripts_dir),
+                env=child_env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_stream if log_stream is not None else subprocess.DEVNULL,
+                stderr=log_stream if log_stream is not None else subprocess.DEVNULL,
+                creationflags=flags,
+            )
+        finally:
+            # 子进程持有 dup 出的独立句柄；父侧句柄即可关闭，不随服务存续泄漏。
+            if log_stream is not None:
+                log_stream.close()
 
     def _child_argv(self, script_name: str) -> list[str]:
         if getattr(sys, "frozen", False):
@@ -751,6 +795,22 @@ class TelemetryCaptureService:
 def _latest_by_name(paths) -> Path | None:
     ordered = sorted(paths, key=lambda p: p.name)
     return ordered[-1] if ordered else None
+
+
+def _read_log_tail(path: Path, max_chars: int = _CHILD_LOG_TAIL_CHARS) -> str | None:
+    """读 {role}.log 尾部 ≤max_chars 字符；不可得（无文件/读失败）返回 None。
+
+    按字节从尾部回读（utf-8 最长 4B/字符），起点若撕裂多字节字符由
+    errors="replace" 吸收为一个替换符。"""
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, size - max_chars * 4))
+            data = stream.read()
+    except OSError:
+        return None
+    text = data.decode("utf-8", errors="replace")
+    return text[-max_chars:] if text else None
 
 
 def _freeze_windowed_jsonl(

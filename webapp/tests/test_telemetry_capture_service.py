@@ -79,7 +79,10 @@ def no_diagnostics(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
     return writes
 
 
-def _make_service(tmp_path: Path, stub_scripts: Path, game_state: dict) -> TelemetryCaptureService:
+def _make_service(
+    tmp_path: Path, stub_scripts: Path, game_state: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TelemetryCaptureService:
     spawned: list[_FakeChild] = []
     service = TelemetryCaptureService(
         data_root=tmp_path / "data",
@@ -90,7 +93,9 @@ def _make_service(tmp_path: Path, stub_scripts: Path, game_state: dict) -> Telem
         game_processes_fn=lambda: game_state["procs"],
     )
 
-    def fake_spawn(self, argv: list[str]) -> _FakeChild:
+    def fake_spawn(
+        self, argv: list[str], session_dir: Path, role: str,
+    ) -> _FakeChild:
         child = _FakeChild(pid=1000 + len(spawned))
         spawned.append(child)
         service.spawn_log.append(list(argv))  # type: ignore[attr-defined]
@@ -98,7 +103,9 @@ def _make_service(tmp_path: Path, stub_scripts: Path, game_state: dict) -> Telem
 
     service.spawn_log = []  # type: ignore[attr-defined]
     service.spawned_children = spawned  # type: ignore[attr-defined]
-    service_mod.TelemetryCaptureService._spawn_process = fake_spawn  # type: ignore[method-assign]
+    # monkeypatch 而非裸类赋值：真实 spawn 测试与本桩共用同一进程，裸赋值会
+    # 把假实现泄漏给后续测试（[fix 2026-09-30] 新增的真实 _spawn_process 测试踩中）。
+    monkeypatch.setattr(TelemetryCaptureService, "_spawn_process", fake_spawn)
     return service
 
 
@@ -213,7 +220,7 @@ def test_lifecycle_spawn_finalize_and_pending(
     tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     game_state = {"procs": ["game"]}
-    service = _make_service(tmp_path, stub_scripts, game_state)
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
     finalize_calls: list[list[str]] = []
 
     def fake_finalize_step(self, argv: list[str], *, label: str) -> str:
@@ -267,11 +274,10 @@ def test_monitor_loop_reports_dead_child_process(
 ) -> None:
     """采集子进程静默退出必须有可见性：log.error + _last_error + 落盘诊断。
 
-    子进程 stdout/stderr 都是 DEVNULL，崩溃本会完全静默；本轮询检查只做可见性，
-    不自动重启。
+    子进程崩溃的现场在 {role}.log；本轮询检查只做可见性，不自动重启。
     """
     game_state = {"procs": ["game"]}
-    service = _make_service(tmp_path, stub_scripts, game_state)
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
     assert service.start() is True
     assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
 
@@ -284,15 +290,97 @@ def test_monitor_loop_reports_dead_child_process(
     assert "target" in str(last_error) and "3" in str(last_error)
     # 诊断确实落盘（no_diagnostics 记录 file_store.write_json 调用）。
     assert any("telemetry" in rel or "capture" in rel for rel, _ in no_diagnostics)
+    # 无日志文件时 child_log_tail 保持 None（可选字段不硬造空值）。
+    assert service.diagnostics()["child_log_tail"] is None
+
+    service.stop()
+
+
+# --------------------------------------------------------------- [fix 2026-09-30]
+
+def test_spawn_process_merges_child_output_into_role_log(
+    tmp_path: Path, stub_scripts: Path,
+) -> None:
+    """子进程 stdout/stderr 同一句柄合并落会话目录 {role}.log，且恒 utf-8。
+
+    中文 Windows 子进程默认 cp936，若无 PYTHONIOENCODING=utf-8，中文输出会以
+    GBK 字节落进按 utf-8 打开的日志文件（乱码/解不开）。
+    """
+    session_dir = tmp_path / "sess"
+    session_dir.mkdir()
+    service = TelemetryCaptureService(
+        data_root=tmp_path / "data", scripts_dir=stub_scripts,
+        game_processes_fn=lambda: [],
+    )
+    argv = [sys.executable, "-c",
+            "import sys; print('OUT-遥测'); "
+            "sys.stderr.write('ERR-遥测\\n'); sys.exit(0)"]
+    child = service._spawn_process(argv, session_dir, "target")
+    assert child.wait(timeout=30) == 0
+    logged = (session_dir / "target.log").read_text(encoding="utf-8")
+    assert "OUT-遥测" in logged and "ERR-遥测" in logged
+
+
+def test_spawn_process_role_log_open_failure_falls_back_to_devnull(
+    tmp_path: Path, stub_scripts: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """{role}.log 打不开（此处：该名字被目录占用）→ 降级 DEVNULL + warning。
+
+    真实场景是用户数据目录在移动盘且已拔出；拉起本身绝不能因此失败。
+    """
+    session_dir = tmp_path / "sess"
+    session_dir.mkdir()
+    (session_dir / "camera.log").mkdir()  # open("a") 会 PermissionError
+    service = TelemetryCaptureService(
+        data_root=tmp_path / "data", scripts_dir=stub_scripts,
+        game_processes_fn=lambda: [],
+    )
+    with caplog.at_level("WARNING", logger=service_mod.log.name):
+        child = service._spawn_process(
+            [sys.executable, "-c", "print('ok')"], session_dir, "camera",
+        )
+    # 拉起成功（子进程正常跑完），日志降级只留 warning。
+    assert child.wait(timeout=30) == 0
+    assert "camera" in caplog.text and "DEVNULL" in caplog.text
+    assert (session_dir / "camera.log").is_dir()  # 目录原样，未被改写
+
+
+def test_dead_child_reports_log_tail_truncated(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """子进程死亡 → {role}.log 尾部（≤8000 字符）入 diagnostics 的 child_log_tail。"""
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+    session_dir = Path(
+        service.spawn_log[0][service.spawn_log[0].index("--out-dir") + 1]  # type: ignore[attr-defined]
+    )
+    (session_dir / "target.log").write_text(
+        "x" * 20000 + "TAIL-MARKER-靶点", encoding="utf-8",
+    )
+    (session_dir / "camera.log").write_text("CAM-TAIL", encoding="utf-8")
+
+    service.spawned_children[0].returncode = 1  # type: ignore[attr-defined]
+    service.spawned_children[1].returncode = 1  # type: ignore[attr-defined]
+    assert _wait_until(lambda: bool(service.diagnostics()["child_log_tail"]))
+    tails = service.diagnostics()["child_log_tail"]
+    assert isinstance(tails, dict)
+    # 截断到尾部 8000 字符（对齐 finalize.log 先例），且保住末尾标记。
+    assert len(tails["target"]) == 8000
+    assert tails["target"].endswith("TAIL-MARKER-靶点")
+    assert tails["camera"] == "CAM-TAIL"
+    # 存活的 input 不出现在尾部字典里。
+    assert set(tails) == {"target", "camera"}
 
     service.stop()
 
 
 def test_stop_with_raw_files_marks_pending(
-    tmp_path: Path, stub_scripts: Path, no_diagnostics
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     game_state = {"procs": ["game"]}
-    service = _make_service(tmp_path, stub_scripts, game_state)
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
     assert service.start() is True
     session_dir = Path(service.spawn_log[0][service.spawn_log[0].index("--out-dir") + 1])  # type: ignore[attr-defined]
     (session_dir / "target_poll_out_0906_120100.jsonl").write_text(
