@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.3.2",
+      "date": "2026-09-30",
+      "items": [
+        {
+          "type": "new",
+          "zh": "训练历史支持整条删除——悬停训练记录点垃圾桶两段确认即可清理不要的记录",
+          "en": "Training history now supports deleting a record: hover a row and click the trash icon twice to remove it"
+        },
+        {
+          "type": "fix",
+          "zh": "打完一局当场就能深度分析，不用再退出 KovaaK——跟枪等场景的深度诊断数据现在按局实时进入系统",
+          "en": "Deep analysis is now available right after each run, without quitting KovaaK first"
+        },
+        {
+          "type": "fix",
+          "zh": "修复部分多显卡/特殊显示环境下录屏建立失败的问题——现在会自动换用其他显卡重试采集",
+          "en": "Fixed screen capture failing to start on some multi-GPU setups; capture now retries automatically on another GPU"
+        },
+        {
+          "type": "fix",
+          "zh": "修复自带 Key 直连 DeepSeek 官方端点时对话发送失败的问题",
+          "en": "Fixed conversations failing when using your own DeepSeek API key on the official endpoint"
+        }
+      ]
+    },
+    {
       "version": "1.3.1",
       "date": "2026-09-29",
       "items": [
