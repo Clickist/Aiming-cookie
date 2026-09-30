@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="baidu-site-verification" content="codeva-zhLqXj6A6t" />
+  <title>更新日志 · Aiming Cookie（KovaaK&#39;s 瞄准诊断 + AI 教练）</title>
+  <meta name="description" content="Aiming Cookie 每个版本更新了什么，都在这里：新增、改进与修复的完整更新日志。KovaaK&#39;s 瞄准诊断 + AI 教练，免费 Windows 桌面应用。">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#f7f5f0" id="metaThemeColor">
+  <script>
+    // 首屏前应用持久化主题，避免深色用户闪白（与落地页同款）
+    try { if (localStorage.getItem('ac-landing-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+  </script>
+  <link rel="canonical" href="https://aimingcookie.com/changelog/">
+  <link rel="alternate" hreflang="zh-CN" href="https://aimingcookie.com/changelog/">
+  <link rel="alternate" hreflang="en" href="https://aimingcookie.com/en/changelog/">
+  <link rel="alternate" hreflang="x-default" href="https://aimingcookie.com/changelog/">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Aiming Cookie">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:title" content="更新日志 · Aiming Cookie">
+  <meta property="og:description" content="Aiming Cookie 每个版本更新了什么，都在这里：新增、改进与修复的完整更新日志。KovaaK&#39;s 瞄准诊断 + AI 教练，免费 Windows 桌面应用。">
+  <meta property="og:url" content="https://aimingcookie.com/changelog/">
+  <meta property="og:image" content="https://aimingcookie.com/logo.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:image:alt" content="Aiming Cookie logo">
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="更新日志 · Aiming Cookie">
+  <meta name="twitter:description" content="Aiming Cookie 每个版本更新了什么，都在这里：新增、改进与修复的完整更新日志。KovaaK&#39;s 瞄准诊断 + AI 教练，免费 Windows 桌面应用。">
+  <meta name="twitter:image" content="https://aimingcookie.com/logo.png">
+  <link href="/fonts.css" rel="stylesheet">
+  <style>
+    /* ─── tokens（绑定 brand-spec.md · Light）───────────────────────── */
+    :root {
+      --bg:      oklch(96.6% 0.006 85);   /* #f7f5f0 background */
+      --surface: oklch(99.2% 0.004 90);   /* #fffdf8 surface */
+      --fg:      oklch(23.5% 0.008 75);   /* #24211d on-background */
+      --muted:   oklch(47.5% 0.013 80);   /* #625c54 on-surface-variant */
+      --border:  oklch(82.5% 0.014 85);   /* #cec6bc outline-variant */
+      --accent:  #c83d00;                 /* primary */
+
+      /* derived — do not change */
+      --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
+      --fg-soft:     color-mix(in oklch, var(--fg) 6%, transparent);
+
+      /* type — 品牌指定：Outfit 展示 / Inter 正文 / JetBrains Mono 数据 */
+      --font-display: 'Outfit', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+      --font-body:    'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+      --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+      /* scale */
+      --fs-h1: clamp(44px, 6vw, 76px);
+      --fs-h2: clamp(32px, 4vw, 48px);
+      --fs-h3: 22px;
+      --fs-lead: 19px;
+      --fs-body: 16px;
+      --fs-meta: 13px;
+
+      /* spacing — 8-point grid */
+      --gap-xs: 8px;
+      --gap-sm: 12px;
+      --gap-md: 20px;
+      --gap-lg: 32px;
+      --gap-xl: 56px;
+      --gap-2xl: 96px;
+      --container: 1120px;
+      --gutter: 32px;
+
+      --radius: 10px;
+      --radius-lg: 16px;
+
+      color-scheme: light;
+    }
+    /* ─── 深色模式（绑定 app v1.1.0 深色 token）────────────────────── */
+    html.dark {
+      --bg:      #141413;
+      --surface: #1c1c1a;
+      --fg:      #eae8e3;
+      --muted:   #9e9a92;
+      --border:  #3a3833;
+      --accent:  #ff8a5c;
+      color-scheme: dark;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-body);
+      font-size: var(--fs-body);
+      line-height: 1.55;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    img, svg { display: block; max-width: 100%; }
+    a { color: inherit; text-decoration: none; }
+    .inline-link { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border); transition: color 150ms ease, text-decoration-color 150ms ease; }
+    .inline-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
+    button { font: inherit; cursor: pointer; }
+    p { text-wrap: pretty; }
+    h1, h2, h3, h4 { text-wrap: balance; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+    .container { max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
+    .section { padding-block: clamp(40px, 5vw, 72px); }
+    .row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); }
+    /* ─── type ─────────────────────────────────────────────────────── */
+    .h1, h1 { font-family: var(--font-display); font-size: var(--fs-h1); line-height: 1.08; letter-spacing: -0.02em; font-weight: 600; margin: 0; }
+    .h2, h2 { font-family: var(--font-display); font-size: var(--fs-h2); line-height: 1.12; letter-spacing: -0.015em; font-weight: 600; margin: 0; }
+    .lead   { font-size: var(--fs-lead); line-height: 1.6; color: var(--muted); max-width: 64ch; margin: 0; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 var(--gap-md);
+    }
+    .meta { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--muted); }
+    .topnav {
+      position: sticky; top: 0; z-index: 10;
+      background: color-mix(in oklch, var(--bg) 92%, transparent);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .topnav-inner { display: flex; align-items: center; justify-content: space-between; padding-block: 14px; }
+    .topnav .logo { display: inline-flex; align-items: center; font-family: var(--font-display); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+    .topnav .logo-mark { width: 26px; height: 26px; margin-right: 10px; filter: invert(1); display: inline-block; }
+    html.dark .topnav .logo-mark { filter: none; }
+    .topnav-right { display: flex; align-items: center; gap: var(--gap-sm); }
+    .topnav nav { display: flex; gap: var(--gap-lg); }
+    .topnav nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; color: var(--muted); }
+    .topnav nav a:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 5px; }
+    .menu-toggle { display: none; width: 44px; height: 44px; padding: 0; place-items: center; background: transparent; color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); }
+    .menu-toggle svg { width: 20px; height: 20px; }
+    @media (max-width: 920px) {
+      .topnav-inner { flex-wrap: wrap; }
+      .menu-toggle { display: grid; }
+      .topnav nav { display: none; order: 3; width: 100%; padding: 10px 0 4px; border-top: 1px solid var(--border); margin-top: 10px; }
+      .topnav nav[data-open="true"] { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
+      .topnav nav a { border-bottom: 1px solid var(--border); }
+    }
+    .theme-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 44px; padding: 0;
+      background: transparent; color: var(--muted);
+      border: 0; border-radius: var(--radius);
+      cursor: pointer; transition: color .15s ease;
+    }
+    .theme-toggle:hover { color: var(--fg); }
+    .lang-switch {
+      display: inline-flex; align-items: center;
+      height: 28px; padding: 0 12px;
+      border: 1px solid var(--border); border-radius: 999px;
+      font-size: 13px; font-weight: 600; color: var(--muted);
+      transition: color .15s ease, border-color .15s ease;
+    }
+    .lang-switch:hover { color: var(--fg); border-color: var(--fg); }
+    html.dark .icon-moon { display: none; }
+    html:not(.dark) .icon-sun { display: none; }
+    .pagefoot { padding-block: var(--gap-xl); color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
+    .pagefoot .row-between { flex-wrap: wrap; gap: var(--gap-md); }
+    .pagefoot a { text-underline-offset: 2px; }
+    .pagefoot a:hover { color: var(--fg); text-decoration: underline; }
+    /* ─── 更新日志条目（与首页弹窗 cl-* 同款，原样搬运）───────────────── */
+    .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
+    .cl-rel:last-child { margin-bottom: 0; }
+    .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-badge {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
+    }
+    .cl-date { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+    .cl-rel ul { list-style: none; margin: 0; padding: 0; }
+    .cl-item { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; padding: 3px 0; }
+    .cl-tag { flex: none; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-top: 3px; }
+    .cl-new .cl-tag { background: var(--accent-soft); color: var(--accent); }
+    .cl-imp .cl-tag { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+    .cl-fix .cl-tag { border: 1px solid var(--border); color: var(--muted); }
+    /* ─── 本页布局 ─────────────────────────────────────────────────── */
+    .cl-wrap { max-width: 760px; }
+    .cl-head-block { margin-bottom: var(--gap-lg); }
+    .cl-back {
+      display: inline-flex; margin-bottom: 20px;
+      font-size: 15px; font-weight: 500; letter-spacing: -0.005em;
+      color: var(--fg);
+    }
+    .cl-back:hover { color: var(--accent); }
+    /* 子页面压缩区块顶部留白，返回链接与标题的间隙单独给足 */
+    main > .section { padding-top: clamp(28px, 4vw, 48px); }
+    .cl-head-block .lead { margin-top: var(--gap-sm); }
+    @media (max-width: 560px) {
+      :root { --gutter: 20px; }
+    }
+    @media (max-width: 640px) {
+      .cl-rel { padding: 14px 16px; }
+      .cl-item { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="container topnav-inner">
+      <span class="logo"><img class="logo-mark" src="/logo.png" alt="" aria-hidden="true">Aiming Cookie</span>
+      <nav id="site-nav" aria-label="主导航" data-open="false">
+        <a href="/#contrast">对照</a>
+        <a href="/#capture">采集</a>
+        <a href="/#metrics">指标</a>
+        <a href="/#coach">Coach</a>
+        <a href="/#pricing">套餐</a>
+        <a href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener">Bilibili 主页</a>
+      </nav>
+      <button class="menu-toggle" type="button" aria-label="打开导航菜单" aria-controls="site-nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+      </button>
+      <div class="topnav-right">
+        <a class="lang-switch" href="https://aimingcookie.com/en/changelog/">EN</a>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色 / 浅色">
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="section">
+      <div class="container cl-wrap">
+        <div class="cl-head-block">
+          <a class="cl-back" href="/">← 返回首页</a>
+          <h1 class="h2">更新日志</h1>
+          <p class="lead">Aiming Cookie 每个版本更新了什么，都在这里。</p>
+        </div>
+        <div class="cl-list">
+        <div class="cl-rel">
+          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.2</span> <span class="cl-badge">最新</span><span class="cl-date">2026-09-30</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>训练历史支持整条删除——悬停训练记录点垃圾桶两段确认即可清理不要的记录</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>打完一局当场就能深度分析，不用再退出 KovaaK——跟枪等场景的深度诊断数据现在按局实时进入系统</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分多显卡/特殊显示环境下录屏建立失败的问题——现在会自动换用其他显卡重试采集</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复自带 Key 直连 DeepSeek 官方端点时对话发送失败的问题</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.1</span><span class="cl-date">2026-09-29</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>兼容部分 AMD 老显卡——视频录制初始化失败时自动切换软件编码，不再整体失效</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复训练途中调整窗口大小后，之后所有对局都无法分析的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复 Steam 正在更新 KovaaK 时启动本软件，导致对局记录丢失的问题</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.0</span><span class="cl-date">2026-09-28</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>自定义数据存储位置——录像与遥测可一键迁到非系统盘，C 盘不再被占满</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>用户中心新增「调用记录」——每次 AI 调用的时间、模型与 token 用量一目了然</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>长对话记忆修复——历史不丢、上下文更连贯、回复更省额度</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复新对话快速连发消息被拆散到多个会话的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复连通测试误报「登录凭证已失效」的问题</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.2</span><span class="cl-date">2026-09-18</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>顶栏讨论条防遮挡三键</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>安装与更新流程稳定性</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.1</span><span class="cl-date">2026-09-14</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>官方场景库搜索（17.5 万场景模糊匹配）</span></li>
+          </ul>
+        </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="pagefoot">
+    <div class="container row-between">
+      <span>© 2026 Aiming Cookie · KovaaK&#39;s 瞄准诊断 + AI 教练</span>
+      <span class="meta">简体中文 · Windows 桌面应用 · 免费 · <a href="https://github.com/Clickist/Aiming-cookie" target="_blank" rel="noopener">GitHub 开源</a></span>
+    </div>
+  </footer>
+  <script>
+    // ─── 深色模式切换（持久化，与落地页同款）─────────────────────────────
+    (function () {
+      var toggle = document.getElementById('themeToggle');
+      var meta = document.getElementById('metaThemeColor');
+      var apply = function (dark) {
+        document.documentElement.classList.toggle('dark', dark);
+        if (meta) meta.content = dark ? '#141413' : '#f7f5f0';
+      };
+      if (!toggle) return;
+      apply(document.documentElement.classList.contains('dark'));
+      toggle.addEventListener('click', function () {
+        var dark = !document.documentElement.classList.contains('dark');
+        apply(dark);
+        try { localStorage.setItem('ac-landing-theme', dark ? 'dark' : 'light'); } catch (e) {}
+      });
+    })();
+    // ─── 移动端导航折叠（与落地页同款交互）───────────────────────────────
+    (function () {
+      var mt = document.querySelector('.menu-toggle');
+      var nav = document.getElementById('site-nav');
+      if (!mt || !nav) return;
+      mt.addEventListener('click', function () {
+        var open = nav.dataset.open === 'true';
+        nav.dataset.open = String(!open);
+        mt.setAttribute('aria-expanded', String(!open));
+      });
+    })();
+  </script>
+</body></html>

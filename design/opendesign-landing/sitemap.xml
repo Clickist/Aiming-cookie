@@ -18,4 +18,22 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://aimingcookie.com/en/"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://aimingcookie.com/"/>
   </url>
+  <url>
+    <loc>https://aimingcookie.com/changelog/</loc>
+    <lastmod>2026-09-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://aimingcookie.com/changelog/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aimingcookie.com/en/changelog/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aimingcookie.com/changelog/"/>
+  </url>
+  <url>
+    <loc>https://aimingcookie.com/en/changelog/</loc>
+    <lastmod>2026-09-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://aimingcookie.com/changelog/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aimingcookie.com/en/changelog/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aimingcookie.com/changelog/"/>
+  </url>
 </urlset>
