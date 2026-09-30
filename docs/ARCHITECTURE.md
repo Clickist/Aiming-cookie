@@ -9,7 +9,8 @@ Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、Hist
 ```text
 Desktop Client (Next.js UI in Tauri)
   ├─ Native shell / file picker / media access
-  ├─ Capture Coordinator (Windows Raw Input + bounded KovaaK replay buffer, opt-in)
+  ├─ Capture Coordinator (Windows Raw Input + bounded KovaaK replay buffer
+  │    + telemetry_capture external-truth companion service, opt-in)
   ├─ Local Analysis Runtime (Python API + worker)
   ├─ Coach Agent Runtime (Pi-based runtime + product tools)
   ├─ App-owned local Provider profile / credential store
@@ -51,6 +52,7 @@ Desktop Client (Next.js UI in Tauri)
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
 - native layer 不改变鼠标设备 polling rate。Windows 上报进入 canonical trace 前按整数毫秒归一化：同一毫秒内所有运动报告的 `dx/dy` 分别求和为至多一条运动记录，按钮状态边沿按接收顺序作为例外单独保留，因此 canonical 运动序列最高 1000 Hz；不补零、不做 deadzone/低通滤波，也不把亚毫秒路径形状写成产品事实；
 - 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
+- 外部遥测采集自 2026-09-06 起随产品接线：`telemetry_capture/` 三个采集脚本（RPM 目标轮询、相机 POV、OS Raw Input）作为桌面后端的伴生子进程常驻托管，游戏退场自动清洗分轮并旁车落盘；导入侧把清洗轮次按挑战窗 ±1s 粗配对为 `ExternalTelemetryRun`，存储在 `{DATA_ROOT}/external/`，并以 `sources.external_telemetry` 注入 KovaaK Run 分析快照；导入与数据合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md`；
 - L0 Raw Input trace 与私有 parser payload 不上传云端或进入 Coach 请求；run metadata 与本地解析结果只能通过版本化、字段白名单化且有预算上限的 L1-L3 投影进入用户已选择的 Provider；
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
 - token 不写普通日志；
@@ -67,17 +69,18 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 
 新 Coach Run 由 Coach 自动选择一条证据等级路径，不向用户暴露 mode selector：
 
+- `telemetry_multimodal`：Stats + Performance + 配对外部遥测（ExternalTelemetryRun）+ canonical window；视频与 Raw Input 非必需，目标侧证据来自遥测真值投影；
 - `multimodal`：Stats + Performance + Raw Input + managed MP4 + canonical window；
-- `input_native`：Stats + Performance + Raw Input + canonical window；没有视觉结论；
+- `input_native`：Stats + Performance + Raw Input + canonical window；无配对遥测与视频时没有视觉结论；
 - `video_fallback`：Stats + managed MP4；没有 Raw Input provenance 或输入运动学测量。
 
-服务端按 `multimodal > input_native > video_fallback` 选择最高可用路径；三者均不可用时不得创建 Analysis。所有路径都必须冻结 owner-scoped 输入快照，结果必须带 evidence provenance 和 limitations。历史旧结果仍可读，安装前孤立的 Stats/Performance 文件可导入、展示为历史 Run（缺 Raw/MP4，按 video_fallback 分析）。
+服务端按 `telemetry_multimodal > multimodal > input_native > video_fallback` 选择最高可用路径；四档均不可用时不得创建 Analysis。所有路径都必须冻结 owner-scoped 输入快照，结果必须带 evidence provenance 和 limitations。历史旧结果仍可读，安装前孤立的 Stats/Performance 文件可导入、展示为历史 Run（缺 Raw/MP4，按 video_fallback 分析）。外部遥测的导入与数据合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md`。
 
 暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
-Raw Input 解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需经过本地 MP4 预处理、统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
+Raw Input 解决的是输入运动学事实源；目标/准星相对误差与视觉反应时刻首选来自配对外部遥测的真值投影（不经 MP4；对齐回执未接受即 fail-closed），本地 MP4 预处理降为回退与行为细节来源，仍需统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
 
-场景 family 路由与精确 ScenarioProfile 是两层独立合同。任何场景都按多级识别进入大类管线（2026-08-15 决策）：exact reviewed hash 是已知图的精确加速通道；用户+Coach 确认的持久场景记忆（`scenario_override`，存于 app-data `config/scenario-overrides.json`，由 `scenario_memory.set` 在用户确认一次后按场景哈希写入，confidence confirmed 但只授予该 family 的 baseline）优先于 `.sce` 结构、挑战形态与名称各层；Run finalization 可以从同名本地 `.sce` 及已冻结的 Challenge 事实生成有界、无路径和无原文的 `scenario_behavior_descriptor.v1`，据此确认 static/dynamic family；由冻结 Stats/Raw 事实派生的挑战形态（`challenge_shape`，candidate 级统计判据，判据数值由代码与测试维护）在名称候选之上再给出一层大类候选；场景名关键词只产生标记为 `name_heuristic`/candidate 的大类候选，不构成场景身份；全部识别失败时落到 static clicking 基础分析并标记 `scenario_family_unresolved`。exact reviewed profile 仍是完整视觉/场景分析（目标相对误差、目标身份或速度、命中关联、场景处方）的唯一许可，不能因 family 相同跨 hash 复用；manifest gate 未激活的已审核 hash 与所有非 exact 识别都降级为该 family 的 baseline analyzer。baseline 只能消费 Raw Input、Stats、Performance 等原生已验证事实，必须显式保留缺少目标相对几何、命中关联、目标身份/速度和场景处方的 limitations；确无任何可分析数据（如 movement aiming 缺玩家移动遥测）的场景保持 outcome-only，而不是猜测。
+场景 family 路由与精确 ScenarioProfile 是两层独立合同。任何场景都按多级识别进入大类管线（2026-08-15 决策）：exact reviewed hash 是已知图的精确加速通道；用户+Coach 确认的持久场景记忆（`scenario_override`，存于 app-data `config/scenario-overrides.json`，由 `scenario_memory.set` 在用户确认一次后按场景哈希写入，confidence confirmed 但只授予该 family 的 baseline）优先于 `.sce` 结构、挑战形态与名称各层；Run finalization 可以从同名本地 `.sce` 及已冻结的 Challenge 事实生成有界、无路径和无原文的 `scenario_behavior_descriptor.v1`，据此确认 static/dynamic family；由冻结 Stats/Raw 事实派生的挑战形态（`challenge_shape`，candidate 级统计判据，判据数值由代码与测试维护）在名称候选之上再给出一层大类候选；场景名关键词只产生标记为 `name_heuristic`/candidate 的大类候选，不构成场景身份；全部识别失败时落到 static clicking 基础分析并标记 `scenario_family_unresolved`。exact reviewed profile 仍是完整视觉/场景分析（目标相对误差、目标身份或速度、命中关联、场景处方）的唯一许可，不能因 family 相同跨 hash 复用；manifest gate 未激活的已审核 hash 与所有非 exact 识别都降级为该 family 的 baseline analyzer。baseline 只能消费 Raw Input、Stats、Performance 等原生已验证事实；配对外部遥测可用时目标相对几何与目标身份/速度可由遥测真值供给，遥测不可用时必须显式保留缺少目标相对几何、命中关联、目标身份/速度和场景处方的 limitations；确无任何可分析数据（如 movement aiming 缺玩家移动遥测）的场景保持 outcome-only，而不是猜测。
 
 Raw Input snapshot 的采样语义必须随格式版本识别。`ACRI v1` 保持历史逐报告 trace 的只读兼容；新的 1 ms canonical 运动归一化使用 `ACRI v2`。现存滚动 v1 snapshot 在继续采集前必须确定性迁移为 v2，迁移需保持每毫秒 X/Y 净位移、按钮边沿及其顺序；不得把 v1 与 v2 记录混装后标为单一语义。Analysis 可继续消费相同的 `timestamp_ms/dx/dy/buttons` 记录形状，但 provenance 必须保留实际 snapshot format version。
 
@@ -87,13 +90,16 @@ The new Coach Run analysis contract uses the highest available evidence tier.
 Before enqueue, the server validates the allow-listed sources for each tier and
 returns only stable missing-source codes plus a bounded path-free summary:
 
+- `telemetry_multimodal`: Stats, Performance, paired external telemetry, and
+  canonical time window; Raw Input and managed KovaaK-window MP4 are not required;
 - `multimodal`: Stats, Performance, Raw Input, managed KovaaK-window MP4, and canonical time window;
 - `input_native`: Stats, Performance, Raw Input, and canonical time window;
 - `video_fallback`: Stats and managed KovaaK-window MP4.
 
-The server selects `multimodal > input_native > video_fallback` and rejects the
-Run only when all three tiers are unavailable. Every created Analysis freezes an
-owner-scoped snapshot and exposes its evidence provenance and limitations.
+The server selects `telemetry_multimodal > multimodal > input_native >
+video_fallback` and rejects the Run only when all four tiers are unavailable.
+Every created Analysis freezes an owner-scoped snapshot and exposes its
+evidence provenance and limitations.
 
 ## 3. 稳定数据合同
 
@@ -125,10 +131,10 @@ AnalysisResult
 
 - measured/derived 数值、事件、时间、来源、质量和 limitations 是 Coach 不得改写或重算的事实输入；deterministic diagnosis/prescription 是规则层生成的可追溯候选观察与初始排序，不是不可挑战的最终因果结论。Coach 可结合完整动作级 processed data、反例、历史和知识重新排序、保留或拒绝候选解释，但不得伪造测量、覆盖正式指标或把假设写成事实；
 - `analysis_type` 必须显式，不能靠字段猜测 flicking/tracking；
-- 历史报告与新 Coach Run 的 `input_mode` 都必须显式区分 input-native / multimodal / video-fallback；新 Run 使用 source gate 冻结的选择，不能靠是否有 MP4 或 trace 在下游猜测；
+- 历史报告与新 Coach Run 的 `input_mode` 都必须显式区分 input-native / multimodal / video-fallback / telemetry-multimodal；新 Run 使用 source gate 冻结的选择，不能靠是否有 MP4 或 trace 在下游猜测；
 - `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
 - multimodal 不得让视频重新定义已经成立的输入运动学；视觉校验失败时保留受限结果和 warning，不把该 Analysis 静默改标为另一种 input mode；
-- 每个关键指标必须能追溯到 Raw Input、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
+- 每个关键指标必须能追溯到 Raw Input、外部遥测（external telemetry）、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
 - Coach 可获得版本化、类型化、字段白名单化的 L1-L3 facts/evidence/diagnosis；不得获得 L0 原始载体或私有 parser payload；
 - artifact 通过 manifest/稳定引用暴露，不泄露任意文件系统路径；
 - 新字段优先向后兼容；破坏性变化升级 contract version。
@@ -179,6 +185,7 @@ KovaaKRun
   ├─ parsed scenario / challenge / event summaries
   ├─ optional Run-owned local mouse trace
   ├─ optional Run-owned automatic MP4
+  ├─ optional paired ExternalTelemetryRun reference (pairing; weak import-side association)
   ├─ capture / finalization / analysis-readiness state
   └─ zero or more Analysis Session references
 ```
@@ -189,6 +196,7 @@ KovaaKRun
 - Stats / Performance 原始文件保持用户所有，本地 `runs/{id}/meta.json` 只保存绝对路径、解析摘要和稳定 source key；Aiming Cookie 不自动复制、搬迁或删除这些源文件；
 - Raw Input trace 是 Run 的本地 managed artifact，不是云端 artifact；没有有效 Performance 时间锚时不得伪造配对；
 - 自动录制并按 Challenge window 切出的 MP4 是 Run-owned managed artifact；它不随 terminal Analysis 删除。手动导入 MP4 仍按用户源文件与 Analysis-owned managed copy 的既有边界处理；
+- 外部遥测经导入侧 ±1s 挑战窗粗配对挂到 KovaaKRun（`pairing.matched_run_ids`），是弱关联引用而非 Run-owned artifact：ExternalTelemetryRun 及其旁车存储在独立的 `{DATA_ROOT}/external/`（带导入台账），不归 Run 或 Analysis 所有；分析快照以 `sources.external_telemetry` 注入，合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md`；
 - 一条 canonical Performance Challenge window 只生成一条 Run；连续多局必须分别 finalization，重复 watcher observation 必须幂等；
 - finalization 后满足最低条件但尚未创建 Analysis 的 Run 进入 `pending_analysis` 或等价稳定状态；未选择 Run 不进入 Analysis job queue；
 - Domain Core 必须在结果中保留 evidence provenance 和缺失范围，不能把单一来源的推断序列化成另一来源的测量；
@@ -264,7 +272,7 @@ Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 
 - L1 CanonicalSourceFacts、L2 DerivedEvidence 与 L3 diagnosis/profile/plan 必须版本化、类型化、字段白名单化并带 provenance、completeness 与 limitation；完整规范化 facts 不等于原始载体或 future unknown field；
 - L2 必须保留 analyzer 定义的全部动作级 processed event rows：static 每次 flick/click、dynamic 每次 acquisition/click、tracking 每个 episode/change/loss/reacquisition 或固定分析窗口、switching 每条 leave-to-first-outcome 链。它们可以留在本地 artifact 并通过固定查询操作消费，但不能只剩若干代表片段或整局摘要；EvidenceSegment 主要是解释和本地视频回放锚点；
 - 用户启用 Coach 并选择 Provider 后，L1-L3 的 bounded context/tool results 是普通 Coach turn 数据，不增加逐 Run consent。owner、capability、预算和审计边界仍在本地 bridge 强制；
-- MP4 在当前合同中只由本地确定性预处理器生成数值 signals/events/confidence，Coach 引用 EvidenceSegment，用户在 UI 播放本地片段。未来视觉模型必须另立版本化合同，明确用户授权、限定片段、Provider、预算、retention 与 `model_inferred` 边界。
+- MP4 在当前合同中只由本地确定性预处理器生成数值 signals/events/confidence；配对外部遥测可用时，冻结的真值旁车由遥测 producer 投影为与 CV 同形的 visual_result（首选路径，不经 MP4；对齐回执 `alignment.accepted != true` 时 fail-closed），producer 失败且有视频时才回退 CV。Coach 引用 EvidenceSegment，用户在 UI 播放本地片段。未来视觉模型必须另立版本化合同，明确用户授权、限定片段、Provider、预算、retention 与 `model_inferred` 边界。
 
 #### Backend-to-frontend handoff contract
 

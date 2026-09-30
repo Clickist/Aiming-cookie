@@ -6,8 +6,8 @@
 
 - Aiming Cookie 是 Provider-backed Agent 产品。首次 onboarding 不允许跳过 Provider；Provider 连接并测试成功、Windows 自动采集授权并启用后，才能进入 Coach、History 和 Settings 主工作区。
 - 首发可导入并展示安装前已有的 KovaaK Stats/Performance 文件；它们不含 Aiming Cookie 的 Raw Input 与受管 MP4，作为历史 Run 展示，分析时按 video_fallback（stats-only）路径，不进入 multimodal / input_native。
-- 新训练由 Coach 自动选择最高质量的可用分析路径：`multimodal`（Stats + Performance + Raw Input + managed MP4 + canonical window）→ `input_native`（Stats + Performance + Raw Input + canonical window）→ `video_fallback`（Stats + managed MP4）。用户不手动选择模式。
-- fallback 是正式可用的有限分析，不是伪造的完整结果。每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；三条路径均不可用时，Coach 说明本局不能分析及下一步。
+- 新训练由 Coach 自动选择最高质量的可用分析路径：`telemetry_multimodal`（配对外部遥测 ExternalTelemetryRun + Stats + Performance + canonical window；视频与 Raw Input 非必需）→ `multimodal`（Stats + Performance + Raw Input + managed MP4 + canonical window）→ `input_native`（Stats + Performance + Raw Input + canonical window）→ `video_fallback`（Stats + managed MP4）。用户不手动选择模式。
+- fallback 是正式可用的有限分析，不是伪造的完整结果。每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；四条路径均不可用时，Coach 说明本局不能分析及下一步。
 - 多局练习中的每个可用 Run 都可独立分析；跨局比较只使用双方共同具备且已验证的指标，不把证据等级差异写成疲劳或瞄准变化。
 - Provider 后续失效不把用户强制送回 onboarding；Coach 对话显示错误并引导 Settings 修复或新增 Provider。Provider fallback 暂不属于首发合同。
 
@@ -90,7 +90,7 @@
 
 1. **完整 Coach 诊断闭环**：自动采集 Raw + KovaaK 窗口回放缓冲并事后切成独立 Run → 用户确认一条 Run → static/dynamic clicking、continuous tracking 或 target switching 的专项分析 → 完整动作级 processed data、指标与候选诊断 → Coach 基于支持证据和反例综合解释 → 本地历史、计划与复测；movement aiming 没有移动遥测时只保留 outcome-only；未选择 Run 保留为待分析，手动 `MP4 + Stats` 作为独立 fallback；
 2. **闭环可靠性与共同设计语言**：状态/失败/恢复、通知、日志、History 支撑，以及统一 token 和基础组件；
-3. **本地视觉预处理与质量 Gate**：Raw Input 负责输入运动学；当前 MP4 仅在本地确定性预处理为目标、准星、误差和事件数值证据，并受质量 Gate 约束。未来若让视觉模型读取片段，必须另立版本化、显式授权且有预算上限的合同；
+3. **本地视觉预处理与质量 Gate**：Raw Input 负责输入运动学；目标/准星相对误差等目标侧数值证据首选由配对外部遥测真值投影生成（不经 MP4），当前 MP4 由本地确定性预处理为视觉/准星/误差和事件数值证据，作为遥测不可用时的回退与行为细节来源，并受质量 Gate 约束。未来若让视觉模型读取片段，必须另立版本化、显式授权且有预算上限的合同；
 4. **运营与生态能力**：开源发布、Provider / 认证接入、显式导出 / 导入、经验证的外设目录、商业关系披露和联盟链接治理；
 5. **远期扩展**：手部摄像头、多游戏和超出 KovaaK 输入合同的本地采集。
 
@@ -156,18 +156,19 @@
 
 | 模式 | 必需输入 | 主要产出 | 视频作用 |
 |---|---|---|---|
-| **multimodal**（最高可用时） | KovaaK Run（Stats + Performance）+ Windows Raw Input + managed MP4 + canonical window | Provider-backed Coach 消费完整来源 | 用于可点击回放和证据定位，不覆盖输入事实 |
-| **input_native** | KovaaK Run（Stats + Performance）+ Windows Raw Input + canonical window | 基础 native 分析 + Coach；视觉类结论标注不可用 | 无视频；不得声称视觉证据 |
+| **telemetry_multimodal**（最高可用时） | KovaaK Run（Stats + Performance）+ 配对外部遥测（ExternalTelemetryRun）+ canonical window；Raw Input 与 MP4 非必需 | 遥测真值投影的目标侧证据（目标位置/轨迹/出生-死亡事件）+ 完整 Coach；导入与数据合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md` | 无需视频 |
+| **multimodal** | KovaaK Run（Stats + Performance）+ Windows Raw Input + managed MP4 + canonical window | Provider-backed Coach 消费完整来源 | 用于可点击回放和证据定位，不覆盖输入事实 |
+| **input_native** | KovaaK Run（Stats + Performance）+ Windows Raw Input + canonical window | 基础 native 分析 + Coach；无配对遥测与视频时视觉类结论标注不可用 | 无视频；不得声称视觉证据 |
 | **video_fallback** | Stats + managed MP4（首发导入的安装前文件走 stats-only 兼容路径） | 正式可用的有限分析 | 有限视觉证据；必须显示缺失来源与限制 |
 
 规则：
 
-- 新 Run 按 `multimodal > input_native > video_fallback` 自动降级选择，用户不手动选择模式；三档均不可用时 Coach 说明本局不能分析及下一步。MP4 必须已经明确对应当前 Challenge 才可作为该档来源；
+- 新 Run 按 `telemetry_multimodal > multimodal > input_native > video_fallback` 自动降级选择，用户不手动选择模式；四档均不可用时 Coach 说明本局不能分析及下一步。MP4 必须已经明确对应当前 Challenge 才可作为该档来源；
 - fallback 是正式可用的有限分析，不是伪造的完整结果；每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；
 - Raw Input 只记录相对 `dx/dy`、时间戳和鼠标按钮；不采集键盘或桌面绝对坐标；
 - Aiming Cookie 不修改鼠标硬件 polling rate；无论设备以何种 polling rate 上报，Raw Input 的 canonical 运动时间粒度固定为 1 ms、最高 1000 Hz。同一毫秒内的 `dx/dy` 分别累加为至多一条运动记录，不生成补零记录；鼠标按钮按下/抬起边沿不受该上限约束并保持顺序。该归一化保留每毫秒 X/Y 净位移，但有意不保留亚毫秒路径形状；产品不得把它描述为硬件 polling rate 测量或亚毫秒运动证据；
 - Raw Input 默认关闭，首次开启必须明确告知用户本地采集范围、用途和关闭方式；
-- 缺 MP4 时进入 input_native；缺 Raw Input 或 MP4 时进入 video_fallback；任一档都不能伪造目标相对误差、视觉反应时刻或视频证据——低层路径只能声明其来源实际支撑的结论；
+- 缺 MP4 但有配对外部遥测时进入 telemetry_multimodal；缺 MP4 且无配对遥测时进入 input_native；缺 Raw Input 或 MP4 时进入 video_fallback；任一档都不能伪造目标相对误差、视觉反应时刻或视频证据——低层路径只能声明其来源实际支撑的结论；
 - Performance / Stats 负责场景身份、挑战时间、击杀/命中事件和可用的目标配置；Raw Input 负责输入运动学；视频主要负责直观回放、问题定位和可验证的视觉证据；
 - 自动采集不能依赖不存在的实时 Challenge hook；应用在 KovaaK 进程 gate 内连续采集 Raw，并把仅 KovaaK 窗口的编码码流（硬件编码优先；两级硬件编码均不可用或不适配采集适配器时受控降级到软件 MFT 编码，encoder path 记入诊断包）保留在最近 300 秒的有界回放缓冲中，再用稳定 Stats / Performance 事后把连续多局切成独立 Run；300 秒按墙上时间计算，但 v1 仅对 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4；检测到 `Pause Count > 0` 时保留可诊断的 partial/unavailable evidence，不生成永久 MP4，也不把 Raw/Performance 标记为 canonical aligned；超出该范围或任一来源覆盖不完整时明确降级，不伪造完整 Raw / MP4；
 - 单次只产生一条可分析 Run 时默认选中并等待用户确认；产生多条时用户必须选择一条开始分析，其余保留在 History 的待分析训练中，不进入 Tasks、不合并、不自动删除；
@@ -178,11 +179,15 @@
 ### Current Coach Run analysis gate
 
 New Run-based Analysis created from the Coach flow is tiered automatically by
-the server: `multimodal` requires Stats, Performance (`.perf`), Raw Input,
-managed KovaaK-window video, and a resolved canonical time window;
-`input_native` drops the managed-video requirement; `video_fallback` runs on
-Stats with managed MP4 (imported pre-install files use the stats-only compat
-path). The source gate returns bounded missing-source codes and never exposes
+the server: `telemetry_multimodal` requires paired external telemetry
+(ExternalTelemetryRun), Stats, Performance (`.perf`), and a resolved canonical
+time window; Raw Input and managed KovaaK-window video are not required;
+`multimodal` requires Stats, Performance, Raw Input, managed KovaaK-window
+video, and a resolved canonical time window; `input_native` drops the
+managed-video requirement; `video_fallback` runs on Stats with managed MP4
+(imported pre-install files use the stats-only compat path). The server
+selects `telemetry_multimodal > multimodal > input_native > video_fallback`.
+The source gate returns bounded missing-source codes and never exposes
 paths or raw payloads.
 
 Capture-pending and analysis-ready are separate states. A Run with no usable
@@ -355,7 +360,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 
 **技术预览成功**：
 - 自动采集能够把连续 KovaaK Challenge 事后切成独立 Run；单局默认确认、多局选一条，其余待分析 Run 可在 History 找回；
-- 新 Run 由服务端按 `multimodal > input_native > video_fallback` 自动选择最高可用路径；完全无可用来源时只保留失败/待补齐记录；
+- 新 Run 由服务端按 `telemetry_multimodal > multimodal > input_native > video_fallback` 自动选择最高可用路径；完全无可用来源时只保留失败/待补齐记录；
 - 异常退出不会留下无法恢复的永久进行中状态，失败可识别、可恢复或可重试；
 - 无 LLM 时确定性测量、候选观察和规则化 prescription 仍完整可用；
 - 分析和相关 managed 文件按规则删除，且不级联删除 Coach 消息或长期档案；
@@ -374,7 +379,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - 分析稳定（失败率可接受，具体阈值待真实数据校准）
 - 性能（本地 CV ~160s 可接受）
 - 指标可信（用户跨次比较有意义）
-- multimodal 档的 Run 必须同时具备 Raw Input、Performance、Stats、MP4 与 canonical window；target-relative claims 仅在本地预处理的视觉质量 Gate 通过后生成；Coach 能明确区分四类证据
+- telemetry_multimodal 档的 Run 必须同时具备配对外部遥测、Performance、Stats 与 canonical window（Raw Input 与 MP4 非必需）；multimodal 档的 Run 必须同时具备 Raw Input、Performance、Stats、MP4 与 canonical window；target-relative claims 仅在遥测真值投影或本地预处理的视觉质量 Gate 通过后生成；Coach 能明确区分五类证据（Raw Input、外部遥测、Performance、Stats、MP4）
 - 没有 Raw Input、非 Windows 或用户拒绝授权时，新 Run 自动进入 video_fallback（或 stats-only 导入路径）并显示相应限制，不伪造缺失来源的结论
 - Raw Input 的采集范围、授权状态、关闭方式和本地保留边界对用户清楚可见
 - 自动录屏只捕获 KovaaK 窗口，Raw/MP4/Stats/Performance 的时间轴可追溯；连续多局不会被错误合并
@@ -387,7 +392,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - 多游戏（先 KovaaK's）
 - 手部摄像头 v1（远期）
 - Raw Input 目前不扩展到键盘、桌面绝对坐标、后台任意应用或非 KovaaK 进程
-- Raw Input 不直接替代目标/准星视觉证据；没有可靠来源时不输出目标相对误差、视觉反应时刻等结论
+- Raw Input 本身不直接替代目标/准星视觉证据；目标侧结论只能出自配对外部遥测真值或通过质量 Gate 的本地视觉预处理，没有可靠来源时不输出目标相对误差、视觉反应时刻等结论
 - 桌面发布工程细节（Python bundling、installer、签名、公证、自动更新，另 plan）
 - 能力付费墙，以及把产品能力绑定为订阅条件的做法（官方托管模型套餐作为可选的模型供给服务除外）
 - 通用 Benchmark 平台、排行榜浏览、社交比较、后台自动抓取和任意 Benchmark provider 不进入 v1。v1 只允许用户明确同意后，以 Steam Profile URL 或 17 位 ID 手动读取一组随产品审核的 KovaaK 训练项目最高分、项目档位和完成度；用户可在本地保存一个本人已连接账号以便后续手动刷新。聊天中临时提交的其它 Profile 只在该回合查询，身份和成绩都不持久化；两类身份均不进入 Coach Provider。用户界面只称“KovaaK 成绩”或“训练项目成绩”，不突出外部作者、课程代号或难度体系。Coach 可用去身份成绩决定先检查哪个项目，但不能凭分数或课程标签直接诊断 reading、动作机制、身体状态或外设问题
@@ -395,7 +400,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 ## 12. 约束与依赖
 
 - **技术边界**：Raw Input / KovaaK 数据解析 + Python CV + 项目内 Pi-based Coach runtime + Next.js/React 前端 + FastAPI 服务 + Tauri 2 桌面壳；具体版本以依赖文件和 lockfile 为准
-- **输入事实源分工**：Raw Input 测量用户输入运动学与真实鼠标按钮；Performance 提供 Challenge 时间窗和自动配对锚；Stats 提供场景、射击、击杀/命中事件和可用配置；MP4 提供视觉目标/准星/场景证据；任何单一来源都不得静默冒充其它来源
+- **输入事实源分工**：Raw Input 测量用户输入运动学与真实鼠标按钮；Performance 提供 Challenge 时间窗和自动配对锚；Stats 提供场景、射击、击杀/命中事件和可用配置；外部遥测（RPM 目标/相机 + OS Raw Input 旁车，导入侧配对为 ExternalTelemetryRun）提供目标位置/轨迹与出生-死亡事件的直接真值，是目标侧事实的权威来源（导入与数据合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md`）；MP4 提供视觉目标/准星/场景证据，作为行为细节与回退来源；任何单一来源都不得静默冒充其它来源
 - **隐私与平台**：Raw Input 第一版仅 Windows、默认关闭、用户 opt-in、只在检测到 KovaaK 进程时采集、只保存本地。用户启用 Coach 并选择 Provider 后，版本化、字段白名单化的 L1-L3 facts/evidence 可作为普通 Coach context；Raw trace、MP4、原始 CSV / protobuf、私有 parser payload 和未知字段不发送。非 Windows 必须有可用 fallback
 - **合规**：Landing、release 分发和可选外设目录按实际托管地区遵守适用要求；不把“规避备案”作为产品目标或表述，具体上线方案发布前复核
 - **成本**：CV 本地运行以降低服务器成本；LLM 使用成本属于用户与其选择的 Provider 的独立关系；官方静态站、分发和外设目录成本在上线前按实际方案复核
@@ -423,6 +428,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **scenario.open 同意门保持在提示词层**（2026-09-13）：「打开 KovaaK 场景前必须先征得用户同意」由工具描述与教学提示词约束，不加代码层强制拦截（不做过度工程）；防线单层是已知并接受的取舍。
 - **开场分析一次性、成绩层为界**（2026-09-13）：Onboarding 后首启自动创建「开场分析」会话（不设跳过键，切走即跳过）；分析只用成绩层数据（Stats/Perf、社区基准 S2 段位、时长、进步曲线）与用户自评，禁止动作层断言；具体处方保留给 Run 分析管线，开场只给类别级「下一步」；用户基本信息以白名单 JSON（`config/user-profile.json`）承载。数据边界依据：开场时点尚无 Raw Input/遥测证据，低层路径只能声明其实际支撑的结论。
 - **第三方知识包与知识库 SDK**（2026-09-20）：教练知识库支持第三方知识包：整库替换 + 档切换，官方知识库是默认常驻档，激活哪份用哪份，不做叠加合并，坏包 fail-closed 回退官方档。知识包内容分两层：数据→现象映射（哪些指标形态说明什么问题、怎么练）与类 Wiki 知识（讲解正文）。处方能力开放：第三方包可用 `scenario_prescription`，但只能引用官方场景 registry 已审核场景，不能自造场景档案。v1 只做本地导入（作者自行分发 zip/仓库），在线知识商店后置（候选 Cloudflare 静态分发方案，未定案）；配套 SDK（包格式规范 + 模板 + 校验器）置于主仓库 `sdk/knowledge-pack/`，面向第三方瞄准作者。为什么：让社区瞄准知识作者能替换"讲什么、怎么练"，而不动摇测量与诊断的确定性根基。
+- **外部遥测通道与 telemetry_multimodal 档回写上游文档**（2026-09-30，补录）：目标侧证据来源确立为外部遥测优先——2026-08-31 落地导入合同（cleaned 轮次配对为 ExternalTelemetryRun）、2026-09-01 `telemetry_multimodal` 档入源门（源门最高优先：配对遥测 + Stats + Performance + canonical window，视频与 Raw Input 非必需）、2026-09-06 采集工具随产品接线（RPM 目标/相机 + OS Raw Input 三通道伴生常驻）。档位序更正为 `telemetry_multimodal > multimodal > input_native > video_fallback`；目标/准星相对误差首选来自遥测真值投影，MP4/CV 预处理降为回退与行为细节来源。依据：09-06 采集接线与实机两局真打全链验收（分析均 telemetry_multimodal 档）的既成事实；本条为该能力回写 PRD 的决策补录，导入与数据合同见 `docs/EXTERNAL_TELEMETRY_IMPORT.md`。为什么：目标位置（含未命中目标的出生/轨迹/存活）是公平指标与目标侧诊断的基础事实；RPM 只读、零注入零写入，本地单用户尺度下风险可接受。
 - **Provider-first onboarding 是硬门槛**（2026-08-09）：首次启动先说明 Coach 价值、Provider 成本和数据边界；连接 Provider 后才进入 Coach-backed 分析。Provider 不可用时采集可继续，但不生成 Provider-less Analysis 或报告；后续回访从既有入口恢复连接
 - **Pi catalog 与本地 credential**（2026-07-13）：pinned Pi built-in provider/model catalog 就是产品 catalog，不维护 Aiming Cookie allow-list；支持自定义 OpenAI-compatible profile。API key 可作为 local-first 权衡明文保存在本地 config/provider.json，secure store 不是前置 Gate，但 secret 绝不进入 AnalysisResult、Coach 上下文/消息、普通日志、诊断或导出
 - **v1 → B → C 分阶段**：v1 建立开源免费的完整 Coach 闭环；B 深化长期档案、训练计划和复测体验；C 在保持信任边界的前提下接通经验证的外设目录与透明联盟链接
