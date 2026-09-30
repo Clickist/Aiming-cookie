@@ -1,0 +1,28 @@
+# Aiming Cookie
+
+> Aiming Cookie is a free, local-first Windows desktop app that diagnoses and coaches FPS aiming for KovaaK's FPS Aim Trainer. It reads first-party evidence — Raw Input mouse signals, match telemetry, KovaaK's stats and screen recordings — measures every shot with engine-level ground truth (angle error per bullet, deceleration ratio, trajectory smoothness), and an AI coach explains what went wrong frame-by-frame, assigns training plans, and tracks long-term progress. All training data stays on the user's machine.
+
+> Aiming Cookie（瞄准饼干）是一款免费、本地优先的 Windows 桌面应用，为 KovaaK's（Steam 上的 FPS Aim Trainer）提供瞄准诊断与 AI 教练。它读取一手证据（Raw Input 鼠标信号、对局遥测、KovaaK's 统计与屏幕录像），用引擎级真值计算每一发的角度误差、减速占比与轨迹平滑度，AI 教练逐帧讲解问题、制定训练计划并追踪长期进步。训练数据全部保留在用户电脑本地。
+
+## Pages / 页面
+
+- [Home · 中文首页](https://aimingcookie.com/): product overview, features, pricing, FAQ (Simplified Chinese)
+- [Home · English](https://aimingcookie.com/en/): English product page
+- [Changelog · 更新日志](https://aimingcookie.com/changelog/): full release notes (Chinese)
+- [Changelog · Release notes](https://aimingcookie.com/en/changelog/): full release notes (English)
+- [GitHub — Clickist/Aiming-cookie](https://github.com/Clickist/Aiming-cookie): open source (GPL-3.0-or-later), architecture and development docs
+- [Bilibili 作者主页](https://space.bilibili.com/14425468): creator channel (Chinese aim-training content)
+
+## Key facts / 关键事实
+
+- Platform: Windows 10/11 64-bit desktop app (Tauri); requires KovaaK's on Steam
+- Download: free via the hero button on the homepage (latest version v1.3.2)
+- Pricing: BYOK tier free forever (bring your own LLM API key); Standard ¥10/month; Plus ¥30/month — official hosted model included in paid tiers
+- Not a cheat: runs entirely outside the game — no memory reading, no injection, no aim assistance; analysis happens after training sessions
+- Privacy: match data, analyses and coach conversations are stored locally in human-readable JSON; nothing is uploaded unless the user explicitly sends it (coach chat or a diagnostic log upload)
+- AI coach: grounded in measured evidence (per-shot ground truth, kinematics metrics) and a curated aim-theory knowledge base; answers link to exact video timestamps
+- Vision fallback: for matches without telemetry, a deterministic classical-CV pipeline rebuilds evidence from screen recordings (no neural networks, quality-gated)
+
+## FAQ / 常见问题
+
+See the homepage FAQ section (JSON-LD FAQPage included) for: Is it a cheat? · Is it free? · Do I need KovaaK's? · Does my data leave my machine? · How is it better than re-watching recordings? · Which drill types are supported? · What can the AI coach do? · System requirements.
