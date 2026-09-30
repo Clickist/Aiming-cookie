@@ -7,7 +7,7 @@
 **A locally-run AI aim coach for FPS players**
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.2.4-green.svg)](https://aimingcookie.com)
+[![Release](https://img.shields.io/badge/release-v1.3.2-green.svg)](https://aimingcookie.com)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)](#quick-start)
 [![Website](https://img.shields.io/badge/website-aimingcookie.com-FF6B2C.svg)](https://aimingcookie.com)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/DEVELOPMENT.md)
@@ -123,7 +123,7 @@ Three everyday surfaces, no dashboard clutter:
 
 ## Current status
 
-**v1.2.4 released** (the installer and auto-updates are distributed via the official website; the installer is unsigned — SmartScreen will ask you to choose "Run anyway").
+**v1.3.2 released** (the installer and auto-updates are distributed via the official website; the installer is unsigned — SmartScreen will ask you to choose "Run anyway").
 
 - ✅ Four-source capture, generic vision analysis, full Coach capabilities, auto-update — all verified on real machines
 - 🚧 Known limitations: analyses that include video take 1–2 minutes (with a progress display); hit detection has a ±10 px visual gray zone; the installer is unsigned
@@ -184,4 +184,4 @@ This is an independent personal project with no affiliation to KovaaK's / FPS Ai
 
 ---
 
-*Product goals are governed by the [PRD](docs/PRD.md); the capabilities described in this README reflect the current code, tests, and real-machine results.*
+*The capabilities described in this README reflect the current code, tests, and real-machine results.*

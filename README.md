@@ -7,7 +7,7 @@
 **本地运行的 FPS 瞄准 AI 教练**
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.2.4-green.svg)](https://aimingcookie.com)
+[![Release](https://img.shields.io/badge/release-v1.3.2-green.svg)](https://aimingcookie.com)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)](#快速开始)
 [![Website](https://img.shields.io/badge/website-aimingcookie.com-FF6B2C.svg)](https://aimingcookie.com)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/DEVELOPMENT.md)
@@ -120,7 +120,7 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 
 ## 当前状态
 
-**v1.2.4 已发布**（安装包与自动更新经官网分发；安装包未签名，SmartScreen 需选择「仍要运行」）。
+**v1.3.2 已发布**（安装包与自动更新经官网分发；安装包未签名，SmartScreen 需选择「仍要运行」）。
 
 - ✅ 四源采集链路、通用视觉分析、Coach 全能力、自动更新——均经真机验证
 - 🚧 已知限制：含视频的分析需等待 1-2 分钟（有进度显示）；击中判定存在 ±10px 视觉灰区；安装包未签名
@@ -179,4 +179,4 @@ Aiming Cookie 的立场是：**教练必须先看证据，再开口。** 它把�
 
 ---
 
-*产品目标以 [PRD](docs/PRD.md) 为准；本文描述的能力以当前代码、测试和真机运行结果为准。*
+*本文描述的能力以当前代码、测试和真机运行结果为准。*
