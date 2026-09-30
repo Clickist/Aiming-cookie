@@ -759,7 +759,7 @@ fn build_capture_diagnostics_bundle(
         .status();
     let now_ms = diagnostic_now_ms();
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v5",
+        schema_version: "capture_diagnostics.v6",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,

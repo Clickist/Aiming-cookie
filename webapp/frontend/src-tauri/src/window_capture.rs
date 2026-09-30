@@ -106,7 +106,9 @@ pub struct Mp4Writer {
 #[cfg(windows)]
 impl Mp4Writer {
     pub fn start(path: impl AsRef<Path>, width: u32, height: u32) -> Result<Self, String> {
-        validate_recording_dimensions(width, height)?;
+        let dims_note = capture_dims_note(width, height);
+        validate_recording_dimensions(width, height)
+            .map_err(|error| format!("{dims_note}{error}"))?;
         let path = path.as_ref().to_path_buf();
         if !path.is_absolute() {
             return Err("recording output path must be absolute".to_string());
@@ -135,7 +137,7 @@ impl Mp4Writer {
         };
 
         unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }
-            .map_err(|error| format!("MFStartup failed: {error}"))?;
+            .map_err(|error| format!("{dims_note}MFStartup failed: {error}"))?;
         let mut writer = None;
         let mut path_wide: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().collect();
         path_wide.push(0);
@@ -219,7 +221,7 @@ impl Mp4Writer {
         })();
         if let Err(error) = startup_result {
             unsafe { windows::Win32::Media::MediaFoundation::MFShutdown() }.ok();
-            return Err(error);
+            return Err(format!("{dims_note}{error}"));
         }
         Ok(writer.expect("writer initialized after successful Media Foundation startup"))
     }
@@ -315,6 +317,43 @@ fn validate_recording_dimensions(width: u32, height: u32) -> Result<(), String> 
         return Err("H.264 recording dimensions must be even".to_string());
     }
     Ok(())
+}
+
+// 编码链可接受的尺寸上限：软编兜底层（Microsoft H.264 Encoder MFT）的
+// 实际上限量级在 4096 一档。超限会话显式终态而非静默缩放——缩放需要
+// 软编路径不具备的 scaler，等真实报障数据证明需要时再引入。
+#[cfg(windows)]
+const ENCODE_DIMENSION_LIMIT: u32 = 4096;
+
+/// 会话尺寸 → 编码尺寸：H.264/NV12 的 4:2:0 色度子采样要求偶数维，
+/// 向下取偶（裁掉 ≤1px，视觉无感）。WGC item size 含非客户区，虚拟
+/// 显示器与分数 DPI 缩放下常为奇数；不取偶会让硬编 NV12 纹理与软编
+/// output type 双双拒绝（0930 线上报障）。<2 或超上限返回 Err，调用方
+/// 显式终态，不做会话中途重建。
+#[cfg(windows)]
+fn normalize_encode_dimensions(width: u32, height: u32) -> Result<(u32, u32), String> {
+    if width < 2 || height < 2 {
+        return Err(format!(
+            "capture window is too small to encode: {width}x{height}"
+        ));
+    }
+    if width > ENCODE_DIMENSION_LIMIT || height > ENCODE_DIMENSION_LIMIT {
+        return Err(format!(
+            "capture window exceeds the encoder size limit {ENCODE_DIMENSION_LIMIT}: \
+             {width}x{height}"
+        ));
+    }
+    Ok((width & !1, height & !1))
+}
+
+/// 终态编码错误消息的尺寸前缀：fps/码率/profile 是全机器常量，唯一随
+/// 机器变化的输入就是尺寸，必须让它第一时间出现在日志与诊断包里。
+#[cfg(windows)]
+fn capture_dims_note(width: u32, height: u32) -> String {
+    format!(
+        "capture {width}x{height}@{}/{}: ",
+        DEFAULT_RECORDING_FPS_NUMERATOR, DEFAULT_RECORDING_FPS_DENOMINATOR
+    )
 }
 
 #[cfg(windows)]
@@ -1588,11 +1627,18 @@ pub struct WindowCaptureStatus {
     pub writer_dropped_frames: u64,
     pub adapter_identity: Option<String>,
     pub encoder_path: Option<HardwareEncoderPath>,
+    pub capture_width: Option<u32>,
+    pub capture_height: Option<u32>,
+    pub encode_width: Option<u32>,
+    pub encode_height: Option<u32>,
     pub first_packet_pts_100ns: Option<i64>,
     pub last_packet_pts_100ns: Option<i64>,
     pub submitted_packets: u64,
     pub dropped_packets: u64,
     pub last_encoder_failure: Option<HardwareEncoderFailure>,
+    // 硬编层失败被软编回退顶替时的拒绝原因（类别+消息）：末级软编聚合
+    // 错误会完全遮蔽硬编层死在哪一步（0930 报障的盲区），此处单独留痕。
+    pub last_hardware_rejection: Option<String>,
     pub first_system_relative_time_100ns: Option<i64>,
     pub last_system_relative_time_100ns: Option<i64>,
     pub replay_keyframes: u64,
@@ -1618,11 +1664,18 @@ pub struct FrameQueue {
     writer_dropped_frames: u64,
     adapter_identity: Option<String>,
     encoder_path: Option<HardwareEncoderPath>,
+    // WGC item size（capture*）与取偶后进入编码链的尺寸（encode*）：
+    // 奇数窗口两者差 1px，诊断时需要同时看到。
+    capture_width: Option<u32>,
+    capture_height: Option<u32>,
+    encode_width: Option<u32>,
+    encode_height: Option<u32>,
     first_packet_pts_100ns: Option<i64>,
     last_packet_pts_100ns: Option<i64>,
     submitted_packets: u64,
     dropped_packets: u64,
     last_encoder_failure: Option<HardwareEncoderFailure>,
+    last_hardware_rejection: Option<String>,
     first_system_relative_time_100ns: Option<i64>,
     last_system_relative_time_100ns: Option<i64>,
     replay_keyframes: u64,
@@ -1652,11 +1705,16 @@ impl FrameQueue {
             writer_dropped_frames: 0,
             adapter_identity: None,
             encoder_path: None,
+            capture_width: None,
+            capture_height: None,
+            encode_width: None,
+            encode_height: None,
             first_packet_pts_100ns: None,
             last_packet_pts_100ns: None,
             submitted_packets: 0,
             dropped_packets: 0,
             last_encoder_failure: None,
+            last_hardware_rejection: None,
             first_system_relative_time_100ns: None,
             last_system_relative_time_100ns: None,
             replay_keyframes: 0,
@@ -1756,6 +1814,27 @@ impl FrameQueue {
         }
     }
 
+    /// 会话启动时记录 WGC item size（capture*）与取偶后的编码尺寸
+    /// （encode*）：尺寸不进诊断包时，奇数窗口故障只能靠猜（0930 报障）。
+    pub fn record_session_dimensions(
+        &mut self,
+        capture_width: u32,
+        capture_height: u32,
+        encode_width: u32,
+        encode_height: u32,
+    ) {
+        self.capture_width = Some(capture_width);
+        self.capture_height = Some(capture_height);
+        self.encode_width = Some(encode_width);
+        self.encode_height = Some(encode_height);
+    }
+
+    /// 硬编层失败被软编回退顶替时留痕（类别+消息），不被末级软编聚合
+    /// 错误遮蔽。
+    pub fn record_hardware_rejection(&mut self, rejection: String) {
+        self.last_hardware_rejection = Some(rejection);
+    }
+
     /// 编码器在每包入重放缓冲后同步累计的重放侧统计，随诊断导出：
     /// keyframes/字节数用于判断码率与缓冲占用，evicted/coverage_gaps
     /// 用于定位导出 CoverageGap（缓冲被淘汰或时间线断档）的根因。
@@ -1786,11 +1865,16 @@ impl FrameQueue {
         self.writer_dropped_frames = 0;
         self.adapter_identity = None;
         self.encoder_path = None;
+        self.capture_width = None;
+        self.capture_height = None;
+        self.encode_width = None;
+        self.encode_height = None;
         self.first_packet_pts_100ns = None;
         self.last_packet_pts_100ns = None;
         self.submitted_packets = 0;
         self.dropped_packets = 0;
         self.last_encoder_failure = None;
+        self.last_hardware_rejection = None;
         self.first_system_relative_time_100ns = None;
         self.last_system_relative_time_100ns = None;
         self.replay_keyframes = 0;
@@ -1815,11 +1899,16 @@ impl FrameQueue {
             writer_dropped_frames: self.writer_dropped_frames,
             adapter_identity: self.adapter_identity.clone(),
             encoder_path: self.encoder_path,
+            capture_width: self.capture_width,
+            capture_height: self.capture_height,
+            encode_width: self.encode_width,
+            encode_height: self.encode_height,
             first_packet_pts_100ns: self.first_packet_pts_100ns,
             last_packet_pts_100ns: self.last_packet_pts_100ns,
             submitted_packets: self.submitted_packets,
             dropped_packets: self.dropped_packets,
             last_encoder_failure: self.last_encoder_failure,
+            last_hardware_rejection: self.last_hardware_rejection.clone(),
             first_system_relative_time_100ns: self.first_system_relative_time_100ns,
             last_system_relative_time_100ns: self.last_system_relative_time_100ns,
             replay_keyframes: self.replay_keyframes,
@@ -2214,9 +2303,28 @@ impl D3dFrameReadback {
             .map_err(|error| format!("capture surface DXGI access failed: {error}"))?;
         let source: ID3D11Texture2D = unsafe { access.GetInterface() }
             .map_err(|error| format!("capture surface texture access failed: {error}"))?;
+        // 编码尺寸取偶后 staging 按编码尺寸分配；源表面（item size，可为
+        // 奇数）不能整拷（CopyResource 要求两侧同尺寸），用 box 裁剪复制
+        // 左上 encode* 区域。
+        let crop_box = windows::Win32::Graphics::Direct3D11::D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: self.width,
+            bottom: self.height,
+            back: 1,
+        };
         unsafe {
-            self.context
-                .CopyResource(&self.staging[staging_index], &source);
+            self.context.CopySubresourceRegion(
+                &self.staging[staging_index],
+                0,
+                0,
+                0,
+                0,
+                &source,
+                0,
+                Some(&crop_box as *const _),
+            );
         }
 
         self.pending.push_back(PendingReadback {
@@ -2259,6 +2367,10 @@ impl D3dFrameReadback {
             .pop_front()
             .expect("pending readback exists after mapping front");
         completed.sample.bgra8 = pixels;
+        // 像素已按编码尺寸（取偶）裁剪，sample 尺寸同步改写，与
+        // Mp4Writer 的启动尺寸保持一致（write_frame 会做全等校验）。
+        completed.sample.width = self.width;
+        completed.sample.height = self.height;
         Ok(Some(completed.sample))
     }
 
@@ -3025,9 +3137,10 @@ impl HardwareH264Encoder {
             Err(HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderSetupFailure,
                 format!(
-                    "no same-adapter hardware H.264 MFT accepted D3D11 NV12 surfaces; \
+                    "{}no same-adapter hardware H.264 MFT accepted D3D11 NV12 surfaces; \
                      candidates={candidate_count}; d3d11Aware={d3d11_aware_count}; \
-                     lastRejection={last_rejection}"
+                     lastRejection={last_rejection}",
+                    capture_dims_note(width, height)
                 ),
             ))
         })();
@@ -3411,11 +3524,16 @@ struct SoftwareH264Encoder {
 
 #[cfg(windows)]
 impl SoftwareH264Encoder {
+    // source* 是 WGC 帧表面的原始尺寸（可为奇数，BGRA 合法）；encode* 是
+    // 取偶后的编码尺寸（媒体类型/NV12 转换/MFT 输入都用它）。staging 按
+    // source* 分配保 CopyResource 同尺寸，回读行拷贝按 encode* 裁掉 ≤1px。
     fn new(
         device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
         context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
-        width: u32,
-        height: u32,
+        source_width: u32,
+        source_height: u32,
+        encode_width: u32,
+        encode_height: u32,
         queue: Arc<Mutex<FrameQueue>>,
     ) -> Result<Self, HardwareEncoderError> {
         use windows::core::Interface;
@@ -3449,8 +3567,8 @@ impl SoftwareH264Encoder {
             let input_type = create_video_type(
                 MFMediaType_Video,
                 MFVideoFormat_NV12,
-                width,
-                height,
+                encode_width,
+                encode_height,
                 DEFAULT_RECORDING_FPS_NUMERATOR,
                 DEFAULT_RECORDING_FPS_DENOMINATOR,
                 0,
@@ -3461,8 +3579,8 @@ impl SoftwareH264Encoder {
             let output_type = create_video_type(
                 MFMediaType_Video,
                 MFVideoFormat_H264,
-                width,
-                height,
+                encode_width,
+                encode_height,
                 DEFAULT_RECORDING_FPS_NUMERATOR,
                 DEFAULT_RECORDING_FPS_DENOMINATOR,
                 DEFAULT_RECORDING_TARGET_BITRATE_BPS,
@@ -3505,8 +3623,8 @@ impl SoftwareH264Encoder {
                     })?;
             }
             let staging_description = D3D11_TEXTURE2D_DESC {
-                Width: width,
-                Height: height,
+                Width: source_width,
+                Height: source_height,
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -3533,6 +3651,7 @@ impl SoftwareH264Encoder {
                     "software input staging texture was not returned",
                 )
             })?;
+            let candidate_count = candidates.len();
             let mut last_rejection = "no candidate was activated".to_string();
             for activation in candidates {
                 let friendly_name = mft_friendly_name(&activation);
@@ -3619,8 +3738,8 @@ impl SoftwareH264Encoder {
                     replay: EncodedReplayBuffer::new(),
                     sequence_header,
                     last_submitted_pts_100ns: None,
-                    width,
-                    height,
+                    width: encode_width,
+                    height: encode_height,
                     context: context.clone(),
                     staging,
                     _mf_platform: MediaFoundationPlatform,
@@ -3629,8 +3748,9 @@ impl SoftwareH264Encoder {
             Err(HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderSetupFailure,
                 format!(
-                    "no software H.264 MFT accepted NV12 input; \
-                     lastRejection={last_rejection}"
+                    "{}no software H.264 MFT accepted NV12 input; \
+                     candidates={candidate_count}; lastRejection={last_rejection}",
+                    capture_dims_note(encode_width, encode_height)
                 ),
             ))
         })();
@@ -4073,11 +4193,16 @@ fn encoder_failure_allows_software_fallback(failure: HardwareEncoderFailure) -> 
 
 #[cfg(windows)]
 impl AutomaticH264Encoder {
+    // source*/encode* 语义同 SoftwareH264Encoder：硬编层的转换与媒体类型
+    // 全部使用取偶后的 encode*（converter 输入视图建在奇数源表面上，
+    // VideoProcessorBlt 默认矩形把全源缩放到偶数 NV12 目标，≤1px 无感）。
     fn new(
         device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
         context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
-        width: u32,
-        height: u32,
+        source_width: u32,
+        source_height: u32,
+        encode_width: u32,
+        encode_height: u32,
         queue: Arc<Mutex<FrameQueue>>,
     ) -> Result<Self, HardwareEncoderError> {
         // 只读环境覆盖：强制走第三层软件编码，用于无硬件 MFT 机器的
@@ -4086,20 +4211,60 @@ impl AutomaticH264Encoder {
             std::env::var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER").is_ok_and(|value| value == "1");
         if forced_software {
             return Ok(Self::Software(SoftwareH264Encoder::new(
-                device, context, width, height, queue,
+                device,
+                context,
+                source_width,
+                source_height,
+                encode_width,
+                encode_height,
+                queue,
             )?));
         }
-        match HardwareH264Encoder::new(device, context, width, height, Arc::clone(&queue)) {
+        match HardwareH264Encoder::new(
+            device,
+            context,
+            encode_width,
+            encode_height,
+            Arc::clone(&queue),
+        ) {
             Ok(encoder) => Ok(Self::Hardware(encoder)),
             // 硬件编码器不可用（两级硬件枚举都为空）、全局枚举有编码器但
             // 都不匹配采集适配器（hybrid 机器）、或 GPU 侧转换装配失败时
-            // 回退软件编码；其余装配错误保持原样上报。
-            Err(error)
-                if encoder_failure_allows_software_fallback(error.failure) =>
-            {
-                Ok(Self::Software(SoftwareH264Encoder::new(
-                    device, context, width, height, queue,
-                )?))
+            // 回退软件编码；其余装配错误保持原样上报。回退不丢证据：硬件
+            // 层失败原因先落日志与诊断（lastHardwareRejection），软编也
+            // 失败时合成双因消息，不再只看得到末级软编聚合错误（0930
+            // 报障的定位盲区）。
+            Err(error) if encoder_failure_allows_software_fallback(error.failure) => {
+                crate::dlog!(
+                    "[capture-encoder] hardware layer failed, falling back to software: \
+                     {:?}: {}",
+                    error.failure,
+                    error.message
+                );
+                if let Ok(mut guard) = queue.lock() {
+                    guard.record_hardware_rejection(format!(
+                        "{:?}: {}",
+                        error.failure, error.message
+                    ));
+                }
+                match SoftwareH264Encoder::new(
+                    device,
+                    context,
+                    source_width,
+                    source_height,
+                    encode_width,
+                    encode_height,
+                    queue,
+                ) {
+                    Ok(encoder) => Ok(Self::Software(encoder)),
+                    Err(software) => Err(HardwareEncoderError::new(
+                        software.failure,
+                        format!(
+                            "hardware layer failed: {}; software layer failed: {}",
+                            error.message, software.message
+                        ),
+                    )),
+                }
             }
             Err(error) => Err(error),
         }
@@ -4873,6 +5038,24 @@ fn run_wgc_window_capture(
             frame_pool,
             session,
         } = started;
+        // 编码尺寸防线（单一计算点）：编码器构造、MP4 writer 与 replay
+        // 导出必须消费同一对取偶值；帧池、drift 判定与会话尺寸保持
+        // item size 不变。病态尺寸（<2 或超上限）在此显式终态。
+        let (encode_width, encode_height) =
+            normalize_encode_dimensions(size.Width as u32, size.Height as u32).map_err(
+                |message| {
+                    crate::dlog!("[capture-encoder] session size rejected: {message}");
+                    message
+                },
+            )?;
+        if let Ok(mut guard) = queue.lock() {
+            guard.record_session_dimensions(
+                size.Width as u32,
+                size.Height as u32,
+                encode_width,
+                encode_height,
+            );
+        }
         let recording_failed = Arc::new(AtomicBool::new(false));
         let mut automatic_encoder = if recording_path.is_none() {
             // 三级回退：全局硬件枚举 → LUID 定点枚举 → 软件 H.264 MFT，
@@ -4882,6 +5065,8 @@ fn run_wgc_window_capture(
                 &context,
                 size.Width as u32,
                 size.Height as u32,
+                encode_width,
+                encode_height,
                 Arc::clone(&queue),
             )
             .map_err(|error| {
@@ -4912,8 +5097,8 @@ fn run_wgc_window_capture(
             let writer_join = thread::spawn(move || {
                 run_mp4_writer(
                     path,
-                    size.Width as u32,
-                    size.Height as u32,
+                    encode_width,
+                    encode_height,
                     receiver,
                     writer_ready_tx,
                     writer_queue,
@@ -4938,7 +5123,7 @@ fn run_wgc_window_capture(
         let recording_readback = recording_sender
             .as_ref()
             .map(|_| {
-                D3dFrameReadback::new(&device, &context, size.Width as u32, size.Height as u32)
+                D3dFrameReadback::new(&device, &context, encode_width, encode_height)
                     .map(|readback| Arc::new(Mutex::new(readback)))
             })
             .transpose()?;
@@ -5166,8 +5351,8 @@ fn run_wgc_window_capture(
                                     encoder.replay_mux_input(
                                         requested_start_100ns,
                                         requested_end_100ns,
-                                        size.Width as u32,
-                                        size.Height as u32,
+                                        encode_width,
+                                        encode_height,
                                         clock_metadata,
                                     )
                                 });
@@ -6921,19 +7106,28 @@ mod tests {
     #[cfg(windows)]
     fn drive_software_encoder(
         frames: u32,
-        width: u32,
-        height: u32,
+        source_width: u32,
+        source_height: u32,
+        encode_width: u32,
+        encode_height: u32,
     ) -> (SoftwareH264Encoder, Arc<Mutex<FrameQueue>>) {
-        let (device, context, source) = warp_bgra_source(width, height);
+        let (device, context, source) = warp_bgra_source(source_width, source_height);
         let queue = Arc::new(Mutex::new(
             FrameQueue::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap(),
         ));
-        let mut encoder =
-            SoftwareH264Encoder::new(&device, &context, width, height, Arc::clone(&queue))
-                .expect("software H.264 encoder should initialize");
+        let mut encoder = SoftwareH264Encoder::new(
+            &device,
+            &context,
+            source_width,
+            source_height,
+            encode_width,
+            encode_height,
+            Arc::clone(&queue),
+        )
+        .expect("software H.264 encoder should initialize");
         let frame_duration = 10_000_000 / 60;
         for index in 0..frames {
-            fill_bgra_texture(&context, &source, width, height, index);
+            fill_bgra_texture(&context, &source, source_width, source_height, index);
             encoder
                 .submit_texture(&source, index as i64 * frame_duration, frame_duration)
                 .expect("software encoder should accept a CPU frame");
@@ -7016,7 +7210,7 @@ mod tests {
         // MFT 有约 16 帧固有管线延迟（feed=N 时输出到 N-16，稳态 1:1），
         // 120 帧输入保证覆盖窗口内全部输出且尾部仍在缓冲中。
         let fed = 120u32;
-        let (encoder, queue) = drive_software_encoder(fed, width, height);
+        let (encoder, queue) = drive_software_encoder(fed, width, height, width, height);
         let status = queue.lock().unwrap().status(false, true);
         eprintln!("software H.264 synthetic status: {status:?}");
         assert_eq!(
@@ -7052,12 +7246,35 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn software_encoder_encodes_odd_source_at_even_encode_dims() {
+        // 0930 报障回归锁：奇数源（虚拟显示器/分数 DPI 下的整窗尺寸）
+        // 直接进编码链会让软编 MFT output type 被拒；staging 保源尺寸、
+        // 回读按偶数编码尺寸裁剪后，装配与编码都必须成功。
+        let (encoder, queue) = drive_software_encoder(120, 321, 241, 320, 240);
+        let status = queue.lock().unwrap().status(false, true);
+        assert_eq!(
+            status.encoder_path,
+            Some(HardwareEncoderPath::MediaFoundationSoftwareH264)
+        );
+        assert_eq!(status.encoder_errors, 0);
+        assert!(
+            status.submitted_packets > 0,
+            "odd-source cropping should still produce encoded packets"
+        );
+        assert!(
+            encoder.has_keyframe(),
+            "expected H.264 clean-point metadata"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn software_replay_mux_writes_valid_mp4() {
         let width = 320u32;
         let height = 240u32;
         let frame_duration = 10_000_000 / 60;
         // 120 帧输入 + ~16 帧管线延迟 → 输出覆盖 PTS 0..100+，窗口 0..60 安全覆盖。
-        let (encoder, _queue) = drive_software_encoder(120, width, height);
+        let (encoder, _queue) = drive_software_encoder(120, width, height, width, height);
         let output = std::env::temp_dir().join(format!(
             "aiming-cookie-software-encoder-{}.mp4",
             std::process::id()
@@ -7107,6 +7324,64 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn normalize_encode_dimensions_rounds_odd_down_to_even() {
+        // 0930 报障回归锁：奇数窗口必须向下取偶（裁 ≤1px），偶数原样。
+        assert_eq!(
+            normalize_encode_dimensions(1921, 1081).unwrap(),
+            (1920, 1080)
+        );
+        assert_eq!(normalize_encode_dimensions(2, 3).unwrap(), (2, 2));
+        assert_eq!(
+            normalize_encode_dimensions(1920, 1080).unwrap(),
+            (1920, 1080)
+        );
+        assert_eq!(
+            normalize_encode_dimensions(4096, 4095).unwrap(),
+            (4096, 4094)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_encode_dimensions_rejects_degenerate_and_oversized() {
+        // 病态尺寸显式终态且消息携带实际尺寸，便于日志一锤定音。
+        for (width, height) in [(0, 0), (1, 1080), (1920, 1)] {
+            let error = normalize_encode_dimensions(width, height).unwrap_err();
+            assert!(
+                error.contains(&format!("{width}x{height}")),
+                "rejection should carry actual dims: {error}"
+            );
+        }
+        assert!(normalize_encode_dimensions(4097, 1080).is_err());
+        assert!(normalize_encode_dimensions(1920, 4097).is_err());
+    }
+
+    #[test]
+    fn session_dimensions_and_hardware_rejection_surface_in_status() {
+        // 诊断包可见性：会话/编码尺寸与硬编层被回退顶替的拒绝原因都要
+        // 进 status，且随 reset 清空（下一局不残留旧值）。
+        let mut queue = FrameQueue::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        queue.record_session_dimensions(1921, 1081, 1920, 1080);
+        let rejection = "GpuConversionFailure: GPU NV12 texture creation failed".to_string();
+        queue.record_hardware_rejection(rejection.clone());
+        let status = queue.status(false, false);
+        assert_eq!(status.capture_width, Some(1921));
+        assert_eq!(status.capture_height, Some(1081));
+        assert_eq!(status.encode_width, Some(1920));
+        assert_eq!(status.encode_height, Some(1080));
+        assert_eq!(
+            status.last_hardware_rejection.as_deref(),
+            Some(rejection.as_str())
+        );
+        queue.reset();
+        let status = queue.status(false, false);
+        assert_eq!(status.capture_width, None);
+        assert_eq!(status.encode_height, None);
+        assert!(status.last_hardware_rejection.is_none());
+    }
+
     #[test]
     fn force_software_encoder_env_selects_software_path() {
         use windows::Win32::Foundation::HMODULE;
@@ -7140,7 +7415,7 @@ mod tests {
             let queue = Arc::new(Mutex::new(
                 FrameQueue::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap(),
             ));
-            AutomaticH264Encoder::new(&device, &context, 320, 240, queue)
+            AutomaticH264Encoder::new(&device, &context, 320, 240, 320, 240, queue)
         };
         std::env::remove_var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER");
         let encoder = result.expect("forced software encoder should initialize");
