@@ -29,5 +29,12 @@
     "rva_slot_target": "0x531BD58",
     "rva_slot_scene": "0x53D4E18",
     "rva_blocks_expect": "0x5639290"
+  },
+  "d63c7267424ac5fda9d9f545c95be615b7be399e6d59df998785f4d18f06b2ca": {
+    "label": "Steam E:\\SteamLibrary 2026-09-30 (92,450,816 B, buildid 25582706, KovaaK 3.9.10；槽位缺=自定位生成，reoffset 7/8 PASS 验证)",
+    "rva_guobjectarray": "0x54001E8",
+    "rva_slot_target": null,
+    "rva_slot_scene": null,
+    "rva_blocks_expect": "0x53C3350"
   }
 }
