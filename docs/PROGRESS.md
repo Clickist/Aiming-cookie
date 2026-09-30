@@ -1,6 +1,19 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-09-21. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-09-30. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-09-30 — v1.3.3 发布：奇数分辨率录制防线 + 采集子进程可观测
+
+同日 1.3.2（28000 预览版 WGC 逐适配器重试/按局深度分析/训练记录删除/DeepSeek 直连修复）发布后，当晚报障巡查定位出「MF 编码器集群」：分数 DPI 缩放/虚拟显示器下 KovaaK 窗口宽高为奇数时，硬编 BGRA→NV12 转换与软编 output type 双双拒绝，视频采集整场不可用（报障机视频从未成功过）。1.3.3 同晚发版：
+
+- **编码器尺寸防线（window_capture.rs）**：WGC 会话启动一次性向下取偶（裁 ≤1px），编码器构造/replay 导出/MP4 writer 三消费点同值；<2×2 或超 4096 显式终态；软编 staging 保源尺寸、回读按编码尺寸裁剪，writer readback 改 CopySubresourceRegion 裁剪；真 MFT 奇数源回归锁（321x241→320x240）入 cargo。
+- **编码器诊断补全**：软编回退点保留硬件层错误（`lastHardwareRejection` 进诊断包）；`WindowCaptureStatus` 增 capture/encode 尺寸四字段；终态错误统一 `capture WxH@fps` 前缀；软编聚合补 candidates 计数；诊断包 schema v5→v6。
+- **采集子进程 rc=1 加固（telemetry_capture + service）**：camera_probe/target_poll2 初次路径加固（find_pid/Proc 附着重试 3×2s）+ 采样段 <5s 防热自旋；子进程 stdout/stderr 合并落 `{role}.log`，崩溃尾部经 `child_log_tail` 进诊断包。
+- **文档**：PRD/ARCH/ROADMAP 同步遥测四档口径（telemetry_multimodal 优先）；AGENTS/CLAUDE 退出 git 跟踪（点点拍板本地保留，.gitignore 收口）。
+
+测试基线（发版前实测）：Rust **170 过/0 败/7 跳**（含 4 新测试）+ clippy 净；pytest **1648 过/5 跳 + 1 条既有 flaky**（`test_external_deletion_is_detected_and_ledger_recomputed`：目录 mtime 同 tick 漏检实锤——本机「建文件→stat→删→再 stat」mtime_ns 零变化，单跑必过；09-06 cba1234 引入，非本批域）；前端 type-check 0 错 + unit/contracts **335 过/0 败**；coach-runtime **503 过/2 跳/0 败**；pi-ai 740 过/12 败=HEAD 基线（7f6c066 记录在案：kimi-coding 从 models.dev 消失致 0.83 pin 后 strict hydrate 全阻，数据冻结 08-27）。L2 真 Tauri E2E 全绿（desktop-matrix/managed-media/interaction-polish×2 + diagnostics-export-live v6 断言）。L3 安装冒烟全绿（静默安装 + 打包版 CDP 渲染 packaged-release 5.2s + 单实例二次启动；SHA-256 `9a76ce15…`；Authenticode 未签名=内测预期）。
+
+已知遗留：存储台账 flaky 待修（测试内跨 tick 或 utime 触发即可）；pi-ai 12 红为上游活数据漂移，需 pin 内救济或上游跟进。
 
 ## 2026-09-21 — i18n 双语收官：英文体验全链可用（前端 1359+53 键/侧 + 后端三波）
 
@@ -87,7 +100,7 @@ v0.1.14（tag 指向落地页 commit `3355b89`）是**首个内置自动更新�
 ## Current Product Direction
 
 - Windows 单机桌面应用（内测阶段，v1.0.0）：KovaaK's 训练诊断 + AI 教练。正常产品面 = Coach、History、Settings。
-- Coach 自动选最强可用 Run 档：`multimodal` → `input_native` → `video_fallback`；真值口径以 KovaaK 遥测为权威，CV 是行为细节与回退档（视频 e2e 回归锚的意义所在，见 `webapp/tests/test_e2e.py`）。
+- Coach 自动选最强可用 Run 档：`telemetry_multimodal` → `multimodal` → `input_native` → `video_fallback`；真值口径以 KovaaK 遥测为权威，CV 是行为细节与回退档（视频 e2e 回归锚的意义所在，见 `webapp/tests/test_e2e.py`）。
 - 商业模式（PRD 09-06 修订）：官方托管套餐 + BYOK 双轨；官方托管服务接入已完成订阅 API 与排障，售卖链路拍板为不急。
 - 自动更新已上线：新版本发布 = 上传 R2 三件套（latest.json 最后）→ 老客户端自动弹更新。
 

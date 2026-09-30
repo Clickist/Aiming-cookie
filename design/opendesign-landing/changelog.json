@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.3.3",
+      "date": "2026-09-30",
+      "items": [
+        {
+          "type": "new",
+          "zh": "录屏支持非标准分辨率窗口——高分屏缩放、虚拟显示器等导致窗口宽高为奇数时自动适配，此前这类电脑完全无法录制训练视频",
+          "en": "Screen recording now supports non-standard window sizes: odd pixel dimensions from display scaling or virtual displays are handled automatically instead of failing"
+        },
+        {
+          "type": "fix",
+          "zh": "修复采集子进程静默崩溃的问题——崩溃原因会记录进诊断包，游戏重启等临时性故障后自动恢复",
+          "en": "Telemetry capture subprocesses no longer fail silently: crash reasons are recorded in diagnostics, and transient failures recover automatically"
+        },
+        {
+          "type": "imp",
+          "zh": "采集在异常环境（游戏退出瞬间、移动磁盘掉线等）下更稳定，不再空转刷日志",
+          "en": "Capture is more resilient in adverse conditions such as game-exit races or removable-drive dropouts, without busy-looping"
+        },
+        {
+          "type": "imp",
+          "zh": "诊断包新增录屏窗口尺寸、编码尺寸、编码器各层失败详情与采集子进程崩溃日志，远程排查更快",
+          "en": "Diagnostics bundles now include capture window size, encode size, per-layer encoder failure details and capture subprocess crash logs for faster remote troubleshooting"
+        }
+      ]
+    },
+    {
       "version": "1.3.2",
       "date": "2026-09-30",
       "items": [
