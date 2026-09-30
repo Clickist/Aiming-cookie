@@ -335,7 +335,9 @@ def _install_shutdown_signal_handlers(stop_event: asyncio.Event) -> Callable[[],
     return remove_handlers
 
 
-def create_kovaak_capture_finalizer() -> KovaaKCaptureFinalizer:
+def create_kovaak_capture_finalizer(
+    telemetry_cut_hook=None,
+) -> KovaaKCaptureFinalizer:
     address = config.NATIVE_CAPTURE_CONTROL_ADDR
     secret = config.NATIVE_CAPTURE_CONTROL_SECRET
     if bool(address) != bool(secret):
@@ -346,6 +348,7 @@ def create_kovaak_capture_finalizer() -> KovaaKCaptureFinalizer:
         data_root=config.DATA_ROOT,
         raw_input_snapshot_path=config.DATA_ROOT / "raw-input" / "buffer.bin",
         user_id=config.DESKTOP_LOCAL_PROFILE,
+        telemetry_cut_hook=telemetry_cut_hook,
     )
 
 
@@ -516,22 +519,27 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     server_task = asyncio.create_task(server.serve())
     worker_task: asyncio.Task[None] | None = None
     stop_task = asyncio.create_task(shutdown_requested.wait())
-    finalizer = create_kovaak_capture_finalizer()
     finalizer_futures = FinalizerFutureTracker()
     capture_exit_releases = CaptureExitReleaseTracker()
     capture_exit_task: asyncio.Task[None] | None = None
     ingestion_diagnostics_task: asyncio.Task[None] | None = None
+    # 采集工具随产品分发（2026-09-06 拍板）：先保证 watch 根自动指向托管
+    # cleaned 根（已配置则不动），再创建采集服务——run 收尾的按局增量切窗
+    # 钩子要从它取（构造顺序在 finalizer 之前）。
+    telemetry_capture_service.ensure_managed_watch_root()
+    capture_service = telemetry_capture_service.create_telemetry_capture_service()
+    app.state.telemetry_capture_service = capture_service
+    finalizer = create_kovaak_capture_finalizer(
+        telemetry_cut_hook=(
+            capture_service.request_run_cut if capture_service is not None else None
+        ),
+    )
     ingestion_service = create_kovaak_ingestion_service(
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
     app.state.kovaak_ingestion_service = ingestion_service
-    # 采集工具随产品分发（2026-09-06 拍板）：先保证 watch 根自动指向托管
-    # cleaned 根（已配置则不动），再创建外部遥测服务让它读到该配置。
-    telemetry_capture_service.ensure_managed_watch_root()
     external_service = create_external_telemetry_service()
     app.state.external_telemetry_service = external_service
-    capture_service = telemetry_capture_service.create_telemetry_capture_service()
-    app.state.telemetry_capture_service = capture_service
 
     try:
         port = await _wait_for_server_start(server, server_task)

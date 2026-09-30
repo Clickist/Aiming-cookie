@@ -161,7 +161,7 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
     monkeypatch.setattr(
         desktop_runtime,
         "create_kovaak_capture_finalizer",
-        lambda: FakeFinalizer(),
+        lambda **_kwargs: FakeFinalizer(),
     )
     monkeypatch.setattr(
         desktop_runtime,

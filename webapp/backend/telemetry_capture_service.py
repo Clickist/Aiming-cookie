@@ -44,6 +44,34 @@ _PROCESSED_SUBDIR = "processed"
 _PIDS_FILE = "pids.json"
 _FINALIZE_TIMEOUT_SECONDS = 300.0
 _TERMINATE_TIMEOUT_SECONDS = 5.0
+# 按局增量切窗（2026-09-29）：stats 局窗口 → 冻结活文件窗口切片 → cleaner/merge
+# 增量产物落 cleaned/incr/<cut-id>/，watcher 增量索引入库——游戏不退场也能出
+# 深度遥测（对齐 mp4/raw-input 的按局收尾语义）。全量收尾仍在退场时兜底。
+_CUT_PRE_MARGIN_S = 10.0        # 前垫：接住略早于 stats 锚的出生事件
+_CUT_POST_MARGIN_S = 5.0        # 后垫：死亡/收尾余量
+_CUT_INPUT_EXTRA_MARGIN_S = 15.0  # 输入通道再放宽（对齐互相关的点击邻域）
+_INCR_SUBDIR = "incr"
+
+# 在途按局切窗登记（进程级）：分析侧据此给导入一个有界落地窗口。
+_RUN_CUT_EVENTS: dict[int, threading.Event] = {}
+_RUN_CUT_LOCK = threading.Lock()
+
+
+def run_cut_pending(run_id: int) -> bool:
+    """该 run 的按局切窗是否在途（分析侧等待门，进程级注册表）。"""
+    with _RUN_CUT_LOCK:
+        return run_id in _RUN_CUT_EVENTS
+
+
+def wait_run_cut(run_id: int, timeout: float) -> bool:
+    """阻塞等该 run 的切窗结束；返回结束时是否仍登记（False=已完成/不存在）。"""
+    with _RUN_CUT_LOCK:
+        event = _RUN_CUT_EVENTS.get(run_id)
+    if event is None:
+        return False
+    event.wait(timeout)
+    with _RUN_CUT_LOCK:
+        return run_id in _RUN_CUT_EVENTS
 
 
 def managed_capture_roots(data_root: Path | None = None) -> tuple[Path, Path]:
@@ -88,17 +116,41 @@ def run_telemetry_child(script_name: str, argv: list[str]) -> None:
     runpy.run_path(str(script_path), run_name="__main__")
 
 
+def _is_managed_cleaned_path(path: Path) -> bool:
+    """路径是否长得像托管 cleaned 根（…/external-capture/cleaned）。"""
+    return path.name == "cleaned" and path.parent.name == "external-capture"
+
+
 def ensure_managed_watch_root() -> bool:
-    """watch 根未配置时自动指向托管 cleaned 根；已配置/失败一律不动现状。"""
+    """watch 根未配置时自动指向托管 cleaned 根；已配置/失败一律不动现状。
+
+    唯一例外（1.3.2 修复）：已配置的指针是"托管长相"但指向的目录已不存在
+    （1.3.0 存储迁移搬走 DATA_ROOT 后的陈旧遗留——迁移没重写这份配置），
+    且当前托管 cleaned 根真实存在时，重指当前托管根。用户自定义路径永不触碰。
+    """
     try:
         from . import external_telemetry_store as store
 
-        if store.get_watch_root() is not None:
-            return False
         _, cleaned_root = managed_capture_roots()
-        store.save_watch_root(str(cleaned_root))
-        log.info("external telemetry watch root auto-configured to managed root")
-        return True
+        configured = store.get_watch_root()
+        if configured is None:
+            store.save_watch_root(str(cleaned_root))
+            log.info("external telemetry watch root auto-configured to managed root")
+            return True
+        if (
+            configured != cleaned_root
+            and str(configured).casefold() != str(cleaned_root).casefold()
+            and _is_managed_cleaned_path(configured)
+            and not configured.is_dir()
+            and cleaned_root.is_dir()
+        ):
+            store.save_watch_root(str(cleaned_root))
+            log.warning(
+                "external telemetry watch root repointed from stale managed "
+                "path %s -> %s", configured, cleaned_root,
+            )
+            return True
+        return False
     except Exception:
         log.exception("managed external-telemetry watch root auto-config failed")
         return False
@@ -160,6 +212,9 @@ class TelemetryCaptureService:
         self._last_error: str | None = None
         self._last_finalize: dict[str, object] = {}
         self._next_finalize_retry_epoch = 0.0
+        # 按局增量切窗簿记：run_id → outcome（去重 + 诊断可见）。
+        self._run_cuts: dict[int, str] = {}
+        self._last_cut: dict[str, object] = {}
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -219,6 +274,11 @@ class TelemetryCaptureService:
             "children": sorted(self._children),
             "last_error": self._last_error,
             "last_finalize": self._last_finalize,
+            "last_cut": dict(self._last_cut) if self._last_cut else None,
+            "run_cuts_total": len(self._run_cuts),
+            "run_cuts_in_flight": sum(
+                1 for rid in self._run_cuts if run_cut_pending(rid)
+            ),
         }
 
     # ------------------------------------------------------------------ 内部
@@ -281,6 +341,167 @@ class TelemetryCaptureService:
         except Exception as error:
             self._last_error = f"finalize_failed: {error}"
             log.exception("telemetry capture finalize failed")
+
+    # ------------------------------------------------------------------ 按局增量切窗
+
+    def request_run_cut(
+        self, run_id: int, window_start_ms: int, window_end_ms: int,
+    ) -> bool:
+        """stats 局窗口的增量遥测切片（fire-and-forget，幂等去重）。
+
+        与 mp4/raw-input 的按局收尾对齐：run 收尾即切，游戏退场时的全量收尾
+        仍是兜底（两者轮次会重叠入库一份，选轮按挑战窗贴合度择优，见
+        kovaak_run_store._select_external_telemetry_meta）。游戏不在场时跳过
+        （退场全量收尾已覆盖）。任何失败只记日志与诊断，不影响主链路。
+        """
+        if not isinstance(run_id, int) or isinstance(run_id, bool):
+            return False
+        if run_id in self._run_cuts:
+            return False
+        if (self._session_dir is None or not self._game_present
+                or not any(self._session_dir.glob(_RAW_GLOB))):
+            return False
+        try:
+            (self._session_dir / "cuts").mkdir(exist_ok=True)
+        except OSError as error:
+            self._last_error = f"cut_staging_unavailable: {error}"
+            return False
+        # 请求即登记（pending）：跨线程去重 + 诊断的 in-flight 计数都以此为准。
+        self._run_cuts[run_id] = "pending"
+        event = threading.Event()
+        with _RUN_CUT_LOCK:
+            _RUN_CUT_EVENTS[run_id] = event
+        try:
+            thread = threading.Thread(
+                target=self._cut_run_window,
+                args=(run_id, int(window_start_ms), int(window_end_ms), event),
+                name=f"telemetry-cut-run{run_id}", daemon=True,
+            )
+            thread.start()
+        except Exception as error:
+            # 启动失败必须回收登记，否则该 run 的分析每次都白等满超时。
+            self._run_cuts[run_id] = "spawn_failed"
+            self._last_error = f"cut_spawn_failed: {error}"
+            with _RUN_CUT_LOCK:
+                _RUN_CUT_EVENTS.pop(run_id, None)
+            event.set()
+            log.exception("telemetry run cut thread spawn failed run=%s", run_id)
+            return False
+        return True
+
+    def _cut_run_window(
+        self, run_id: int, window_start_ms: int, window_end_ms: int,
+        event: threading.Event,
+    ) -> None:
+        outcome = "error"
+        try:
+            outcome = self._cut_run_window_inner(run_id, window_start_ms, window_end_ms)
+        except Exception as error:
+            self._last_error = f"run_cut_failed: {error}"
+            log.exception("telemetry run cut failed run=%s", run_id)
+        finally:
+            self._run_cuts[run_id] = outcome
+            self._last_cut = {
+                "run_id": run_id,
+                "finished_epoch_s": time.time(),
+                "outcome": outcome,
+            }
+            self._persist_diagnostics()
+            with _RUN_CUT_LOCK:
+                _RUN_CUT_EVENTS.pop(run_id, None)
+            event.set()
+        if outcome == "ok":
+            log.info(
+                "telemetry run cut landed run=%s window=[%s,%s]",
+                run_id, window_start_ms, window_end_ms,
+            )
+
+    def _cut_run_window_inner(
+        self, run_id: int, window_start_ms: int, window_end_ms: int,
+    ) -> str:
+        session_dir = self._session_dir
+        assert session_dir is not None  # request_run_cut 已守卫
+        cut_id = f"cut-run{run_id}-{int(time.time() * 1000)}"
+        frozen_dir = session_dir / "cuts" / cut_id
+        cut_dir = self.cleaned_root / _INCR_SUBDIR / cut_id
+        frozen_dir.mkdir(parents=True, exist_ok=True)
+        cut_dir.mkdir(parents=True, exist_ok=True)
+        lo = window_start_ms / 1000.0 - _CUT_PRE_MARGIN_S
+        hi = window_end_ms / 1000.0 + _CUT_POST_MARGIN_S
+        input_lo = lo - _CUT_INPUT_EXTRA_MARGIN_S
+        input_hi = hi + _CUT_INPUT_EXTRA_MARGIN_S
+
+        frozen_targets: list[Path] = []
+        for raw in sorted(session_dir.glob(_RAW_GLOB)):
+            dst = frozen_dir / raw.name
+            if _freeze_windowed_jsonl(raw, dst, "target", lo, hi) > 0:
+                frozen_targets.append(dst)
+        if not frozen_targets:
+            return "no_target_data"
+
+        frozen_camera = None
+        # 多附着会话会有多份相机文件（每次附着新锚新文件）；按窗口产出挑选
+        # 真覆盖本局的那个，而不是按文件名取最新（退场全量收尾沿用旧语义）。
+        for camera in sorted(session_dir.glob(_CAMERA_GLOB), key=lambda p: p.name):
+            dst = frozen_dir / camera.name
+            if _freeze_windowed_jsonl(camera, dst, "camera", lo, hi) > 0:
+                frozen_camera = dst
+                break
+        input_log = session_dir / _INPUT_NAME
+        frozen_input = None
+        if input_log.is_file():
+            dst = frozen_dir / _INPUT_NAME
+            if _freeze_windowed_jsonl(input_log, dst, "input", input_lo, input_hi) > 0:
+                frozen_input = dst
+
+        outcome = self._run_finalize_step(
+            self._child_argv("cleaner.py")
+            + [str(f) for f in frozen_targets]
+            + ["--outdir", str(cut_dir),
+               "--epoch-min", repr(lo), "--epoch-max", repr(hi)],
+            label="cleaner.py",
+        )
+        if outcome != "ok":
+            return f"cleaner_{outcome}"
+        index_path = cut_dir / "rounds_index.json"
+        if not index_path.is_file():
+            return "cleaner_no_index"
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "cut_index_unreadable"
+        rounds_by_stem = {
+            str(source.get("source", "")): source.get("rounds") or []
+            for source in index.get("sources", []) or []
+            if isinstance(source, dict)
+        }
+        merged_any = False
+        for target in frozen_targets:
+            stem = target.stem
+            # merge 硬约束：轮目录名（=冻结件名）须带 MMDD_HHMMSS 后缀定粗锚，
+            # 因此冻结件必须保留原始文件名（见 merge_channels.find_index_and_source）。
+            if not rounds_by_stem.get(f"{stem}.jsonl"):
+                continue
+            if frozen_camera is None or frozen_input is None:
+                continue
+            merge_outcome = self._run_finalize_step(
+                self._child_argv("merge_channels.py") + [
+                    "--round-dir", str(cut_dir / stem),
+                    "--camera", str(frozen_camera),
+                    "--input", str(frozen_input),
+                    "--year", str(datetime.now().year),
+                ],
+                label="merge_channels.py",
+            )
+            merged_any = merged_any or merge_outcome == "ok"
+        # 冻结件只是切窗原料，产物已落 cut_dir；留着只会占盘，清掉。
+        _remove_tree_quietly(frozen_dir)
+        any_rounds = any(
+            rounds_by_stem.get(f"{t.stem}.jsonl") for t in frozen_targets
+        )
+        if not any_rounds:
+            return "no_rounds"
+        return "ok" if merged_any else "merge_unavailable"
 
     def _spawn_session(self) -> bool:
         session_dir = self.sessions_root / datetime.now().strftime("session-%y%m%d-%H%M%S")
@@ -530,6 +751,81 @@ class TelemetryCaptureService:
 def _latest_by_name(paths) -> Path | None:
     ordered = sorted(paths, key=lambda p: p.name)
     return ordered[-1] if ordered else None
+
+
+def _freeze_windowed_jsonl(
+    src: Path, dst: Path, channel: str, lo_epoch_s: float, hi_epoch_s: float,
+) -> int:
+    """把正在被采集进程追加的 JSONL 按绝对纪元窗冻结成副本。
+
+    各通道锚约定（FORMAT §2.4-5）：target/camera 首行 clock_map 的 t 即纪元锚，
+    帧 epoch = 锚 + t；input 的 clock_map 带 t/t_unix（delta = t_unix - t，多次
+    出现用于漂移监控），事件 epoch ≈ t + 首个 delta（漂移为毫秒级，远小于切窗
+    垫量）。锚行无条件保留；撕裂的尾行（写了一半）直接丢弃。返回保留记录数。
+    """
+    kept = 0
+    anchor: float | None = None
+    first_delta: float | None = None
+    try:
+        with src.open("r", encoding="utf-8", errors="replace") as source, \
+                dst.open("w", encoding="utf-8") as target:
+            for line in source:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except ValueError:
+                    break  # 采集进程写了一半的尾行：到此为止
+                if not isinstance(record, dict):
+                    continue
+                # 单行坏记录（缺字段/非数值）只跳过该行，绝不中断整个冻结。
+                try:
+                    ev = record.get("ev")
+                    if channel == "input":
+                        if ev == "clock_map":
+                            if first_delta is None:
+                                first_delta = (
+                                    float(record["t_unix"]) - float(record["t"])
+                                )
+                            target.write(stripped + "\n")
+                            kept += 1
+                            continue
+                        if ev != "m":
+                            continue
+                        base = first_delta
+                    elif channel in {"target", "camera"}:
+                        if ev == "clock_map":
+                            if anchor is None:
+                                anchor = float(record["t"])
+                            target.write(stripped + "\n")
+                            kept += 1
+                            continue
+                        if channel == "target" and ev not in (None, "frame"):
+                            continue
+                        if channel == "camera" and ev != "cam":
+                            continue
+                        base = anchor
+                    else:
+                        continue
+                    if base is not None and \
+                            lo_epoch_s <= base + float(record["t"]) <= hi_epoch_s:
+                        target.write(stripped + "\n")
+                        kept += 1
+                except (KeyError, TypeError, ValueError):
+                    continue
+    except OSError:
+        return kept
+    return kept
+
+
+def _remove_tree_quietly(path: Path) -> None:
+    import shutil
+
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception:  # noqa: BLE001 - 清理失败不影响产物
+        pass
 
 
 def _atomic_write_json(path: Path, payload: object) -> None:

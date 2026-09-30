@@ -567,6 +567,17 @@ def _select_external_telemetry_meta(
     return min(metas, key=_sort_key)
 
 
+def external_telemetry_ready(run_id: int, user_id: object) -> bool:
+    """按局切窗导入是否已给该 run 配对出可用的外部遥测源（含旁车冻结校验）。
+
+    分析创建前的有界等待用（等增量切窗 + watcher 导入落地）；同步轻查询。
+    """
+    return (
+        _external_telemetry_source(run_id, user_id).get("availability")
+        == "available"
+    )
+
+
 def _external_telemetry_source(
     run_id: int,
     user_id: object,

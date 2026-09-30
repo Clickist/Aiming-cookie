@@ -412,3 +412,107 @@ async def test_create_analysis_stays_fail_closed_without_telemetry(tmp_path: Pat
     assert "external_telemetry_missing" in exc_info.value.message
     assert "raw_input_missing" in exc_info.value.message
     assert "video_missing" in exc_info.value.message
+
+
+# ------------------------------------------------------------------ 切窗在途的有界等待
+
+
+@pytest.mark.asyncio
+async def test_wait_for_in_flight_telemetry_cut_no_pending_is_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as _time
+
+    from webapp.backend import analysis_service, telemetry_capture_service
+
+    probes = []
+
+    def _probe_ready(run_id, owner_id):
+        probes.append(run_id)
+        return False
+
+    monkeypatch.setattr(
+        analysis_service, "_TELEMETRY_CUT_WAIT_SECONDS", 5.0,
+    )
+    monkeypatch.setattr(
+        telemetry_capture_service, "run_cut_pending", lambda run_id: False,
+    )
+    monkeypatch.setattr(
+        analysis_service.kovaak_run_store,
+        "external_telemetry_ready", _probe_ready,
+    )
+    started = _time.monotonic()
+    await analysis_service._wait_for_in_flight_telemetry_cut(1, "u1")
+    assert _time.monotonic() - started < 1.0, "无在途切窗必须零等待直过"
+    assert probes == []
+
+
+@pytest.mark.asyncio
+async def test_wait_for_in_flight_telemetry_cut_returns_when_import_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from webapp.backend import analysis_service, telemetry_capture_service
+
+    monkeypatch.setattr(analysis_service, "_TELEMETRY_CUT_WAIT_SECONDS", 2.0)
+    monkeypatch.setattr(analysis_service, "_TELEMETRY_CUT_POLL_SECONDS", 0.05)
+
+    event = threading.Event()
+    with telemetry_capture_service._RUN_CUT_LOCK:
+        telemetry_capture_service._RUN_CUT_EVENTS[4242] = event
+    # 模拟切窗线程 0.1s 后完成。
+    threading.Timer(0.1, event.set).start()
+
+    polls = {"n": 0}
+
+    def _fake_ready(run_id, owner_id):
+        polls["n"] += 1
+        if polls["n"] >= 3:  # 第二轮轮询后导入落地
+            with telemetry_capture_service._RUN_CUT_LOCK:
+                telemetry_capture_service._RUN_CUT_EVENTS.pop(4242, None)
+            return True
+        return False
+
+    monkeypatch.setattr(
+        telemetry_capture_service, "run_cut_pending",
+        lambda run_id: run_id == 4242,
+    )
+    monkeypatch.setattr(
+        analysis_service.kovaak_run_store, "external_telemetry_ready", _fake_ready,
+    )
+
+    await analysis_service._wait_for_in_flight_telemetry_cut(4242, "u1")
+    assert polls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_wait_for_in_flight_telemetry_cut_times_out_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import time as _time
+
+    from webapp.backend import analysis_service, telemetry_capture_service
+
+    monkeypatch.setattr(analysis_service, "_TELEMETRY_CUT_WAIT_SECONDS", 0.15)
+    monkeypatch.setattr(analysis_service, "_TELEMETRY_CUT_POLL_SECONDS", 0.05)
+
+    event = threading.Event()
+    with telemetry_capture_service._RUN_CUT_LOCK:
+        telemetry_capture_service._RUN_CUT_EVENTS[777] = event
+
+    monkeypatch.setattr(
+        telemetry_capture_service, "run_cut_pending",
+        lambda run_id: run_id == 777,
+    )
+    monkeypatch.setattr(
+        analysis_service.kovaak_run_store,
+        "external_telemetry_ready", lambda run_id, owner_id: False,
+    )
+    started = _time.monotonic()
+    await analysis_service._wait_for_in_flight_telemetry_cut(777, "u1")
+    assert _time.monotonic() - started < 2.0, "超时必须放行而不是死等"
+
+    with telemetry_capture_service._RUN_CUT_LOCK:
+        telemetry_capture_service._RUN_CUT_EVENTS.pop(777, None)

@@ -1442,3 +1442,66 @@ async def test_finalizing_session_without_coverage_still_waits_for_snapshot(
     assert pending["trace_state"] == "pending"
     assert pending["finalization_state"] == "retryable"
     assert pending["finalization_error"] == "trace_waiting_snapshot"
+
+
+@pytest.mark.asyncio
+async def test_finalize_fires_telemetry_cut_hook_with_challenge_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """挑战窗有效即触发按局增量遥测切窗钩子（fire-and-forget、异常不扩散）。"""
+    _configure_parsers(monkeypatch, start_epoch_ms=1_000)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stable-stats")
+    performance.write_bytes(b"stable-performance")
+    discovery = KovaaKFileDiscovery(
+        stem="scenario", stats_path=stats, performance_path=performance,
+    )
+    cuts: list[tuple[object, object, object]] = []
+
+    # 钩子抛异常必须被吞掉（记日志），收尾照常完成。
+    def _boom_hook(run_id, start_ms, end_ms):
+        raise RuntimeError("hook must be isolated from finalization")
+
+    boom_finalizer = KovaaKCaptureFinalizer(
+        native_client=FakeNativeCaptureClient(tmp_path / "data"),
+        data_root=tmp_path / "data",
+        raw_input_snapshot_path=tmp_path / "missing-raw.bin",
+        user_id="u1",
+        telemetry_cut_hook=_boom_hook,
+    )
+    run = await boom_finalizer.finalize(discovery)
+    assert run["finalization_state"] == "finalized"
+
+    # 源不齐的收尾重试不触发；窗口校验通过后带着挑战窗触发一次
+    # （跨多次 finalize 的幂等去重由服务侧负责，finalizer 只负责派发）。
+    # 换独立 stem：boom 阶段已把同 stem 的 run 收尾完成，waiting_for_sources
+    # 的重试路径需要一个未成形的 run。
+    stats2 = tmp_path / "Scenario2 Stats.csv"
+    performance2 = tmp_path / "Scenario2 Performance.perf"
+    stats2.write_bytes(b"stable-stats")
+    performance2.write_bytes(b"stable-performance")
+    finalizer = KovaaKCaptureFinalizer(
+        native_client=FakeNativeCaptureClient(tmp_path / "data"),
+        data_root=tmp_path / "data",
+        raw_input_snapshot_path=tmp_path / "missing-raw.bin",
+        user_id="u1",
+        telemetry_cut_hook=lambda *args: cuts.append(args),
+    )
+    with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
+        await finalizer.finalize(KovaaKFileDiscovery(
+            stem="scenario2", stats_path=stats2, performance_path=None,
+        ))
+    assert cuts == []
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="scenario2", stats_path=stats2, performance_path=performance2,
+    ))
+    assert run["finalization_state"] == "finalized"
+    assert len(cuts) == 1
+    run_id, start_ms, end_ms = cuts[0]
+    assert run_id == run["id"]
+    assert start_ms == 1_000
+    assert end_ms == 61_000  # challenge_start + time_limit(60s)
+
+

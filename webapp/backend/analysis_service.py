@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -32,6 +33,36 @@ from .source_requirements import validate_source_requirements
 from .workspace import copy_path_to_path, remove_session_workspace, session_dir
 
 RESULT_SCHEMA_VERSION = "coach_product_command_result.v1"
+
+# 按局遥测切窗在途时，给「冻结 → cleaner/merge → watcher 导入 → 配对」一个
+# 有界落地窗口（与 mp4/raw-input 在收尾侧阻塞等待的语义对齐，只是这里放
+# 在分析创建侧）：无在途切窗的 run 零开销直接过。
+_TELEMETRY_CUT_WAIT_SECONDS = 15.0
+_TELEMETRY_CUT_POLL_SECONDS = 0.4
+
+
+async def _wait_for_in_flight_telemetry_cut(run_id: int, owner_id: str) -> None:
+    """切窗在途才等；等待 = 切窗事件 + 导入配对就绪，超时放行走旧回退路径。"""
+    from . import telemetry_capture_service
+
+    if not telemetry_capture_service.run_cut_pending(run_id):
+        return
+    log.info("waiting for in-flight telemetry run cut run=%s", run_id)
+    await asyncio.to_thread(
+        telemetry_capture_service.wait_run_cut, run_id, _TELEMETRY_CUT_WAIT_SECONDS,
+    )
+    deadline = time.monotonic() + _TELEMETRY_CUT_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            ready = await asyncio.to_thread(
+                kovaak_run_store.external_telemetry_ready, run_id, owner_id,
+            )
+        except Exception:
+            log.exception("telemetry readiness poll failed run=%s", run_id)
+            return
+        if ready:
+            return
+        await asyncio.sleep(_TELEMETRY_CUT_POLL_SECONDS)
 
 
 class ProductCommandError(Exception):
@@ -655,6 +686,8 @@ async def create_analysis_from_run(
         if any_owner is not None:
             raise ProductCommandError("forbidden", "无权访问此 Run")
         raise ProductCommandError("not_found", "KovaaK run 不存在", kind="unavailable")
+    # 快照冻结前给在途的按局遥测切窗一个有界落地窗口（无在途零开销）。
+    await _wait_for_in_flight_telemetry_cut(run_id, owner_id)
     try:
         snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, owner_id)
     except (LookupError, ValueError) as exc:

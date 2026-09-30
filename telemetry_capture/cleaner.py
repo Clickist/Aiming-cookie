@@ -61,12 +61,14 @@ def fmt_addr(a):
 
 
 # ---------------- 1. 读入 ----------------
-def load_frames(path):
+def load_frames(path, epoch_window=None):
     """读 JSONL → 按时间排序的帧列表 [{t, targets:[(addr,x,y,z)]}]。
     [v2.1] 跳过 ev 非 frame/None 的行（target_poll2 的 clock_map/scale 旁线），
     并带出 clock_map 的 epoch 锚（→ rounds_index source 的 t0_epoch）。
     注意：旧版 cleaner 吃新录制文件会把 clock_map 的 epoch 值当 t 排到末尾——
-    两个补丁必须配套升级。"""
+    两个补丁必须配套升级。
+    [v2.2] epoch_window=(lo, hi)（绝对纪元秒）：按 epoch(t)=clock_map.t+t 只保留
+    窗内帧（按局增量切窗用）；文件缺 clock_map 锚时返回空（该源记零轮次）。"""
     frames = []
     bad = 0
     clock_map = None
@@ -101,6 +103,12 @@ def load_frames(path):
                 pts.append((a, x, y, z))
             frames.append({"t": float(t), "targets": pts})
     frames.sort(key=lambda fr: fr["t"])
+    if epoch_window is not None:
+        if clock_map is None:
+            return [], bad, None
+        lo, hi = epoch_window
+        t0 = float(clock_map["t"])
+        frames = [fr for fr in frames if lo <= t0 + fr["t"] <= hi]
     return frames, bad, clock_map
 
 
@@ -337,7 +345,7 @@ def assign_rounds(targets, cfg):
 # ---------------- 5. 主流程 ----------------
 def clean_file(path, outdir, cfg):
     name = os.path.splitext(os.path.basename(path))[0]
-    frames, bad_recs, t0_map = load_frames(path)
+    frames, bad_recs, t0_map = load_frames(path, epoch_window=cfg.get("epoch_window"))
     tracks = build_tracks(frames)
 
     discarded = {
@@ -485,7 +493,13 @@ def main():
     ap.add_argument("--birth-gap", type=float, default=BIRTH_GAP)
     ap.add_argument("--dead-gap", type=float, default=DEAD_GAP)
     ap.add_argument("--min-life", type=float, default=MIN_LIFE)
+    ap.add_argument("--epoch-min", type=float, default=None,
+                    help="按局增量切窗：只保留 epoch(t)≥该值的帧（绝对纪元秒）")
+    ap.add_argument("--epoch-max", type=float, default=None,
+                    help="按局增量切窗：只保留 epoch(t)≤该值的帧（绝对纪元秒）")
     args = ap.parse_args()
+    if (args.epoch_min is None) != (args.epoch_max is None):
+        ap.error("--epoch-min 与 --epoch-max 必须成对使用")
     outdir = args.outdir or os.path.join(os.path.dirname(os.path.abspath(args.inputs[0])), "cleaned")
     os.makedirs(outdir, exist_ok=True)
     cfg = {"jump_dist": args.jump_dist, "jump_speed": args.jump_speed, "bound": args.bound,
@@ -496,7 +510,9 @@ def main():
            # [fix 2026-08-30] 二级短距重生判据（常量，未开 CLI；见文件头 2b 与 cleaner_fix_0830.md）
            "respawn2_speed": RESPAWN2_SPEED, "respawn2_dist": RESPAWN2_DIST,
            "lane_cos": LANE_COS, "ambient_static_speed": AMBIENT_STATIC_SPEED,
-           "respawn2_static_dist": RESPAWN2_STATIC_DIST}
+           "respawn2_static_dist": RESPAWN2_STATIC_DIST,
+           "epoch_window": (args.epoch_min, args.epoch_max)
+           if args.epoch_min is not None else None}
     index = {
         "format_version": 1,
         "generator": "cleaner.py",

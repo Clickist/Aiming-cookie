@@ -152,6 +152,39 @@ def test_ensure_managed_watch_root_only_when_unset(
     assert len(saved) == 1  # 已配置时绝不覆盖
 
 
+def test_ensure_managed_watch_root_repoints_stale_managed_pointer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """1.3.0 存储迁移后 watch 根指向旧托管路径且已不存在时，重指当前托管根。
+
+    自定义路径（无论存在与否）永不触碰；托管长相但当前托管根也没建时不重指
+    （避免把 fresh 安装误改写）。
+    """
+    saved: list[str] = []
+    monkeypatch.setattr(
+        external_telemetry_store, "save_watch_root", lambda raw: saved.append(str(raw))
+    )
+    stale = tmp_path / "old-root" / "external-capture" / "cleaned"  # 托管长相但不存在
+    current = tmp_path / "data" / "external-capture" / "cleaned"
+    current.mkdir(parents=True)
+    # 隔离 DATA_ROOT：ensure 内部取的是 config.DATA_ROOT 下的托管根。
+    monkeypatch.setattr(
+        service_mod, "managed_capture_roots",
+        lambda data_root=None: (tmp_path / "data" / "external-capture" / "sessions", current),
+    )
+
+    monkeypatch.setattr(external_telemetry_store, "get_watch_root", lambda: stale)
+    assert ensure_managed_watch_root() is True
+    assert saved == [str(current)]
+
+    # 自定义路径（非托管长相）缺失也不动。
+    saved.clear()
+    custom_missing = tmp_path / "my-custom-telemetry"
+    monkeypatch.setattr(external_telemetry_store, "get_watch_root", lambda: custom_missing)
+    assert ensure_managed_watch_root() is False
+    assert saved == []
+
+
 def test_start_unavailable_without_scripts(tmp_path: Path, no_diagnostics) -> None:
     game_state = {"procs": []}
     empty_scripts = tmp_path / "empty-scripts"
@@ -373,3 +406,149 @@ def test_real_scripts_cleaner_and_merge_end_to_end(
     # 已在研究管线实证（RUNBOOK §3.5 / merge_manifest 实链）。
     assert service._last_finalize["merge"] == {"target_poll_out_0906_120000": "exit_2"}
     assert not list(round_dir.glob("views_*.jsonl"))
+
+
+# ------------------------------------------------------------------ 按局增量切窗
+
+
+def _write_long_synthetic_session(session_dir: Path, *, duration_s: float = 40.0) -> float:
+    """两轮结构的加长三元组：0x1000 生于 t=0 亡于 t=15；0x2000 生于 t=20。
+
+    出生间隔 20s > BIRTH_GAP(10s) → cleaner 必切两轮；用于按局切窗测试。
+    """
+    epoch = time.time()
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    target = session_dir / "target_poll_out_0906_120000.jsonl"
+    with target.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"ev": "clock_map", "t": epoch}) + "\n")
+        for i in range(int(duration_s * _HZ)):
+            t = i / _HZ
+            targets = []
+            if t <= 15.0:
+                targets.append([0x1000, 500 + 300 * t, 1000.0, 700.0])
+            if t >= 20.0:
+                targets.append([0x2000, 1500 + 80 * (t - 20.0), 800.0, 700.0])
+            if not targets:
+                # 全灭间隙：cleaner 据此分轮，帧流不能断
+                targets.append([0x9000, 0.0, 0.0, 0.0])
+            f.write(json.dumps({"ev": "frame", "t": t, "targets": targets}) + "\n")
+
+    camera = session_dir / "camera_probe_out_0906_120000.jsonl"
+    with camera.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"ev": "clock_map", "t": epoch}) + "\n")
+        for i in range(int(duration_s * _HZ)):
+            f.write(json.dumps({
+                "ev": "cam", "t": i / _HZ, "pos": [0.0, 0.0, 300.0],
+                "rot": [0.0, 0.0, 0.0], "fov": 90.0,
+            }) + "\n")
+
+    perf0 = 1000.0
+    with (session_dir / "input_log.jsonl").open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"ev": "clock_map", "t": perf0, "t_unix": epoch + perf0}) + "\n")
+        for i in range(int(duration_s * _HZ)):
+            f.write(json.dumps({
+                "ev": "m", "t": perf0 + i / _HZ, "qpc": 0, "dx": 0, "dy": 0,
+                "btn": ["L_down"] if i % 50 == 10 else [],
+            }) + "\n")
+    return epoch
+
+
+def test_freeze_windowed_jsonl_filters_by_epoch_and_drops_torn_tail(
+    tmp_path: Path,
+) -> None:
+    from webapp.backend.telemetry_capture_service import _freeze_windowed_jsonl
+
+    epoch = 1_700_000_000.0
+    src = tmp_path / "target_poll_out_0906_120000.jsonl"
+    lines = [
+        json.dumps({"ev": "clock_map", "t": epoch}),
+        json.dumps({"ev": "frame", "t": 1.0, "targets": [[1, 1.0, 2.0, 3.0]]}),
+        json.dumps({"ev": "frame", "t": 5.0, "targets": [[1, 1.0, 2.0, 3.0]]}),
+        json.dumps({"ev": "frame", "t": 9.0, "targets": [[1, 1.0, 2.0, 3.0]]}),
+        '{"ev": "frame", "t": 12.0, "targ',  # 撕裂尾行（写到一半）
+    ]
+    src.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    dst = tmp_path / "frozen.jsonl"
+
+    kept = _freeze_windowed_jsonl(
+        src, dst, "target", epoch + 4.0, epoch + 6.0,
+    )
+
+    assert kept == 2  # 锚 + t=5 一帧；t=1/9 出窗、撕裂行丢弃
+    records = [json.loads(line) for line in dst.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["ev"] == "clock_map"
+    assert records[1]["t"] == 5.0
+
+
+def test_freeze_windowed_jsonl_skips_single_bad_record_without_truncating(
+    tmp_path: Path,
+) -> None:
+    """中间一条坏记录（缺字段/非数值）只跳过该行，其后窗口内的帧照常保留。"""
+    from webapp.backend.telemetry_capture_service import _freeze_windowed_jsonl
+
+    epoch = 1_700_000_000.0
+    src = tmp_path / "target_poll_out_0906_120000.jsonl"
+    lines = [
+        json.dumps({"ev": "clock_map", "t": epoch}),
+        json.dumps({"ev": "frame", "t": 4.0, "targets": [[1, 1.0, 2.0, 3.0]]}),
+        json.dumps({"ev": "frame", "targets": "not-a-list"}),   # 坏记录：缺 t
+        json.dumps({"ev": "frame", "t": "oops", "targets": []}),  # 坏记录：t 非数值
+        json.dumps({"ev": "frame", "t": 5.0, "targets": [[1, 1.0, 2.0, 3.0]]}),
+    ]
+    src.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+    dst = tmp_path / "frozen.jsonl"
+
+    kept = _freeze_windowed_jsonl(src, dst, "target", epoch + 3.0, epoch + 6.0)
+
+    assert kept == 3  # 锚 + t=4 + t=5；两条坏行跳过而非截断
+    records = [json.loads(line) for line in dst.read_text(encoding="utf-8").splitlines()]
+    assert [r.get("t") for r in records[1:]] == [4.0, 5.0]
+
+
+def test_request_run_cut_windowed_real_scripts_e2e(
+    tmp_path: Path, no_diagnostics,
+) -> None:
+    real_scripts = resolve_scripts_dir()
+    assert real_scripts is not None, "repo telemetry_capture/ must exist"
+    service = TelemetryCaptureService(
+        data_root=tmp_path / "data",
+        scripts_dir=real_scripts,
+        poll_interval=0.05,
+        game_processes_fn=lambda: [object()],
+    )
+    session_dir = service.sessions_root / "session-260929-210000"
+    epoch = _write_long_synthetic_session(session_dir)
+    service._session_dir = session_dir
+
+    # 游戏不在场：切窗直接跳过（退场全量收尾负责）。
+    assert service.request_run_cut(901, int((epoch + 18) * 1000), int((epoch + 28) * 1000)) is False
+
+    service._game_present = True
+    assert service.request_run_cut(902, int((epoch + 18) * 1000), int((epoch + 28) * 1000)) is True
+    assert service_mod.run_cut_pending(902) is True
+    assert service_mod.wait_run_cut(902, 60.0) is False  # 完成后登记清除
+
+    # 幂等去重：同 run 第二次不再切。
+    assert service.request_run_cut(902, int((epoch + 18) * 1000), int((epoch + 28) * 1000)) is False
+
+    incr_indexes = list((service.cleaned_root / "incr").glob("cut-run902-*/rounds_index.json"))
+    assert len(incr_indexes) == 1, "增量切窗必须产出独立的 rounds_index.json"
+    index = json.loads(incr_indexes[0].read_text(encoding="utf-8"))
+    [source] = index["sources"]
+    assert source["t0_epoch"] == pytest.approx(epoch, abs=1e-3)
+    rounds = source["rounds"]
+    assert rounds, "窗口内必须有轮次"
+    # 前垫 10s → 窗口起点 epoch+8：第一轮从窗口首帧起（中途截入），第二轮生于 t=20。
+    assert [round["t_start"] for round in rounds] == pytest.approx([8.0, 20.0], abs=0.2)
+    assert rounds[0]["t_end"] == pytest.approx(15.0, abs=0.2)
+    # 全量收尾路径未被触碰（增量与全量产物分家）。
+    assert not (service.cleaned_root / "rounds_index.json").exists()
+    # 冻结原料用后即清。
+    assert not list((session_dir / "cuts").glob("*/*.jsonl"))
+    # 合成数据 merge 验收按设计 fail-closed（exit_2）→ 旁车缺失如实记账。
+    assert service._run_cuts[902] == "merge_unavailable"
+    assert service._last_cut["run_id"] == 902
+    diag = service.diagnostics()
+    assert diag["last_cut"]["outcome"] == "merge_unavailable"
+    assert diag["run_cuts_total"] == 1

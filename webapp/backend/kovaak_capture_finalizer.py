@@ -94,11 +94,15 @@ class KovaaKCaptureFinalizer:
         data_root: str | Path,
         raw_input_snapshot_path: str | Path,
         user_id: str,
+        telemetry_cut_hook=None,
     ) -> None:
         self._native_client = native_client
         self._data_root = Path(data_root).resolve()
         self._raw_input_snapshot_path = Path(raw_input_snapshot_path).resolve()
         self._user_id = user_id
+        # 按局增量遥测切窗（见 telemetry_capture_service.request_run_cut）：
+        # fire-and-forget，签名 (run_id, window_start_ms, window_end_ms)。
+        self._telemetry_cut_hook = telemetry_cut_hook
 
     async def shutdown(self) -> None:
         """Release only the native session already finalizing during runtime exit."""
@@ -255,6 +259,16 @@ class KovaaKCaptureFinalizer:
             return await self._finish_or_retry_trace(
                 run, trace_pending, "video_window_invalid",
             )
+
+        # 挑战窗有效即触发按局增量遥测切窗（与 mp4/raw-input 同一收尾时机；
+        # 服务侧幂等去重 + fire-and-forget，失败不影响本函数）。
+        if self._telemetry_cut_hook is not None:
+            try:
+                self._telemetry_cut_hook(run["id"], start_epoch_ms, end_epoch_ms)
+            except Exception:
+                log.exception(
+                    "telemetry run cut dispatch failed run=%s", run["id"],
+                )
 
         if (
             run.get("video_state") == "attached"
