@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.3.4",
+      "date": "2026-10-01",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复 Coach 偶发空回复的问题——现在会自动重试一次，不再需要手动重新提问",
+          "en": "Coach no longer returns an occasional empty reply: it now retries automatically once, so you don't have to ask again by hand"
+        },
+        {
+          "type": "fix",
+          "zh": "所选模型失效时自动恢复可用并给出处理指引，不再卡在报错上",
+          "en": "If the selected model becomes unavailable, the app now repairs it automatically and points you to what to do next instead of getting stuck on the error"
+        },
+        {
+          "type": "imp",
+          "zh": "网关额度类错误的提示文案更清晰，一眼能看出问题所在",
+          "en": "Error messages for gateway quota issues are now clearer, so you can tell at a glance what went wrong"
+        }
+      ]
+    },
+    {
       "version": "1.3.3",
       "date": "2026-09-30",
       "items": [
