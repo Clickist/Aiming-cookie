@@ -660,9 +660,20 @@ pub struct CaptureCoordinatorState {
     diagnostic_events: Mutex<VecDeque<CaptureDiagnosticEvent>>,
     finalizing_since: Mutex<Option<Instant>>,
     raw_unhealthy_since: Mutex<Option<Instant>>,
+    // video 采集 start 失败 dlog 的限频锚点：协调器按相位推进可能每局
+    // 触发多次 start 失败，日志按「首条 + 每 30s 一条」限频，人类可读细节
+    // 同时完整留在启动失败快照（诊断包 v7）里。
+    video_capture_failure_log_at: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
+}
+
+/// 失败 dlog 限频判据：首条必发，之后每 30s 放行一条。
+const VIDEO_CAPTURE_FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(30);
+
+fn video_capture_failure_log_allowed(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|at| now.duration_since(at) >= VIDEO_CAPTURE_FAILURE_LOG_INTERVAL)
 }
 
 impl CaptureCoordinatorState {
@@ -691,6 +702,7 @@ impl CaptureCoordinatorState {
             }])),
             finalizing_since: Mutex::new(None),
             raw_unhealthy_since: Mutex::new(None),
+            video_capture_failure_log_at: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
@@ -711,6 +723,19 @@ impl CaptureCoordinatorState {
             .as_ref()
             .map(ControlServer::connection)
             .ok_or_else(|| "capture control server is unavailable".to_string())
+    }
+
+    /// 失败 dlog 限频：首条必发，之后每 30s 放行一条；放行时顺带记账。
+    /// 槽位中毒按不放行处理（宁可少一条日志，不 panic 采集面）。
+    fn video_capture_failure_log_allowed(&self) -> bool {
+        let Ok(mut slot) = self.video_capture_failure_log_at.lock() else {
+            return false;
+        };
+        let allowed = video_capture_failure_log_allowed(*slot, Instant::now());
+        if allowed {
+            *slot = Some(Instant::now());
+        }
+        allowed
     }
 
     pub fn status(&self) -> CaptureCoordinatorStatus {
@@ -946,10 +971,12 @@ impl CaptureCoordinatorState {
                 // 人类可读细节进 native 日志，不得拼进 reason（0929 合同违规整改：
                 // 带文案 reason 曾使后端判 schema_invalid，连锁导致死会话不释放、
                 // 后续每局视频轨迹全灭）。
-                crate::dlog!(
-                    "[capture-coordinator] window capture start failed: {}",
-                    bounded_diagnostic_text(&error)
-                );
+                if self.video_capture_failure_log_allowed() {
+                    crate::dlog!(
+                        "[capture-coordinator] window capture start failed: {}",
+                        bounded_diagnostic_text(&error)
+                    );
+                }
                 let reason = "video_capture_unavailable".to_string();
                 self.replace_status(CaptureCoordinatorStatus {
                     enabled: true,
@@ -1834,13 +1861,34 @@ mod tests {
         monitor_start_failure_status, parse_control_request, raw_snapshot_flush_allowed,
         read_control_line, replay_failure_code, resized_video_degraded_status,
         response_type_for_request, sha256_hex, track_control_connection_thread,
-        write_capture_enabled_file, CaptureCoordinatorStatus, CapturePhase, CaptureSourceState,
-        CaptureSourceStatus, ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
-        StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
+        video_capture_failure_log_allowed, write_capture_enabled_file, CaptureCoordinatorStatus,
+        CapturePhase, CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
+        FileFingerprint, ReceiptRecord, StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
     use std::fs;
     use std::io::Cursor;
+    use std::time::Instant;
+
+    #[test]
+    fn video_capture_failure_log_rate_limits_to_first_and_every_30s() {
+        // 首条必发；30s 内的后续失败被吞；跨过 30s 门槛再放行一条。
+        let now = Instant::now();
+        assert!(video_capture_failure_log_allowed(None, now));
+        assert!(!video_capture_failure_log_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(29)
+        ));
+        assert!(video_capture_failure_log_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(30)
+        ));
+        // 很久以前记过账同样放行（Instant 减法饱和，不会 panic）。
+        assert!(video_capture_failure_log_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(3_600)
+        ));
+    }
 
     #[test]
     fn sha256_matches_known_vectors() {

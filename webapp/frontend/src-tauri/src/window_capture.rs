@@ -1649,6 +1649,135 @@ pub struct WindowCaptureStatus {
     pub timebase_version: &'static str,
     pub clock_anchor_utc_ms: Option<i64>,
     pub clock_anchor_qpc_ns: Option<u128>,
+    // v7 启动失败快照投影（28000 预览版 WGC 排障）：上次 start 失败的
+    // 错误全文/时刻/逐适配器尝试/retry mode。快照挂在 FrameQueue 之外，
+    // 随 start 入口的队列 reset 幸存，成功 start 才清除。
+    pub last_start_error: Option<String>,
+    pub last_start_error_at_utc_ms: Option<i64>,
+    pub last_adapter_attempts: Vec<WgcAdapterAttempt>,
+    pub gpu_driver_suspect: bool,
+    pub retry_mode: &'static str,
+}
+
+/// 逐适配器重试的单条尝试记录：结构化进诊断包，替代纯日志拼接。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WgcAdapterAttempt {
+    pub adapter: String,
+    pub luid: Option<String>,
+    pub step: String,
+    pub message: String,
+}
+
+/// 枚举环顺手拿到的 DXGI 适配器描述（GetDesc1）：诊断包 dxgiAdapters
+/// 的数据源，成功路径零额外 DXGI 调用。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WgcAdapterDescriptor {
+    pub name: String,
+    pub luid: Option<String>,
+    pub vendor_id: Option<u32>,
+    pub dedicated_video_memory: Option<u64>,
+    pub software: bool,
+}
+
+/// 一次 WGC start 失败的现场快照：错误全文 + 时刻 + 当时 retry mode +
+/// 注入开关自标注 + 逐适配器尝试与 DXGI 适配器清单。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartFailureSnapshot {
+    pub error: String,
+    pub at_utc_ms: i64,
+    pub retry_mode: &'static str,
+    pub force_adapter_retry: bool,
+    pub simulate_default_device_failure: bool,
+    pub adapter_attempts: Vec<WgcAdapterAttempt>,
+    pub dxgi_adapters: Vec<WgcAdapterDescriptor>,
+}
+
+/// WGC 触发面治理模式：wide（缺省）放宽为「会话创建两步任意 Win 类错误
+/// 与默认设备创建失败均可换卡重试」；strict 完整恢复 1.3.3 行为（仅
+/// E_INVALIDARG 族白名单，默认设备失败即 Fatal），是旧行为的逃生开关。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WgcRetryMode {
+    Wide,
+    Strict,
+}
+
+impl WgcRetryMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            WgcRetryMode::Wide => "wide",
+            WgcRetryMode::Strict => "strict",
+        }
+    }
+}
+
+/// `AIMING_COOKIE_WGC_RETRY_MODE=strict` 恢复 1.3.3 行为；其余取值（含
+/// 未设置）均为 wide。
+fn wgc_retry_mode_from_env() -> WgcRetryMode {
+    match std::env::var("AIMING_COOKIE_WGC_RETRY_MODE").as_deref() {
+        Ok("strict") => WgcRetryMode::Strict,
+        _ => WgcRetryMode::Wide,
+    }
+}
+
+/// `AIMING_COOKIE_FORCE_ADAPTER_RETRY=1`：跳过默认设备直接进枚举环。
+/// 仅测试/支持用，普通路径零影响。
+fn wgc_force_adapter_retry_enabled() -> bool {
+    std::env::var("AIMING_COOKIE_FORCE_ADAPTER_RETRY").as_deref() == Ok("1")
+}
+
+/// `AIMING_COOKIE_SIMULATE_DEFAULT_DEVICE_FAILURE=1`：create_default_device
+/// 注入 Err。仅测试/支持用，普通路径零影响。
+fn wgc_simulate_default_device_failure_enabled() -> bool {
+    std::env::var("AIMING_COOKIE_SIMULATE_DEFAULT_DEVICE_FAILURE").as_deref() == Ok("1")
+}
+
+fn utc_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+impl StartFailureSnapshot {
+    fn new(
+        error: String,
+        adapter_attempts: Vec<WgcAdapterAttempt>,
+        dxgi_adapters: Vec<WgcAdapterDescriptor>,
+    ) -> Self {
+        Self {
+            error,
+            at_utc_ms: utc_now_ms(),
+            retry_mode: wgc_retry_mode_from_env().as_str(),
+            force_adapter_retry: wgc_force_adapter_retry_enabled(),
+            simulate_default_device_failure: wgc_simulate_default_device_failure_enabled(),
+            adapter_attempts,
+            dxgi_adapters,
+        }
+    }
+}
+
+/// gpuDriverSuspect 派生（中英两形态）：WMI 适配器名含「基本显示适配器 /
+/// Basic Display Adapter」（无驱动），或启动失败快照显示枚举环里全部
+/// 适配器被 software/no-driver 跳过。gpu_names 为空（WMI 不可用）时只看
+/// 快照侧证据。
+pub(crate) fn gpu_driver_suspect(
+    gpu_names: &[String],
+    last_failure: Option<&StartFailureSnapshot>,
+) -> bool {
+    let name_suspect = gpu_names.iter().any(|name| {
+        name.contains("基本显示适配器")
+            || name.to_ascii_lowercase().contains("basic display adapter")
+    });
+    name_suspect
+        || last_failure.is_some_and(|snapshot| {
+            !snapshot.adapter_attempts.is_empty()
+                && snapshot.adapter_attempts.iter().all(|attempt| {
+                    attempt.step == "skip" && attempt.message.contains("software/no-driver")
+                })
+        })
 }
 
 pub struct FrameQueue {
@@ -1919,6 +2048,13 @@ impl FrameQueue {
             timebase_version: "time_alignment.v2",
             clock_anchor_utc_ms: None,
             clock_anchor_qpc_ns: None,
+            // 启动失败快照投影的占位值：FrameQueue 不持有快照，真实值由
+            // WindowCaptureState::status() 覆盖。
+            last_start_error: None,
+            last_start_error_at_utc_ms: None,
+            last_adapter_attempts: Vec::new(),
+            gpu_driver_suspect: false,
+            retry_mode: "wide",
         }
     }
 }
@@ -1927,6 +2063,10 @@ pub struct WindowCaptureState {
     enabled: bool,
     recording: bool,
     queue: Arc<Mutex<FrameQueue>>,
+    // 启动失败快照：刻意放在 FrameQueue 之外——start 入口会 reset 队列，
+    // 快照必须幸存到诊断包与下一局；成功 start 才清除。Arc 共享给采集
+    // 线程，失败现场（含逐适配器尝试）由线程侧写入。
+    last_start_failure: Arc<Mutex<Option<StartFailureSnapshot>>>,
     clock_metadata: Option<CaptureClockMetadata>,
     #[cfg(windows)]
     worker: Option<WindowCaptureWorker>,
@@ -1967,6 +2107,7 @@ impl WindowCaptureState {
             enabled: false,
             recording: false,
             queue: Arc::new(Mutex::new(FrameQueue::new(capacity)?)),
+            last_start_failure: Arc::new(Mutex::new(None)),
             clock_metadata: None,
             #[cfg(windows)]
             worker: None,
@@ -1983,7 +2124,54 @@ impl WindowCaptureState {
             status.clock_anchor_utc_ms = Some(clock.utc_epoch_ms);
             status.clock_anchor_qpc_ns = Some(clock.qpc_ns);
         }
+        let last_failure = self.last_start_failure_snapshot();
+        status.last_start_error = last_failure.as_ref().map(|failure| failure.error.clone());
+        status.last_start_error_at_utc_ms = last_failure.as_ref().map(|failure| failure.at_utc_ms);
+        status.last_adapter_attempts = last_failure
+            .as_ref()
+            .map(|failure| failure.adapter_attempts.clone())
+            .unwrap_or_default();
+        // 只投快照侧证据；gpu_names（WMI 查询）侧由诊断包组装时补齐，
+        // status 是高频查询，不能每次跑 PowerShell。
+        status.gpu_driver_suspect = gpu_driver_suspect(&[], last_failure.as_ref());
+        status.retry_mode = last_failure
+            .as_ref()
+            .map(|failure| failure.retry_mode)
+            .unwrap_or_else(|| wgc_retry_mode_from_env().as_str());
         status
+    }
+
+    /// 上次 start 失败快照的只读克隆（诊断包 dxgiAdapters/gpuDriverSuspect
+    /// 组装用）；无失败或槽位不可用时为 None。
+    pub fn last_start_failure_snapshot(&self) -> Option<StartFailureSnapshot> {
+        self.last_start_failure
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+    }
+
+    /// 成功 start 清除失败快照；失败快照由采集线程写入共享槽位。
+    fn clear_start_failure(&self) {
+        if let Ok(mut slot) = self.last_start_failure.lock() {
+            *slot = None;
+        }
+    }
+
+    /// 兜底写入：采集线程未及写入（如 start 超时）时由 start 侧补一份
+    /// 最小快照，不覆盖线程已写入的完整现场。
+    fn ensure_start_failure_snapshot(&self, error: String) {
+        if let Ok(mut slot) = self.last_start_failure.lock() {
+            if slot.is_none() {
+                *slot = Some(StartFailureSnapshot::new(error, Vec::new(), Vec::new()));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn set_last_start_failure_for_test(&self, snapshot: Option<StartFailureSnapshot>) {
+        if let Ok(mut slot) = self.last_start_failure.lock() {
+            *slot = snapshot;
+        }
     }
 
     /// 当前会话录制是否因窗口尺寸漂移被诚实终态化（F6）。供采集协调器在
@@ -2140,6 +2328,7 @@ impl WindowCaptureState {
             };
             let stop = Arc::new(AtomicBool::new(false));
             let queue = Arc::clone(&self.queue);
+            let failure_snapshot = Arc::clone(&self.last_start_failure);
             let thread_stop = Arc::clone(&stop);
             let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
             let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(1);
@@ -2152,10 +2341,12 @@ impl WindowCaptureState {
                     recording_path,
                     clock_metadata,
                     command_receiver,
+                    failure_snapshot,
                 )
             });
             match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Ok(Ok(())) => {
+                    self.clear_start_failure();
                     self.worker = Some(WindowCaptureWorker {
                         stop,
                         join: Some(join),
@@ -2168,12 +2359,16 @@ impl WindowCaptureState {
                 }
                 Ok(Err(error)) => {
                     let _ = join.join();
+                    // 快照本体由采集线程写入共享槽位；此处只兜底防空。
+                    self.ensure_start_failure_snapshot(error.clone());
                     Err(error)
                 }
                 Err(error) => {
                     stop.store(true, Ordering::Release);
                     let _ = join.join();
-                    Err(format!("window capture startup timed out: {error}"))
+                    let message = format!("window capture startup timed out: {error}");
+                    self.ensure_start_failure_snapshot(message.clone());
+                    Err(message)
                 }
             }
         }
@@ -4738,6 +4933,37 @@ fn wgc_step_error_is_invalid_parameter(error: &WgcStepError) -> bool {
     }
 }
 
+/// 启动链上「换适配器可解」的两步（wide 模式的放宽范围）；步骤名必须与
+/// try_start_wgc_with_device 里的 step() 命名一致。
+#[cfg(windows)]
+const WGC_STEP_CREATE_FREE_THREADED: &str = "Direct3D11CaptureFramePool::CreateFreeThreaded";
+#[cfg(windows)]
+const WGC_STEP_CREATE_CAPTURE_SESSION: &str = "CreateCaptureSession";
+
+/// 换卡重试判据（按治理模式分流）：
+/// - strict（1.3.3 行为完整恢复）：仅 E_INVALIDARG 族白名单，任意步骤。
+/// - wide（缺省）：CreateFreeThreaded / CreateCaptureSession 两步的任意
+///   Win 类错误均可换卡重试（28000 预览版上同一根因会以多种 HRESULT/
+///   NTSTATUS 形态出现）；CreateForWindow 失败与窗口尺寸校验恒 Fatal
+///   （换卡无解）；Msg 类错误不重试。
+#[cfg(windows)]
+fn wgc_step_error_is_session_start_retryable(
+    step_name: &str,
+    error: &WgcStepError,
+    mode: WgcRetryMode,
+) -> bool {
+    match mode {
+        WgcRetryMode::Strict => wgc_step_error_is_invalid_parameter(error),
+        WgcRetryMode::Wide => match error {
+            WgcStepError::Win(_) => matches!(
+                step_name,
+                WGC_STEP_CREATE_FREE_THREADED | WGC_STEP_CREATE_CAPTURE_SESSION
+            ),
+            WgcStepError::Msg(_) => false,
+        },
+    }
+}
+
 /// 在给定 D3D 设备上走完 item → frame pool → session 启动链。任一步失败
 /// 返回（步骤名, 错误），中间产物靠 drop 释放，调用方可换设备整链重试。
 #[cfg(windows)]
@@ -4763,7 +4989,12 @@ fn try_start_wgc_with_device(
             &dxgi_device,
         )
     }
-    .map_err(|error| step("CreateDirect3D11DeviceFromDXGIDevice", WgcStepError::Win(error)))?;
+    .map_err(|error| {
+        step(
+            "CreateDirect3D11DeviceFromDXGIDevice",
+            WgcStepError::Win(error),
+        )
+    })?;
     let direct3d_device: IDirect3DDevice = inspectable
         .cast()
         .map_err(|error| step("IDirect3DDevice cast", WgcStepError::Win(error)))?;
@@ -4788,15 +5019,10 @@ fn try_start_wgc_with_device(
         4,
         size,
     )
-    .map_err(|error| {
-        step(
-            "Direct3D11CaptureFramePool::CreateFreeThreaded",
-            WgcStepError::Win(error),
-        )
-    })?;
+    .map_err(|error| step(WGC_STEP_CREATE_FREE_THREADED, WgcStepError::Win(error)))?;
     let session = frame_pool
         .CreateCaptureSession(&item)
-        .map_err(|error| step("CreateCaptureSession", WgcStepError::Win(error)))?;
+        .map_err(|error| step(WGC_STEP_CREATE_CAPTURE_SESSION, WgcStepError::Win(error)))?;
     Ok(WgcSessionStart {
         device,
         context,
@@ -4808,30 +5034,45 @@ fn try_start_wgc_with_device(
     })
 }
 
-/// 默认设备报 E_INVALIDARG 后的兜底：枚举 DXGI 适配器，跳过 WARP/无驱动
-/// 适配器，逐个以 D3D_DRIVER_TYPE_UNKNOWN + 显式 adapter 重建设备整链
-/// 重试（ScreenRecorderLib #141 / WebRTC wgc_capturer_win.cc 同款）。
-/// E_INVALIDARG 换下一个适配器；非参数类错误视为环境级问题终止枚举。
-/// 返回的错误里带每个适配器的尝试结果，方便用户日志直接定位。
+/// 默认设备路径失败后的兜底：枚举 DXGI 适配器，跳过 WARP/无驱动适配器，
+/// 逐个以 D3D_DRIVER_TYPE_UNKNOWN + 显式 adapter 重建设备整链重试
+/// （ScreenRecorderLib #141 / WebRTC wgc_capturer_win.cc 同款）。
+/// 换卡判据按治理模式分流（见 wgc_step_error_is_session_start_retryable）；
+/// 不可重试错误终止枚举。返回的错误携带结构化的逐适配器尝试与 DXGI
+/// 适配器清单，直接进启动失败快照与诊断包。
+#[cfg(windows)]
+struct WgcEnumeratedAdaptersFailure {
+    message: String,
+    attempts: Vec<WgcAdapterAttempt>,
+    adapters: Vec<WgcAdapterDescriptor>,
+}
+
 #[cfg(windows)]
 fn try_start_wgc_with_enumerated_adapters(
     hwnd: usize,
     feature_levels: &[windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL],
-) -> Result<WgcSessionStart, String> {
+    retry_mode: WgcRetryMode,
+) -> Result<WgcSessionStart, WgcEnumeratedAdaptersFailure> {
     use windows::core::Interface;
+    use windows::Win32::Foundation::{HMODULE, LUID};
     use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
     use windows::Win32::Graphics::Direct3D11::{
         D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
         D3D11_SDK_VERSION,
     };
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, IDXGIFactory1, IDXGIAdapter, DXGI_ADAPTER_FLAG_SOFTWARE,
+        CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
     };
-    use windows::Win32::Foundation::HMODULE;
 
-    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }
-        .map_err(|error| format!("CreateDXGIFactory1 failed: {error}"))?;
-    let mut tried: Vec<String> = Vec::new();
+    let factory: IDXGIFactory1 =
+        unsafe { CreateDXGIFactory1() }.map_err(|error| WgcEnumeratedAdaptersFailure {
+            message: format!("CreateDXGIFactory1 failed: {error}"),
+            attempts: Vec::new(),
+            adapters: Vec::new(),
+        })?;
+    let format_luid = |luid: LUID| format!("luid:{:08x}{:08x}", luid.HighPart as u32, luid.LowPart);
+    let mut attempts: Vec<WgcAdapterAttempt> = Vec::new();
+    let mut adapters: Vec<WgcAdapterDescriptor> = Vec::new();
     let mut index = 0u32;
     loop {
         let adapter = match unsafe { factory.EnumAdapters1(index) } {
@@ -4842,25 +5083,51 @@ fn try_start_wgc_with_enumerated_adapters(
         let desc = match unsafe { adapter.GetDesc1() } {
             Ok(desc) => desc,
             Err(error) => {
-                tried.push(format!("adapter[{index}] GetDesc1 failed: {error}"));
+                attempts.push(WgcAdapterAttempt {
+                    adapter: format!("adapter[{index}]"),
+                    luid: None,
+                    step: "GetDesc1".to_string(),
+                    message: format!("GetDesc1 failed: {error}"),
+                });
                 continue;
             }
         };
         let name = String::from_utf16_lossy(&desc.Description)
             .trim_end_matches('\0')
             .to_string();
+        let luid = format_luid(desc.AdapterLuid);
+        let software = desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+        adapters.push(WgcAdapterDescriptor {
+            name: name.clone(),
+            luid: Some(luid.clone()),
+            vendor_id: Some(desc.VendorId),
+            dedicated_video_memory: Some(desc.DedicatedVideoMemory as u64),
+            software,
+        });
         // 无驱动适配器（"Microsoft 基本显示适配器"）与 WARP 没有可用的硬件
         // 设备，对它们整链重试只会复现同一错误。
-        if desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0
-            || desc.DedicatedVideoMemory == 0
-        {
-            tried.push(format!("{name}: skipped (software/no-driver adapter)"));
+        if software || desc.DedicatedVideoMemory == 0 {
+            attempts.push(WgcAdapterAttempt {
+                adapter: name,
+                luid: Some(luid),
+                step: "skip".to_string(),
+                message: "skipped (software/no-driver adapter)".to_string(),
+            });
             continue;
         }
         // D3D11CreateDevice 的参数绑定要基类接口 IDXGIAdapter。
-        let adapter_base: IDXGIAdapter = adapter
-            .cast()
-            .map_err(|error| format!("{name}: IDXGIAdapter cast failed: {error}"))?;
+        let adapter_base: IDXGIAdapter = match adapter.cast() {
+            Ok(adapter_base) => adapter_base,
+            Err(error) => {
+                attempts.push(WgcAdapterAttempt {
+                    adapter: name,
+                    luid: Some(luid),
+                    step: "IDXGIAdapter cast".to_string(),
+                    message: format!("IDXGIAdapter cast failed: {error}"),
+                });
+                continue;
+            }
+        };
         let mut device = None;
         let mut context = None;
         let mut feature_level = D3D_FEATURE_LEVEL::default();
@@ -4881,21 +5148,36 @@ fn try_start_wgc_with_enumerated_adapters(
             Ok(()) => match (device, context) {
                 (Some(device), Some(context)) => (device, context),
                 _ => {
-                    tried.push(format!("{name}: device creation returned no device"));
+                    attempts.push(WgcAdapterAttempt {
+                        adapter: name,
+                        luid: Some(luid),
+                        step: "D3D11CreateDevice".to_string(),
+                        message: "device creation returned no device".to_string(),
+                    });
                     continue;
                 }
             },
             Err(error) => {
-                tried.push(format!("{name}: device creation failed ({error})"));
+                attempts.push(WgcAdapterAttempt {
+                    adapter: name,
+                    luid: Some(luid),
+                    step: "D3D11CreateDevice".to_string(),
+                    message: format!("device creation failed ({error})"),
+                });
                 continue;
             }
         };
         match try_start_wgc_with_device(hwnd, device, context) {
             Ok(started) => return Ok(started),
             Err((step_name, error)) => {
-                let line = format!("{name}: {step_name} failed ({error})");
-                let retryable = wgc_step_error_is_invalid_parameter(&error);
-                tried.push(line);
+                let retryable =
+                    wgc_step_error_is_session_start_retryable(&step_name, &error, retry_mode);
+                attempts.push(WgcAdapterAttempt {
+                    adapter: name,
+                    luid: Some(luid),
+                    step: step_name.clone(),
+                    message: format!("{step_name} failed ({error})"),
+                });
                 if !retryable {
                     // 设备/适配器身份之外的错误（窗口消失、帧池枯竭等）不是
                     // 换适配器能解决的，终止并交出已尝试清单。
@@ -4904,14 +5186,37 @@ fn try_start_wgc_with_enumerated_adapters(
             }
         }
     }
-    Err(if tried.is_empty() {
-        "no hardware adapter available to retry".to_string()
-    } else {
-        format!("tried: {}", tried.join("; "))
+    Err(WgcEnumeratedAdaptersFailure {
+        message: if attempts.is_empty() {
+            "no hardware adapter available to retry".to_string()
+        } else {
+            format!(
+                "tried: {}",
+                attempts
+                    .iter()
+                    .map(|attempt| format!(
+                        "{}: {} ({})",
+                        attempt.adapter, attempt.step, attempt.message
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )
+        },
+        attempts,
+        adapters,
     })
 }
 
+/// B 计划占位：WARP 软件适配器兜底启动。尚未接线（28000 加固先落诊断与
+/// 换卡重试，WARP 保底挂账后续）；保留签名占位，接线时移除 allow。
 #[cfg(windows)]
+#[allow(dead_code)]
+fn try_start_wgc_with_warp(_hwnd: usize) -> Result<WgcSessionStart, String> {
+    Err("WARP fallback is not wired yet".to_string())
+}
+
+#[cfg(windows)]
+#[allow(clippy::too_many_arguments)] // 线程入口参数表：现有管线合同的延续
 fn run_wgc_window_capture(
     hwnd: usize,
     queue: Arc<Mutex<FrameQueue>>,
@@ -4920,6 +5225,7 @@ fn run_wgc_window_capture(
     recording_path: Option<PathBuf>,
     clock_metadata: CaptureClockMetadata,
     command_receiver: std::sync::mpsc::Receiver<WindowCaptureCommand>,
+    failure_snapshot: Arc<Mutex<Option<StartFailureSnapshot>>>,
 ) -> Result<(), String> {
     use windows::core::{IInspectable, Interface};
     use windows::Foundation::TypedEventHandler;
@@ -4941,6 +5247,16 @@ fn run_wgc_window_capture(
     unsafe { RoInitialize(RO_INIT_MULTITHREADED) }
         .map_err(|error| format!("RoInitialize failed: {error}"))?;
 
+    // 触发面治理模式与注入开关在 start 时刻定格，并自标注进失败快照
+    //（开关仅测试/支持用，普通路径零影响）。
+    let retry_mode = wgc_retry_mode_from_env();
+    let force_adapter_retry = wgc_force_adapter_retry_enabled();
+    let simulate_default_device_failure = wgc_simulate_default_device_failure_enabled();
+    // 逐适配器尝试与 DXGI 适配器清单：枚举环失败时收集，终态失败处写进
+    // 共享快照槽位（FrameQueue 之外，start 的队列 reset 清不掉）。
+    let mut adapter_attempts: Vec<WgcAdapterAttempt> = Vec::new();
+    let mut dxgi_adapters_seen: Vec<WgcAdapterDescriptor> = Vec::new();
+
     let result = (|| {
         if !GraphicsCaptureSession::IsSupported()
             .map_err(|error| format!("GraphicsCaptureSession::IsSupported failed: {error}"))?
@@ -4953,9 +5269,9 @@ fn run_wgc_window_capture(
         // 28000 Insider 上 CreateCaptureSession 报 E_INVALIDARG 的经典机理
         // = D3D 设备所在适配器与采集目标所属适配器不一致（ScreenRecorderLib
         // #141、Chromium wgc_capturer_win.cc 同款结论）。默认路径保持第一
-        // 优先（正式版行为零变化）；默认设备在会话创建处报 E_INVALIDARG
-        // 族错误时，再按 LUID 逐适配器显式重建设备重试。非参数类错误
-        // （设备创建失败、窗口无效等）不进重试环，直接终态。
+        // 优先（正式版行为零变化）；默认设备失败时按治理模式分流：wide
+        // （缺省）下设备创建失败与会话创建两步的 Win 类错误都换卡重试，
+        // strict（=1.3.3）仅 E_INVALIDARG 族换卡、设备创建失败即终态。
         let feature_levels = [
             D3D_FEATURE_LEVEL_11_1,
             D3D_FEATURE_LEVEL_11_0,
@@ -4963,6 +5279,12 @@ fn run_wgc_window_capture(
             D3D_FEATURE_LEVEL_10_0,
         ];
         let create_default_device = || {
+            if simulate_default_device_failure {
+                return Err(
+                    "simulated default device failure (AIMING_COOKIE_SIMULATE_DEFAULT_DEVICE_FAILURE=1)"
+                        .to_string(),
+                );
+            }
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
             let mut feature_level = D3D_FEATURE_LEVEL::default();
@@ -4988,42 +5310,57 @@ fn run_wgc_window_capture(
 
         enum DefaultDeviceOutcome {
             Started(WgcSessionStart),
-            // E_INVALIDARG 族：值得逐适配器显式重试；携带默认路径错误文案。
+            // 值得逐适配器显式重试；携带默认路径错误文案。
             RetryEnumerated(String),
-            // 不可重试失败（设备创建失败、窗口无效等）：直接终态。
+            // 不可重试失败（窗口无效、WGC 不支持等）：直接终态。
             Fatal(String),
         }
-        let default_outcome = match create_default_device() {
-            Ok((device, context)) => match try_start_wgc_with_device(hwnd, device, context) {
-                Ok(started) => DefaultDeviceOutcome::Started(started),
-                Err((step_name, error)) => {
-                    let text = format!("{step_name} failed: {error}");
-                    if wgc_step_error_is_invalid_parameter(&error) {
-                        DefaultDeviceOutcome::RetryEnumerated(text)
-                    } else {
-                        DefaultDeviceOutcome::Fatal(text)
+        let default_outcome = if force_adapter_retry {
+            DefaultDeviceOutcome::RetryEnumerated(
+                "forced via AIMING_COOKIE_FORCE_ADAPTER_RETRY=1 (default device skipped)"
+                    .to_string(),
+            )
+        } else {
+            match create_default_device() {
+                Ok((device, context)) => match try_start_wgc_with_device(hwnd, device, context) {
+                    Ok(started) => DefaultDeviceOutcome::Started(started),
+                    Err((step_name, error)) => {
+                        let text = format!("{step_name} failed: {error}");
+                        if wgc_step_error_is_session_start_retryable(&step_name, &error, retry_mode)
+                        {
+                            DefaultDeviceOutcome::RetryEnumerated(text)
+                        } else {
+                            DefaultDeviceOutcome::Fatal(text)
+                        }
                     }
-                }
-            },
-            Err(error) => DefaultDeviceOutcome::Fatal(error),
+                },
+                Err(error) => match retry_mode {
+                    // wide：默认设备建不出来也可能是适配器身份问题，交给
+                    // 枚举环收集逐适配器证据（含无驱动适配器跳过记录）。
+                    WgcRetryMode::Wide => DefaultDeviceOutcome::RetryEnumerated(error),
+                    WgcRetryMode::Strict => DefaultDeviceOutcome::Fatal(error),
+                },
+            }
         };
 
         let started = match default_outcome {
             DefaultDeviceOutcome::Started(started) => started,
             DefaultDeviceOutcome::Fatal(text) => return Err(text),
             DefaultDeviceOutcome::RetryEnumerated(default_error) => {
-                match try_start_wgc_with_enumerated_adapters(hwnd, &feature_levels) {
+                match try_start_wgc_with_enumerated_adapters(hwnd, &feature_levels, retry_mode) {
                     Ok(started) => {
                         crate::dlog!(
-                            "[wgc-capture] default adapter path hit E_INVALIDARG, \
+                            "[wgc-capture] default adapter path failed, \
                              enumerated adapter retry succeeded (default path: {default_error})"
                         );
                         started
                     }
-                    Err(fallback_error) => {
+                    Err(fallback) => {
+                        adapter_attempts = fallback.attempts;
+                        dxgi_adapters_seen = fallback.adapters;
                         return Err(format!(
-                            "default adapter path: {default_error}; enumerated adapters: \
-                             {fallback_error}"
+                            "default adapter path: {default_error}; enumerated adapters: {}",
+                            fallback.message
                         ));
                     }
                 }
@@ -5482,6 +5819,15 @@ fn run_wgc_window_capture(
         Ok(())
     })();
     if let Err(error) = &result {
+        // 启动失败快照：写入共享槽位（FrameQueue 之外），start 入口的
+        // 队列 reset 与下一局 start 都清不掉；成功 start 才清除。
+        if let Ok(mut slot) = failure_snapshot.lock() {
+            *slot = Some(StartFailureSnapshot::new(
+                error.clone(),
+                std::mem::take(&mut adapter_attempts),
+                std::mem::take(&mut dxgi_adapters_seen),
+            ));
+        }
         let _ = ready.send(Err(error.clone()));
     }
     unsafe { RoUninitialize() };
@@ -7454,5 +7800,237 @@ mod tests {
         // 基准下采样间隔必须远低于导出 CoverageGap 容差。
         assert_eq!(SOFTWARE_FRAME_DURATION_100NS, SOFTWARE_INPUT_INTERVAL_100NS);
         const { assert!(SOFTWARE_INPUT_INTERVAL_100NS < REPLAY_TOLERATED_GAP_100NS) };
+    }
+
+    fn start_failure_snapshot_fixture(
+        adapter_attempts: Vec<WgcAdapterAttempt>,
+    ) -> StartFailureSnapshot {
+        StartFailureSnapshot {
+            error:
+                "default adapter path: CreateCaptureSession failed; enumerated adapters: tried: ..."
+                    .to_string(),
+            at_utc_ms: 1_760_000_000_000,
+            retry_mode: "wide",
+            force_adapter_retry: false,
+            simulate_default_device_failure: false,
+            adapter_attempts,
+            dxgi_adapters: Vec::new(),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wgc_step_retry_predicate_splits_by_mode() {
+        // 28000 加固触发面：同一根因在预览版会以多种 HRESULT/NTSTATUS 形态
+        // 出现。strict=1.3.3 白名单行为；wide 只放宽会话创建两步，窗口身份
+        // 与尺寸校验两模式一致恒 Fatal。
+        let make_win_error = |code: u32| {
+            WgcStepError::Win(windows::core::Error::new(
+                windows::core::HRESULT(code as i32),
+                "synthetic start-chain error",
+            ))
+        };
+        let invalid_arg = make_win_error(0x8007_0057);
+        let nt_invalid_parameter = make_win_error(0xC000_000D);
+        let unexpected = make_win_error(0x8007_0005); // 非白名单 HRESULT
+        let msg_error = WgcStepError::Msg("capture window has an invalid size".to_string());
+
+        let session_step = WGC_STEP_CREATE_CAPTURE_SESSION;
+        let pool_step = WGC_STEP_CREATE_FREE_THREADED;
+        let window_step = "CreateForWindow";
+
+        // 两码两模式同过（CreateCaptureSession 步骤）。
+        for error in [&invalid_arg, &nt_invalid_parameter] {
+            assert!(wgc_step_error_is_session_start_retryable(
+                session_step,
+                error,
+                WgcRetryMode::Strict
+            ));
+            assert!(wgc_step_error_is_session_start_retryable(
+                session_step,
+                error,
+                WgcRetryMode::Wide
+            ));
+        }
+        // 同步骤的未知 HRESULT：strict 终态（1.3.3 行为）/ wide 换卡重试。
+        assert!(!wgc_step_error_is_session_start_retryable(
+            session_step,
+            &unexpected,
+            WgcRetryMode::Strict
+        ));
+        assert!(wgc_step_error_is_session_start_retryable(
+            session_step,
+            &unexpected,
+            WgcRetryMode::Wide
+        ));
+        // wide 同样覆盖 CreateFreeThreaded 步骤。
+        assert!(wgc_step_error_is_session_start_retryable(
+            pool_step,
+            &unexpected,
+            WgcRetryMode::Wide
+        ));
+        // CreateForWindow（换卡无解）：wide 恒 Fatal；strict 沿用 1.3.3
+        // 白名单语义——E_INVALIDARG 族在任意步骤都重试，历史行为原样保留。
+        assert!(wgc_step_error_is_session_start_retryable(
+            window_step,
+            &invalid_arg,
+            WgcRetryMode::Strict
+        ));
+        assert!(!wgc_step_error_is_session_start_retryable(
+            window_step,
+            &invalid_arg,
+            WgcRetryMode::Wide
+        ));
+        // 窗口尺寸校验等 Msg 类错误两模式都不重试。
+        for mode in [WgcRetryMode::Strict, WgcRetryMode::Wide] {
+            assert!(!wgc_step_error_is_session_start_retryable(
+                session_step,
+                &msg_error,
+                mode
+            ));
+        }
+    }
+
+    #[test]
+    fn start_failure_snapshot_projects_into_status_and_survives_queue_reset() {
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        // 无失败：错误/时刻/尝试均为空，嫌疑为否（retryMode 回落当前治理
+        // 模式，值依赖环境变量，不在空态断言）。
+        let status = state.status();
+        assert!(status.last_start_error.is_none());
+        assert!(status.last_start_error_at_utc_ms.is_none());
+        assert!(status.last_adapter_attempts.is_empty());
+        assert!(!status.gpu_driver_suspect);
+
+        // 失败写入：结构化尝试进 status。
+        state.set_last_start_failure_for_test(Some(start_failure_snapshot_fixture(vec![
+            WgcAdapterAttempt {
+                adapter: "NVIDIA GeForce RTX 4070".to_string(),
+                luid: Some("luid:0000000000000c8a".to_string()),
+                step: "CreateCaptureSession".to_string(),
+                message: "CreateCaptureSession failed (The parameter is incorrect)".to_string(),
+            },
+        ])));
+        // start 入口会 reset 队列；快照挂在 FrameQueue 之外必须幸存。
+        state.queue.lock().expect("queue mutex").reset();
+        let status = state.status();
+        assert_eq!(
+            status.last_start_error.as_deref(),
+            Some(
+                "default adapter path: CreateCaptureSession failed; enumerated adapters: tried: ..."
+            )
+        );
+        assert_eq!(status.last_start_error_at_utc_ms, Some(1_760_000_000_000));
+        assert_eq!(status.last_adapter_attempts.len(), 1);
+        assert_eq!(
+            status.last_adapter_attempts[0].adapter,
+            "NVIDIA GeForce RTX 4070"
+        );
+        assert_eq!(status.retry_mode, "wide");
+        // 有硬件尝试（而非全部跳过）不算无驱动嫌疑。
+        assert!(!status.gpu_driver_suspect);
+
+        // serde 投影字段为 camelCase（前端与诊断包同一契约）。
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"lastStartError\""), "{json}");
+        assert!(json.contains("\"lastStartErrorAtUtcMs\""), "{json}");
+        assert!(json.contains("\"lastAdapterAttempts\""), "{json}");
+        assert!(json.contains("\"gpuDriverSuspect\""), "{json}");
+        assert!(json.contains("\"retryMode\""), "{json}");
+        let snapshot_json =
+            serde_json::to_string(&state.last_start_failure_snapshot().unwrap()).unwrap();
+        assert!(snapshot_json.contains("\"atUtcMs\""), "{snapshot_json}");
+        assert!(
+            snapshot_json.contains("\"forceAdapterRetry\""),
+            "{snapshot_json}"
+        );
+        assert!(
+            snapshot_json.contains("\"simulateDefaultDeviceFailure\""),
+            "{snapshot_json}"
+        );
+
+        // 成功 start 清除快照。
+        state.clear_start_failure();
+        let status = state.status();
+        assert!(status.last_start_error.is_none());
+        assert!(status.last_adapter_attempts.is_empty());
+    }
+
+    #[test]
+    fn gpu_driver_suspect_matches_basic_display_adapter_names_and_all_skipped_snapshot() {
+        // WMI 名单侧：中英两形态都算无驱动嫌疑（英文不区分大小写）。
+        assert!(gpu_driver_suspect(
+            &["Microsoft 基本显示适配器".to_string()],
+            None
+        ));
+        assert!(gpu_driver_suspect(
+            &["Microsoft Basic Display Adapter".to_string()],
+            None
+        ));
+        assert!(gpu_driver_suspect(
+            &["Microsoft basic display adapter".to_string()],
+            None
+        ));
+        assert!(gpu_driver_suspect(
+            &[
+                "NVIDIA GeForce RTX 4070".to_string(),
+                "Microsoft Basic Display Adapter".to_string(),
+            ],
+            None
+        ));
+        assert!(!gpu_driver_suspect(
+            &["NVIDIA GeForce RTX 4070".to_string()],
+            None
+        ));
+        assert!(!gpu_driver_suspect(&[], None));
+
+        // 快照侧：全部适配器被 software/no-driver 跳过才嫌疑；取或语义。
+        let skip = |name: &str| WgcAdapterAttempt {
+            adapter: name.to_string(),
+            luid: Some("luid:0000000000000001".to_string()),
+            step: "skip".to_string(),
+            message: "skipped (software/no-driver adapter)".to_string(),
+        };
+        let all_skipped = start_failure_snapshot_fixture(vec![
+            skip("Microsoft 基本显示适配器"),
+            skip("Microsoft Basic Display Adapter"),
+        ]);
+        assert!(gpu_driver_suspect(&[], Some(&all_skipped)));
+        assert!(gpu_driver_suspect(
+            &["NVIDIA GeForce RTX 4070".to_string()],
+            Some(&all_skipped)
+        ));
+        // 有硬件尝试（即使失败）或空尝试清单都不算。
+        let attempted = start_failure_snapshot_fixture(vec![WgcAdapterAttempt {
+            adapter: "NVIDIA GeForce RTX 4070".to_string(),
+            luid: Some("luid:0000000000000002".to_string()),
+            step: "CreateCaptureSession".to_string(),
+            message: "CreateCaptureSession failed (The parameter is incorrect)".to_string(),
+        }]);
+        assert!(!gpu_driver_suspect(&[], Some(&attempted)));
+        let empty = start_failure_snapshot_fixture(Vec::new());
+        assert!(!gpu_driver_suspect(&[], Some(&empty)));
+    }
+
+    #[test]
+    fn wgc_governance_env_switches_parse() {
+        // 治理模式：缺省 wide；显式 strict 才收紧；未知取值回落 wide。
+        std::env::remove_var("AIMING_COOKIE_WGC_RETRY_MODE");
+        assert_eq!(wgc_retry_mode_from_env(), WgcRetryMode::Wide);
+        std::env::set_var("AIMING_COOKIE_WGC_RETRY_MODE", "strict");
+        assert_eq!(wgc_retry_mode_from_env(), WgcRetryMode::Strict);
+        std::env::set_var("AIMING_COOKIE_WGC_RETRY_MODE", "bogus");
+        assert_eq!(wgc_retry_mode_from_env(), WgcRetryMode::Wide);
+        std::env::remove_var("AIMING_COOKIE_WGC_RETRY_MODE");
+
+        // 注入开关：仅 "1" 激活，缺省关闭；用完即清不泄漏给并行测试。
+        assert!(!wgc_force_adapter_retry_enabled());
+        assert!(!wgc_simulate_default_device_failure_enabled());
+        std::env::set_var("AIMING_COOKIE_FORCE_ADAPTER_RETRY", "1");
+        std::env::set_var("AIMING_COOKIE_SIMULATE_DEFAULT_DEVICE_FAILURE", "1");
+        assert!(wgc_force_adapter_retry_enabled());
+        assert!(wgc_simulate_default_device_failure_enabled());
+        std::env::remove_var("AIMING_COOKIE_FORCE_ADAPTER_RETRY");
+        std::env::remove_var("AIMING_COOKIE_SIMULATE_DEFAULT_DEVICE_FAILURE");
     }
 }

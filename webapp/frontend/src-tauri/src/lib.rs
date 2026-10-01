@@ -78,6 +78,10 @@ struct CaptureDiagnosticsBundle {
     // v5：WebView/React 侧错误（打包版 console 不可见）经前端环形日志落盘，
     // 与 native/backend 日志同在包内，打通前端失败现场。
     frontend_log_tail: Option<String>,
+    // v7：28000 预览版 WGC 排障——启动失败快照里的 DXGI 适配器清单（枚举
+    // 环已拿到的 GetDesc1：名称/LUID/vendor/VRAM/软件标志；成功路径零额外
+    // DXGI 调用，无启动失败时为 null）。
+    dxgi_adapters: Option<Vec<window_capture::WgcAdapterDescriptor>>,
 }
 
 #[derive(serde::Serialize)]
@@ -753,13 +757,19 @@ fn build_capture_diagnostics_bundle(
     // The session id is an internal correlation secret and is not needed by support.
     coordinator_status.capture_session_id = None;
     let data_root = PathBuf::from(coordinator.diagnostic_data_root());
-    let window_status = window_capture
+    let (window_status, last_start_failure) = window_capture
         .lock()
-        .map_err(|_| "window capture state is unavailable".to_string())?
-        .status();
+        .map_err(|_| "window capture state is unavailable".to_string())
+        .map(|state| (state.status(), state.last_start_failure_snapshot()))?;
     let now_ms = diagnostic_now_ms();
+    let gpu_names = gpu_names();
+    // gpuDriverSuspect 双源派生：WMI 适配器名（中英两形态的无驱动标志）+
+    // 启动失败快照的逐适配器证据；status() 只投快照侧，WMI 侧在此补齐。
+    let mut window_status = window_status;
+    window_status.gpu_driver_suspect =
+        window_capture::gpu_driver_suspect(&gpu_names, last_start_failure.as_ref());
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v6",
+        schema_version: "capture_diagnostics.v7",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -771,7 +781,7 @@ fn build_capture_diagnostics_bundle(
         processor_count: std::env::var("NUMBER_OF_PROCESSORS")
             .ok()
             .map(|value| bounded_diagnostic_text(&value)),
-        gpu_names: gpu_names(),
+        gpu_names,
         capture_data_root: data_root.to_string_lossy().into_owned(),
         coordinator: coordinator_status,
         raw_input: raw_input.status(),
@@ -806,6 +816,7 @@ fn build_capture_diagnostics_bundle(
             &data_root.join("logs").join("frontend.log"),
             DIAG_LOG_TAIL_BYTES,
         ),
+        dxgi_adapters: last_start_failure.map(|failure| failure.dxgi_adapters),
     })
 }
 
