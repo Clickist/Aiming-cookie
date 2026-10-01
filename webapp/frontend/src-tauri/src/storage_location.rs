@@ -208,9 +208,7 @@ pub fn strip_extended_prefix(path: &Path) -> PathBuf {
 
 /// 返回解析后的绝对路径（已确认可写），供直接使用。
 pub fn resolve_custom_root(requested: &str) -> PathBuf {
-    strip_extended_prefix(
-        &fs::canonicalize(requested).unwrap_or_else(|_| PathBuf::from(requested)),
-    )
+    strip_extended_prefix(&fs::canonicalize(requested).unwrap_or_else(|_| PathBuf::from(requested)))
 }
 
 /// 解析「生效数据根」：指针合法 + 自定义根可用 → 自定义根；否则默认根。
@@ -340,10 +338,7 @@ pub fn read_migration_state(default_root: &Path) -> Option<StorageMigrationState
 
 /// 原子写迁移记录。设置页会轮询该文件，并发读窗可能让 Windows 的原子替换
 /// 因共享冲突失败（用户态替换不是排队操作）——短暂重试几次，仍失败才回报。
-fn write_migration_state(
-    default_root: &Path,
-    state: &StorageMigrationState,
-) -> Result<(), String> {
+fn write_migration_state(default_root: &Path, state: &StorageMigrationState) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(state)
         .map_err(|_| "storage_migration.serialize_failed".to_string())?;
     let path = default_root.join(STORAGE_MIGRATION_FILE_NAME);
@@ -572,7 +567,9 @@ fn available_space(_path: &Path) -> Option<u64> {
 
 /// 目录总字节数（预检用）。
 pub fn directory_total_bytes(root: &Path) -> u64 {
-    collect_files(root).map(|files| total_bytes(&files)).unwrap_or(0)
+    collect_files(root)
+        .map(|files| total_bytes(&files))
+        .unwrap_or(0)
 }
 
 /// 待迁顶层条目的总字节数（进度与预检的口径：不含 logs 与指针等跳过项）。
@@ -583,7 +580,9 @@ fn entries_total_bytes(entries: &[PathBuf]) -> u64 {
             if path.is_dir() {
                 directory_total_bytes(path)
             } else {
-                fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0)
+                fs::metadata(path)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0)
             }
         })
         .sum()
@@ -783,8 +782,8 @@ pub fn run_migration(
     }
     // 迁移成功 = 指针里的位置真正生效：原子重写一次指针（刷新 updated_at）。
     // 目标就是默认根时写 null（「恢复默认」的语义，而不是把默认根记成自定义根）。
-    let pointer_target = (!same_path(target_root, default_root))
-        .then(|| target_root.to_string_lossy().into_owned());
+    let pointer_target =
+        (!same_path(target_root, default_root)).then(|| target_root.to_string_lossy().into_owned());
     if let Err(error) = write_pointer(default_root, pointer_target.as_deref()) {
         crate::diag_log::write_line(&format!(
             "storage-migration: migrated but pointer refresh failed: {error}"
@@ -951,9 +950,8 @@ impl StorageLocationState {
                 "storage-location: overwriting pointer ({problem})"
             ));
         }
-        let normalized =
-            normalize_custom_root(&self.default_root, requested.as_deref())
-                .map_err(|code| StorageLocationError::code(&code))?;
+        let normalized = normalize_custom_root(&self.default_root, requested.as_deref())
+            .map_err(|code| StorageLocationError::code(&code))?;
         let resolved_effective = match &normalized {
             Some(path) => resolve_custom_root(path),
             None => self.default_root.clone(),
@@ -1030,8 +1028,9 @@ mod tests {
                 r#"{{"schema":1,"custom_root":{},"updated_at":"2026-09-28T00:00:00Z"}}"#,
                 serde_json::to_string(path).unwrap()
             ),
-            None => r#"{"schema":1,"custom_root":null,"updated_at":"2026-09-28T00:00:00Z"}"#
-                .to_string(),
+            None => {
+                r#"{"schema":1,"custom_root":null,"updated_at":"2026-09-28T00:00:00Z"}"#.to_string()
+            }
         };
         fs::write(root.join(STORAGE_LOCATION_FILE_NAME), payload).expect("write pointer");
     }
@@ -1180,7 +1179,9 @@ mod tests {
         );
         write_pointer(&root, None).expect("write default");
         assert_eq!(
-            read_pointer(&root).0.and_then(|pointer| pointer.custom_root),
+            read_pointer(&root)
+                .0
+                .and_then(|pointer| pointer.custom_root),
             None
         );
         let names: Vec<String> = fs::read_dir(&root)
@@ -1271,7 +1272,10 @@ mod tests {
         assert_eq!(finished.phase, MIGRATION_PHASE_DONE);
         assert_eq!(finished.total_bytes, finished.copied_bytes);
         assert!(finished.pending_entries.is_empty());
-        assert_eq!(fs::read(target.join("runs/7/meta.json")).expect("read"), b"meta");
+        assert_eq!(
+            fs::read(target.join("runs/7/meta.json")).expect("read"),
+            b"meta"
+        );
         assert_eq!(
             fs::read(target.join("runs/7/video.mp4")).expect("read"),
             vec![b'v'; 128]
@@ -1369,7 +1373,10 @@ mod tests {
         let finished = run_migration(&root, &source, &target, state);
 
         assert_eq!(finished.phase, MIGRATION_PHASE_DONE, "{:?}", finished.error);
-        assert_eq!(fs::read(target.join("runs/7/meta.json")).expect("read"), b"meta");
+        assert_eq!(
+            fs::read(target.join("runs/7/meta.json")).expect("read"),
+            b"meta"
+        );
         // 目标目录只增不删：新会话写进去的数据与「目标独有」的文件都原样保留。
         assert_eq!(
             fs::read(target.join("sessions/1.json")).expect("read"),
@@ -1478,7 +1485,9 @@ mod tests {
         use std::os::windows::io::AsRawHandle;
         use winapi::shared::ntdef::HANDLE;
         use winapi::um::fileapi::LockFileEx;
-        use winapi::um::minwinbase::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, OVERLAPPED};
+        use winapi::um::minwinbase::{
+            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, OVERLAPPED,
+        };
 
         let root = scratch("locked");
         let source = root.join("source");
@@ -1523,7 +1532,11 @@ mod tests {
 
         // 被锁条目留在 pending（phase=partial），其余条目照常搬完——这正是
         // 0929 真机 P0 的场景：不能因第一个条目被占用就放弃整场迁移。
-        assert_eq!(finished.phase, MIGRATION_PHASE_PARTIAL, "{:?}", finished.error);
+        assert_eq!(
+            finished.phase, MIGRATION_PHASE_PARTIAL,
+            "{:?}",
+            finished.error
+        );
         assert_eq!(
             finished.pending_entries,
             vec!["aiming_cookie.db".to_string()]
@@ -1705,7 +1718,12 @@ mod tests {
         assert!(!custom.join("runs").exists());
         assert_eq!(resolve_effective_root(&root), root);
         // 恢复默认后指针必须是 null（而不是把默认根记成自定义根）。
-        assert_eq!(read_pointer(&root).0.and_then(|pointer| pointer.custom_root), None);
+        assert_eq!(
+            read_pointer(&root)
+                .0
+                .and_then(|pointer| pointer.custom_root),
+            None
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

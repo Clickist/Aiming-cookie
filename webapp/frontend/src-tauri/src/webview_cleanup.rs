@@ -84,8 +84,8 @@ fn select_kill_set(
             if !command_line_uses_user_data_dir(command_line, user_data_dir) {
                 continue;
             }
-            let parent_gone = !alive_pids.contains(&candidate.parent_pid)
-                || kill.contains(&candidate.parent_pid);
+            let parent_gone =
+                !alive_pids.contains(&candidate.parent_pid) || kill.contains(&candidate.parent_pid);
             if parent_gone {
                 kill.insert(candidate.pid);
                 grew = true;
@@ -109,7 +109,10 @@ pub fn cleanup_orphans() -> usize {
     };
     // 没有候选，或所有候选父进程健在 → 不可能有孤儿。跳过昂贵的 PowerShell
     // 查询：其他应用的 WebView2 常驻是常态，不能让它们拖慢每次启动。
-    if candidates.iter().all(|c| alive_pids.contains(&c.parent_pid)) {
+    if candidates
+        .iter()
+        .all(|c| alive_pids.contains(&c.parent_pid))
+    {
         return 0;
     }
     let Some(user_data_dir) = webview2_user_data_dir() else {
@@ -322,11 +325,11 @@ mod tests {
         let our = our_command_line();
         let other_app = our.replace("com.aimingcookie.desktop", "com.othervendor.shell");
         let candidates = vec![
-            entry(20, 7),    // 命令行匹配但父进程健在（正运行的实例）→ 不杀
-            entry(30, 999),  // 父已死但拿不到命令行（PowerShell 缺口）→ 不杀
-            entry(40, 999),  // 父已死但命令行是其他应用的目录 → 不杀
-            entry(50, 999),  // 父已死 + 命令行匹配 → 杀
-            entry(60, 50),   // 父在待杀集合 → 连带杀
+            entry(20, 7),   // 命令行匹配但父进程健在（正运行的实例）→ 不杀
+            entry(30, 999), // 父已死但拿不到命令行（PowerShell 缺口）→ 不杀
+            entry(40, 999), // 父已死但命令行是其他应用的目录 → 不杀
+            entry(50, 999), // 父已死 + 命令行匹配 → 杀
+            entry(60, 50),  // 父在待杀集合 → 连带杀
         ];
         let command_lines: HashMap<u32, String> = [
             (20, our.clone()),
