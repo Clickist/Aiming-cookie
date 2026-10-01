@@ -261,15 +261,80 @@ test("PUT /v1/provider-profiles/{id} updates that profile", async () => {
       provider_id: "opencode-go",
       model_id: "deepseek-v4-flash",
     });
+    // C2 白名单（2026-10-01）：内置档整档更新同样校验模型名 ∈ 当前目录，
+    // deepseek 目录合法模型为 deepseek-v4-flash / deepseek-v4-pro。
     const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
       kind: "builtin",
       provider_id: "deepseek",
-      model_id: "deepseek-v3",
+      model_id: "deepseek-v4-pro",
     }));
     assert.equal(updated.statusCode, 200);
     const profile = updated.json as Record<string, unknown>;
     assert.equal(profile.provider_id, "deepseek");
-    assert.equal(profile.model_id, "deepseek-v3");
+    assert.equal(profile.model_id, "deepseek-v4-pro");
+  });
+});
+
+test("PUT /v1/provider-profiles/{id} rejects a builtin model outside the current catalog", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v3",
+    }));
+    assert.equal(updated.statusCode, 400);
+    assert.equal(
+      (updated.json as { detail: string }).detail,
+      "所选模型不可用，请选择当前 Provider 目录中的模型",
+    );
+    // 拒绝不得改动已存档。
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+  });
+});
+
+test("POST /v1/provider-profiles rejects a builtin model outside the current catalog", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const res = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "totally-made-up-model",
+    }));
+    assert.equal(res.statusCode, 400);
+    assert.equal(
+      (res.json as { detail: string }).detail,
+      "所选模型不可用，请选择当前 Provider 目录中的模型",
+    );
+    assert.equal(loadProfile(), null);
+  });
+});
+
+test("POST /v1/provider-profiles/model rejects a relay model outside the single-model lock", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    await createProfile(server, {
+      kind: "builtin",
+      provider_id: "aiming-cookie-relay",
+      model_id: "deepseek-v4-flash",
+      api_key: "member-jwt",
+    });
+    // 模型锁（契约 §0）：官方档只认 deepseek-v4-flash，清单外名单拒绝且不落盘。
+    const res = await request(server, "POST", "/v1/provider-profiles/model", JSON.stringify({
+      schema_version: "coach_provider_model_switch.v1",
+      model_id: "deepseek-v4-pro",
+    }));
+    assert.equal(res.statusCode, 400);
+    assert.equal(
+      (res.json as { detail: string }).detail,
+      "所选模型不可用，请选择当前 Provider 目录中的模型",
+    );
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
   });
 });
 

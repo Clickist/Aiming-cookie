@@ -453,6 +453,10 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const role = (message as { role?: unknown })?.role;
           if (role === "user") {
             const text = extractMessageText((message as { content?: unknown })?.content);
+            // B1 空回复重试的 nudge 不落历史：重试请求由 harness 在内存里携带
+            // （runAgentLoop 把 prompt 消息并进 context），持久化反而会在会话
+            // 里留下一条系统口吻的假用户消息。
+            if (text === EMPTY_REPLY_NUDGE) return undefined;
             const branch = await proxyTarget.getBranch();
             const last = branch[branch.length - 1];
             if (
@@ -684,7 +688,27 @@ export function assembleSystemPrompt(basePrompt: string, skillsBlock: string): s
 
 // ── Error helpers ────────────────────────────────────────────────────────
 
-class EmptyAssistantReplyError extends Error {}
+/**
+ * 空回复（B1）。fromProviderError 区分两种来源：
+ * - true：Provider 已带错误文本（stopReason=error，含 HTTP 状态/网关错误体）。
+ *   userFacing 原样透传——前端网关错误码分流（契约 §5.3，member.ts 同表）
+ *   要从这份明文里识别 quota/member 系错误。
+ * - false：Provider 正常结束但没有正文（模型偶发空回复）。重试仍空后走
+ *   中文分层文案，英文诊断串只进日志。
+ */
+class EmptyAssistantReplyError extends Error {
+  readonly fromProviderError: boolean;
+  constructor(message: string, fromProviderError = false) {
+    super(message);
+    this.fromProviderError = fromProviderError;
+  }
+}
+
+/** B1 受控重试的 nudge 提示词：同 harness 连续 prompt（照抄 next_turn 排水模式）。 */
+const EMPTY_REPLY_NUDGE = "你上一条回复内容为空。请重新给出完整的回答，不要复述这条提示。";
+
+/** B1 重试仍空的用户文案（错误文案分层合同 §3.3：用户面中文，诊断串进日志）。 */
+const EMPTY_REPLY_USER_MESSAGE = "模型本次没有返回内容，请稍后重试。";
 
 function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
   return COACH_RUNTIME_TURN_SCHEMA;
@@ -706,8 +730,17 @@ const STOPPED_USER_MESSAGE = "已停止生成。";
 
 function userFacingErrorMessage(error: unknown, stopped: boolean): string {
   if (stopped) return STOPPED_USER_MESSAGE;
-  if (error instanceof ProviderProfileError) return "Provider 配置不可用，请在设置中检查后重试。";
-  if (error instanceof EmptyAssistantReplyError && error.message.trim()) return error.message;
+  if (error instanceof ProviderProfileError) {
+    // C2：模型/Provider 已不在当前目录（存量选择失效）→ needs_reselect 语义，
+    // 不再归成泛化配置文案；code（unknown_model/unknown_provider）原样透出。
+    if (error.code === "unknown_model" || error.code === "unknown_provider") {
+      return "所选模型已不可用，请在 设置 → 模型服务 中重新选择模型。";
+    }
+    return "Provider 配置不可用，请在设置中检查后重试。";
+  }
+  if (error instanceof EmptyAssistantReplyError) {
+    return error.fromProviderError ? error.message : EMPTY_REPLY_USER_MESSAGE;
+  }
   return "Coach 暂时无法完成回复，请稍后重试。";
 }
 
@@ -1210,7 +1243,7 @@ export async function runCoachTurn(
         harness.prompt(nextTurnTexts.shift()!),
       );
     }
-    const turnUsage = extractUsage(replyMessage);
+    let turnUsage = extractUsage(replyMessage);
 
     if (stopRequested.has(request.run_id)) {
       return failureResponse(
@@ -1257,9 +1290,49 @@ export async function runCoachTurn(
     }
 
     // Extract reply text
-    const isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
-    const isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
-    const rawReply = extractAssistantText(replyMessage);
+    let isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
+    let isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
+    let rawReply = extractAssistantText(replyMessage);
+
+    // B1 受控重试（2026-10-01 12 机诊断定罪）：模型偶发正常结束但零正文，
+    // 此前直接硬失败。这里照抄 next_turn 排水模式——同一个 harness 连续
+    // prompt()，恰好一次，nudge 提示词让模型重新作答；nudge 本身不落会话
+    // 历史（见 wrapCoachSession）。只对「非 abort、非 error」的真空回复
+    // 重试：stopReason=error 的场景 pi 流式层已内部重试过（maxRetries:2），
+    // 再叠加只会把一次真实故障拖成三倍等待。重试仍空/中断/停止 → 落回
+    // 下方既有失败路径。
+    if (rawReply === null && !isAborted && !isError && !stopRequested.has(request.run_id)) {
+      replyMessage = await runScopedSkillReads(recordSkillRead, () =>
+        runScopedAnalysisReads(recordAnalysisRead, () => harness.prompt(EMPTY_REPLY_NUDGE)),
+      );
+      turnUsage = extractUsage(replyMessage);
+      isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
+      isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
+      // 重试轮复用首轮同一条中断防线：断流带半截话仍按可重试失败返回，
+      // 不能把 partial 当成功交付（与上方 provider_stream_interrupted 同语义）。
+      if (isError && !isAborted) {
+        const interruptedText = extractAssistantText(replyMessage);
+        if (interruptedText !== null) {
+          return failureResponse(
+            makeError({
+              category: "coach_runtime",
+              code: "provider_stream_interrupted",
+              message: "回复流被中断，已生成的部分已保留，可直接重试。",
+              retryable: true,
+            }),
+            [],
+            request.schema_version,
+            collectedToolEvents,
+            safePartialReply(interruptedText, secrets),
+            request.run_id,
+            analysisRefs,
+            deepReadAnalysisRefs,
+            turnUsage,
+          );
+        }
+      }
+      rawReply = extractAssistantText(replyMessage);
+    }
 
     if (rawReply === null) {
       try {
@@ -1298,6 +1371,7 @@ export async function runCoachTurn(
         isError
           ? providerError ?? "Provider returned an error response"
           : "Provider returned an empty assistant reply",
+        isError,
       );
     }
 

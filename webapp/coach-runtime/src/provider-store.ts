@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isRecord, type CoachRuntimeProviderProfile, type ProviderCredential } from "./contracts.ts";
+import { isRecord, AIMING_COOKIE_RELAY_MODEL_ID, AIMING_COOKIE_RELAY_PROVIDER_ID, type CoachRuntimeProviderProfile, type ProviderCredential } from "./contracts.ts";
 import { getConfigDir } from "./app-data.ts";
 
 const PROVIDER_FILE = "provider.json";
@@ -224,12 +224,38 @@ function parseStoreDocument(config: unknown): ProviderProfileStore {
     ?? emptyStore();
 }
 
+/**
+ * 官方会员档模型锁自愈（C2，2026-10-01 点点拍板）：模型锁只有
+ * deepseek-v4-flash 一个（无可选性），存量档案若还指着已下架模型
+ * （WP-C 时代的 deepseek-v4-pro 选择），解析恒 unknown_model 死路——
+ * 读取时静默改写为锁内模型并落盘，最多事后提示「模型已自动更新」。
+ * 只动 provider_id 命中官方档的条目；BYOK/自定义档自由填名是设计内能力。
+ */
+function healRelayModelLock(store: ProviderProfileStore): ProviderProfileStore {
+  let healed = false;
+  for (const entry of store.profiles) {
+    if (entry.kind !== "builtin" || entry.provider_id !== AIMING_COOKIE_RELAY_PROVIDER_ID) continue;
+    if (entry.model_id === AIMING_COOKIE_RELAY_MODEL_ID) continue;
+    const stale = entry.model_id;
+    entry.model_id = AIMING_COOKIE_RELAY_MODEL_ID;
+    healed = true;
+    console.error(`[provider-store] relay model lock healed: ${stale} -> ${AIMING_COOKIE_RELAY_MODEL_ID} (profile ${entry.id})`);
+  }
+  if (!healed) return store;
+  try {
+    saveProviderStore(store);
+  } catch {
+    // 落盘失败不拦读取：本次内存里已是修复值，下次读取会再试。
+  }
+  return store;
+}
+
 /** Read the multi-profile store; missing or invalid documents read as empty. */
 export function loadProviderStore(): ProviderProfileStore {
   const path = providerConfigPath();
   if (!existsSync(path)) return emptyStore();
   try {
-    return parseStoreDocument(JSON.parse(readFileSync(path, "utf8")));
+    return healRelayModelLock(parseStoreDocument(JSON.parse(readFileSync(path, "utf8"))));
   } catch {
     return emptyStore();
   }

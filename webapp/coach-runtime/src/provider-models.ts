@@ -1,4 +1,6 @@
 import {
+  AIMING_COOKIE_RELAY_MODEL_ID,
+  AIMING_COOKIE_RELAY_PROVIDER_ID,
   PROVIDER_CATALOG_SCHEMA,
   isRecord,
   type CoachRuntimeProviderProfile,
@@ -91,11 +93,9 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
  * `AC_MEMBER_GATEWAY_BASE_URL`（新）优先，`AC_RELAY_BASE_URL`（旧注入名）保留
  * 一个版本以兼容既有构建脚本。
  */
-export const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
+export { AIMING_COOKIE_RELAY_PROVIDER_ID, AIMING_COOKIE_RELAY_MODEL_ID };
 /** 档显示名（剑线稿 ①：置顶推荐、账号订阅，登录即用）。 */
 export const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie（推荐）";
-/** 模型锁（契约 §0）：sub / boost 两令牌都是这一个模型。 */
-export const AIMING_COOKIE_RELAY_MODEL_ID = "deepseek-v4-flash";
 /** 会员档端点默认值（契约 §0）；带 /v1 以便 OpenAI 兼容路径透传给网关。 */
 export const MEMBER_GATEWAY_BASE_URL = "https://member-gateway.example.invalid:8443/member/v1";
 

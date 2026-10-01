@@ -169,6 +169,8 @@ export const MEMBER_COPY = {
   dunning: (date: string) => t("member.notice.dunning", { date }),
   /** ④ 双池皆空。 */
   get quotaExhausted() { return t("member.quota.exhausted"); },
+  /** 网关 403 quota_prehold_insufficient：本回合预算预扣超过剩余额度。 */
+  get quotaPreholdInsufficient() { return t("member.quota.preholdInsufficient"); },
   /** ④b 没配过 BYOK：与④同一模式的指路。 */
   get noProvider() { return t("member.noProvider.full"); },
   /** chip 行的短形（②b 尺寸内）。 */
@@ -246,10 +248,10 @@ export function planLabel(plan: MemberMe["plan"]): string {
 
 /**
  * ac-gateway 错误 `type` → 客户端动作。**两个版本内新旧值都要认**
- * （契约 §5.3 兼容段）：新值 `jwt_expired` / `member_required` / `quota_exhausted`，
- * 旧值 `auth_expired` / `ac_member_required`。
+ * （契约 §5.3 兼容段）：新值 `jwt_expired` / `member_required` / `quota_exhausted`
+ * / `quota_prehold_insufficient`，旧值 `auth_expired` / `ac_member_required`。
  */
-export type MemberGatewayError = "jwt_expired" | "member_required" | "quota_exhausted";
+export type MemberGatewayError = "jwt_expired" | "member_required" | "quota_exhausted" | "quota_prehold_insufficient";
 
 const GATEWAY_ERROR_ALIASES: Record<string, MemberGatewayError> = {
   jwt_expired: "jwt_expired",
@@ -257,6 +259,9 @@ const GATEWAY_ERROR_ALIASES: Record<string, MemberGatewayError> = {
   member_required: "member_required",
   ac_member_required: "member_required",
   quota_exhausted: "quota_exhausted",
+  // 2026-10-01 新增（服务端网关 403）：语义＝本回合预算预扣超过剩余额度，
+  // 与「本期额度用完」（quota_exhausted）是两种口径，文案分列。
+  quota_prehold_insufficient: "quota_prehold_insufficient",
 };
 
 /**
@@ -278,6 +283,7 @@ export function classifyMemberGatewayError(text: string | null | undefined): Mem
 /** 网关错误 → 客户端提示文案（④ / ⑨ / 重登录引导；零商业化）。 */
 export function gatewayErrorNotice(code: MemberGatewayError): { tone: "warn" | "error"; text: string } {
   if (code === "quota_exhausted") return { tone: "error", text: MEMBER_COPY.quotaExhausted };
+  if (code === "quota_prehold_insufficient") return { tone: "error", text: MEMBER_COPY.quotaPreholdInsufficient };
   if (code === "member_required") return { tone: "error", text: MEMBER_COPY.noProvider };
   return { tone: "warn", text: MEMBER_COPY.jwtExpired };
 }

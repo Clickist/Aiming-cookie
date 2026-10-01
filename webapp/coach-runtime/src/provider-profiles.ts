@@ -133,6 +133,31 @@ function configuredFromStatus(status: ProviderProfileStatusResponse): boolean {
   );
 }
 
+/**
+ * 内置档模型名必须 ∈ 当前目录（C2 越狱口封堵，2026-10-01）：/model 切换路由
+ * 一直经 resolveProviderModel 校验，但 create/PUT 整档写入此前不校验——官方
+ * 档可以被写成清单外的任意模型名，落库即 unknown_model 死路。自定义档 BYOK
+ * 自由填名是设计内能力，不校验。只查目录命中，不触碰凭据（免 key 干跑）。
+ * 返回 null=通过；否则为可直接下发的 400 detail。
+ */
+async function builtinModelWhitelistViolation(
+  profile: CoachRuntimeProviderProfile,
+): Promise<string | null> {
+  if (profile.kind !== "builtin") return null;
+  try {
+    await resolveProviderModel(profile);
+    return null;
+  } catch (error) {
+    if (
+      error instanceof ProviderProfileError
+      && (error.code === "unknown_model" || error.code === "unknown_provider")
+    ) {
+      return "所选模型不可用，请选择当前 Provider 目录中的模型";
+    }
+    throw error;
+  }
+}
+
 function statusMessage(status: ProviderProfileStatusResponse): string {
   if (status.status === "ready") return "Provider 连接成功";
   if (status.status === "auth_expired") return "Provider OAuth credential 已过期";
@@ -614,6 +639,11 @@ export async function handleProviderProfileRequest(
     try {
       const body = await readJsonBody(req);
       const profile = coachProfileFromCreate(body);
+      const whitelistViolation = await builtinModelWhitelistViolation(profile);
+      if (whitelistViolation !== null) {
+        writeJson(res, 400, { detail: whitelistViolation });
+        return true;
+      }
       // Upsert: a body id addressing an existing profile updates that profile;
       // anything else appends a new one. Other stored profiles are untouched,
       // and appending never changes the active profile unless none is set.
@@ -787,6 +817,11 @@ export async function handleProviderProfileRequest(
         if (!suppliesApiKey && entry.credential) {
           profile = profileWithCredential(profile, entry.credential);
         }
+      }
+      const whitelistViolation = await builtinModelWhitelistViolation(profile);
+      if (whitelistViolation !== null) {
+        writeJson(res, 400, { detail: whitelistViolation });
+        return true;
       }
       const updated = replaceStoredProfile(store, entry.id, profile);
       saveProviderStore(store);

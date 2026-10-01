@@ -270,6 +270,7 @@ export const sharedEn = {
   "member.notice.connectionLost": "Aiming Cookie is disconnected: the subscription has ended and the booster is used up ({date}). History and settings are all kept. Click the account at the bottom left to re-subscribe, or switch to BYOK in Settings.",
   "member.notice.dunning": "This auto-renewal didn't go through ({date}): it retries automatically within 7 days and everything keeps working. You can update your payment method.",
   "member.quota.exhausted": "This period's quota is used up. Click the account at the bottom left to top up or manage your subscription, or switch to BYOK in Settings.",
+  "member.quota.preholdInsufficient": "This turn needs more quota than you have left. Starting a new session usually costs less; you can also manage your subscription from the account at the bottom left.",
   "member.noProvider.full": "No model service connected. Connect Aiming Cookie or a custom Provider in Settings → Model service to use Coach.",
   "member.noProvider.short": "No model service connected",
   "member.chip.remain": "Quota",

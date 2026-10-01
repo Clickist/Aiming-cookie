@@ -197,16 +197,25 @@ test("gateway error codes accept both the v2 and v1 spellings (dual-recognition 
   assert.equal(classifyMemberGatewayError('{"error":{"type":"ac_member_required"}}'), "member_required");
   assert.equal(classifyMemberGatewayError('{"error":{"type":"jwt_expired"}}'), "jwt_expired");
   assert.equal(classifyMemberGatewayError('{"error":{"type":"auth_expired"}}'), "jwt_expired");
+  // A3（2026-10-01 网关新增 403）：本回合预算预扣超限，独立码独立文案。
+  assert.equal(
+    classifyMemberGatewayError('403: {"error":{"message":"..","type":"quota_prehold_insufficient"}}'),
+    "quota_prehold_insufficient",
+  );
   assert.equal(classifyMemberGatewayError("something else"), null);
   assert.equal(classifyMemberGatewayError(null), null);
 });
 
 test("gateway notice copy stays inside the zero-commercialization rule", () => {
-  for (const code of ["quota_exhausted", "member_required", "jwt_expired"] as const) {
+  for (const code of ["quota_exhausted", "quota_prehold_insufficient", "member_required", "jwt_expired"] as const) {
     const notice = gatewayErrorNotice(code);
     // 零商业化：不提价格、不提升级、不提「云教练」。
     assert.doesNotMatch(notice.text, /¥|\d+ 元|升级|套餐价格|云教练/);
   }
+  assert.equal(
+    gatewayErrorNotice("quota_prehold_insufficient").text,
+    translate("zh-CN", "member.quota.preholdInsufficient"),
+  );
 });
 
 // ── 文案与格式化 ─────────────────────────────────────────────────────────

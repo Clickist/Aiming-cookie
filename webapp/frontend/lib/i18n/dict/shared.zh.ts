@@ -274,6 +274,7 @@ export const sharedZh = {
   "member.notice.connectionLost": "Aiming Cookie 连接已断开：订阅已结束且加油包已用完（{date}）。历史与设置全部保留。点击左下角账户可重新订阅；也可以在设置中改用 BYOK。",
   "member.notice.dunning": "本次自动续费未成功（{date}）：7 天内会自动重试，期间一切照常。可更新支付方式。",
   "member.quota.exhausted": "本期额度已用完。点击左下角账户可充值或管理订阅；也可以在设置中改用 BYOK。",
+  "member.quota.preholdInsufficient": "本回合所需的额度超过剩余额度，开启新会话后重试通常更省；也可以点击左下角账户管理订阅。",
   "member.noProvider.full": "未连接模型服务。在 设置 → 模型服务 中连接 Aiming Cookie 或自定义 Provider 后即可使用 Coach。",
   "member.noProvider.short": "未连接模型服务",
   "member.chip.remain": "余量",
