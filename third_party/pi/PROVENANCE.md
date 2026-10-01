@@ -25,11 +25,11 @@ implemented in the core package).
 
 ## Local modifications
 
-None. The two Windows path-compat patches previously carried on
-`packages/agent/src/harness/env/nodejs.ts` and
-`packages/agent/src/harness/skills.ts` were dropped at this upgrade:
-upstream is now natively path-separator aware (backslash normalization and
-separator-aware basename/split), so the vendor tree matches upstream exactly.
+One patch is carried on top of the frozen `v0.83.0` tree (registered 2026-10-01; it predates this entry and had made the previous "None" claim stale):
+
+| Commit | File | Change | Upstream status |
+|--------|------|--------|-----------------|
+| `7f6c066` (2026-09-29) | `packages/ai/src/api/openai-completions.ts` (`detectCompat`) | `supportsDeveloperRole` gains `&& !isDeepSeek` — DeepSeek's official endpoint rejects the `developer` role with HTTP 422 (GitHub issue #2, 2026-09-24 report) | **Not included upstream at v0.99.1** (same function still has the old logic); must be manually re-applied on any re-vendor — it is a one-line semantic change onto a heavily refactored function, not a cherry-pick |
 
 ## Package versions (at frozen commit)
 
@@ -41,10 +41,16 @@ separator-aware basename/split), so the vendor tree matches upstream exactly.
 
 ## Aiming Cookie usage scope
 
-Coach runtime integration uses **only**:
+Coach runtime integration uses, via the single entry `webapp/coach-runtime/src/pi-source.ts` (machine-checked by `test/import-boundary.test.ts`):
 
 - `packages/ai`
-- `packages/agent`
+- `packages/agent` (including `harness/env/nodejs.ts`)
+- `packages/coding-agent/src/core/tools/index.ts` — the seven canonical fs/shell tool factories (read/write/ls/edit/grep/find/bash)
+
+Beyond the runtime path, the vendored tree is also relied on by:
+
+- `webapp/frontend/package.json` — `test:unit` / `test:contracts` borrow `third_party/pi/node_modules/tsx/dist/loader.mjs` as the test loader.
+- `scripts/dev-up.sh`, `scripts/run-coach-sidecar.sh` — default `PI_SOURCE_DIR` points at this tree; the sidecar verifies the pinned package identity (`@earendil-works/pi-agent-core`) at startup.
 
 Other packages in this tree (TUI, coding-agent CLI, extensions, etc.) are present for auditability but are **not** part of the product runtime path unless explicitly adopted in a future plan.
 

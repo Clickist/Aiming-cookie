@@ -27,7 +27,7 @@ import {
   redactRuntimeSecrets,
 } from "./provider-profile.ts";
 import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
-import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
+import { createMemorySession, loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
 import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
 import { createWebSearchTools } from "./web-search-native.ts";
@@ -858,7 +858,7 @@ export async function runCoachTurn(
     const { history, lastMessage } = splitConversation(request.messages, resolved.model);
 
     // Load Pi classes
-    const { AgentHarness, InMemorySessionRepo, loadSkills, formatSkillsForSystemPrompt } = (await loadPiAgent()) as {
+    const { AgentHarness, loadSkills, formatSkillsForSystemPrompt } = (await loadPiAgent()) as {
       AgentHarness: new (opts: Record<string, unknown>) => InstanceType<typeof Object> & {
         prompt: (text: string) => Promise<unknown>;
         subscribe: (listener: (event: any, signal?: AbortSignal) => Promise<void> | void) => () => void;
@@ -868,11 +868,6 @@ export async function runCoachTurn(
         setSteeringMode: (mode: CoachDrainMode) => Promise<void>;
         setFollowUpMode: (mode: CoachDrainMode) => Promise<void>;
         compact: (customInstructions?: string) => Promise<unknown>;
-      };
-      InMemorySessionRepo: new () => {
-        create: () => Promise<{
-          appendMessage: (message: unknown) => Promise<string>;
-        }>;
       };
       loadSkills: (env: unknown, dirs: string) => Promise<{ skills: unknown[]; diagnostics: unknown[] }>;
       formatSkillsForSystemPrompt: (skills: unknown[]) => string;
@@ -906,8 +901,9 @@ export async function runCoachTurn(
     const session = options.session
       ? wrapCoachSession(options.session, secrets)
       : await (async () => {
-          const repo = new InMemorySessionRepo();
-          const memorySession = await repo.create();
+          const memorySession = (await createMemorySession()) as {
+            appendMessage: (message: unknown) => Promise<unknown>;
+          };
           for (const historyMessage of history) {
             await memorySession.appendMessage(historyMessage);
           }

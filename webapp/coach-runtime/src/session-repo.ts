@@ -85,17 +85,31 @@ type JsonlRepoLike = {
 
 let repoPromise: Promise<JsonlRepoLike> | null = null;
 
+/**
+ * Pi JsonlSessionRepo 构造合同收口（pi 升级解耦 P0，2026-10-01）：
+ * 0.83 构造选项是 {fs, sessionsRoot}；上游 0.99 起选项改名 {fileSystem, …}。
+ * 全仓库只有这一处构造 pi repo——升级时只改此函数体。
+ */
+function constructJsonlSessionRepo(
+  piAgent: Record<string, unknown>,
+  piNodeEnv: Record<string, unknown>,
+  sessionsRoot: string,
+): JsonlRepoLike {
+  const { JsonlSessionRepo } = piAgent as { JsonlSessionRepo: new (opts: { fs: unknown; sessionsRoot: string }) => JsonlRepoLike };
+  const { NodeExecutionEnv } = piNodeEnv as { NodeExecutionEnv: new (opts: { cwd: string }) => unknown };
+  const env = new NodeExecutionEnv({ cwd: getDataRoot() });
+  return new JsonlSessionRepo({ fs: env, sessionsRoot });
+}
+
 export async function getSessionRepo(): Promise<JsonlRepoLike> {
   if (!repoPromise) {
     repoPromise = (async () => {
-      const { JsonlSessionRepo } = (await loadPiAgent()) as Record<string, unknown>;
-      const { NodeExecutionEnv } = (await loadPiNodeEnv()) as Record<string, unknown>;
       ensureAppDataDirs();
-      const env = new (NodeExecutionEnv as new (opts: { cwd: string }) => unknown)({ cwd: getDataRoot() });
-      return new (JsonlSessionRepo as new (opts: { fs: unknown; sessionsRoot: string }) => JsonlRepoLike)({
-        fs: env,
-        sessionsRoot: getConversationsDir(),
-      });
+      return constructJsonlSessionRepo(
+        (await loadPiAgent()) as Record<string, unknown>,
+        (await loadPiNodeEnv()) as Record<string, unknown>,
+        getConversationsDir(),
+      );
     })();
   }
   return repoPromise;

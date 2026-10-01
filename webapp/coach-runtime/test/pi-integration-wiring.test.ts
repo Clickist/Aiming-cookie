@@ -11,7 +11,7 @@ process.env.DATA_ROOT = dataRoot;
 import { createAgentRun, getAgentRun } from "../src/agent-runs.ts";
 import { extractUsage, shouldCompactNow } from "../src/turn.ts";
 import { saveProfile } from "../src/provider-store.ts";
-import { loadPiAgent, loadPiAi } from "../src/pi-source.ts";
+import { createMemorySession, loadPiAi } from "../src/pi-source.ts";
 import { waitForTask } from "../src/task-manager.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 import { streamAssistant } from "./pi-fake-stream.ts";
@@ -193,11 +193,7 @@ test("shouldCompactNow refuses unknown context windows without touching the sess
 });
 
 test("shouldCompactNow follows the last assistant usage against the context window", async () => {
-  const { InMemorySessionRepo } = (await loadPiAgent()) as {
-    InMemorySessionRepo: new () => { create: () => Promise<any> };
-  };
-
-  const big = await new InMemorySessionRepo().create();
+  const big = (await createMemorySession()) as any;
   await big.appendMessage({ role: "user", content: [{ type: "text", text: "hi" }] });
   await big.appendMessage({
     role: "assistant",
@@ -207,7 +203,7 @@ test("shouldCompactNow follows the last assistant usage against the context wind
   assert.equal(await shouldCompactNow(big, 128_000), true);
   assert.equal(await shouldCompactNow(big, 0), false);
 
-  const small = await new InMemorySessionRepo().create();
+  const small = (await createMemorySession()) as any;
   await small.appendMessage({ role: "user", content: [{ type: "text", text: "hi" }] });
   await small.appendMessage({
     role: "assistant",

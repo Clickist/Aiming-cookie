@@ -163,15 +163,37 @@ async function loadTools() {
   };
 }
 
+// ── Pi 工具构造收敛（pi 升级解耦 P0，2026-10-01）───────────────────────
+//
+// 上游 0.99.1 把 7 个具名工厂（createReadTool/…）换成 ToolName 驱动的
+// createTool(name, cwd, options)。这里提前把全部具名调用收敛到
+// createPiTool 单一入口：升级时只改它的函数体（换成上游 createTool），
+// 7 个 Coach 包装（read 注入、write/ls 护栏）不动。
+export type PiToolName = "read" | "write" | "ls" | "edit" | "grep" | "find" | "bash";
+
+const PI_TOOL_FACTORY: Readonly<Record<PiToolName, keyof Awaited<ReturnType<typeof loadTools>>>> = {
+  read: "createReadTool",
+  write: "createWriteTool",
+  ls: "createLsTool",
+  edit: "createEditTool",
+  grep: "createGrepTool",
+  find: "createFindTool",
+  bash: "createBashTool",
+};
+
+async function createPiTool(name: PiToolName, cwd: string, options?: Record<string, unknown>): Promise<CoachTool> {
+  const factories = await loadTools();
+  return factories[PI_TOOL_FACTORY[name]](cwd, options);
+}
+
 /**
  * read: pi 原版（2000 行/50KB 截断、offset/limit 分页、图片支持）+ Coach 层
  * 注入 readFile 操作以触发 analysis-read 通知——原版 resolve 完路径后才读，
  * 这里拿到的一定是绝对路径。
  */
 export async function createReadTool(cwd: string) {
-  const { createReadTool: create } = await loadTools();
   // operations 是整体替换不是合并——必须把默认的 access/detectImageMimeType 一起带上。
-  return create(cwd, {
+  return createPiTool("read", cwd, {
     operations: {
       access: (absolutePath: string) => fsAccess(absolutePath, constants.R_OK),
       readFile: async (absolutePath: string) => {
@@ -188,8 +210,7 @@ export async function createReadTool(cwd: string) {
  * write: pi 原版（自带同文件写入排队）+ 写前拦截产品状态文件。
  */
 export async function createWriteTool(cwd: string) {
-  const { createWriteTool: create } = await loadTools();
-  const inner = create(cwd);
+  const inner = await createPiTool("write", cwd);
   return {
     ...inner,
     execute: async (id: string, args: { path: string; content: string }, signal?: AbortSignal) => {
@@ -211,8 +232,7 @@ export async function createWriteTool(cwd: string) {
 // 条上限、edit 走同文件变更队列、bash 自带超时与 Windows shell 选择）。
 
 export async function createLsTool(cwd: string) {
-  const { createLsTool: create } = await loadTools();
-  const inner = create(cwd);
+  const inner = await createPiTool("ls", cwd);
   return {
     ...inner,
     async execute(id: string, args: { path?: string } | undefined, signal?: AbortSignal) {
@@ -231,21 +251,17 @@ export async function createLsTool(cwd: string) {
 }
 
 export async function createEditTool(cwd: string) {
-  const { createEditTool: create } = await loadTools();
-  return create(cwd);
+  return createPiTool("edit", cwd);
 }
 
 export async function createGrepTool(cwd: string) {
-  const { createGrepTool: create } = await loadTools();
-  return create(cwd);
+  return createPiTool("grep", cwd);
 }
 
 export async function createFindTool(cwd: string) {
-  const { createFindTool: create } = await loadTools();
-  return create(cwd);
+  return createPiTool("find", cwd);
 }
 
 export async function createBashTool(cwd: string) {
-  const { createBashTool: create } = await loadTools();
-  return create(cwd);
+  return createPiTool("bash", cwd);
 }

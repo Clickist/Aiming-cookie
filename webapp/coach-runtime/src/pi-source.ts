@@ -51,6 +51,18 @@ export async function loadPiCodingTools(): Promise<Record<string, unknown>> {
   return PiCodingTools as Record<string, unknown>;
 }
 
+/**
+ * 内存会话工厂（pi 升级解耦 P0，2026-10-01）：上游 0.83 的
+ * InMemorySessionRepo 在 0.99 改名 MemorySessionRepo。消费方经此包装取
+ * 内存会话，升级时只改本函数体（turn.ts / wiring 测试不再触 pi 类名）。
+ */
+export async function createMemorySession(): Promise<unknown> {
+  const { InMemorySessionRepo } = (await loadPiAgent()) as {
+    InMemorySessionRepo: new () => { create: () => Promise<unknown> };
+  };
+  return new InMemorySessionRepo().create();
+}
+
 export function readPinnedAgentPackageVersion(): string {
   const pkgPath = join(piSourceRoot(), "packages", "agent", "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string; version?: string };
