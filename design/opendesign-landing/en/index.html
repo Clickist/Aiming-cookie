@@ -362,7 +362,8 @@
           { "@type": "Question", "name": "How is this better than reviewing my demos?", "acceptedAnswer": { "@type": "Answer", "text": "Demo review is guessing from pixels. Aiming Cookie computes: true angular error per shot (measured median 0.2–0.5° on kill clicks), deceleration share, path smoothness — off-screen targets included. None of that is visible in footage." } },
           { "@type": "Question", "name": "Which training types are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Static / dynamic clicking, continuous tracking, target switching — the mainstream KovaaK's scenario categories." } },
           { "@type": "Question", "name": "What can the AI coach help with?", "acceptedAnswer": { "@type": "Answer", "text": "Explaining weaknesses, building training plans, reading re-tests, gear talk (based on Gearclickist's experience, only when you ask), and it can even open the KovaaK's scenario you need to train." } },
-          { "@type": "Question", "name": "What are the system requirements?", "acceptedAnswer": { "@type": "Answer", "text": "Windows 10/11 64-bit with KovaaK's installed. Analysis runs on engine telemetry instead of vision models, so it doesn't eat your GPU." } }
+          { "@type": "Question", "name": "What are the system requirements?", "acceptedAnswer": { "@type": "Answer", "text": "Windows 10/11 64-bit with KovaaK's installed. Analysis runs on engine telemetry instead of vision models, so it doesn't eat your GPU." } },
+          { "@type": "Question", "name": "Capture says video capture is unavailable when I start?", "acceptedAnswer": { "@type": "Answer", "text": "It's almost always a GPU driver issue: if Device Manager shows 'Microsoft Basic Display Adapter', install your GPU driver and try again; if a driver is already installed, update to the latest version from the vendor's website first." } }
         ]
       }
     ]
@@ -2323,6 +2324,10 @@
           <details class="faq-item">
             <summary>What are the system requirements?</summary>
             <p>Windows 10/11 64-bit with KovaaK's installed. Analysis runs on engine telemetry instead of vision models, so it doesn't eat your GPU.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Capture says video capture is unavailable when I start?</summary>
+            <p>It's almost always a GPU driver issue: if Device Manager shows "Microsoft Basic Display Adapter", install your GPU driver and try again; if a driver is already installed, update to the latest version from the vendor's website first.</p>
           </details>
         </div>
       </div>
