@@ -33,6 +33,7 @@ import { createBashTool, createEditTool, createFindTool, createGrepTool, createL
 import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
 import { isIntroSession } from "./intro-session.ts";
+import { registerCompactionFallback } from "./compaction-fallback.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -241,11 +242,115 @@ export function extractUsage(message: unknown): CoachRuntimeUsage | null {
   };
 }
 
+// ── 上下文 token 估算（CJK 感知）─────────────────────────────────────────
+//
+// pi 的 estimateTokens 是 chars/4（英文口径）。DeepSeek 系 tokenizer 中文
+// ≈0.6 token/字符，chars/4 会把纯中文会话低估约 2.4 倍——真实 128K–269K
+// tokens 的纯中文历史按 chars/4 只有 53K–112K，低于压缩阈值（128K−16K），
+// 首请求照样绕过 compaction 直发超窗载荷（0908 bug、1002 网关 413 事故的
+// 复现带）。CJK 字符按 0.7 token/字符计（真实 0.6 + ~17% 保守余量：宁可
+// 早压缩，不可放行超窗请求），其余字符维持 chars/4，英文会话行为与 pi
+// 原版一致。image 块沿用 pi 的 4800 字符折算口径。
+
+const CJK_TOKENS_PER_CHAR = 0.7;
+const OTHER_TOKENS_PER_CHAR = 0.25;
+const ESTIMATED_IMAGE_CHARS = 4800;
+
+function isCjkCodePoint(code: number): boolean {
+  return (
+    (code >= 0x2e80 && code <= 0x9fff) // CJK 部首/康熙/注音/汉字主区
+    || (code >= 0x3040 && code <= 0x30ff) // 平假名/片假名
+    || (code >= 0xac00 && code <= 0xd7af) // 谚文音节
+    || (code >= 0xf900 && code <= 0xfaff) // 汉字兼容区
+    || (code >= 0x20000 && code <= 0x2ffff) // 汉字扩展 B+
+  );
+}
+
+function countCjkAwareTokens(text: string): number {
+  let cjk = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (isCjkCodePoint(text.charCodeAt(i))) cjk += 1;
+  }
+  return cjk * CJK_TOKENS_PER_CHAR + (text.length - cjk) * OTHER_TOKENS_PER_CHAR;
+}
+
+function safeStringifyLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return "[unserializable]".length;
+  }
+}
+
+/** CJK 感知版 pi estimateTokens：role/block 遍历口径与 pi 对齐（user/
+ * assistant/toolResult/custom/bashExecution/summary 消息，text/thinking/
+ * toolCall 分别计），只把字符折算系数换成 CJK 感知。未知形状计 0。 */
+function estimateMessageTokensCjkAware(message: unknown): number {
+  if (!isRecord(message)) return 0;
+  const blockContentTokens = (content: unknown): number => {
+    if (typeof content === "string") return countCjkAwareTokens(content);
+    if (!Array.isArray(content)) return 0;
+    let tokens = 0;
+    for (const block of content) {
+      if (!isRecord(block)) continue;
+      if (block.type === "text" && typeof block.text === "string") {
+        tokens += countCjkAwareTokens(block.text);
+      } else if (block.type === "image") {
+        tokens += ESTIMATED_IMAGE_CHARS * OTHER_TOKENS_PER_CHAR;
+      }
+    }
+    return tokens;
+  };
+  switch (message.role) {
+    case "user":
+    case "custom":
+    case "toolResult":
+      return blockContentTokens(message.content);
+    case "assistant": {
+      if (!Array.isArray(message.content)) return 0;
+      let tokens = 0;
+      for (const block of message.content) {
+        if (!isRecord(block)) continue;
+        if (block.type === "text" && typeof block.text === "string") {
+          tokens += countCjkAwareTokens(block.text);
+        } else if (block.type === "thinking" && typeof block.thinking === "string") {
+          tokens += countCjkAwareTokens(block.thinking);
+        } else if (block.type === "toolCall") {
+          tokens += countCjkAwareTokens(String(block.name ?? "")) + safeStringifyLength(block.arguments) * OTHER_TOKENS_PER_CHAR;
+        }
+      }
+      return tokens;
+    }
+    case "bashExecution":
+      return (
+        countCjkAwareTokens(typeof message.command === "string" ? message.command : "")
+        + countCjkAwareTokens(typeof message.output === "string" ? message.output : "")
+      );
+    case "branchSummary":
+    case "compactionSummary":
+      return typeof message.summary === "string" ? countCjkAwareTokens(message.summary) : 0;
+    default:
+      return 0;
+  }
+}
+
 /**
- * 长会话压缩判定（审计#18）：用 pi 内建的 estimateContextTokens + shouldCompact
- * 按 token 余量判断是否该让 harness.compact() 压缩。contextWindow 未知（≤0）
- * 时明确返回 false；模型目录与自定义档都兜底 128K（provider-models），正常
- * 不会走到该分支。这是唯一的上下文窗口管理，没有条数级兜底（见上方缓存注）。
+ * 长会话压缩判定（审计#18，0908/1002 修复）：用 pi 内建的
+ * estimateContextTokens + shouldCompact 按 token 余量判断是否该让
+ * harness.compact() 压缩，另做两层加固：
+ *
+ * 1. **折叠视图**：估算对象是 session.buildContext() 的返回（= 实际要发送
+ *    的视图，compaction 之后旧历史已被摘要替换）。朴素对 getBranch() 全量
+ *    估算会把已压缩历史永远计入 → 首次压缩后每轮重压缩 → 请求前缀每轮
+ *    重写、DeepSeek 前缀缓存全废（0927 缓存修复立的禁区）。
+ * 2. **usage 失真兜底**：provider usage 只反映「当时发出的请求」大小，40
+ *    条滑窗时代（08-13~09-24）的旧会话末条 usage 是 ~30K 级小数字，切换
+ *    回来时 usage 基准严重低估 → 首请求绕过 compaction 直发全量历史。与
+ *    CJK 感知的字符全量估算取 max，保证超长历史的首请求也必触发。
+ *
+ * contextWindow 未知（≤0）时明确返回 false；模型目录与自定义档都兜底
+ * 128K（provider-models），正常不会走到该分支。这是唯一的上下文窗口
+ * 管理，没有条数级兜底（见上方缓存注）。
  */
 export async function shouldCompactNow(session: unknown, contextWindow: number): Promise<boolean> {
   if (typeof contextWindow !== "number" || contextWindow <= 0) return false;
@@ -254,13 +359,14 @@ export async function shouldCompactNow(session: unknown, contextWindow: number):
     shouldCompact: (tokens: number, contextWindow: number, settings: unknown) => boolean;
     DEFAULT_COMPACTION_SETTINGS: unknown;
   };
-  const target = session as { getBranch(): Promise<unknown[]> };
-  const branch = await target.getBranch();
-  const messages = branch
-    .filter((entry) => isRecord(entry) && entry.type === "message" && isRecord(entry.message))
-    .map((entry) => (entry as { message: unknown }).message);
+  const target = session as { buildContext(options?: unknown): Promise<{ messages: unknown[] }> };
+  const messages = (await target.buildContext()).messages;
   const estimate = estimateContextTokens(messages);
-  return shouldCompact(estimate.tokens, contextWindow, DEFAULT_COMPACTION_SETTINGS);
+  let charEstimate = 0;
+  for (const message of messages) {
+    charEstimate += estimateMessageTokensCjkAware(message);
+  }
+  return shouldCompact(Math.max(estimate.tokens, charEstimate), contextWindow, DEFAULT_COMPACTION_SETTINGS);
 }
 
 // ── Request parsing ──────────────────────────────────────────────────────
@@ -862,6 +968,7 @@ export async function runCoachTurn(
       AgentHarness: new (opts: Record<string, unknown>) => InstanceType<typeof Object> & {
         prompt: (text: string) => Promise<unknown>;
         subscribe: (listener: (event: any, signal?: AbortSignal) => Promise<void> | void) => () => void;
+        on: (type: string, handler: (event: any) => unknown) => unknown;
         abort: () => Promise<unknown>;
         steer: (text: string) => Promise<void>;
         followUp: (text: string) => Promise<void>;
@@ -979,6 +1086,17 @@ export async function runCoachTurn(
       // compaction 本身是一次网络调用，抖动不该判死整轮压缩（审计#19）。
       retry: { enabled: true, maxRetries: 2, baseDelayMs: 1_000 },
       ...(thinkingLevel ? { thinkingLevel } : {}),
+    });
+
+    // 怪物会话压缩兜底（1002 修复，commit B）：滑窗时代遗留的 62 万 tokens
+    // 级会话首次压缩时，原生 compact 的单次摘要调用自身超窗必败。此 hook
+    // 在待压缩总量超阈值时改为分块链式摘要（compaction-fallback.ts）；
+    // 未超阈值返回 undefined，行为与 pi 原生完全一致。
+    registerCompactionFallback(harness, {
+      models: harnessModels,
+      model: resolved.model,
+      thinkingLevel,
+      estimateMessage: estimateMessageTokensCjkAware,
     });
 
     // Subscribe to events for streaming and tracking

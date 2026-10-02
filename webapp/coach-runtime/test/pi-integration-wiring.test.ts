@@ -182,9 +182,9 @@ test("extractUsage returns null for missing or empty usage", () => {
 test("shouldCompactNow refuses unknown context windows without touching the session", async () => {
   const probes: string[] = [];
   const session = {
-    getBranch: async () => {
+    buildContext: async () => {
       probes.push("called");
-      return [];
+      return { messages: [] };
     },
   };
   assert.equal(await shouldCompactNow(session, 0), false);
@@ -215,6 +215,79 @@ test("shouldCompactNow follows the last assistant usage against the context wind
     usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 110 },
   });
   assert.equal(await shouldCompactNow(small, 128_000), false);
+});
+
+// ── 0908 回归锁：usage 失真的超长中文会话首请求必触发压缩 ────────────────
+//
+// 场景复刻：40 条滑窗时代（2026-08-13~09-24）的旧会话，末条 assistant 的
+// usage 只反映当时 40 条窗口的请求大小（~30K）；JSONL 里全量历史都在。
+// 本用例的总字符量刻意选在 chars/4 也不够触发的带内（400K 中文字符 →
+// naive chars/4 = 100K < 111,616 阈值），同时锁住两层：旧代码（usage-only）
+// 与朴素字符修复（chars/4）都返回 false，只有 CJK 感知 + max 才救得回来。
+test("shouldCompactNow triggers on stale-usage super-long CJK history (0908 regression lock)", async () => {
+  const { InMemorySessionRepo, estimateContextTokens } = (await loadPiAgent()) as {
+    InMemorySessionRepo: new () => { create: () => Promise<any> };
+    estimateContextTokens: (messages: unknown[]) => { tokens: number };
+  };
+  const session = await new InMemorySessionRepo().create();
+
+  const STALE_WINDOW_USAGE = { input: 30_000, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 30_500 };
+  // 每条 10K 中文字符 × 40 条 = 400K 字符（真实 ≈0.6 token/字符 → ≈240K
+  // tokens，超 128K 窗、请求体按 ~5B/token 折算 ≈1.2MB——正是 413 复现带）。
+  const chineseText = "教练对话历史模拟：瞄准训练复盘要兼顾灵敏度、场景识别与转火决策。".repeat(400);
+  for (let i = 0; i < 40; i++) {
+    await session.appendMessage({ role: "user", content: [{ type: "text", text: chineseText }] });
+    await session.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: chineseText }],
+      usage: STALE_WINDOW_USAGE,
+      stopReason: "stop",
+    });
+  }
+
+  // 前置证明：pi 的 usage 基准估算确实低于阈值（滑窗时代失真数字），
+  // 旧判定（usage-only）在此返回 false → 首请求直发全量历史。
+  const context = await session.buildContext();
+  const usageEstimate = estimateContextTokens(context.messages);
+  assert.ok(usageEstimate.tokens < 111_616, `usage estimate should undershoot: ${usageEstimate.tokens}`);
+
+  // 回归锁：CJK 感知字符估算（400K × 0.7 = 280K）必须救回来。
+  assert.equal(await shouldCompactNow(session, 128_000), true);
+});
+
+// ── 折叠回归锁：compaction 之后估算必须基于折叠视图（缓存护栏）───────────
+//
+// 朴素对 getBranch() 全量字符估算会把已压缩历史永远计入 → 首次压缩后
+// 每轮触发重压缩 → 请求前缀每轮重写、前缀缓存全废（0927 缓存修复禁区）。
+test("shouldCompactNow estimates on the folded view after compaction (no re-compact loop)", async () => {
+  const { InMemorySessionRepo } = (await loadPiAgent()) as {
+    InMemorySessionRepo: new () => { create: () => Promise<any> };
+  };
+  const session = await new InMemorySessionRepo().create();
+
+  // 压缩前的怪物历史（30 条 × ~13K 中文字符 ≈ 390K 字符；朴素 getBranch
+  // 全量字符估算 ≈390K × 0.7 ≈ 273K > 阈值——若不折叠必误报）。
+  const chineseText = "历史包袱：这段对话在压缩前占据大量上下文。".repeat(600);
+  for (let i = 0; i < 30; i++) {
+    await session.appendMessage({ role: "user", content: [{ type: "text", text: chineseText }] });
+  }
+  // 真实 compaction entry：firstKeptEntryId 指向最后一条消息（全史压掉）。
+  const branch = await session.getBranch();
+  const lastId = (branch[branch.length - 1] as { id: string }).id;
+  await session.appendCompaction("摘要：训练复盘完成，用户转向新话题。", lastId, 400_000);
+
+  // 压缩后追加一轮正常对话（post-compaction usage 是折叠后的真实口径）。
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "我们继续聊转火练习。" }] });
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "好的，从上一个话题的结论继续。" }],
+    usage: { input: 8_000, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 8_300 },
+    stopReason: "stop",
+  });
+
+  // 折叠视图（摘要 + 保留尾部 + 新对话）远低于阈值 → 不该再压缩。
+  // 朴素 getBranch 全量估算（≈390K 字符 × 0.7 ≈ 273K）在此会误报 true。
+  assert.equal(await shouldCompactNow(session, 128_000), false);
 });
 
 // ── live：usage 透出到 run state ──────────────────────────────────────────
