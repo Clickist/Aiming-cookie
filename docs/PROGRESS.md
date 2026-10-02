@@ -1,6 +1,16 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-01. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-02. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-02 — v1.3.5 发布：会话治理/采集可观测/onboarding 死循环修复
+
+发版内容（5 commit + 发版 commit + landing）：①compaction 触发修复（0927 挂账：切超长会话首请求绕过压缩直发 62 万 tokens）——shouldCompactNow 折叠视图 + CJK 感知字符估算取 max；怪物会话分块摘要兜底（pi 原生 session_before_compact + generateSummaryWithUsage 链式）+ 超长单消息块内截断。**真机 e2e 全链验证**：902 超窗会话（2.1MB/零压缩条目）触发→分块摘要 7 连发（网关日志）→压缩条目落库（0→2）→巨型消息摘要折叠（界面 443894→1880 字符）→模型识别干扰内容正常回复。②采集自愈可观测（trace-coverage-gap 研究 P1/P4）：recover_unhealthy_raw 结构化事件+限频+重启前 barrier flush，receipt echo 进诊断包（schema v7→v8）。③onboarding 态1 试用出口：官方模式新用户死循环（态1 无试用出口 × 订阅页验证闸，今天 8 注册 4 卡死；粉丝 skyxz2000@qq.com 手动写 verified_at 解锁，另 3 个同状态用户 EWLeB8e0/tAb0TYV1/GKGvzXy 待拍板处理）。
+
+网关侧（accounts 仓 cd09edb，已部署）：aiohttp 默认 1MB 请求体上限 413 拒客（用户 223.167.246.53 连拒 24 次流失）→ 48MiB + 413 观测日志，真机三连击验证。
+
+测试基线：cargo 177/pytest 869/coach-runtime 523/前端 unit 216/contracts 336 全绿（3 处既有红不在本批域）；L3 沙箱冒烟 + 覆盖装真机 CDP e2e（surface/coach 回合/设置/历史/console 零错误）。
+
+发版新坑三账：①`build:tauri` 只备前端静态产物，真打包= `build-windows-installer.ps1`（含运行时重建——改 coach-runtime 必须走它）；②更新签名密码=空串但须显式 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""`，否则无 tty 下挂死；③`test-windows-installer.ps1` 冒烟不恢复 NSIS 安装目录注册表 → 真机静默装被导回冒烟临时目录（本次已修：save/restore）。coach-runtime 在途 WIP（串视频 9 文件）继续留工作区未随发。
 
 ## 2026-10-01 — v1.3.4 发布：B1 空回复止血热修（手术式拆分，pi 解耦不随发）
 

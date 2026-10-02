@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$InstallerPath,
     [switch]$RequireValidSignature,
@@ -24,6 +24,11 @@ if ($InstallSmoke) {
     $previousBrowserArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     $previousCdpUrl = $env:AIMING_COOKIE_TAURI_CDP_URL
     $previousScreenshot = $env:AIMING_COOKIE_TAURI_SMOKE_SCREENSHOT
+    # NSIS 会把本次安装目录写进 HKCU\Softwareimingcookie（下次安装/更新的
+    # 默认目录）。不恢复的话，冒烟之后真机静默安装/更新会被导回已删除的
+    # 冒烟临时目录（2026-10-02 1.3.5 真机覆盖装踩坑）。
+    $smokeRegKey = "HKCU:\Softwareimingcookie\Aiming Cookie"
+    $previousInstallDir = (Get-ItemProperty -LiteralPath $smokeRegKey -ErrorAction SilentlyContinue).'(default)'
     New-Item -ItemType Directory -Path $installRoot | Out-Null
     try {
         Start-Process -FilePath $InstallerPath -ArgumentList @("/S", "/D=$installRoot") -Wait -NoNewWindow
@@ -119,5 +124,11 @@ if ($InstallSmoke) {
         # The smoke directory only contains generated installer output.
         if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $smokeAppData) { Remove-Item -LiteralPath $smokeAppData -Recurse -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $previousInstallDir) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $smokeRegKey) -Force | Out-Null
+            Set-ItemProperty -LiteralPath $smokeRegKey -Name '(default)' -Value $previousInstallDir
+        } elseif (Test-Path -LiteralPath $smokeRegKey) {
+            Remove-Item -LiteralPath $smokeRegKey -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
