@@ -753,8 +753,30 @@ async def test_raw_completeness_receipt_never_attaches_incomplete_native_trace(
     assert readiness["state"] == "pending_analysis"
     if expected_trace_state == "attached":
         assert readiness["input_native"] is True
+        # 回显只挂在 receipt 判死路径；正常 attach 的 run 不携带。
+        assert "trace_receipt_echo" not in run
     else:
         assert readiness["video_fallback"] is True
+        # receipt 判死必须回显时钟锚/覆盖值/窗口（区分元数据误报与真缺数据）。
+        echo = run["trace_receipt_echo"]
+        assert echo["receiptVersion"] == "raw_snapshot_receipt.v2"
+        assert echo["window_start_epoch_ms"] == 1_000
+        assert echo["window_end_epoch_ms"] == 2_000
+        assert echo["captureSessionStartEpochMs"] == getattr(
+            client, "raw_snapshot_capture_session_start_epoch_ms",
+        )
+        assert echo["coveredThroughEpochMs"] == 2_000
+        assert echo["snapshotAtEpochMs"] == 2_001
+        assert echo["pointCount"] == 1
+        assert echo["queueDroppedPoints"] == getattr(
+            client, "raw_snapshot_queue_dropped_points",
+        )
+        assert echo["ringExpiredPoints"] == getattr(
+            client, "raw_snapshot_ring_expired_points",
+        )
+        # 回显随 meta.json 持久化（诊断包 recent_runs 从磁盘读）。
+        persisted = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+        assert persisted["trace_receipt_echo"] == echo
 
 
 @pytest.mark.asyncio

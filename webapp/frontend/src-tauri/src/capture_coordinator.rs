@@ -664,6 +664,10 @@ pub struct CaptureCoordinatorState {
     // 触发多次 start 失败，日志按「首条 + 每 30s 一条」限频，人类可读细节
     // 同时完整留在启动失败快照（诊断包 v7）里。
     video_capture_failure_log_at: Mutex<Option<Instant>>,
+    // raw 健康重启事件的限频锚点：recover_unhealthy_raw 的 6s 起搏在最坏
+    // 负载下可能形成分钟级重启循环，事件按「首条 + 每 30s 一条」限频，
+    // 避免 6s 周期的重启风暴刷爆 64 条事件环；错误细节同时完整进 dlog。
+    raw_health_restart_event_at: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
@@ -674,6 +678,28 @@ const VIDEO_CAPTURE_FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 fn video_capture_failure_log_allowed(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|at| now.duration_since(at) >= VIDEO_CAPTURE_FAILURE_LOG_INTERVAL)
+}
+
+/// raw 健康重启事件限频判据：与失败 dlog 同参（首条 + 每 30s 一条）。
+/// recover_unhealthy_raw 的 6s 起搏在最坏负载下可能形成分钟级重启循环，
+/// 不限频会刷爆 64 条事件环、挤掉相位迁移证据。
+const RAW_HEALTH_RESTART_EVENT_INTERVAL: Duration = Duration::from_secs(30);
+
+fn raw_health_restart_event_allowed(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|at| now.duration_since(at) >= RAW_HEALTH_RESTART_EVENT_INTERVAL)
+}
+
+/// raw 健康重启的诊断事件：reason 固定裸码（控制面合同 ^[a-z][a-z0-9_]{0,63}$，
+/// 人类可读细节只进 dlog），相位/子态取重启决策时刻的协调器状态。
+fn raw_health_restart_event(status: &CaptureCoordinatorStatus) -> CaptureDiagnosticEvent {
+    CaptureDiagnosticEvent {
+        timestamp_utc_ms: diagnostic_now_ms(),
+        phase: status.phase,
+        reason: Some("raw_health_restart".to_string()),
+        kovaak_process_present: status.kovaak_process_present,
+        raw_state: status.raw.state,
+        video_state: status.video.state,
+    }
 }
 
 impl CaptureCoordinatorState {
@@ -703,6 +729,7 @@ impl CaptureCoordinatorState {
             finalizing_since: Mutex::new(None),
             raw_unhealthy_since: Mutex::new(None),
             video_capture_failure_log_at: Mutex::new(None),
+            raw_health_restart_event_at: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
@@ -736,6 +763,29 @@ impl CaptureCoordinatorState {
             *slot = Some(Instant::now());
         }
         allowed
+    }
+
+    /// raw 健康重启事件限频：与失败 dlog 同构（首条必发，之后每 30s 一条，
+    /// 放行时顺带记账）；槽位中毒按不放行处理。
+    fn raw_health_restart_event_allowed(&self) -> bool {
+        let Ok(mut slot) = self.raw_health_restart_event_at.lock() else {
+            return false;
+        };
+        let allowed = raw_health_restart_event_allowed(*slot, Instant::now());
+        if allowed {
+            *slot = Some(Instant::now());
+        }
+        allowed
+    }
+
+    /// 追加一条诊断事件，维持 64 条环形上限（旧事件先出）。
+    fn push_diagnostic_event(&self, event: CaptureDiagnosticEvent) {
+        if let Ok(mut events) = self.diagnostic_events.lock() {
+            events.push_back(event);
+            while events.len() > DIAGNOSTIC_EVENT_LIMIT {
+                events.pop_front();
+            }
+        }
     }
 
     pub fn status(&self) -> CaptureCoordinatorStatus {
@@ -1085,7 +1135,8 @@ impl CaptureCoordinatorState {
     }
 
     fn recover_unhealthy_raw(&self) {
-        let healthy = self.raw_input.status().capture_healthy;
+        let raw_status = self.raw_input.status();
+        let healthy = raw_status.capture_healthy;
         let should_restart = {
             let Ok(mut since) = self.raw_unhealthy_since.lock() else {
                 return;
@@ -1106,6 +1157,26 @@ impl CaptureCoordinatorState {
         if !should_restart {
             return;
         }
+        // 重启必须有痕：dlog 带错误码与细节（诊断包 native 日志尾部可见），
+        // 事件流带裸码（限频首条 + 每 30s 一条），否则 raw-only 静默重启在
+        // 诊断包里完全不可见（本路径不迁移 phase，事件环原本对它失明）。
+        crate::dlog!(
+            "[capture-recovery] raw health restart: code={:?} error={:?} failures={} anchor_utc_ms={}",
+            raw_status.snapshot_error_code,
+            raw_status
+                .snapshot_error
+                .as_deref()
+                .map(bounded_diagnostic_text),
+            raw_status.snapshot_failures,
+            raw_status.clock_anchor_utc_ms
+        );
+        if self.raw_health_restart_event_allowed() {
+            self.push_diagnostic_event(raw_health_restart_event(&self.status()));
+        }
+        // 重启前先请求一次 barrier flush，把 ring 里未落盘的点先写盘
+        //（已有 5s 超时保护，超时/失败即放弃；写失败型不健康下 barrier
+        // 同样可能失败——这里收窄而非消灭丢失窗，诚实量化仍靠 receipt）。
+        let _ = self.raw_input.flush_snapshot_barrier();
         // Force-cycle past set_enabled's no-op when enabled is already true.
         // Video capture is left running; only the raw backend is restarted.
         let _ = self.raw_input.set_enabled(false);
@@ -1858,12 +1929,13 @@ mod tests {
     use super::{
         bounded_diagnostic_text, capture_enabled_file_path, control_error_response,
         join_control_connections, load_capture_enabled_file, managed_export_paths,
-        monitor_start_failure_status, parse_control_request, raw_snapshot_flush_allowed,
-        read_control_line, replay_failure_code, resized_video_degraded_status,
-        response_type_for_request, sha256_hex, track_control_connection_thread,
-        video_capture_failure_log_allowed, write_capture_enabled_file, CaptureCoordinatorStatus,
-        CapturePhase, CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
-        FileFingerprint, ReceiptRecord, StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
+        monitor_start_failure_status, parse_control_request, raw_health_restart_event,
+        raw_health_restart_event_allowed, raw_snapshot_flush_allowed, read_control_line,
+        replay_failure_code, resized_video_degraded_status, response_type_for_request, sha256_hex,
+        track_control_connection_thread, video_capture_failure_log_allowed,
+        write_capture_enabled_file, CaptureCoordinatorStatus, CapturePhase, CaptureSourceState,
+        CaptureSourceStatus, ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
+        StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
     use std::fs;
@@ -1888,6 +1960,58 @@ mod tests {
             Some(now),
             now + std::time::Duration::from_secs(3_600)
         ));
+    }
+
+    #[test]
+    fn raw_health_restart_event_rate_limits_to_first_and_every_30s() {
+        // 与失败 dlog 限频同参：6s 起搏的重启风暴每 30s 至多进一条事件。
+        let now = Instant::now();
+        assert!(raw_health_restart_event_allowed(None, now));
+        assert!(!raw_health_restart_event_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(29)
+        ));
+        assert!(raw_health_restart_event_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(30)
+        ));
+        assert!(raw_health_restart_event_allowed(
+            Some(now),
+            now + std::time::Duration::from_secs(3_600)
+        ));
+    }
+
+    #[test]
+    fn raw_health_restart_event_carries_bare_reason_and_current_states() {
+        // reason 必须是裸码（控制面合同 ^[a-z][a-z0-9_]{0,63}$），
+        // 相位/子态原样取自重启决策时刻的协调器状态。
+        let status = CaptureCoordinatorStatus {
+            enabled: true,
+            phase: CapturePhase::Capturing,
+            capture_session_id: Some("session-1".to_string()),
+            kovaak_process_present: true,
+            window_handle: Some(0x1234),
+            reason: None,
+            raw: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+            video: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+        };
+        let event = raw_health_restart_event(&status);
+        assert_eq!(event.reason.as_deref(), Some("raw_health_restart"));
+        assert!(event.timestamp_utc_ms > 0);
+        assert_eq!(event.phase, CapturePhase::Capturing);
+        assert!(event.kovaak_process_present);
+        assert_eq!(event.raw_state, CaptureSourceState::Capturing);
+        assert_eq!(event.video_state, CaptureSourceState::Capturing);
+        // 会话密钥不得借道事件泄漏（诊断包隐私边界与 status 一致）。
+        assert!(!serde_json::to_string(&event)
+            .expect("event serializes")
+            .contains("session-1"));
     }
 
     #[test]

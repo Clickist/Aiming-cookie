@@ -270,6 +270,7 @@ const RUN_META_FIELDS: &[&str] = &[
     "video_summary",
     "trace_state",
     "trace_error",
+    "trace_receipt_echo",
     "finalization_state",
     "finalization_error",
 ];
@@ -769,7 +770,7 @@ fn build_capture_diagnostics_bundle(
     window_status.gpu_driver_suspect =
         window_capture::gpu_driver_suspect(&gpu_names, last_start_failure.as_ref());
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v7",
+        schema_version: "capture_diagnostics.v8",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -1148,6 +1149,13 @@ mod tests {
                         "stats_challenge_start": "01:46:41.321",
                         "performance_challenge_start_utc": 1_699_897_600_000i64,
                     },
+                    "trace_receipt_echo": {
+                        "receiptVersion": "raw_snapshot_receipt.v2",
+                        "captureSessionStartEpochMs": 1_001i64,
+                        "coveredThroughEpochMs": 2_000i64,
+                        "window_start_epoch_ms": 1_000i64,
+                        "window_end_epoch_ms": 2_000i64,
+                    },
                 })
                 .to_string(),
             )
@@ -1171,6 +1179,12 @@ mod tests {
             assert_eq!(
                 run["alignment_summary"]["performance_challenge_start_utc"],
                 serde_json::json!(1_699_897_600_000i64)
+            );
+            // v8：receipt 判死局回显（时钟锚/覆盖值/窗口）进包，供支持侧区分
+            // 「会话元数据误报」与「真缺数据」。
+            assert_eq!(
+                run["trace_receipt_echo"]["captureSessionStartEpochMs"],
+                serde_json::json!(1_001i64)
             );
         }
         let _ = fs::remove_dir_all(&root);

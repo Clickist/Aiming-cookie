@@ -32,7 +32,7 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(returned, "command returns the written path").toBe(outPath);
 
   const bundle = JSON.parse(await fs.readFile(outPath, "utf8")) as Record<string, unknown>;
-  expect(bundle.schemaVersion).toBe("capture_diagnostics.v7");
+  expect(bundle.schemaVersion).toBe("capture_diagnostics.v8");
   expect(typeof bundle.generatedAtUtcMs).toBe("number");
   expect(bundle.targetOs).toBe("windows");
   expect(bundle.appVersion).toBeTruthy();

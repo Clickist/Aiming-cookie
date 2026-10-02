@@ -903,6 +903,11 @@ async def attach_mouse_trace_snapshot_window(
         if receipt_error is not None:
             return await mark_mouse_trace_unavailable(
                 run["id"], user_id, receipt_error,
+                receipt_echo=_receipt_diagnostic_echo(
+                    raw_snapshot_receipt,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                ),
             ) or run
     if require_coverage and (
         isinstance(covered_through_epoch_ms, bool)
@@ -977,6 +982,32 @@ async def attach_mouse_trace_snapshot_window(
             run["id"], user_id, "trace_attach_failed",
             expected_pending_trace_path=target,
         ) or run
+
+
+def _receipt_diagnostic_echo(
+    receipt: dict[str, object],
+    *,
+    start_ms: int,
+    end_ms: int,
+) -> dict[str, object]:
+    # receipt 判死时的诊断回显：只挑时钟锚/覆盖类数值与版本串 + 局窗口，
+    # 不含路径或会话密钥；值原样透传（含缺失/类型异常），供支持侧区分
+    # 「会话元数据误报」与「真缺数据」。随 run meta 白名单进诊断包。
+    echo: dict[str, object] = {
+        "receiptVersion": receipt.get("receiptVersion"),
+        "window_start_epoch_ms": start_ms,
+        "window_end_epoch_ms": end_ms,
+    }
+    for key in (
+        "captureSessionStartEpochMs",
+        "coveredThroughEpochMs",
+        "snapshotAtEpochMs",
+        "pointCount",
+        "queueDroppedPoints",
+        "ringExpiredPoints",
+    ):
+        echo[key] = receipt.get(key)
+    return echo
 
 
 def _raw_snapshot_receipt_quality(
@@ -2628,6 +2659,7 @@ async def mark_mouse_trace_unavailable(
     error: str,
     *,
     expected_pending_trace_path: str | Path | None = None,
+    receipt_echo: dict[str, object] | None = None,
 ) -> Optional[dict]:
     run = _load_run(run_id)
     if run is None or run.get("user_id") != user_id:
@@ -2641,6 +2673,9 @@ async def mark_mouse_trace_unavailable(
     run["trace_state"] = "unavailable"
     run["pending_trace_path"] = None
     run["trace_error"] = error
+    if receipt_echo is not None:
+        # 仅 receipt 判死路径回填（attach/unavailable 后不再翻转，无残留清理）。
+        run["trace_receipt_echo"] = receipt_echo
     run["updated_at"] = _utc_now()
     _save_run(run)
     return run
