@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.3.5",
+      "date": "2026-10-02",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复部分 Windows 预览版系统下训练视频无法录制的问题",
+          "en": "Fixed training video recording on certain Windows Insider preview builds"
+        },
+        {
+          "type": "fix",
+          "zh": "改进虚拟显示器与远程桌面环境下的录制兼容性",
+          "en": "Improved recording compatibility on virtual displays and remote desktop setups"
+        },
+        {
+          "type": "fix",
+          "zh": "修复超长对话首次继续时全量重发导致的请求失败与消耗暴涨——现在会自动压缩历史后正常继续",
+          "en": "Fixed very long conversations failing or burning excess quota when first resumed: history is now compacted automatically before sending"
+        },
+        {
+          "type": "imp",
+          "zh": "录制引擎自愈重启会写入诊断记录，远程排查问题更快",
+          "en": "Self-healing restarts of the capture engine are now recorded in diagnostics for faster remote troubleshooting"
+        }
+      ]
+    },
+    {
       "version": "1.3.4",
       "date": "2026-10-01",
       "items": [
