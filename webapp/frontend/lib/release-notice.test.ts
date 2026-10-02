@@ -88,7 +88,14 @@ test("共享 changelog 内容：当前打包版本（package.json 版本）的�
   assert.ok(entry, `changelog.json 缺少 v${pkg.version} 块`);
   assert.ok(entry.date, "版本块缺 date");
   assert.ok(entry.items.length >= 3);
-  assert.equal(entry.items[0].type, "new");
+  // 纯修复版允许没有 new 条目（修复版是合法发版形态，如 1.3.4 热修）；
+  // 只锁条目类型枚举合法，防 changelog 写错 type 导致卡片徽标渲染异常。
+  for (const releaseItem of entry.items) {
+    assert.ok(
+      releaseItem.type === "new" || releaseItem.type === "imp" || releaseItem.type === "fix",
+      `未知条目类型: ${String(releaseItem.type)}`,
+    );
+  }
 });
 
 test("完整更新日志外链指向落地页 changelog 锚点", () => {
