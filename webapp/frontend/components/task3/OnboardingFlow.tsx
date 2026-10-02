@@ -1022,13 +1022,19 @@ function MemberConnect({
             // verified_at 落库后订阅页验证闸自动解锁。此态下网页订阅页仍在
             // 验证闸后（无购买入口），订阅按钮不渲染——首次引导只留体验一条路
             // （点点 1002 拍板）。
-            <Button className="task3-member-primary" onClick={onContinue} variant="primary">{t("onboarding.member.trialCta")}</Button>
+            <>
+              <Button className="task3-member-primary" onClick={onContinue} variant="primary">{t("onboarding.member.trialCta")}</Button>
+              {/* 重开浏览器是低频补救动作：首次引导降为文字链（点点 1002）。 */}
+              <button className="task3-member-link" style={{ textDecoration: "underline" }} onClick={onReopen} disabled={busy}>{MEMBER_COPY.reopenBrowser}</button>
+            </>
           ) : (
-            <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
+            <>
+              <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
+              <div className="task3-member-secondary-actions">
+                <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
+              </div>
+            </>
           )}
-          <div className="task3-member-secondary-actions">
-            <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
-          </div>
           <Button onClick={onUseByok} variant="ghost">{MEMBER_COPY.useByok}</Button>
         </>
       ) : null}
