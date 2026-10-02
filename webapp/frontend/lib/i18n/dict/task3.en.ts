@@ -74,6 +74,9 @@ export const task3En = {
   "onboarding.member.browserFailed": "Couldn't open the system browser. Use \"Reopen the browser page\" below.",
   "onboarding.member.testFailedToStart": "The connection test couldn't be started. Please try again later.",
   "onboarding.member.testFailedFallback": "The connection test didn't pass. You can retry.",
+  // State-1 deadlock hotfix (1002): try-it-first exit and hint when trial quota remains
+  "onboarding.member.trialCta": "Try it free first (run one analysis to get verified, then subscribe)",
+  "onboarding.member.trialHint": "New accounts include a free trial quota — try it before subscribing",
 
   // components/task3/MemberCenter.tsx / MemberChrome.tsx —— 用户中心（②c）补充文案
   // （MEMBER_COPY 门面引用的 member.* 键在 shared 冻结区，本块只放组件侧新增）

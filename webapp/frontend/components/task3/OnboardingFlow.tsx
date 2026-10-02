@@ -37,6 +37,7 @@ import { isDesktopRuntime, openExternalUrl, setDesktopCaptureEnabled } from "@/l
 import { useT, type TranslateFn } from "@/lib/i18n";
 import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { MEMBER_COPY, maskEmail } from "@/lib/member";
+import { parseTrialState } from "@/lib/trial";
 import { isMemberWizardType, wizardTypeOptions } from "@/lib/provider-wizard";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import type {
@@ -144,6 +145,16 @@ export function OnboardingFlow() {
     () => providers.find((provider) => provider.provider_id === providerId),
     [providerId, providers],
   );
+
+  // 态1 死锁止血（1002）：无订阅用户过不了订阅页验证闸（要先跑一局才有
+  // verified_at），跑一局又必须先过 onboarding 第 1 步。试用余量 > 0 时给
+  // 态1 加「先免费体验」出口（放行第 2 步；分析完成 verified_at 落库后
+  // 订阅页自动解锁）。trial 不可用时态1 保持现状（parseTrialState 宽松
+  // 解析，/me 形状不对一律 null，fail-open）。
+  const memberTrialAvailable = useMemo(() => {
+    const trial = parseTrialState(memberMe);
+    return trial !== null && trial.analysesRemaining > 0;
+  }, [memberMe]);
 
   useEffect(() => {
     setDesktop(isDesktopRuntime());
@@ -620,6 +631,7 @@ export function OnboardingFlow() {
           onSubscribe={() => void openExternalUrl(MEMBER_SUBSCRIBE_URL)}
           onUseByok={() => selectProvider(CUSTOM_PROVIDER_ID)}
           stage={memberStage}
+          trialAvailable={memberTrialAvailable}
         />
       ) : step === 1 ? (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="provider-title" key="provider">
@@ -954,6 +966,7 @@ function MemberConnect({
   onRetry,
   onSubscribe,
   onUseByok,
+  trialAvailable,
 }: {
   stage: MemberStage;
   email: string | null;
@@ -964,6 +977,7 @@ function MemberConnect({
   onRetry: () => void;
   onSubscribe: () => void;
   onUseByok: () => void;
+  trialAvailable: boolean;
 }) {
   const t = useT();
   return (
@@ -999,8 +1013,16 @@ function MemberConnect({
               <br />
               {MEMBER_COPY.notSubscribedBodyLine2}
             </p>
+            {trialAvailable ? (
+              <p className="task3-member-hint">{t("onboarding.member.trialHint")}</p>
+            ) : null}
           </div>
           <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
+          {trialAvailable ? (
+            // 死锁出口（1002）：试用余量可跑一局 → 放行第 2 步，分析完成
+            // verified_at 落库后订阅页验证闸自动解锁。
+            <Button className="task3-member-primary" onClick={onContinue} variant="primary">{t("onboarding.member.trialCta")}</Button>
+          ) : null}
           <div className="task3-member-secondary-actions">
             <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
           </div>

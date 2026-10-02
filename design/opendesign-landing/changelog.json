@@ -23,6 +23,11 @@
           "type": "imp",
           "zh": "录制引擎自愈重启会写入诊断记录，远程排查问题更快",
           "en": "Self-healing restarts of the capture engine are now recorded in diagnostics for faster remote troubleshooting"
+        },
+        {
+          "type": "fix",
+          "zh": "修复新用户在连接模型服务一步被卡住的问题——现在可以先免费体验，完成一局分析验证后再订阅",
+          "en": "Fixed new users getting stuck on the model-service step: you can now start with the free trial first and subscribe after completing one verification analysis"
         }
       ]
     },

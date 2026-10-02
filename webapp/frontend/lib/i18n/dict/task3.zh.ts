@@ -75,6 +75,9 @@ export const task3Zh = {
   "onboarding.member.browserFailed": "没能打开系统浏览器，可点下方「重新打开浏览器页面」。",
   "onboarding.member.testFailedToStart": "连接测试未能发起，请稍后重试。",
   "onboarding.member.testFailedFallback": "连接测试未通过，可重试。",
+  // 态1 死锁止血（1002）：试用余量 > 0 时的先体验出口与提示
+  "onboarding.member.trialCta": "先免费体验（跑一局完成验证，之后即可订阅）",
+  "onboarding.member.trialHint": "新账号含免费试用额度，可先体验再订阅",
 
   // components/task3/MemberCenter.tsx / MemberChrome.tsx —— 用户中心（②c）补充文案
   // （MEMBER_COPY 门面引用的 member.* 键在 shared 冻结区，本块只放组件侧新增）
