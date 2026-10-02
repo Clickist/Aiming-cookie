@@ -914,11 +914,12 @@ async def save_kovaak_connection(
         connection_request = KovaaKConnectionSaveRequest.model_validate(
             await request.json(),
         )
+        steam_id = await kovaak_benchmark_provider.resolve_steam_profile_input(
+            connection_request.steam_profile,
+        )
     except (TypeError, ValueError):
         raise HTTPException(422, "KovaaK connection input is invalid") from None
-    await kovaak_connection_store.save_connection(
-        x_user_id, connection_request.steam_profile,
-    )
+    await kovaak_connection_store.save_connection(x_user_id, steam_id)
     return KovaaKConnectionStatusResponse(connected=True)
 
 

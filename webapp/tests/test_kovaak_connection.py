@@ -11,6 +11,7 @@ from webapp.backend.app import app
 
 STEAM_ID = "76561199033719938"
 PROFILE_URL = f"https://steamcommunity.com/profiles/{STEAM_ID}/"
+VANITY_URL = "https://steamcommunity.com/id/vapor/"
 
 
 def complete_snapshot() -> dict:
@@ -75,6 +76,64 @@ async def test_connection_is_owner_scoped_and_public_responses_hide_identity():
     assert stored is not None
     assert stored["steam_id"] == STEAM_ID
     assert removed.json() == {"deleted": True}
+    assert await kovaak_connection_store.get_connection("u1") is None
+
+
+@pytest.mark.asyncio
+async def test_connection_resolves_vanity_profile_url_before_saving(monkeypatch):
+    from webapp.backend import kovaak_benchmark_provider, kovaak_connection_store
+
+    async def fake_resolve(value, client=None):
+        assert value == VANITY_URL
+        return STEAM_ID
+
+    monkeypatch.setattr(
+        kovaak_benchmark_provider, "resolve_steam_profile_input", fake_resolve,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        saved = await client.put(
+            "/api/kovaak-connection",
+            json={"steam_profile": VANITY_URL, "identity_consent": True},
+        )
+        stored = await kovaak_connection_store.get_connection("u1")
+        removed = await client.delete("/api/kovaak-connection")
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"connected": True}
+    assert "steamcommunity" not in saved.text.casefold()
+    assert stored is not None
+    assert stored["steam_id"] == STEAM_ID
+    assert removed.json() == {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_connection_rejects_unresolvable_vanity_profile_url(monkeypatch):
+    from webapp.backend import kovaak_benchmark_provider, kovaak_connection_store
+
+    async def fake_resolve(value, client=None):
+        raise ValueError("Steam profile could not be resolved")
+
+    monkeypatch.setattr(
+        kovaak_benchmark_provider, "resolve_steam_profile_input", fake_resolve,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.put(
+            "/api/kovaak-connection",
+            json={"steam_profile": VANITY_URL, "identity_consent": True},
+        )
+        stored = await kovaak_connection_store.get_connection("u1")
+
+    assert response.status_code == 422
+    assert "steamcommunity" not in response.text.casefold()
+    assert stored is None
     assert await kovaak_connection_store.get_connection("u1") is None
 
 

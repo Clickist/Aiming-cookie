@@ -294,12 +294,46 @@ async function fetchAndNormalize(
 
 const STEAM_ID_RE = /^\d{17}$/;
 const STEAM_PROFILE_URL_RE = /^https:\/\/steamcommunity\.com\/profiles\/(\d{17})\/?$/;
+const STEAM_VANITY_URL_RE = /^https:\/\/steamcommunity\.com\/id\/[A-Za-z0-9_-]{1,64}\/?$/;
+const PROFILE_PAGE_STEAMID_RE = /g_rgProfileData\s*=\s*\{[^;]*?"steamid"\s*:\s*"(\d{17})"/;
 
 /** Accept an exact 17-digit Steam ID or a canonical steamcommunity profile URL. */
 export function normalizeSteamProfileInput(value: string): string | null {
   if (STEAM_ID_RE.test(value)) return value;
   const match = STEAM_PROFILE_URL_RE.exec(value);
   return match ? match[1] : null;
+}
+
+/** Syntax-only gate: numeric forms or a vanity profile URL. */
+export function isSteamProfileInput(value: string): boolean {
+  return normalizeSteamProfileInput(value) !== null || STEAM_VANITY_URL_RE.test(value.trim());
+}
+
+/**
+ * Turn any accepted profile input into the 17-digit Steam ID. Vanity URLs
+ * (`/id/<name>`) are resolved by fetching the public profile page and
+ * extracting g_rgProfileData.steamid; missing or unreachable profiles resolve
+ * to null. Numeric forms never touch the network.
+ */
+export async function resolveSteamProfileInput(value: string): Promise<string | null> {
+  const normalized = normalizeSteamProfileInput(value);
+  if (normalized !== null) return normalized;
+  const trimmed = value.trim();
+  if (!STEAM_VANITY_URL_RE.test(trimmed)) return null;
+  const pageUrl = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+  try {
+    const response = await fetch(pageUrl, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    // steamcommunity serves missing profiles as HTTP 200 error pages, so the
+    // g_rgProfileData extraction is the existence check, not the status code.
+    const match = PROFILE_PAGE_STEAMID_RE.exec(await response.text());
+    return match && STEAM_ID_RE.test(match[1]) ? match[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────
@@ -333,7 +367,8 @@ async function executeLookup(
   }
 
   // Preferred path: a literal Steam ID or profile URL provided by the user.
-  let normalizedId = normalizeSteamProfileInput(profileRef);
+  // Vanity URLs are resolved to the numeric ID here (one network round trip).
+  let normalizedId = await resolveSteamProfileInput(profileRef);
 
   // Legacy path: an opaque steam_profile:N ref resolved through the optional
   // turn-scoped map (kept for callers that still supply one).

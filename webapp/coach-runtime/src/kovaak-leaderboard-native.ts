@@ -34,7 +34,10 @@
  * parameters, `unavailable` when the upstream cannot be reached or no longer
  * matches the expected shape.
  */
-import { normalizeSteamProfileInput } from "./kovaak-scores-native.ts";
+import {
+  isSteamProfileInput,
+  resolveSteamProfileInput,
+} from "./kovaak-scores-native.ts";
 
 type AnyDict = Record<string, any>;
 
@@ -475,7 +478,7 @@ async function executeLookup(params: AnyDict): Promise<NativeKovaakLeaderboardRe
       },
     };
   }
-  if (hasProfile && normalizeSteamProfileInput(String(profileRef)) === null) {
+  if (hasProfile && !isSteamProfileInput(String(profileRef))) {
     return {
       status: "failed",
       warning_or_error: {
@@ -556,7 +559,7 @@ async function executeLookup(params: AnyDict): Promise<NativeKovaakLeaderboardRe
   }
 
   if (hasProfile) {
-    const steamId = normalizeSteamProfileInput(String(profileRef));
+    const steamId = await resolveSteamProfileInput(String(profileRef));
     if (!steamId) {
       return {
         status: "failed",

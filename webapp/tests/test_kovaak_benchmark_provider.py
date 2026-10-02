@@ -117,6 +117,14 @@ async def test_fetch_viscose_s2_rejects_network_failure_without_identity_in_erro
             "https://steamcommunity.com/profiles/00000000000000000/",
             "00000000000000000",
         ),
+        (
+            "https://steamcommunity.com/id/name/",
+            "https://steamcommunity.com/id/name/",
+        ),
+        (
+            "https://steamcommunity.com/id/name",
+            "https://steamcommunity.com/id/name",
+        ),
     ],
 )
 def test_steam_profile_input_normalizes_to_a_canonical_id(value: str, expected: str) -> None:
@@ -134,7 +142,10 @@ def test_steam_profile_input_normalizes_to_a_canonical_id(value: str, expected: 
         " 00000000000000000 ",
         "http://steamcommunity.com/profiles/00000000000000000/",
         "https://example.com/profiles/00000000000000000/",
-        "https://steamcommunity.com/id/name/",
+        "https://example.com/id/name/",
+        "https://steamcommunity.com/groups/name",
+        "https://steamcommunity.com/id/name?xml=1",
+        "https://steamcommunity.com/id/name/extra",
         "https://steamcommunity.com/profiles/00000000000000000",
         "https://steamcommunity.com/profiles/00000000000000000/extra",
         "https://steamcommunity.com/profiles/00000000000000000/?page=1",
@@ -146,3 +157,67 @@ def test_steam_profile_input_rejects_noncanonical_or_identifying_forms(value: st
 
     with pytest.raises(ValueError, match="Steam profile"):
         provider.normalize_steam_profile_input(value)
+
+_VANITY_ID = "76561199033719938"
+_VANITY_PAGE = (
+    "<script>g_rgProfileData = {\"url\":\"https://steamcommunity.com/id/name/\","
+    f"\"steamid\":\"{_VANITY_ID}\",\"personaname\":\"name\"}};</script>"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "vanity_url",
+    [
+        "https://steamcommunity.com/id/name/",
+        "https://steamcommunity.com/id/name",
+    ],
+)
+async def test_resolve_steam_profile_input_resolves_vanity_url(vanity_url: str) -> None:
+    from webapp.backend import kovaak_benchmark_provider as provider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "steamcommunity.com"
+        assert request.url.path == "/id/name/"
+        return httpx.Response(200, text=_VANITY_PAGE, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolved = await provider.resolve_steam_profile_input(vanity_url, client=client)
+
+    assert resolved == _VANITY_ID
+
+
+@pytest.mark.asyncio
+async def test_resolve_steam_profile_input_short_circuits_numeric_input() -> None:
+    from webapp.backend import kovaak_benchmark_provider as provider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("numeric input must not trigger a network call")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolved = await provider.resolve_steam_profile_input(_VANITY_ID, client=client)
+
+    assert resolved == _VANITY_ID
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error_page", "http_403", "timeout"])
+async def test_resolve_steam_profile_input_fails_closed_without_identity(failure: str) -> None:
+    from webapp.backend import kovaak_benchmark_provider as provider
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if failure == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        if failure == "http_403":
+            return httpx.Response(403, request=request)
+        # steamcommunity serves missing profiles as HTTP 200 error pages.
+        return httpx.Response(200, text="<html>Error</html>", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="Steam profile could not be resolved") as captured:
+            await provider.resolve_steam_profile_input(
+                "https://steamcommunity.com/id/name/", client=client,
+            )
+
+    assert "steamcommunity" not in str(captured.value)
+    assert _VANITY_ID not in str(captured.value)

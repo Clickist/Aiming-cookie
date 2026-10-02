@@ -547,3 +547,31 @@ test("scenario.search surfaces a 200 error envelope as a thrown error", async ()
     },
   );
 });
+
+test("profile_ref accepts a vanity URL and resolves it through the Steam profile page", async () => {
+  await withStubbedFetch(
+    {
+      steamHtml:
+        `<html><script>g_rgProfileData = {"url":"https://steamcommunity.com/id/vapor/","steamid":"${STEAM_ID}","personaname":"vapor"};</script>` +
+        '<span class="actual_persona_name">riler</span></html>',
+      leaderboard: (page) =>
+        page === 0
+          ? { total: 1000, data: [boardEntry({ steamId: STEAM_ID, score: 16_500, rank: 143 })], searchSteamId: STEAM_ID }
+          : { total: 1000 },
+    },
+    async (calls) => {
+      const result = await executeNativeKovaakLeaderboard("kovaak_leaderboard.lookup", {
+        leaderboard_id: 185342,
+        profile_ref: "https://steamcommunity.com/id/vapor/",
+      });
+      assert.equal(result.status, "succeeded", JSON.stringify(result.warning_or_error));
+      const summary = result.result as Record<string, unknown>;
+      assert.equal(summary.rank, 143);
+      assert.equal(summary.on_board, true);
+      assert.ok(
+        calls.some((call) => call.includes("steamcommunity.com/id/vapor/")),
+        "the vanity page must be fetched to resolve the numeric Steam ID",
+      );
+    },
+  );
+});

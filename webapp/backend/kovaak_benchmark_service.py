@@ -191,7 +191,7 @@ async def refresh_connected_score_summary(owner_id: str) -> dict:
 
 
 async def project_temporary_snapshot(steam_profile_input: str) -> dict:
-    steam_id = kovaak_benchmark_provider.normalize_steam_profile_input(steam_profile_input)
+    steam_id = kovaak_benchmark_provider.normalize_numeric_steam_input(steam_profile_input)
     snapshot = await kovaak_benchmark_provider.fetch_viscose_s2(steam_id)
     records = _records_from_snapshot(snapshot, _observed_at())
     return project_score_summary(benchmark_catalog.project_benchmark_summary(records))

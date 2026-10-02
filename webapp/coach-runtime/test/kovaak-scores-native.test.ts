@@ -163,3 +163,54 @@ test("a malformed rank_maxes entry degrades to an empty list without failing the
     globalThis.fetch = originalFetch;
   }
 });
+
+test("kovaak_scores.lookup resolves a vanity profile URL to the numeric Steam ID", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = new URL(String(input));
+    if (url.hostname === "steamcommunity.com") {
+      assert.equal(url.pathname, "/id/vapor/");
+      return new Response(
+        `<script>g_rgProfileData = {"url":"https://steamcommunity.com/id/vapor/","steamid":"${STEAM_ID}","personaname":"vapor"};</script>`,
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      );
+    }
+    const difficulty = BENCHMARK_ID_TO_DIFFICULTY.get(Number(url.searchParams.get("benchmarkId")));
+    assert.ok(difficulty, "unknown benchmark id");
+    return new Response(JSON.stringify(benchmarkPayload(difficulty)), { status: 200 });
+  }) as typeof fetch;
+  try {
+    // Slash-less paste: the resolver canonicalizes instead of relying on a redirect.
+    const result = await executeNativeKovaakScore(
+      "kovaak_scores.lookup",
+      { profile_ref: "https://steamcommunity.com/id/vapor" },
+      "owner",
+    );
+    assert.equal(result.status, "succeeded", JSON.stringify(result.warning_or_error));
+    const items = (result.result as Record<string, unknown>).items as Array<Record<string, unknown>>;
+    assert.ok(items.length > 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("kovaak_scores.lookup rejects a vanity URL whose profile page has no Steam ID", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = new URL(String(input));
+    assert.equal(url.hostname, "steamcommunity.com");
+    // steamcommunity serves missing profiles as HTTP 200 error pages.
+    return new Response("<html>Error</html>", { status: 200, headers: { "Content-Type": "text/html" } });
+  }) as typeof fetch;
+  try {
+    const result = await executeNativeKovaakScore(
+      "kovaak_scores.lookup",
+      { profile_ref: "https://steamcommunity.com/id/ghost/" },
+      "owner",
+    );
+    assert.equal(result.status, "failed");
+    assert.match(String(result.warning_or_error?.message ?? ""), /profile_ref/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

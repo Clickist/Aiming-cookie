@@ -394,9 +394,9 @@ class KovaaKBenchmarkSyncRequest(BaseModel):
     @field_validator("steam_id")
     @classmethod
     def _steam_id(cls, value: str) -> str:
-        from .kovaak_benchmark_provider import normalize_steam_profile_input
+        from .kovaak_benchmark_provider import normalize_numeric_steam_input
 
-        return normalize_steam_profile_input(value)
+        return normalize_numeric_steam_input(value)
 
     @field_validator("identity_consent")
     @classmethod

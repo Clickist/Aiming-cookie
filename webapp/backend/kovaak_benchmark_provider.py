@@ -17,6 +17,12 @@ _STEAM_ID = re.compile(r"^[0-9]{17}$")
 _STEAM_PROFILE_URL = re.compile(
     r"^https://steamcommunity\.com/profiles/([0-9]{17})/$",
 )
+_STEAM_VANITY_URL = re.compile(
+    r"^https://steamcommunity\.com/id/([A-Za-z0-9_-]{1,64})/?$",
+)
+_PROFILE_PAGE_STEAMID = re.compile(
+    r'g_rgProfileData\s*=\s*\{[^;]*?"steamid"\s*:\s*"([0-9]{17})"',
+)
 _BENCHMARK_URL = (
     "https://kovaaks.com/webapp-backend/benchmarks/"
     "player-progress-rank-benchmark"
@@ -36,7 +42,7 @@ def validate_steam_id(steam_id: str) -> str:
 
 
 def normalize_steam_profile_input(value: str) -> str:
-    """Accept only an exact Steam ID or canonical public profile URL."""
+    """Accept an exact Steam ID, canonical numeric profile URL, or vanity URL."""
     if not isinstance(value, str):
         raise ValueError("Steam profile input is invalid")
     if _STEAM_ID.fullmatch(value) is not None:
@@ -44,7 +50,61 @@ def normalize_steam_profile_input(value: str) -> str:
     match = _STEAM_PROFILE_URL.fullmatch(value)
     if match is not None:
         return match.group(1)
+    if _STEAM_VANITY_URL.fullmatch(value) is not None:
+        # Vanity URLs keep their form; resolving the name to a 17-digit ID
+        # is a network round trip, done by resolve_steam_profile_input.
+        return value
     raise ValueError("Steam profile input is invalid")
+
+
+def normalize_numeric_steam_input(value: str) -> str:
+    """Numeric forms only; endpoints that cannot resolve vanity URLs use this."""
+    normalized = normalize_steam_profile_input(value)
+    if _STEAM_ID.fullmatch(normalized) is None:
+        raise ValueError("Steam profile input is invalid")
+    return normalized
+
+
+async def resolve_steam_profile_input(
+    value: str,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Turn any accepted profile input into the 17-digit Steam ID.
+
+    Vanity URLs are resolved by fetching the public profile page; missing or
+    unavailable profiles surface as ValueError without echoing the input.
+    """
+    normalized = normalize_steam_profile_input(value)
+    if _STEAM_ID.fullmatch(normalized) is not None:
+        return normalized
+
+    async def resolve_with(active_client: httpx.AsyncClient) -> str:
+        try:
+            response = await active_client.get(
+                # Canonical form ends in "/", so a slash-less paste still hits
+                # the real page instead of depending on a Steam redirect.
+                normalized if normalized.endswith("/") else f"{normalized}/",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+        except httpx.HTTPError as error:
+            raise ValueError("Steam profile could not be resolved") from error
+        if response.status_code != 200:
+            raise ValueError("Steam profile could not be resolved")
+        # steamcommunity serves missing profiles as HTTP 200 error pages
+        # without the g_rgProfileData script block, so extraction is the
+        # existence check, not the status code.
+        match = _PROFILE_PAGE_STEAMID.search(response.text)
+        if match is None:
+            raise ValueError("Steam profile could not be resolved")
+        return validate_steam_id(match.group(1))
+
+    if client is not None:
+        return await resolve_with(client)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0),
+        follow_redirects=True,
+    ) as owned_client:
+        return await resolve_with(owned_client)
 
 
 def _rank(value: object, field: str) -> int:

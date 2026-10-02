@@ -30,9 +30,10 @@ interface Feedback {
 
 const STEAM_ID = /^\d{17}$/;
 const STEAM_PROFILE = /^https:\/\/steamcommunity\.com\/profiles\/\d{17}\/$/;
+const STEAM_VANITY = /^https:\/\/steamcommunity\.com\/id\/[A-Za-z0-9_-]{1,64}\/?$/;
 
 function isSteamProfile(value: string): boolean {
-  return STEAM_ID.test(value) || STEAM_PROFILE.test(value);
+  return STEAM_ID.test(value) || STEAM_PROFILE.test(value) || STEAM_VANITY.test(value);
 }
 
 export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKConnectionPanelProps) {
