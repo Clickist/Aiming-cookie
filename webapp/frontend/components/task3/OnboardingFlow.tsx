@@ -1017,12 +1017,15 @@ function MemberConnect({
               <p className="task3-member-hint">{t("onboarding.member.trialHint")}</p>
             ) : null}
           </div>
-          <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
           {trialAvailable ? (
             // 死锁出口（1002）：试用余量可跑一局 → 放行第 2 步，分析完成
-            // verified_at 落库后订阅页验证闸自动解锁。
+            // verified_at 落库后订阅页验证闸自动解锁。此态下网页订阅页仍在
+            // 验证闸后（无购买入口），订阅按钮不渲染——首次引导只留体验一条路
+            // （点点 1002 拍板）。
             <Button className="task3-member-primary" onClick={onContinue} variant="primary">{t("onboarding.member.trialCta")}</Button>
-          ) : null}
+          ) : (
+            <Button className="task3-member-primary" onClick={onSubscribe} variant="primary">{MEMBER_COPY.openSubscribePage}</Button>
+          )}
           <div className="task3-member-secondary-actions">
             <Button disabled={busy} onClick={onReopen} variant="secondary">{MEMBER_COPY.reopenBrowser}</Button>
           </div>
