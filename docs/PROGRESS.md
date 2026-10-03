@@ -1,6 +1,14 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-02. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-03. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-03 — v1.3.6 发布：安全加固/评审修复批/动效与指引卡
+
+workflow 全量代码评审（10 领域 68 发现，67 经独立复核确认）→ 活体验证（真客户端 CDP：sidecar 裸奔偷 key 全链、坏文件 500、白屏循环等 10 条实锤）→ 两子代理实施 → 全量测试（pytest 743+884 / 前端 342 / coach-runtime 534 / cargo 177 全绿）→ 两连实机走查（安装版老用户旅程 + 隔离标识符 onboarding→真实流式对话→持久化全旅程，SSE query token 路径实测）→ 发版。主要内容：①**sidecar 启动令牌闸门**（ARCHITECTURE 合同落地：全路由除 healthz 校验 `X-Aiming-Cookie-Desktop-Token`，CORS * 收白名单，Tauri 生成→IPC 下发，SSE 走 query 特批，Python 后端调 sidecar 两处补带）；②评审七小修（坏会话文件 500 保护/存储写序 record-first/会员缓存深校验自愈/分析 hash 下线程/omega_frac 空保护/安装器 0x07 控制字符/ac-logs 备份对齐 schemaVersion）；③七条动效+KovaaK 安装指引卡+模型 reasoning 力度档位投影；④1002 分析器家族能力随车。
+
+发版坑新账：**`tauri build` 不重编 coach-sidecar/PyInstaller runtime 二进制**——改 sidecar/backend 必须先 `build-windows-runtime.ps1` 再 tauri build（本次首轮终验偷 key 仍 200 即此因，活体验证抓出）；installer 脚本签名挂死时 exe 已完整，`tauri signer sign` 补签 1 分钟收尾。
+
+同日 accounts 仓上线（`7c57d9f` 退款链 + `7109f7c` 文案手术）：账单页清除订阅时代"自动续费"残留（取消/恢复卡、FAQ 等），对齐按月购买事实——真实客诉（用户点取消自动续费被告知无订阅）闭环；部署方式实证=`wrangler deploy` 非 push 自动部署。usage_pusher.py 已入库待 ECS 重启生效。
 
 ## 2026-10-02 — v1.3.5 发布：会话治理/采集可观测/onboarding 死循环修复
 
