@@ -510,7 +510,11 @@ export function OnboardingFlow() {
   const selectedModelLabel = selectedModel?.model_name ?? selectedModel?.model_id ?? modelId;
   const connectionReady = connectionState === "ready";
   // ①b 态2（老会员直连）：会员态 + 连通测试都过才放行（铁律⑤）。
-  const memberReady = memberSelected && memberStage === "member" && connectionState !== "failed";
+  // 态1 试用出口也要放行（1003）：「先免费体验」放行进第 2 步后，进入工作台
+  // 门禁不认试用态会让按钮永远禁用（1.3.5/1.3.6 试用新用户卡死在向导）。
+  const memberReady = memberSelected
+    && (memberStage === "member" || (memberStage === "not_subscribed" && memberTrialAvailable))
+    && connectionState !== "failed";
   const builtinModelSelectable = Boolean(
     selectedProvider
     && (authMode !== "api_key" || apiKey.trim() || (connectionReady && savedProfile?.has_api_key)),

@@ -267,6 +267,16 @@ test("onboarding never persists credentials in browser storage", async () => {
   assert.doesNotMatch(value, /localStorage|sessionStorage|indexedDB/);
 });
 
+test("onboarding finish gate admits the trial path so the trial exit cannot dead-end at step 2", async () => {
+  const value = await source("components/task3/OnboardingFlow.tsx");
+  // 态1 试用出口（1003 修复）：「先免费体验」放行进第 2 步后，memberReady
+  // 必须认试用态（not_subscribed + 试用余量 > 0），否则「进入工作台」永远
+  // 禁用（1.3.5/1.3.6 试用新用户卡死在向导）。
+  assert.match(value, /memberStage === "member" \|\| \(memberStage === "not_subscribed" && memberTrialAvailable\)/);
+  // 进入工作台按钮的放行条件仍是 connectionReady || memberReady。
+  assert.match(value, /!\(connectionReady \|\| memberReady\)/);
+});
+
 test("onboarding provider catalog failure has error status semantics", async () => {
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
   const styles = await source("components/task3/task3.css");
