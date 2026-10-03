@@ -172,7 +172,7 @@
     .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
     .cl-rel:last-child { margin-bottom: 0; }
     .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin: 0; }
     .cl-badge {
       font-size: 11px; font-weight: 600; color: var(--accent);
       background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
@@ -204,6 +204,9 @@
       .cl-item { font-size: 14px; }
     }
   </style>
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://aimingcookie.com/changelog/#webpage","url":"https://aimingcookie.com/changelog/","name":"更新日志 · Aiming Cookie","description":"Aiming Cookie 每个版本更新了什么，都在这里：新增、改进与修复的完整更新日志。KovaaK's 瞄准诊断 + AI 教练，免费 Windows 桌面应用。","inLanguage":"zh-CN","isPartOf":{"@id":"https://aimingcookie.com/#website"},"about":{"@id":"https://aimingcookie.com/#org"}},{"@type":"BreadcrumbList","@id":"https://aimingcookie.com/changelog/#breadcrumb","itemListElement":[{"@type":"ListItem","position":1,"name":"Aiming Cookie","item":"https://aimingcookie.com/"},{"@type":"ListItem","position":2,"name":"更新日志","item":"https://aimingcookie.com/changelog/"}]}]}
+  </script>
 </head>
 <body>
   <header class="topnav">
@@ -240,7 +243,34 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.2</span> <span class="cl-badge">最新</span><span class="cl-date">2026-09-30</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.5</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-02</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分 Windows 预览版系统下训练视频无法录制的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>改进虚拟显示器与远程桌面环境下的录制兼容性</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复超长对话首次继续时全量重发导致的请求失败与消耗暴涨——现在会自动压缩历史后正常继续</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>录制引擎自愈重启会写入诊断记录，远程排查问题更快</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复新用户在连接模型服务一步被卡住的问题——现在可以先免费体验，完成一局分析验证后再订阅</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.4</h2><span class="cl-date">2026-10-01</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复 Coach 偶发空回复的问题——现在会自动重试一次，不再需要手动重新提问</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>所选模型失效时自动恢复可用并给出处理指引，不再卡在报错上</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>网关额度类错误的提示文案更清晰，一眼能看出问题所在</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.3</h2><span class="cl-date">2026-09-30</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>录屏支持非标准分辨率窗口——高分屏缩放、虚拟显示器等导致窗口宽高为奇数时自动适配，此前这类电脑完全无法录制训练视频</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复采集子进程静默崩溃的问题——崩溃原因会记录进诊断包，游戏重启等临时性故障后自动恢复</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>采集在异常环境（游戏退出瞬间、移动磁盘掉线等）下更稳定，不再空转刷日志</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>诊断包新增录屏窗口尺寸、编码尺寸、编码器各层失败详情与采集子进程崩溃日志，远程排查更快</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.2</h2><span class="cl-date">2026-09-30</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">新增</span><span>训练历史支持整条删除——悬停训练记录点垃圾桶两段确认即可清理不要的记录</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>打完一局当场就能深度分析，不用再退出 KovaaK——跟枪等场景的深度诊断数据现在按局实时进入系统</span></li>
@@ -249,7 +279,7 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.1</span><span class="cl-date">2026-09-29</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.1</h2><span class="cl-date">2026-09-29</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>兼容部分 AMD 老显卡——视频录制初始化失败时自动切换软件编码，不再整体失效</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复训练途中调整窗口大小后，之后所有对局都无法分析的问题</span></li>
@@ -257,7 +287,7 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.0</span><span class="cl-date">2026-09-28</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.0</h2><span class="cl-date">2026-09-28</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">新增</span><span>自定义数据存储位置——录像与遥测可一键迁到非系统盘，C 盘不再被占满</span></li>
             <li class="cl-new"><span class="cl-tag">新增</span><span>用户中心新增「调用记录」——每次 AI 调用的时间、模型与 token 用量一目了然</span></li>
@@ -267,14 +297,14 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.2</span><span class="cl-date">2026-09-18</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.2.2</h2><span class="cl-date">2026-09-18</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>顶栏讨论条防遮挡三键</span></li>
             <li class="cl-imp"><span class="cl-tag">改进</span><span>安装与更新流程稳定性</span></li>
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.1</span><span class="cl-date">2026-09-14</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.2.1</h2><span class="cl-date">2026-09-14</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">新增</span><span>官方场景库搜索（17.5 万场景模糊匹配）</span></li>
           </ul>

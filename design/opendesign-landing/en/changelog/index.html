@@ -172,7 +172,7 @@
     .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
     .cl-rel:last-child { margin-bottom: 0; }
     .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin: 0; }
     .cl-badge {
       font-size: 11px; font-weight: 600; color: var(--accent);
       background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
@@ -204,6 +204,9 @@
       .cl-item { font-size: 14px; }
     }
   </style>
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://aimingcookie.com/en/changelog/#webpage","url":"https://aimingcookie.com/en/changelog/","name":"Release Notes · Aiming Cookie","description":"Every change to Aiming Cookie, in one place: the full changelog of new features, improvements and fixes. Free Windows desktop app for KovaaK's aim analysis with an AI coach.","inLanguage":"en","isPartOf":{"@id":"https://aimingcookie.com/#website"},"about":{"@id":"https://aimingcookie.com/#org"}},{"@type":"BreadcrumbList","@id":"https://aimingcookie.com/en/changelog/#breadcrumb","itemListElement":[{"@type":"ListItem","position":1,"name":"Aiming Cookie","item":"https://aimingcookie.com/"},{"@type":"ListItem","position":2,"name":"Release notes","item":"https://aimingcookie.com/en/changelog/"}]}]}
+  </script>
 </head>
 <body>
   <header class="topnav">
@@ -240,7 +243,34 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.2</span> <span class="cl-badge">Latest</span><span class="cl-date">2026-09-30</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.5</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-02</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed training video recording on certain Windows Insider preview builds</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Improved recording compatibility on virtual displays and remote desktop setups</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed very long conversations failing or burning excess quota when first resumed: history is now compacted automatically before sending</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Self-healing restarts of the capture engine are now recorded in diagnostics for faster remote troubleshooting</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed new users getting stuck on the model-service step: you can now start with the free trial first and subscribe after completing one verification analysis</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.4</h2><span class="cl-date">2026-10-01</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Coach no longer returns an occasional empty reply: it now retries automatically once, so you don&#39;t have to ask again by hand</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>If the selected model becomes unavailable, the app now repairs it automatically and points you to what to do next instead of getting stuck on the error</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Error messages for gateway quota issues are now clearer, so you can tell at a glance what went wrong</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.3</h2><span class="cl-date">2026-09-30</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">New</span><span>Screen recording now supports non-standard window sizes: odd pixel dimensions from display scaling or virtual displays are handled automatically instead of failing</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Telemetry capture subprocesses no longer fail silently: crash reasons are recorded in diagnostics, and transient failures recover automatically</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Capture is more resilient in adverse conditions such as game-exit races or removable-drive dropouts, without busy-looping</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Diagnostics bundles now include capture window size, encode size, per-layer encoder failure details and capture subprocess crash logs for faster remote troubleshooting</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.2</h2><span class="cl-date">2026-09-30</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">New</span><span>Training history now supports deleting a record: hover a row and click the trash icon twice to remove it</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Deep analysis is now available right after each run, without quitting KovaaK first</span></li>
@@ -249,7 +279,7 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.1</span><span class="cl-date">2026-09-29</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.1</h2><span class="cl-date">2026-09-29</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Compatibility fix for some older AMD GPUs — recording now falls back to software encoding instead of failing entirely</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed all later runs failing to analyze after resizing the game window mid-session</span></li>
@@ -257,7 +287,7 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.3.0</span><span class="cl-date">2026-09-28</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.0</h2><span class="cl-date">2026-09-28</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">New</span><span>Custom data location — move recordings and telemetry off your system drive</span></li>
             <li class="cl-new"><span class="cl-tag">New</span><span>Usage records in Account Center — time, model and tokens for every AI call</span></li>
@@ -267,14 +297,14 @@
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.2</span><span class="cl-date">2026-09-18</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.2.2</h2><span class="cl-date">2026-09-18</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Top-bar discussion chips no longer overlap the three window buttons</span></li>
             <li class="cl-imp"><span class="cl-tag">Improved</span><span>More stable install and update flow</span></li>
           </ul>
         </div>
         <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v1.2.1</span><span class="cl-date">2026-09-14</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.2.1</h2><span class="cl-date">2026-09-14</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">New</span><span>Official scenario library search (fuzzy match across 175k scenarios)</span></li>
           </ul>

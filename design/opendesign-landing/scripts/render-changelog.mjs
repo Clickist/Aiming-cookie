@@ -119,7 +119,7 @@ function renderVersion(v, i, lang, t) {
   const items = v.items.map((it) => renderItem(it, lang, t)).join("\n");
   const badge = i === 0 ? `<span class="cl-badge">${esc(t.TAG.latest)}</span>` : "";
   return `        <div class="cl-rel">
-          <div class="cl-rel-head"><span class="cl-rel-ver">v${esc(v.version)}</span>${badge ? " " + badge : ""}<span class="cl-date">${esc(v.date)}</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v${esc(v.version)}</h2>${badge ? " " + badge : ""}<span class="cl-date">${esc(v.date)}</span></div>
           <ul>
 ${items}
           </ul>
@@ -268,7 +268,7 @@ const CSS = `    /* ─── tokens（绑定 brand-spec.md · Light）───
     .cl-rel { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; }
     .cl-rel:last-child { margin-bottom: 0; }
     .cl-rel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+    .cl-rel-ver { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin: 0; }
     .cl-badge {
       font-size: 11px; font-weight: 600; color: var(--accent);
       background: var(--accent-soft); padding: 2px 9px; border-radius: 999px;
@@ -347,6 +347,31 @@ function renderPage(lang) {
   <style>
 ${CSS}
   </style>
+  <script type="application/ld+json">
+${JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebPage",
+      "@id": `${t.url}#webpage`,
+      url: t.url,
+      name: t.ogTitle,
+      description: t.description,
+      inLanguage: t.htmlLang,
+      isPartOf: { "@id": `${SITE}/#website` },
+      about: { "@id": `${SITE}/#org` },
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": `${t.url}#breadcrumb`,
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Aiming Cookie", item: `${SITE}/` },
+        { "@type": "ListItem", position: 2, name: t.h1, item: t.url },
+      ],
+    },
+  ],
+})}
+  </script>
 </head>
 <body>
   <header class="topnav">
@@ -427,4 +452,16 @@ for (const lang of ["zh", "en"]) {
   mkdirSync(path.dirname(t.out), { recursive: true });
   writeFileSync(t.out, renderPage(lang), "utf8");
   console.log(`[render-changelog] ${data.versions.length} 个版本 / ${data.versions.reduce((n, v) => n + v.items.length, 0)} 条条目 → ${path.relative(root, t.out)}`);
+}
+
+// llms.txt 的版本号与安装包直链随最新版本同步，避免 AI 端读到滞后的版本信息
+const latest = data.versions[0].version;
+const llmsPath = path.join(root, "llms.txt");
+const llmsBefore = readFileSync(llmsPath, "utf8");
+const llmsAfter = llmsBefore
+  .replace(/Aiming_Cookie_[\w.]+-setup\.exe/g, `Aiming_Cookie_${latest}_x64-setup.exe`)
+  .replace(/latest version v[\d.]+/g, `latest version v${latest}`);
+if (llmsAfter !== llmsBefore) {
+  writeFileSync(llmsPath, llmsAfter, "utf8");
+  console.log(`[render-changelog] llms.txt 版本信息已同步到 v${latest}`);
 }
