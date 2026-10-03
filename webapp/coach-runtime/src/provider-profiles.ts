@@ -30,6 +30,7 @@ import {
 import {
   AIMING_COOKIE_RELAY_PROVIDER_ID,
   fetchCustomProviderModels,
+  projectCustomModelReasoning,
   resolveProviderModel,
 } from "./provider-models.ts";
 import {
@@ -105,9 +106,9 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
 function writeJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
+    // ACAO 由 sidecar-server 入口按 Origin 白名单统一 setHeader，这里不回 *。
     "Access-Control-Allow-Headers": "content-type,x-user-id",
     "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
   });
@@ -575,7 +576,10 @@ export async function handleProviderProfileRequest(
           return true;
         }
         const protocol = entry.kind === "custom_anthropic_compatible" ? "anthropic-messages" : "openai-completions";
-        const models: CustomProviderModel[] = await fetchCustomProviderModels(protocol, entry.base_url, apiKey);
+        // reasoning 元数据投影（1003 修复）：力度菜单显隐依赖它，与运行时同源。
+        const models = await projectCustomModelReasoning(
+          await fetchCustomProviderModels(protocol, entry.base_url, apiKey),
+        );
         // 点点 0912 拍板：发现结果存档一份，详情页免点「获取模型」直接显示；
         // 之后的「获取模型」只是更新这份存档。
         entry.discovered_models = models;
@@ -590,10 +594,8 @@ export async function handleProviderProfileRequest(
         writeJson(res, 400, { detail: "custom model discovery input is invalid" });
         return true;
       }
-      const models: CustomProviderModel[] = await fetchCustomProviderModels(
-        body.protocol,
-        body.base_url,
-        body.api_key,
+      const models = await projectCustomModelReasoning(
+        await fetchCustomProviderModels(body.protocol, body.base_url, body.api_key),
       );
       writeJson(res, 200, { models });
     } catch (error) {

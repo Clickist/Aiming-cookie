@@ -9,6 +9,7 @@ import { ProviderAuthOperationManager, type PiAuthProvider } from "../src/provid
 import { createAgentRun, stopAgentRun } from "../src/agent-runs.ts";
 import { loadKnowledgeRegistry } from "../src/knowledge-registry.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { waitForTask } from "../src/task-manager.ts";
 
 // Knowledge materialization binds to DATA_ROOT on first use (getDataRoot
@@ -135,13 +136,16 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(body),
-              ...headers,
-            }
-          : headers,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+                ...headers,
+              }
+            : headers),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -242,6 +246,7 @@ test("POST /v1/turn sends a partial NDJSON frame before the final frame when exp
         headers: {
           "Content-Type": "application/json",
           Accept: "application/x-ndjson",
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
         },
       }, (res) => {
         assert.match(String(res.headers["content-type"]), /application\/x-ndjson/);
@@ -368,6 +373,7 @@ test("POST /v1/turn fail-closes an invalid partial after a valid NDJSON frame", 
         headers: {
           "Content-Type": "application/json",
           Accept: "application/x-ndjson",
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
         },
       }, (res) => {
         const chunks: Buffer[] = [];
@@ -688,7 +694,11 @@ test("GET /v1/agent-runs/:ref/stream emits a done event for a stopped run and cl
         port: address.port,
         method: "GET",
         path: `/v1/agent-runs/${encodeURIComponent(run.run_ref)}/stream`,
-        headers: { "Connection": "close", "X-User-Id": "test-owner" },
+        headers: {
+          "Connection": "close",
+          "X-User-Id": "test-owner",
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+        },
       }, (res) => {
         assert.equal(res.statusCode, 200);
         assert.match(String(res.headers["content-type"]), /text\/event-stream/);

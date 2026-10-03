@@ -9,6 +9,7 @@ const dataRoot = mkdtempSync(join(tmpdir(), "coach-sidecar-error-log-"));
 process.env.DATA_ROOT = dataRoot;
 
 const { createSidecarServer } = await import("../src/sidecar-server.ts");
+const { DESKTOP_TEST_TOKEN } = await import("./desktop-token-env.ts");
 
 function request(
   server: http.Server,
@@ -28,12 +29,15 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(body),
-            }
-          : undefined,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+              }
+            : undefined),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];

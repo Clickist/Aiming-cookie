@@ -18,6 +18,7 @@ import { readSessionMessages } from "../src/session-repo.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 import { runCoachTurn } from "../src/turn.ts";
 import { streamAssistant } from "./pi-fake-stream.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../prompts/skills");
@@ -33,7 +34,15 @@ function request(server: http.Server, method: string, path: string): Promise<{ s
       reject(new Error("server not listening"));
       return;
     }
-    const req = http.request({ host: "127.0.0.1", port: address.port, method, path }, (res) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method,
+        path,
+        headers: { "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN },
+      },
+      (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("end", () => {

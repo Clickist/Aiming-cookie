@@ -26,6 +26,7 @@ import {
   isIntroKickoffMessage,
 } from "../src/intro-kickoff.ts";
 import { readConversationMeta } from "../src/session-repo.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 
 test.after(() => {
@@ -67,7 +68,13 @@ function postJson(
       return;
     }
     const req = http.request(
-      { host: "127.0.0.1", port: address.port, method: "POST", path, headers },
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method: "POST",
+        path,
+        headers: { "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN, ...headers },
+      },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));

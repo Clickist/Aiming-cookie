@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 
 import { createSidecarServer } from "../src/sidecar-server.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 
 function request(
   server: http.Server,
@@ -23,9 +24,12 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body
-          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...headers }
-          : headers,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body
+            ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...headers }
+            : headers),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];

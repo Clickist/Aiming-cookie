@@ -20,6 +20,7 @@ import { createSidecarServer } from "../src/sidecar-server.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
 import { waitForTask } from "../src/task-manager.ts";
 import { streamAssistant } from "./pi-fake-stream.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 
 writeFileSync(join(dataRoot, "passthrough-notes.txt"), "analysis: aim down after peek", "utf8");
 
@@ -158,7 +159,13 @@ function collectSseFrames(
       return;
     }
     const req = http.request(
-      { host: "127.0.0.1", port: address.port, method: "GET", path, headers },
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method: "GET",
+        path,
+        headers: { "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN, ...headers },
+      },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -266,7 +273,11 @@ test("NDJSON partial frames accept thinking-only revisions and carry thinking_te
           port: address.port,
           method: "POST",
           path: "/v1/turn",
-          headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/x-ndjson",
+            "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          },
         },
         (res) => {
           const chunks: Buffer[] = [];

@@ -78,8 +78,12 @@ impl RuntimeProcess {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
-        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout, app_data_dir)?;
+        // 本次启动令牌先生成：同一 token 发给 Python、Coach sidecar（各经
+        // env 注入）并经 desktop_runtime_connection 下发前端（ARCHITECTURE
+        // 「本次启动 token」）。token 不落盘、不进日志。
         let token = create_launch_token();
+        let (mut coach_sidecar, coach_sidecar_url) =
+            start_coach_sidecar(layout, app_data_dir, &token)?;
         let mut command = Command::new(&layout.backend_program);
         command
             .args(&layout.backend_args)
@@ -549,6 +553,7 @@ fn configure_python_io(command: &mut Command) {
 fn start_coach_sidecar(
     layout: &RuntimeLayout,
     app_data_dir: &Path,
+    token: &str,
 ) -> Result<(Child, String), String> {
     let mut command = Command::new(&layout.coach_program);
     if let (Some(pi_source_dir), Some(tsx_loader), Some(sidecar_entry), Some(tsconfig)) = (
@@ -582,7 +587,9 @@ fn start_coach_sidecar(
     }
     command
         .current_dir(&layout.working_dir)
-        .env_remove(TOKEN_ENV)
+        // 与 ARCHITECTURE「本次启动 token」一致：sidecar 对 healthz 之外的
+        // 路由校验 X-Aiming-Cookie-Desktop-Token；与 Python 共用同一 token。
+        .env(TOKEN_ENV, token)
         .env(COACH_SIDECAR_HOST_ENV, "127.0.0.1")
         .env(COACH_SIDECAR_PORT_ENV, "0")
         .env("DATA_ROOT", app_data_dir)
@@ -614,6 +621,8 @@ fn start_coach_sidecar(
     };
 
     let (sender, receiver) = mpsc::sync_channel(1);
+    // token 不进日志：sidecar stderr 理论上可能回显 env，逐行脱敏后再落日志。
+    let stderr_secrets = [token.to_string()];
     thread::spawn(move || {
         let mut sent_readiness = false;
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
@@ -624,7 +633,7 @@ fn start_coach_sidecar(
                     continue;
                 }
             }
-            crate::dlog!("[coach-sidecar] {line}");
+            crate::dlog!("[coach-sidecar] {}", redact_secrets(&line, &stderr_secrets));
         }
         if !sent_readiness {
             let _ = sender.send(Err("Coach sidecar exited before readiness".to_string()));

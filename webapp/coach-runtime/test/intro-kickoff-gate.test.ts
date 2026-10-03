@@ -19,6 +19,7 @@ process.env.DATA_ROOT = dataRoot;
 import { saveProfile } from "../src/provider-store.ts";
 import { ensureIntroSession } from "../src/intro-session.ts";
 import { ensureSession } from "../src/session-repo.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 
 test.after(() => {
@@ -36,7 +37,15 @@ function request(
       reject(new Error("server not listening"));
       return;
     }
-    const req = http.request({ host: "127.0.0.1", port: address.port, method, path }, (res) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method,
+        path,
+        headers: { "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN },
+      },
+      (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("end", () => {

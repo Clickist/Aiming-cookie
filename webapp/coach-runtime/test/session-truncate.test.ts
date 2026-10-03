@@ -12,6 +12,7 @@ process.env.DATA_ROOT = dataRoot;
 const { createSidecarServer } = await import("../src/sidecar-server.ts");
 const { getCoachSessionDetail, truncateCoachSession } = await import("../src/sidecar-coach-data.ts");
 const { ensureSession, readSessionMessages, readSessionMessagesForUi, truncateSessionFromMessage } = await import("../src/session-repo.ts");
+const { DESKTOP_TEST_TOKEN } = await import("./desktop-token-env.ts");
 
 function request(server: http.Server, method: string, path: string, body?: string): Promise<{ statusCode: number; json: unknown }> {
   return new Promise((resolve, reject) => {
@@ -21,7 +22,10 @@ function request(server: http.Server, method: string, path: string, body?: strin
         port: (server.address() as { port: number }).port,
         method,
         path,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : undefined),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];

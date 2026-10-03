@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import http from "node:http";
 import { join } from "node:path";
@@ -59,6 +60,55 @@ import {
 
 export const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 export const DEFAULT_SIDECAR_PORT = 8765;
+
+// 桌面启动令牌（ARCHITECTURE「本次启动 token」）：Tauri 每次启动生成 32 字节
+// 随机 hex，经 AIMING_COOKIE_DESKTOP_TOKEN env 注入本进程；healthz 之外的
+// 所有路由都要求 X-Aiming-Cookie-Desktop-Token 头。env 未配置时 fail-closed
+// （一律 401），与 backend/auth.py 的 require_desktop_token 同口径。手动
+// `bun start-sidecar.ts` 开发时需自带该 env。
+const DESKTOP_TOKEN_ENV = "AIMING_COOKIE_DESKTOP_TOKEN";
+const DESKTOP_TOKEN_HEADER = "x-aiming-cookie-desktop-token";
+
+// CORS 白名单回显制：跨源读取只放行应用自身源（Tauri WebView 的 Windows
+// http(s)://tauri.localhost 与 macOS tauri://localhost）和本地 Next dev 端口，
+// 与 runtime.rs 下发给 Python 的 CORS_ORIGINS 同一集合。名单外的 Origin 不回
+// ACAO，浏览器拒绝读取响应；无 Origin 的本地工具（curl 等）不受 CORS 影响，
+// 但仍过桌面令牌闸门。
+const CORS_ALLOWED_ORIGINS = new Set([
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+  "tauri://localhost",
+  "http://localhost:3000",
+  "http://localhost:3001",
+]);
+
+function corsAllowedOrigin(req: http.IncomingMessage): string | null {
+  const origin = req.headers.origin;
+  return typeof origin === "string" && CORS_ALLOWED_ORIGINS.has(origin) ? origin : null;
+}
+
+// 常数时间比较：两侧都先定长 sha256 再 timingSafeEqual，长度差异不提前短路
+//（对齐 backend/auth.py 的 hmac.compare_digest 语义）。
+function tokensMatch(provided: string, expected: string): boolean {
+  const providedDigest = createHash("sha256").update(provided).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
+function desktopTokenAuthorized(req: http.IncomingMessage, url: URL): boolean {
+  const expected = process.env[DESKTOP_TOKEN_ENV] ?? "";
+  if (!expected) return false; // fail-closed：令牌未配置即全拒。
+  const headerValues = req.headers[DESKTOP_TOKEN_HEADER];
+  const header = Array.isArray(headerValues) ? headerValues[0] : headerValues;
+  if (typeof header === "string" && header && tokensMatch(header, expected)) return true;
+  // EventSource 无法携带自定义头：仅 SSE 订阅路由允许以 query 参数传递同一
+  // 令牌兜底（仅 loopback；令牌不落盘、不进日志）。
+  if (url.pathname.endsWith("/stream")) {
+    const queryToken = url.searchParams.get("desktop_token");
+    if (queryToken && tokensMatch(queryToken, expected)) return true;
+  }
+  return false;
+}
 
 const defaultAuthOperations = new ProviderAuthOperationManager();
 
@@ -122,9 +172,11 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 function writeJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
-    "Access-Control-Allow-Headers": "content-type,x-user-id,x-locale",
+    // ACAO 由 handleSidecarRequest 入口按 Origin 白名单统一 setHeader，
+    // 这里不再回 *；Allow-Headers 必须包含桌面令牌头，预检才会放行实际请求。
+    "Access-Control-Allow-Headers":
+      "content-type,x-user-id,x-locale,x-aiming-cookie-desktop-token",
     "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
   });
@@ -237,11 +289,19 @@ export async function handleSidecarRequest(
   const host = req.headers.host ?? "127.0.0.1";
   const url = new URL(req.url ?? "/", `http://${host}`);
 
+  // CORS 白名单回显：先于任何 writeHead 挂到 res 上，后续所有响应（含流式与
+  // 错误路径）自动携带；名单外的 Origin 不回 ACAO。
+  const allowedOrigin = corsAllowedOrigin(req);
+  if (allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  }
+
   if (req.method === "OPTIONS") {
+    // 预检不设令牌闸（浏览器预检不会带自定义头）；实际请求仍会过闸。
     res.writeHead(204, {
-      "Access-Control-Allow-Headers": "content-type,x-user-id,x-locale",
+      "Access-Control-Allow-Headers":
+        "content-type,x-user-id,x-locale,x-aiming-cookie-desktop-token",
       "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-      "Access-Control-Allow-Origin": "*",
     });
     res.end();
     return;
@@ -249,6 +309,18 @@ export async function handleSidecarRequest(
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  // 桌面令牌闸门：healthz 与 CORS 预检之外的全部路由（含 404）先过闸。
+  if (!desktopTokenAuthorized(req, url)) {
+    writeJson(res, 401, {
+      ok: false,
+      error: {
+        code: "auth.desktop_token_invalid",
+        message: "桌面运行时令牌无效或缺失",
+      },
+    });
     return;
   }
 
@@ -717,7 +789,8 @@ export async function handleSidecarRequest(
     // provider-recovery requeue; resume any waiting run before subscribing.
     resumeWaitingRuns(ownerId);
     res.writeHead(200, {
-      "Access-Control-Allow-Origin": "*",
+      // ACAO 来自入口的 Origin 白名单 setHeader（SSE 由 EventSource 以 query
+      // 参数携带桌面令牌，见 desktopTokenAuthorized）。
       "Cache-Control": "no-cache",
       "Content-Type": "text/event-stream; charset=utf-8",
       Connection: "keep-alive",

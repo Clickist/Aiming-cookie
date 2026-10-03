@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// 手动开发启动入口：桌面令牌闸门 fail-closed（healthz 之外一律 401），
+// 自起时必须自带 AIMING_COOKIE_DESKTOP_TOKEN（与 backend 的同 env 一致），如：
+//   AIMING_COOKIE_DESKTOP_TOKEN=dev-secret bun start-sidecar.ts
+// 桌面模式下由 Tauri 每次启动生成新 token 注入，不经本入口。
 import {
   DEFAULT_SIDECAR_HOST,
   DEFAULT_SIDECAR_PORT,

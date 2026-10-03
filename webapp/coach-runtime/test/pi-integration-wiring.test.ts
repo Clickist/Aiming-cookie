@@ -15,6 +15,7 @@ import { loadPiAgent, loadPiAi } from "../src/pi-source.ts";
 import { waitForTask } from "../src/task-manager.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 import { streamAssistant } from "./pi-fake-stream.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
 
 saveProfile({
@@ -43,12 +44,15 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body || owner
-          ? {
-              ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {}),
-              ...(owner ? { "X-User-Id": owner } : {}),
-            }
-          : undefined,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body || owner
+            ? {
+                ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {}),
+                ...(owner ? { "X-User-Id": owner } : {}),
+              }
+            : undefined),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];

@@ -8,13 +8,20 @@ import test from "node:test";
 process.env.DATA_ROOT = mkdtempSync(join(tmpdir(), "aiming-cookie-http-test-"));
 
 const { createSidecarServer } = await import("../src/sidecar-server.ts");
+const { DESKTOP_TEST_TOKEN } = await import("./desktop-token-env.ts");
 
 function request(server: http.Server, method: string, path: string, body?: string): Promise<{ statusCode: number; json: unknown }> {
   return new Promise((resolve, reject) => {
     const address = server.address();
     if (!address || typeof address === "string") { reject(new Error("not listening")); return; }
     const req = http.request(
-      { host: "127.0.0.1", port: address.port, method, path, headers: { "X-User-Id": "test" } },
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method,
+        path,
+        headers: { "X-User-Id": "test", "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN },
+      },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c) => chunks.push(c));

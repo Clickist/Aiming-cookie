@@ -1930,7 +1930,12 @@ async def _sidecar_parity_validate_registry(registry_doc: dict) -> tuple[Optiona
     url = f"{config.COACH_SIDECAR_URL.rstrip('/')}/knowledge/validate"
     try:
         async with httpx.AsyncClient(timeout=_PACK_PARITY_TIMEOUT_SECONDS) as client:
-            resp = await client.post(url, json=registry_doc)
+            resp = await client.post(
+                url,
+                json=registry_doc,
+                # sidecar 对 healthz 之外的路由要求本次启动令牌（与桌面端同 env）。
+                headers={"X-Aiming-Cookie-Desktop-Token": config.DESKTOP_LAUNCH_TOKEN},
+            )
     except Exception:
         log.exception("sidecar parity validate call failed for %s", url)
         return None, []
@@ -1958,7 +1963,11 @@ async def _sidecar_rematerialize_knowledge() -> Optional[dict]:
     url = f"{config.COACH_SIDECAR_URL.rstrip('/')}/knowledge/rematerialize"
     try:
         async with httpx.AsyncClient(timeout=_PACK_PARITY_TIMEOUT_SECONDS) as client:
-            resp = await client.post(url)
+            resp = await client.post(
+                url,
+                # sidecar 对 healthz 之外的路由要求本次启动令牌（与桌面端同 env）。
+                headers={"X-Aiming-Cookie-Desktop-Token": config.DESKTOP_LAUNCH_TOKEN},
+            )
     except Exception:
         log.exception("sidecar rematerialize call failed for %s", url)
         return None

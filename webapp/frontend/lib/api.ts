@@ -187,6 +187,8 @@ async function apiFetchSidecar(
   const request = async (connection: Awaited<ReturnType<typeof getDesktopRuntimeConnection>>) => {
     const headers = new Headers(init.headers);
     headers.set("X-User-Id", DESKTOP_USER_ID);
+    // sidecar 令牌闸门与 Python 后端共用同一次启动 token（IPC 同通道下发）。
+    headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
     headers.set("X-Locale", getLocale());
     return fetch(`${connection.sidecarUrl}${path}`, {
       ...init,
@@ -1440,12 +1442,18 @@ export async function getCoachAgentRun(
 
 /**
  * Resolve the sidecar SSE stream URL for a live agent run. EventSource cannot
- * attach custom headers, so this relies on the sidecar's default loopback
- * owner (desktop-local) matching the desktop runtime's X-User-Id.
+ * attach custom headers, so the desktop launch token rides in the query string
+ * instead（仅 loopback sidecar 接受，token 不落盘、不进日志）；owner 语义仍靠
+ * sidecar 的默认 loopback X-User-Id（desktop-local）。
  */
 export async function getCoachAgentRunStreamUrl(runRef: string): Promise<string> {
   const connection = await getDesktopRuntimeConnection();
-  return `${connection.sidecarUrl}/v1/agent-runs/${encodeURIComponent(runRef)}/stream`;
+  const url = new URL(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/stream`,
+    connection.sidecarUrl,
+  );
+  url.searchParams.set("desktop_token", connection.token);
+  return url.toString();
 }
 
 export async function stopCoachAgentRun(

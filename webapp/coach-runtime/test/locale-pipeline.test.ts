@@ -15,6 +15,7 @@ process.env.AIMING_COOKIE_ANALYSIS_POLL_INTERVAL_MS = "10";
 const { localeFromRequest } = await import("../src/sidecar-coach-data.ts");
 const { executeNativePythonAnalysis } = await import("../src/python-analysis.ts");
 const { createSidecarServer } = await import("../src/sidecar-server.ts");
+const { DESKTOP_TEST_TOKEN } = await import("./desktop-token-env.ts");
 
 function fakeIncomingMessage(headers: http.IncomingHttpHeaders): http.IncomingMessage {
   return { headers } as unknown as http.IncomingMessage;
@@ -118,6 +119,7 @@ test("sidecar accepts x-locale on agent-run creation without behavior change", a
             "Content-Type": "application/json",
             "X-User-Id": "locale-owner",
             "X-Locale": "en-US",
+            "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
           },
         },
         (res) => {
