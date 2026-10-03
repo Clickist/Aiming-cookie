@@ -1,6 +1,47 @@
 {
   "versions": [
     {
+      "version": "1.3.6",
+      "date": "2026-10-03",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "安全加固：本地模型服务接口现在要求启动级访问令牌，阻断网页对本地凭据的跨源读取",
+          "en": "Security hardening: the local model-service API now requires a launch-scoped access token, blocking cross-origin credential reads from web pages"
+        },
+        {
+          "type": "fix",
+          "zh": "修复异常会话文件导致训练历史列表无法打开的问题",
+          "en": "Fixed corrupted session files breaking the training history list"
+        },
+        {
+          "type": "fix",
+          "zh": "修复极端情况下启动白屏的问题——应用现在会自动识别并丢弃异常缓存",
+          "en": "Fixed a rare startup white-screen: corrupted local cache is now detected and discarded automatically"
+        },
+        {
+          "type": "fix",
+          "zh": "修复更改存储位置时极端情况下数据看似丢失的问题",
+          "en": "Fixed a rare case where changing the storage location could make data appear missing"
+        },
+        {
+          "type": "fix",
+          "zh": "修复遥测帧稀疏时单局分析崩溃的问题",
+          "en": "Fixed a crash when analyzing runs with sparse telemetry frames"
+        },
+        {
+          "type": "imp",
+          "zh": "分析准备阶段的视频校验移入后台线程，分析期间界面响应更流畅",
+          "en": "Video verification during analysis now runs off the main thread for a smoother UI"
+        },
+        {
+          "type": "imp",
+          "zh": "新增 KovaaK 安装指引卡片，界面动效与交互打磨",
+          "en": "New KovaaK installation guide card, plus interface motion and interaction polish"
+        }
+      ]
+    },
+    {
       "version": "1.3.5",
       "date": "2026-10-02",
       "items": [
