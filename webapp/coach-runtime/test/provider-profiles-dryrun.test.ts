@@ -12,6 +12,7 @@ const dataRoot = mkdtempSync(join(tmpdir(), "coach-provider-dryrun-"));
 process.env.DATA_ROOT = dataRoot;
 
 import { loadProviderStore } from "../src/provider-store.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 
 function request(
@@ -32,9 +33,12 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body
-          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
-          : undefined,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body
+            ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
+            : undefined),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];

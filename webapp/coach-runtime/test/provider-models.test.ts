@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   createModelsStreamFn,
   listBuiltinProviderCatalog,
+  projectCustomModelReasoning,
   resolveProviderModel,
   type PiModels,
 } from "../src/provider-models.ts";
@@ -17,6 +18,7 @@ import {
   ProviderProfileError,
 } from "../src/provider-profile.ts";
 import { loadPiAi, loadPiProvidersAll } from "../src/pi-source.ts";
+import { SnapshotCredentialStore } from "../src/provider-auth.ts";
 
 // 仓库/源码不含真实中转站地址（构建期注入，见 provider-models.ts）；
 // 测试用占位地址验证注入链路，须在模块函数被调用前设好环境变量。
@@ -756,4 +758,76 @@ test("model-less probe maps HTTP 401/403 to needs_reauth and 404 to model_unavai
       assert.ok(!JSON.stringify(status).includes(SECRET));
     });
   }
+});
+
+// 1003 修复：发现端点的 reasoning 元数据投影——前端力度菜单显隐依赖它，
+// 与 resolveCustomProfile 的运行时目录查询同源（命中继承、未命中默认 true）。
+test("projectCustomModelReasoning inherits catalog reasoning and defaults unknown ids to reasoning", async () => {
+  const all = (await loadPiProvidersAll()) as {
+    builtinModels: () => { getModels(): Array<{ id: string; reasoning?: boolean }> };
+  };
+  const catalog = all.builtinModels().getModels();
+  const reasoningHit = catalog.find((model) => model.reasoning === true);
+  const plainHit = catalog.find((model) => model.reasoning === false);
+
+  const unknownId = "definitely-not-in-any-catalog-xyz";
+  const models = await projectCustomModelReasoning([
+    ...(reasoningHit ? [{ model_id: reasoningHit.id, context_window: null, max_tokens: null }] : []),
+    ...(plainHit ? [{ model_id: plainHit.id, context_window: null, max_tokens: null }] : []),
+    { model_id: unknownId, context_window: null, max_tokens: null },
+  ]);
+
+  if (reasoningHit) assert.equal(models.find((m) => m.model_id === reasoningHit.id)?.reasoning, true);
+  if (plainHit) assert.equal(models.find((m) => m.model_id === plainHit.id)?.reasoning, false);
+  // 目录未收录默认"会思考"，与 resolveCustomProfile 的运行时兜底一字不差。
+  assert.equal(models.find((m) => m.model_id === unknownId)?.reasoning, true);
+  // 档位表：命中→pi 真支持档 ∩ UI 白名单（可为空——kimi-k3 类只留 max 的
+  // 模型，UI 只出「默认」不谎称可关）；未命中→全五档（clamp 运行时兜底）。
+  const whitelist = ["minimal", "low", "medium", "high", "off"];
+  const hitEfforts = reasoningHit ? models.find((m) => m.model_id === reasoningHit.id)?.reasoning_efforts : undefined;
+  if (hitEfforts) {
+    for (const level of hitEfforts) assert.ok(whitelist.includes(level), `unexpected level ${level}`);
+  }
+  assert.deepEqual(models.find((m) => m.model_id === unknownId)?.reasoning_efforts, whitelist);
+});
+
+// UI 档位表的同源锁：supportedUiEffortLevels 语义复制 pi
+// getSupportedThinkingLevels（同步函数不能走异步 loadPiAi），这里逐模型对账
+// vendored pi 真函数——pi 侧实现一变，本测试即挂，杜绝勾选档≠运行档。
+test("catalog reasoning_efforts stay in lockstep with pi getSupportedThinkingLevels", async () => {
+  const ai = (await loadPiAi()) as {
+    getSupportedThinkingLevels: (model: unknown) => string[];
+  };
+  const catalog = await listBuiltinProviderCatalog();
+  const all = (await loadPiProvidersAll()) as {
+    builtinModels: (options?: { credentials?: unknown }) => { getModels(): Array<{ id: string; provider: string }> };
+  };
+  // 对照表必须与目录同参构建（带 credentials）：OAuth 类 provider 两种调用的
+  // 模型 variant 不同，裸调用会产生假分歧（kimi-k3 实测）。
+  const credentials = new SnapshotCredentialStore("__catalog__");
+  const raw = all.builtinModels({ credentials }).getModels();
+  const whitelist = ["minimal", "low", "medium", "high", "off"];
+  let checked = 0;
+  for (const provider of catalog.providers) {
+    for (const model of provider.models) {
+      // 同名模型挂多 provider 下 variant 各异（如 gpt-5.1 的 openai/azure 条目
+      // thinkingLevelMap 不同），必须 provider+id 双字段匹配。
+      const hit = raw.find((candidate) => candidate.id === model.model_id && candidate.provider === provider.provider_id);
+      if (!hit) continue;
+      checked += 1;
+      const expected = new Set(ai.getSupportedThinkingLevels(hit));
+      const efforts = model.reasoning_efforts;
+      // 可为空：五档全 null 只留 max（白名单外）的模型，UI 只出「默认」。
+      assert.ok(Array.isArray(efforts), `${model.model_id}: efforts missing`);
+      for (const level of efforts) {
+        assert.ok(expected.has(level), `${model.model_id}: UI exposes ${level} but pi does not support it`);
+      }
+      for (const level of whitelist) {
+        if (expected.has(level)) {
+          assert.ok(efforts.includes(level as (typeof efforts)[number]), `${model.model_id}: pi supports ${level} but UI hides it`);
+        }
+      }
+    }
+  }
+  assert.ok(checked > 0, "expected at least one catalog model checked against pi");
 });

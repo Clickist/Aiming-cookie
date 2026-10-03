@@ -15,6 +15,7 @@ import {
 } from "../src/provider-profile.ts";
 import { loadProviderStore, saveProviderStore } from "../src/provider-store.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { defaultThinkingLevel } from "../src/turn.ts";
 
 describe("parseProviderProfile（reasoning_effort 白名单校验）", () => {
@@ -136,9 +137,12 @@ describe("POST /v1/provider-profiles/model（reasoning_effort 挂档落盘）", 
           port: address.port,
           method,
           path,
-          headers: body
-            ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
-            : undefined,
+          headers: {
+            "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+            ...(body
+              ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
+              : undefined),
+          },
         },
         (res) => {
           const chunks: Buffer[] = [];

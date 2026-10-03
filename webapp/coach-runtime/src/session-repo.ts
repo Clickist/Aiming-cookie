@@ -34,6 +34,11 @@ export type ConversationMeta = {
   /** Analysis ids this session engaged with via Coach file reads (frontend
    *  uses them to resolve `@3.4s` time links to video seeks). */
   analysis_session_ids?: number[];
+  /** 挂载顺序台账（1002 串视频修复）：analysis_session_ids 各 id 的挂载时刻，
+   *  按 attached_at 升序、时间取挂载 run 的 started_at（≤ 该回合全部回复的
+   *  created_at，前端据此做「时间就近」归属）。升级前的旧 meta 无此字段——
+   *  detail 侧从并集列表合成空时间戳 refs，前端退回序数近似。 */
+  analysis_refs?: Array<{ id: number; attached_at: string }>;
   /** Non-subject deep-read analysis ids (`analysis:{id}` without a subject):
    *  history/comparison references the AI read this session. @time-link
    *  fallback only — these are viewable, but NOT 本次讨论 subjects. */
@@ -470,6 +475,17 @@ export function readConversationMeta(threadId: number): ConversationMeta {
           analysis_session_ids: Array.isArray(raw.analysis_session_ids)
             ? raw.analysis_session_ids.filter((value): value is number => Number.isInteger(value) && value > 0)
             : undefined,
+          analysis_refs: Array.isArray(raw.analysis_refs)
+            ? raw.analysis_refs
+                .map((item) =>
+                  isRecord(item)
+                    && typeof item.id === "number" && Number.isInteger(item.id) && item.id > 0
+                    && typeof item.attached_at === "string"
+                    ? { id: item.id, attached_at: item.attached_at }
+                    : null,
+                )
+                .filter((item): item is { id: number; attached_at: string } => item !== null)
+            : undefined,
           deep_read_analysis_session_ids: Array.isArray(raw.deep_read_analysis_session_ids)
             ? raw.deep_read_analysis_session_ids.filter((value): value is number => Number.isInteger(value) && value > 0)
             : undefined,
@@ -494,14 +510,44 @@ export function writeConversationMeta(threadId: number, meta: ConversationMeta):
   writeFileSync(metaFilePath(threadId), JSON.stringify(meta, null, 2), "utf8");
 }
 
-/** Union new analysis ids into a thread's engaged-analysis list. */
-export function updateConversationAnalysisIds(threadId: number, ids: number[]): void {
+/**
+ * Union new analysis ids into a thread's engaged-analysis list, and keep the
+ * mount-order ledger (analysis_refs) in sync (1002 串视频修复).
+ *
+ * `attachedAt` 是挂载时刻，调用方（agent-runs）传挂载 run 的 started_at——它
+ * 不晚于本回合任何 assistant 消息的 created_at，前端「attached_at ≤ 消息时间
+ * 的最近一次挂载」才能把本回合回复归到本回合挂载的分析上。缺省落库此刻。
+ *
+ * - 新 id → 追加到台账末尾；
+ * - 已知 id（重挂旧分析）→ 时间戳刷新并移到末尾，之后的追问归它；
+ * - 升级前的旧 meta（只有并集列表）→ 台账先以空时间戳（时间未知）播种，
+ *   前端对含未知时间的场景退回序数近似。
+ * `analysis_session_ids` 并集语义不变（其他消费方不感知台账）。
+ */
+export function updateConversationAnalysisIds(
+  threadId: number,
+  ids: number[],
+  attachedAt: string = new Date().toISOString(),
+): void {
   const meta = readConversationMeta(threadId);
   const merged = new Set(meta.analysis_session_ids ?? []);
+  const ledger = new Map<number, string>();
+  for (const ref of meta.analysis_refs ?? []) ledger.set(ref.id, ref.attached_at);
+  for (const id of merged) {
+    if (!ledger.has(id)) ledger.set(id, "");
+  }
   for (const id of ids) {
-    if (Number.isInteger(id) && id > 0) merged.add(id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    merged.add(id);
+    // delete+set：重挂把该 id 移到台账末尾（挂载顺序 = 插入顺序）。
+    ledger.delete(id);
+    ledger.set(id, attachedAt);
   }
   meta.analysis_session_ids = [...merged].sort((a, b) => a - b);
+  meta.analysis_refs = [...ledger]
+    .map(([id, at]) => ({ id, attached_at: at }))
+    // attached_at 升序兜底（空串自然排最前 = 挂载时间未知的旧挂载）。
+    .sort((a, b) => (a.attached_at < b.attached_at ? -1 : a.attached_at > b.attached_at ? 1 : 0));
   meta.updated_at = new Date().toISOString();
   writeConversationMeta(threadId, meta);
 }

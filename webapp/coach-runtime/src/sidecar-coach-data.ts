@@ -177,10 +177,20 @@ export async function updateCoachSession(
   return shapeSession(ownerId, sessionId, meta, messages);
 }
 
+/**
+ * 挂载顺序台账（1002 串视频修复）：仅 session detail 返回的 analysis_refs，
+ * 按 attached_at 升序。升级前的旧 meta 只有并集 id 列表——合成空时间戳 refs，
+ * 前端对全无时间的 refs 退回序数近似，旧会话行为不变。
+ */
+function analysisRefsFromMeta(meta: ConversationMeta): Array<{ id: number; attached_at: string }> {
+  if (meta.analysis_refs?.length) return meta.analysis_refs;
+  return (meta.analysis_session_ids ?? []).map((id) => ({ id, attached_at: "" }));
+}
+
 export async function getCoachSessionDetail(
   ownerId: string,
   sessionId: number,
-): Promise<SessionOut & { messages: Array<Record<string, unknown>> }> {
+): Promise<SessionOut & { messages: Array<Record<string, unknown>>; analysis_refs: Array<{ id: number; attached_at: string }> }> {
   if (!(await sessionExists(sessionId))) {
     throw new CoachDataError(404, "Coach session is unavailable");
   }
@@ -201,7 +211,7 @@ export async function getCoachSessionDetail(
     legacy_session_id: null,
     ...(entry.stopped ? { stopped: true } : {}),
   }));
-  return { ...base, messages };
+  return { ...base, analysis_refs: analysisRefsFromMeta(meta), messages };
 }
 
 /**

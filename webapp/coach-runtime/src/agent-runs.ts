@@ -377,7 +377,13 @@ async function runAgentTurn(
         const match = /^analysis:([1-9][0-9]*)$/.exec(ref);
         if (match) analysisIds.push(Number(match[1]));
       }
-      if (analysisIds.length > 0) updateConversationAnalysisIds(threadId, analysisIds);
+      if (analysisIds.length > 0) {
+        // 挂载时间戳取 run 起始时刻而非落库此刻：本回合的 assistant 消息都写在
+        // started_at 之后、落库此刻之前，只有用 run 起始时间，前端「attached_at
+        // ≤ 消息时间取最近挂载」的就近归属才能把本回合回复归到本回合挂载的
+        // 分析上（1002 串视频修复）。
+        updateConversationAnalysisIds(threadId, analysisIds, record.state.started_at ?? record.state.created_at);
+      }
     }
 
     // Non-subject deep reads ride alongside so summary/comparison turns keep a

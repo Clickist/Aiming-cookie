@@ -3,6 +3,7 @@ import {
   AIMING_COOKIE_RELAY_PROVIDER_ID,
   PROVIDER_CATALOG_SCHEMA,
   isRecord,
+  type CoachReasoningEffort,
   type CoachRuntimeProviderProfile,
   type CustomProviderModel,
   type ProviderCatalogModel,
@@ -183,6 +184,7 @@ export function toCatalogModel(model: PiModel): ProviderCatalogModel {
     provider_id: model.provider,
     base_url: model.baseUrl,
     reasoning: model.reasoning,
+    reasoning_efforts: supportedUiEffortLevels(model),
     input: [...model.input],
     context_window: model.contextWindow,
     max_tokens: model.maxTokens,
@@ -211,6 +213,34 @@ export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogRespo
 
 const CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const CUSTOM_MODEL_MAX_ITEMS = 200;
+
+// UI 档位白名单 = contracts CoachReasoningEffort 五档；xhigh/max 是 Pi 内部
+// 档位，不对用户开放（contracts.ts 类型注释即合同）。
+const UI_REASONING_EFFORTS: readonly CoachReasoningEffort[] = ["minimal", "low", "medium", "high", "off"];
+
+// 该模型真实支持的 UI 语义档：语义复制 pi getSupportedThinkingLevels
+// （third_party/pi/packages/ai/src/models.ts，由目录 thinkingLevelMap 驱动）
+// 再 ∩ UI 白名单。可为空——kimi-k3 类模型五档全 null 只留 max（白名单外），
+// pi 侧连 off 都不支持（clamp 请求 off 仍跑 max），此时 UI 只出「默认」，
+// 不谎称任何档位可选。不走 loadPiAi 异步调用：toCatalogModel 必须保持同步
+// （listBuiltinProviderCatalog 以 .map 直传、provider-profile.ts 两处直调），
+// 与 pi 实现的一致性由 provider-models.test.ts 的逐模型对账测试锁死——
+// pi 侧实现一变，对账测试即挂，杜绝"勾选档位≠实际运行档"的 UI 说谎。
+function supportedUiEffortLevels(
+  model: PiModel & { thinkingLevelMap?: Record<string, unknown> },
+): CoachReasoningEffort[] {
+  const supported = !model.reasoning
+    ? ["off"]
+    : ["off", "minimal", "low", "medium", "high", "xhigh", "max"].filter((level) => {
+        const mapped = model.thinkingLevelMap?.[level];
+        if (mapped === null) return false;
+        if (level === "xhigh" || level === "max") return mapped !== undefined;
+        return true;
+      });
+  return supported.filter((level): level is CoachReasoningEffort =>
+    (UI_REASONING_EFFORTS as readonly string[]).includes(level),
+  );
+}
 
 // Many OpenAI-compatible endpoints (e.g. DeepSeek) omit context_window/max_tokens
 // from their /models response; fall back to the same capability pair the vendored
@@ -272,6 +302,33 @@ export async function fetchCustomProviderModels(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// 1003 修复：custom 档模型发现缺 reasoning 元数据——前端力度菜单
+// showEffortSection = currentModel?.reasoning === true 恒 false，自定义
+// Provider 的推理模型（含自家中转站 deepseek-v4-flash）永远出不来力度
+// 旋钮，档位只能吃运行时默认 high。与 resolveCustomProfile 的运行时目录
+// 查询同源（pi 内建目录 / models.dev）：命中继承 reasoning，未命中按
+// "会思考"处理（默认 true，同 resolveCustomProfile 兜底），保证 UI 旋钮
+// 可见性与实际推理行为一致。元数据查询不需要凭证（凭证只影响 OAuth 模型
+// 列表成员，不影响 reasoning/thinkingLevelMap 元数据）。
+export async function projectCustomModelReasoning(
+  models: CustomProviderModel[],
+): Promise<CustomProviderModel[]> {
+  const all = (await loadPiProvidersAll()) as {
+    builtinModels: (options?: { credentials?: unknown }) => { getModels(): PiModel[] };
+  };
+  const catalogModels = all.builtinModels().getModels();
+  return models.map((model) => {
+    const catalogHit = catalogModels.find((candidate) => candidate.id === model.model_id);
+    return {
+      ...model,
+      reasoning: catalogHit ? catalogHit.reasoning === true : true,
+      // 未命中目录不知道真实档位表，给全五档（与"默认会思考"兜底同语义，
+      // 选了不支持的档由 pi clampThinkingLevel 运行时收敛）。
+      reasoning_efforts: catalogHit ? supportedUiEffortLevels(catalogHit) : [...UI_REASONING_EFFORTS],
+    };
+  });
 }
 
 async function resolveBuiltinProfile(

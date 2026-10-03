@@ -12,6 +12,7 @@ process.env.DATA_ROOT = dataRoot;
 process.env.AC_RELAY_BASE_URL = "http://127.0.0.1:3000/v1";
 
 import { findStoredProfile, loadProfile, loadProviderStore } from "../src/provider-store.ts";
+import { DESKTOP_TEST_TOKEN } from "./desktop-token-env.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 
 function request(
@@ -32,9 +33,12 @@ function request(
         port: address.port,
         method,
         path,
-        headers: body
-          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
-          : undefined,
+        headers: {
+          "x-aiming-cookie-desktop-token": DESKTOP_TEST_TOKEN,
+          ...(body
+            ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
+            : undefined),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -545,8 +549,10 @@ test("POST /v1/provider-profiles/custom/models proxies the custom /models endpoi
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json, {
       models: [
-        { model_id: "model-a", context_window: 32768, max_tokens: 4096 },
-        { model_id: "model-b", context_window: null, max_tokens: null },
+        // 1003 起 discovery 响应携带目录 reasoning 元数据；model-a/b 不在
+        // pi 目录内 → 默认会思考 + 全五档（与运行时兜底同语义）。
+        { model_id: "model-a", context_window: 32768, max_tokens: 4096, reasoning: true, reasoning_efforts: ["minimal", "low", "medium", "high", "off"] },
+        { model_id: "model-b", context_window: null, max_tokens: null, reasoning: true, reasoning_efforts: ["minimal", "low", "medium", "high", "off"] },
       ],
     });
   }).finally(() => {
@@ -586,7 +592,7 @@ test("POST /v1/provider-profiles/custom/models with profile_id discovers via the
     }));
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json, {
-      models: [{ model_id: "relay-model-x", context_window: 131072, max_tokens: null }],
+      models: [{ model_id: "relay-model-x", context_window: 131072, max_tokens: null, reasoning: true, reasoning_efforts: ["minimal", "low", "medium", "high", "off"] }],
     });
     // 档内凭证就地发现：key 不出 sidecar，URL 取档 base_url。
     assert.equal(seen.length, 1);

@@ -350,6 +350,8 @@ export type ProviderCatalogModel = {
   provider_id: string;
   base_url: string;
   reasoning: boolean;
+  /** 该模型真实支持的 UI 语义档（pi getSupportedThinkingLevels ∩ 五档白名单）。 */
+  reasoning_efforts: CoachReasoningEffort[];
   input: string[];
   context_window: number;
   max_tokens: number;
@@ -369,6 +371,10 @@ export type CustomProviderModel = {
   model_id: string;
   context_window: number | null;
   max_tokens: number | null;
+  /** 目录元数据投影（1003 修复）：力度菜单显隐依据；未命中目录默认 true（与运行时兜底一致）。 */
+  reasoning?: boolean;
+  /** 该模型真实支持的 UI 语义档；未命中目录默认全五档（运行时 clamp 兜底）。 */
+  reasoning_efforts?: CoachReasoningEffort[];
 };
 
 export type ProviderProfileStatus =
