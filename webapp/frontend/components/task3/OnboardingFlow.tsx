@@ -318,6 +318,24 @@ export function OnboardingFlow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberSelected, desktop]);
 
+  // 会员流轮询兜底（1004）：等待页原本只等 deep-link、不轮询；登录回来进态1
+  // 后也不刷新——而服务端试用令牌是 /me 惰性补发（异步入队+发货，实测 30 秒
+  // 到 4 分钟落库），首次 /me 必然 active=false，态1 会停在「打开订阅页」付费
+  // 墙按钮上不自动变「先免费体验」（1003 走查「冻结在发放前快照、重启才恢复」
+  // 的根因；用户被指去 /pay 又被验证闸弹回，死环）。两类态保持轮询：
+  // waiting（deep-link 唤起失败的兜底）与 not_subscribed 且试用未激活（等补发
+  // 落库）；试用一到位或推进到 member 即停，不空转。
+  useEffect(() => {
+    if (!memberSelected || !desktop) return undefined;
+    const keepPolling = memberStage === "waiting"
+      || (memberStage === "not_subscribed" && !memberTrialAvailable);
+    if (!keepPolling) return undefined;
+    const timer = window.setInterval(() => {
+      void syncMemberState();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [memberSelected, desktop, memberStage, memberTrialAvailable, syncMemberState]);
+
   useEffect(() => {
     const controller = new AbortController();
     void Promise.allSettled([
@@ -664,6 +682,22 @@ export function OnboardingFlow() {
                   </button>
                   {openMenu === "provider" ? (
                     <div aria-label={t("onboarding.provider.optionsAria")} className="task3-onboarding-dropdown-menu" id="onboarding-provider-listbox" role="listbox">
+                      {/* 会员档置顶（线框 ①）：账号订阅，登录即用。1004 修复：此前渲染在
+                          全部第三方之后（下拉沉底不可见），与线框相反——新用户首屏只见
+                          一墙要 API key 的选项，无 key 即死路。 */}
+                      {providers.some((provider) => isMemberWizardType(provider.provider_id)) ? (
+                        <button
+                          aria-selected={!custom && isMemberWizardType(providerId)}
+                          className="task3-onboarding-dropdown-option"
+                          data-member="true"
+                          onClick={() => selectProvider("aiming-cookie-relay")}
+                          role="option"
+                          type="button"
+                        >
+                          <span>{MEMBER_COPY.providerDropdownLabel}</span>
+                          <small>{MEMBER_COPY.providerDropdownHint}</small>
+                        </button>
+                      ) : null}
                       {providers
                         .filter((provider) => !isMemberWizardType(provider.provider_id))
                         .map((provider) => (
@@ -679,20 +713,6 @@ export function OnboardingFlow() {
                           <small>{provider.auth_modes.map((mode) => authModeLabel(t, mode)).join(" / ")}</small>
                         </button>
                       ))}
-                      {/* 会员档置顶（线框 ①）：账号订阅，登录即用。 */}
-                      {providers.some((provider) => isMemberWizardType(provider.provider_id)) ? (
-                        <button
-                          aria-selected={!custom && isMemberWizardType(providerId)}
-                          className="task3-onboarding-dropdown-option"
-                          data-member="true"
-                          onClick={() => selectProvider("aiming-cookie-relay")}
-                          role="option"
-                          type="button"
-                        >
-                          <span>{MEMBER_COPY.providerDropdownLabel}</span>
-                          <small>{MEMBER_COPY.providerDropdownHint}</small>
-                        </button>
-                      ) : null}
                       <button
                         aria-selected={custom}
                         className="task3-onboarding-dropdown-option"
