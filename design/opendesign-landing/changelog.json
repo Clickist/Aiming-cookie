@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.3.7",
+      "date": "2026-10-03",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复新用户选择「先免费体验」后无法完成初始设置的问题——「进入工作台」按钮不再无法点击",
+          "en": "Fixed new trial users being unable to finish onboarding after choosing the free trial — the enter-workspace button no longer stays disabled"
+        }
+      ]
+    },
+    {
       "version": "1.3.6",
       "date": "2026-10-03",
       "items": [
