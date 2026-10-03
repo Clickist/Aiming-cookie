@@ -159,10 +159,28 @@ export function planTrialEvent(
   return "send";
 }
 
+/** 会话内重试退避（1004 死锁 C）：上报失败若只等"下次启动"补报，用户跑完一局
+ *  马上去订阅会被 /pay 验证闸挡住（verified_at 未落）——大陆直连 CF 抖动是实况。
+ *  30s/60s/120s/300s 共 4 次会话内重试，之后仍失败才交给下次启动的 flush。 */
+const TRIAL_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
+
+function scheduleTrialRetry(type: TrialEventType, key: string, attempt: number): void {
+  if (typeof window === "undefined" || attempt >= TRIAL_RETRY_DELAYS_MS.length) return;
+  window.setTimeout(() => {
+    void postTrialEvent(type)
+      .then(() => {
+        removePendingTrialEvent(window.localStorage, { type, key });
+        notifyMemberStateChanged();
+      })
+      .catch(() => scheduleTrialRetry(type, key, attempt + 1));
+  }, TRIAL_RETRY_DELAYS_MS[attempt]);
+}
+
 /**
  * 上报一条试用事件。成功路径：标记已上报 → 入 pending → POST → 出 pending →
  * 广播会员态刷新（剩余数字跟上服务端账本）。标记先行（并发双触发只发一次），
- * POST 失败/中断留在 pending，由下次启动的 flushPendingTrialEvents 补报。
+ * POST 失败/中断留在 pending：先会话内退避重试（死锁 C），再由下次启动的
+ * flushPendingTrialEvents 兜底。
  */
 export async function reportTrialEvent(type: TrialEventType, key: string): Promise<"sent" | "queued" | "duplicate" | "gate"> {
   if (typeof window === "undefined") return "gate";
@@ -174,7 +192,8 @@ export async function reportTrialEvent(type: TrialEventType, key: string): Promi
   try {
     await postTrialEvent(type);
   } catch {
-    return "queued"; // pending 队列保底，下次启动补报。
+    scheduleTrialRetry(type, key, 0);
+    return "queued"; // pending 队列保底，重试成功即出队。
   }
   removePendingTrialEvent(storage, { type, key });
   notifyMemberStateChanged();

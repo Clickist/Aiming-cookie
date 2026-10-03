@@ -1034,8 +1034,14 @@ function MemberConnect({
             </strong>
             <p>
               {MEMBER_COPY.notSubscribedBody}
-              <br />
-              {MEMBER_COPY.notSubscribedBodyLine2}
+              {/* 1004：试用可用时不渲染「完成订阅后本页自动继续」——与下方
+                  「可先体验再订阅」并存会误导（不订阅也能继续），两条路二选一。 */}
+              {!trialAvailable ? (
+                <>
+                  <br />
+                  {MEMBER_COPY.notSubscribedBodyLine2}
+                </>
+              ) : null}
             </p>
             {trialAvailable ? (
               <p className="task3-member-hint">{t("onboarding.member.trialHint")}</p>
