@@ -1,6 +1,10 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-03. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-04. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-04（凌晨） — v1.3.8 发布：新用户付费转化漏斗五卡点（数据定罪 + 沙箱真机 + 当夜发版）
+
+「今晚零单」研究定案：**付款链路无辜（Stripe 当日零 checkout session），流失全在付款前**——device_code（选官方档跳浏览器）近 24h 23 创 5 成 ≈ 78% 流失在浏览器侧，历史完成率 4%~21%。五卡点全修：①会员档在 Provider 下拉沉底（注释写「置顶」实现却渲染在 26 个第三方之后，与线框相反）→ 改置顶，真机截图验证；②等待页只等 deep-link 永不超时 → 5s 轮询兜底，CDP 时间线实锤；③**态1 死环**（首次 /me 必然 trial 未落库——服务端惰性补发异步 30s~4min，界面停「打开订阅页」不自动变「先免费体验」，用户被指去 /pay 又被验证闸弹回 = 1003「冻结在发放前快照重启才恢复」的根因）→ 轮询扩展至 not_subscribed 且未激活态，trial 到位自动切换；④device_code TTL 600→1800s（accounts，curl 冒烟 expires_in=1800）；⑤OTP 有效期 300→600s 对齐邮件文案 + 获取验证码 60s 防连点（线上实案 8218217@qq.com 3 秒 3 封且从未注册成功）。验证：tsc + 346 测试绿 ×2 轮、真机沙箱回归置顶+轮询。accounts 两轮部署（d0c72590）。发版：三处 bump + changelog.json + 落地页链接/changelog 页/llms.txt 渲染，R2 三件套（installer SHA-256 `8a69b31c…`）+ latest.json（version 1.3.8 线上验证）+ tag `v1.3.8` + GH release（附件 exe/.sig）。commit 5b69394（fix）+ 26f34c1（release）；accounts e3dc73f（含 1003 JWT 180 天在途改动一并上线）。发版坑复踩+新知：`build-windows-installer.ps1` 不带 `-Unsigned` 拒跑（1.3.7 同款）；`npm run build:tauri` 只重建 out/ **不编译 exe**，完整产物必须 `npx tauri build --no-bundle`（beforeBuildCommand 自动重建 out）；CUA 沙箱验收后恢复真实数据目录，**再次启动 exe 前必须重新做沙箱**（本轮曾忘，应用加载点点真实工作台，CDP 点击落空白区未损数据）。挂账：QQ 邮箱验证码送达率无直接证据待观察；accounts worker 未开 observability。
 
 ## 2026-10-03（晚） — v1.3.7 热修发布：试用出口在第二步卡死（用户报障当日闭环）
 
