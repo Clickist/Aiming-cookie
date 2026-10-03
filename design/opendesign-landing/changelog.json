@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.3.8",
+      "date": "2026-10-04",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "新用户开通链路修复：官方「Aiming Cookie」档在 Provider 列表置顶首选；登录后客户端自动轮询推进，不再无限等待浏览器返回；试用额度到账后引导按钮自动出现，不再需要重启",
+          "en": "New-user funnel fixes: the official Aiming Cookie option now leads the provider list; the client polls automatically after sign-in instead of waiting forever; the trial CTA appears on its own once quota lands — no restart needed"
+        },
+        {
+          "type": "fix",
+          "zh": "设备登录授权有效期从 10 分钟延长到 30 分钟，收验证码更从容",
+          "en": "Device handoff validity extended from 10 to 30 minutes, leaving ample time for email verification"
+        }
+      ]
+    },
+    {
       "version": "1.3.7",
       "date": "2026-10-03",
       "items": [
