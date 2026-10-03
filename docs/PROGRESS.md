@@ -2,6 +2,15 @@
 
 > Updated: 2026-10-03. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
 
+## 2026-10-03（晚） — v1.3.7 热修发布：试用出口在第二步卡死（用户报障当日闭环）
+
+用户报障「第二步显示待确认/未启用走不通」→ 定案为 **1.3.5 引入的恶性 onboarding 死锁**：1002 的「先免费体验」CTA 放行进第 2 步，但进入工作台门禁 `memberReady` 只认 `memberStage === "member"`，试用用户（not_subscribed + trialAvailable）按钮永远禁用；叠加订阅页 verified_at 闸 = 试用新用户完全死锁，且按钮灰死不报错不留日志、线上无法发现。修法一行（`memberReady` 认 `not_subscribed && memberTrialAvailable`）+ task3 源码契约回归锁（343/343 绿 + tsc 净）。
+
+**真机端到端闭环**（打包版 1.3.7 沙箱全旅程）：临时改写 Roaming `storage-location.json` 指针指向沙箱根（事后字节级还原；Tauri app_data_dir 走 Windows 已知文件夹 API，LOCALAPPDATA 环境变量重定向**无效**）→ 全新向导 → 会员档 → 真实 login/start → 账号侧 API 自助完成登录（**accounts D1 `verification` 表 OTP 明文可读**，无需收件邮箱；新邮箱 sign-in 即自动注册）→ `/api/device/claim` 换 ticket → `aimingcookie://auth?scene=login` deep-link 换票 → 态1 出现（试用发放是 /me 惰性入队异步发货，**首读无 trial、需二次同步**——再发 `scene=open` deep-link 触发 syncMemberState 后 CTA 才出现，这本身是个真实用户可感知的延迟）→ 先免费体验 → 第二步勾选后进入工作台**已激活**（1.3.6 同态永久灰）→ finish 全链 → 工作台 + `capture-enabled.json {"enabled":true}`。证据截图 `C:\ac-smoke-137\shots\`。
+
+发版物：installer SHA-256 `e73d2a65…`，R2 三件套（exe/.sig/latest.json）已上传并线上验证，tag `v1.3.7` + GitHub release，落地页 1.3.7（commit 880696f/bcf7400/692d18d）。装机注意：本机已覆盖装 1.3.7（真实数据根指针已还原）。发版管线新坑：pwsh 脚本漏 `-Unsigned` 时 bash 管道吃掉退出码呈现 exit0 假绿（对照 1001 中文参数假绿，同族）。
+
+
 ## 2026-10-03 — v1.3.6 发布：安全加固/评审修复批/动效与指引卡
 
 workflow 全量代码评审（10 领域 68 发现，67 经独立复核确认）→ 活体验证（真客户端 CDP：sidecar 裸奔偷 key 全链、坏文件 500、白屏循环等 10 条实锤）→ 两子代理实施 → 全量测试（pytest 743+884 / 前端 342 / coach-runtime 534 / cargo 177 全绿）→ 两连实机走查（安装版老用户旅程 + 隔离标识符 onboarding→真实流式对话→持久化全旅程，SSE query token 路径实测）→ 发版。主要内容：①**sidecar 启动令牌闸门**（ARCHITECTURE 合同落地：全路由除 healthz 校验 `X-Aiming-Cookie-Desktop-Token`，CORS * 收白名单，Tauri 生成→IPC 下发，SSE 走 query 特批，Python 后端调 sidecar 两处补带）；②评审七小修（坏会话文件 500 保护/存储写序 record-first/会员缓存深校验自愈/分析 hash 下线程/omega_frac 空保护/安装器 0x07 控制字符/ac-logs 备份对齐 schemaVersion）；③七条动效+KovaaK 安装指引卡+模型 reasoning 力度档位投影；④1002 分析器家族能力随车。
