@@ -215,8 +215,10 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             bundle = json.loads(body.decode("utf-8"))
-            if not isinstance(bundle, dict) or "schema" not in bundle:
-                raise ValueError("missing schema")
+            # 现役客户端 serde camelCase 发 schemaVersion（与 ac-logs-worker 同
+            # 口径）；旧字段 schema 兼容保留。
+            if not isinstance(bundle, dict) or not ("schemaVersion" in bundle or "schema" in bundle):
+                raise ValueError("missing schemaVersion")
             app_version = str(bundle.get("app_version", "unknown"))
         except Exception:
             self._reply(400, {"error": "body must be a capture diagnostics bundle JSON"})

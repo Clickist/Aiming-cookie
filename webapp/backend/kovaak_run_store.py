@@ -277,7 +277,12 @@ def _analysis_counts_by_run(user_id: str) -> dict[int, int]:
         fingerprint = (st.st_mtime_ns, st.st_size)
         cached = _SESSION_LIGHT_CACHE.get(p.name)
         if cached is None or cached[0] != fingerprint:
-            session = file_store.read_json(f"sessions/{p.name}")
+            try:
+                session = file_store.read_json(f"sessions/{p.name}")
+            except (OSError, ValueError):
+                # 截断/损坏的 session JSON 不拖垮列表口径（与 _all_runs 一致）。
+                log.warning("skipping unreadable session %s", p.name)
+                continue
             if not session:
                 continue
             run_id = session.get("kovaak_run_id")

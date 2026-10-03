@@ -513,6 +513,21 @@ def test_omega_drops_samples_with_dt_above_limit(tmp_path):
     assert profile["features"]["omega_p99"] < 10.0
 
 
+def test_omega_frac_absent_when_every_gap_exceeds_dt_limit(tmp_path):
+    # 相邻 views 断流全部超过 0.2s：omegas 为空，omega_frac_20_200 置 None
+    # （absent 语义），不得 ZeroDivisionError 整局崩。
+    views = [
+        {"t": t, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 0.0], "fov": FOV}
+        for t in (0.0, 0.5, 1.0)
+    ]
+    frames = _frames_from_lives(_static_target_lives(1.2, count=1, dist=4000.0))
+    profile = _profile(
+        tmp_path, "omega_frac_sparse", views=views, frames=frames, inputs=[],
+    )
+    assert profile["features"]["omega_frac_20_200"] is None
+    assert profile["features"]["omega_p99"] is None
+
+
 def test_yaw_wrap_keeps_small_omega_and_no_false_flip(tmp_path):
     # yaw 179.9 → -179.9（wrap ±180 后实际差 0.2°）。
     views = [

@@ -512,8 +512,13 @@ def compute_observed_features(
             previous_sign = sign
     omegas.sort()
     features["omega_p99"] = _round(_percentile(omegas, 0.99), 2)
-    features["omega_frac_20_200"] = _round(
-        sum(1 for omega in omegas if 20.0 <= omega <= 200.0) / len(omegas)
+    # omegas 为空（views 断流超过 dt 上限）置 None：absent 语义，不得 ZeroDivisionError。
+    features["omega_frac_20_200"] = (
+        _round(
+            sum(1 for omega in omegas if 20.0 <= omega <= 200.0) / len(omegas)
+        )
+        if omegas
+        else None
     )
     features["dir_flips_per_s"] = _round(flips / duration, 4)
 

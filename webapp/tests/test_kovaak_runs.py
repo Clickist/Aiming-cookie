@@ -254,6 +254,25 @@ async def test_list_and_get_are_owner_scoped():
 
 
 @pytest.mark.asyncio
+async def test_corrupt_session_file_is_skipped_by_run_lists():
+    # 回归：sessions/ 里截断 JSON（崩溃写一半）曾让 /api/kovaak-runs 列表与
+    # 详情 500——_analysis_counts_by_run 现按 _all_runs 口径跳过坏文件计 0。
+    from webapp.backend import config
+
+    await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="good", scenario="Good",
+    )
+    sessions_dir = Path(config.DATA_ROOT) / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "424242.json").write_bytes(b'{"kovaak_run_id": ')
+
+    runs = await kovaak_run_store.list_kovaak_runs("u1")
+    assert [run["scenario"] for run in runs] == ["Good"]
+    summaries = await kovaak_run_store.list_kovaak_run_summaries("u1")
+    assert [item["analysis_count"] for item in summaries] == [0]
+
+
+@pytest.mark.asyncio
 async def test_ingest_discovery_parses_existing_stats_fixture():
     stats = Path("data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv").resolve()
     run = await kovaak_run_store.ingest_discovery(

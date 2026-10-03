@@ -45,14 +45,28 @@ export interface MemberState {
  * 与会话 JSONL 同级敏感度）。所有 useMemberState 实例共享；损坏一律静默降级。 */
 const MEMBER_CACHE_KEY = "aiming-cookie.member.cache";
 
-function readMemberCache(): MemberMe | null {
+/** 缓存形状闸：消费端（me.pools.* / me.user.email）对字段无守卫，半形坏缓存
+ * 会在首帧渲染抛 TypeError（白屏且重启不自愈），这里验到关键字段为止。 */
+export function isMemberCacheShape(parsed: unknown): parsed is MemberMe {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const value = parsed as {
+    member?: unknown;
+    user?: unknown;
+    pools?: unknown;
+  };
+  if (typeof value.member !== "boolean") return false;
+  if (typeof value.user !== "object" || value.user === null || typeof (value.user as { email?: unknown }).email !== "string") return false;
+  return typeof value.pools === "object" && value.pools !== null;
+}
+
+export function readMemberCache(): MemberMe | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(MEMBER_CACHE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || typeof (parsed as { member?: unknown }).member !== "boolean") return null;
-    return parsed as MemberMe;
+    if (!isMemberCacheShape(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }

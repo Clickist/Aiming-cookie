@@ -729,7 +729,7 @@ async def create_analysis_from_run(
         video_fingerprint = (
             dict(managed_video_fingerprint)
             if isinstance(managed_video_fingerprint, Mapping)
-            else _freeze_video_source(managed_video_source)
+            else await asyncio.to_thread(_freeze_video_source, managed_video_source)
         )
         run_video_fingerprint = (
             run_video.get("fingerprint") if isinstance(run_video, Mapping) else None
@@ -805,7 +805,10 @@ async def create_analysis_from_run(
                 )
             except OSError as exc:
                 try:
-                    observed_fingerprint = _freeze_video_source(managed_video_source)
+                    # 全文件 SHA256 放线程池：数百 MB 级校验不能占住事件循环。
+                    observed_fingerprint = await asyncio.to_thread(
+                        _freeze_video_source, managed_video_source,
+                    )
                 except ProductCommandError as source_exc:
                     raise source_exc from exc
                 if observed_fingerprint != video_fingerprint:
@@ -815,7 +818,8 @@ async def create_analysis_from_run(
                         kind="unavailable",
                     ) from exc
                 raise
-            if not _matches_frozen_copy(
+            if not await asyncio.to_thread(
+                _matches_frozen_copy,
                 video_destination,
                 video_fingerprint,
                 source=managed_video_source,
@@ -834,14 +838,16 @@ async def create_analysis_from_run(
             # existing matching hard link instead of failing with FileExistsError.
             if not (
                 video_destination.exists()
-                and _matches_frozen_hard_link(
+                and await asyncio.to_thread(
+                    _matches_frozen_hard_link,
                     video_destination, run_video_source, run_video_fingerprint,
                 )
             ):
                 if video_destination.exists():
                     video_destination.unlink()
                 os.link(run_video_source, video_destination)
-            if not _matches_frozen_hard_link(
+            if not await asyncio.to_thread(
+                _matches_frozen_hard_link,
                 video_destination,
                 run_video_source,
                 run_video_fingerprint,
@@ -870,7 +876,9 @@ async def create_analysis_from_run(
                 copy_path_to_path(stats_source, stats_destination)
             except OSError as exc:
                 try:
-                    source_matches = _matches_frozen_copy(stats_source, stats_fingerprint)
+                    source_matches = await asyncio.to_thread(
+                        _matches_frozen_copy, stats_source, stats_fingerprint,
+                    )
                 except OSError:
                     source_matches = False
                 if not source_matches:
@@ -880,7 +888,8 @@ async def create_analysis_from_run(
                         kind="unavailable",
                     ) from exc
                 raise
-            if not _matches_frozen_copy(
+            if not await asyncio.to_thread(
+                _matches_frozen_copy,
                 stats_destination,
                 stats_fingerprint,
                 source=stats_source,
@@ -981,7 +990,10 @@ async def execute_trusted_analysis_create(
     video_fingerprint = None
     if managed_video_source is not None:
         try:
-            video_fingerprint = _freeze_video_source(managed_video_source)
+            # 全文件 SHA256 放线程池：数百 MB 级校验不能占住事件循环。
+            video_fingerprint = await asyncio.to_thread(
+                _freeze_video_source, managed_video_source,
+            )
         except ProductCommandError as exc:
             return _failure_result(command_id, exc.code, exc.message, kind=exc.kind)
     try:

@@ -968,8 +968,10 @@ impl StorageLocationState {
                 });
             }
         }
-        write_pointer(&self.default_root, normalized.as_deref())
-            .map_err(|_| StorageLocationError::code("storage_location.write_failed"))?;
+        // record-first：先落迁移记录（planned）再写指针。指针写失败时记录已在，
+        // 下次启动 start_pending_migration 自动续迁（run_migration 完成时本就会
+        // 写指针）；若先写指针，失败会让指针指向新根却无迁移记录，旧数据看似
+        // 全丢（实际滞留旧根）。
         let state = StorageMigrationState {
             source_root: self.effective_root.to_string_lossy().into_owned(),
             target_root: resolved_effective.to_string_lossy().into_owned(),
@@ -986,6 +988,8 @@ impl StorageLocationState {
             updated_at: now_iso_like(),
         };
         write_migration_state(&self.default_root, &state)
+            .map_err(|_| StorageLocationError::code("storage_location.write_failed"))?;
+        write_pointer(&self.default_root, normalized.as_deref())
             .map_err(|_| StorageLocationError::code("storage_location.write_failed"))?;
         if let Ok(mut guard) = self.migration.lock() {
             *guard = Some(state);

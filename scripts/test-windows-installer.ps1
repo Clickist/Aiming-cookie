@@ -24,10 +24,14 @@ if ($InstallSmoke) {
     $previousBrowserArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     $previousCdpUrl = $env:AIMING_COOKIE_TAURI_CDP_URL
     $previousScreenshot = $env:AIMING_COOKIE_TAURI_SMOKE_SCREENSHOT
-    # NSIS 会把本次安装目录写进 HKCU\Softwareimingcookie（下次安装/更新的
+    # NSIS 会把本次安装目录写进 HKCU\Software\Aimingcookie（下次安装/更新的
     # 默认目录）。不恢复的话，冒烟之后真机静默安装/更新会被导回已删除的
     # 冒烟临时目录（2026-10-02 1.3.5 真机覆盖装踩坑）。
-    $smokeRegKey = "HKCU:\Softwareimingcookie\Aiming Cookie"
+    $smokeRegKey = "HKCU:\Software\Aimingcookie\Aiming Cookie"
+    # 自检：路径含不可见控制字符时 Get-Item 必失败，这里显式报错防再静默失效。
+    if (-not (Get-Item -LiteralPath $smokeRegKey -ErrorAction SilentlyContinue)) {
+        Write-Error "Smoke registry key not found (self-check): $smokeRegKey"
+    }
     $previousInstallDir = (Get-ItemProperty -LiteralPath $smokeRegKey -ErrorAction SilentlyContinue).'(default)'
     New-Item -ItemType Directory -Path $installRoot | Out-Null
     try {
