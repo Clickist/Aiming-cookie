@@ -106,6 +106,17 @@ type ConfirmAction = {
 
 const WIZARD_STEP_LABELS = ["settings.provider.wizardStepType", "settings.provider.wizardStepCredential"] as const satisfies readonly MessageKey[];
 
+// 向导力度下拉的全部可选档（与 composer CoachModelMenu 的 EFFORT_OPTIONS 同
+// 键同序）；1003 起按模型真支持档（目录 reasoning_efforts）过滤渲染，写死
+// 全量会在不支持的模型上说谎——pi clamp 静默收敛令选中档≠实际运行档。
+const WIZARD_EFFORT_OPTIONS: ReadonlyArray<{ value: ProviderReasoningEffort; label: MessageKey }> = [
+  { value: "off", label: "coach.effort.off" },
+  { value: "minimal", label: "coach.effort.minimal" },
+  { value: "low", label: "coach.effort.low" },
+  { value: "medium", label: "coach.effort.medium" },
+  { value: "high", label: "coach.effort.high" },
+];
+
 /** 会员档未建档时的合成档案（未登录也可选中查看会员模板）。
  *  i18n 批 4：合成档案在调用时构造，name 经 t() 取「Aiming Cookie（推荐）」
  *  （复用批 1 键 member.provider.relayLabel）——合成档案只用于本进程渲染，
@@ -365,8 +376,11 @@ export function ProviderSettingsSection({
   const selectedCustomModel = customModels.find((model) => model.model_id === wizardDraft.modelId);
   // 内置目录带 reasoning 元数据：仅当选中的模型确认支持推理时，向导才露出
   // 思考力度旋钮。自定义 Provider 的发现结果没有该元数据，保持未设置（默认）。
-  const wizardModelIsReasoning = !wizardCustom
-    && wizardCatalogEntry?.models.find((model) => model.model_id === wizardDraft.modelId)?.reasoning === true;
+  // 1003：同一次 find 顺带取模型真支持档位表，下拉按它渲染（与 composer
+  // 力度菜单同源同行为）；旧 sidecar 无此字段回落全五档。
+  const wizardSelectedCatalogModel = wizardCatalogEntry?.models.find((model) => model.model_id === wizardDraft.modelId);
+  const wizardModelIsReasoning = !wizardCustom && wizardSelectedCatalogModel?.reasoning === true;
+  const wizardModelEfforts = wizardSelectedCatalogModel?.reasoning_efforts;
   // 「测试」与「完成」各用一份候选 payload：测试走免模型连通探测（内置不选
   // 模型也能先测连），完成时校验并写入带模型的完整档案。
   const wizardProbePayload: ProviderProfileCreate | null = buildWizardProbePayload(wizardDraft, {
@@ -1275,22 +1289,33 @@ export function ProviderSettingsSection({
             ) : (
               <p className="task6-muted">{t("settings.provider.wizardModelsAfterTest")}</p>
             )}
-            {wizardModelIsReasoning ? (
-              <Field label={t("settings.provider.wizardEffortField")}>
-                <select
-                  className="ac-field__control"
-                  onChange={(event) => wizardSetDraft({ reasoningEffort: event.target.value as ProviderReasoningEffort | "" })}
-                  value={wizardDraft.reasoningEffort}
-                >
-                  <option value="">{t("settings.provider.wizardEffortDefault")}</option>
-                  <option value="off">{t("coach.effort.off")}</option>
-                  <option value="minimal">{t("coach.effort.minimal")}</option>
-                  <option value="low">{t("coach.effort.low")}</option>
-                  <option value="medium">{t("coach.effort.medium")}</option>
-                  <option value="high">{t("coach.effort.high")}</option>
-                </select>
-              </Field>
-            ) : null}
+            {wizardModelIsReasoning ? (() => {
+              // 档位按模型真支持渲染；旧 sidecar 无 reasoning_efforts 回落全量。
+              const effortChoices = wizardModelEfforts
+                ? WIZARD_EFFORT_OPTIONS.filter((option) => wizardModelEfforts.includes(option.value))
+                : WIZARD_EFFORT_OPTIONS;
+              // 编辑存量档案时已存档位可能不在支持表内（pi 运行时仍 clamp 兜底）：
+              // 保留显示防止 select 无 matching option 悄悄显示成「默认」的假
+              // 一致；用户改选其他档即自然消失。
+              const storedExtra = wizardDraft.reasoningEffort && !effortChoices.some((option) => option.value === wizardDraft.reasoningEffort)
+                ? WIZARD_EFFORT_OPTIONS.find((option) => option.value === wizardDraft.reasoningEffort) ?? { value: wizardDraft.reasoningEffort, label: "coach.effort.default" as MessageKey }
+                : null;
+              return (
+                <Field label={t("settings.provider.wizardEffortField")}>
+                  <select
+                    className="ac-field__control"
+                    onChange={(event) => wizardSetDraft({ reasoningEffort: event.target.value as ProviderReasoningEffort | "" })}
+                    value={wizardDraft.reasoningEffort}
+                  >
+                    <option value="">{t("settings.provider.wizardEffortDefault")}</option>
+                    {effortChoices.map((option) => (
+                      <option key={option.value} value={option.value}>{t(option.label)}</option>
+                    ))}
+                    {storedExtra ? <option value={storedExtra.value}>{t(storedExtra.label)}</option> : null}
+                  </select>
+                </Field>
+              );
+            })() : null}
             {wizardVerified && !wizardPayload ? (
               <p className="task6-muted">{t("settings.provider.wizardPickModelToFinish")}</p>
             ) : null}

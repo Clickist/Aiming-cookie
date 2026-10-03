@@ -146,13 +146,14 @@ test("quote blocks and mention chips animate in on mount and out before removal"
   assert.match(mentionChunk, /data-exiting=\{exitingMentionTokens\.includes\(ref\.token\) \|\| undefined\}/);
   assert.match(mentionChunk, /onClick=\{\(\) => removeMentionRef\(ref\.token\)\}/);
   // CSS：加入 160ms / 退场 140ms 两条 keyframe，selectors 按父容器限定。
+  // 1002 动效审计：队列 chip 与引用块同语言，选择器去掉 data-mention-refs 门槛。
   assert.match(styles, /@keyframes task6-quote-in\s*\{[\s\S]*?translateY\(-4px\) scale\(0\.96\)/);
   assert.match(styles, /@keyframes task6-quote-out\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*scale\(0\.96\)/);
-  assert.match(styles, /\.task6-quote-list > \.task6-quote-block,[\s\S]*?\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\s*\{[^}]*animation:\s*task6-quote-in 160ms/);
-  assert.match(styles, /\.task6-quote-list > \.task6-quote-block\[data-exiting\],[\s\S]*?\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\[data-exiting\]\s*\{[^}]*animation:\s*task6-quote-out 140ms/);
+  assert.match(styles, /\.task6-quote-list > \.task6-quote-block,[\s\S]*?\.task6-queue-chips > \.task6-queue-chip\s*\{[^}]*animation:\s*task6-quote-in 160ms/);
+  assert.match(styles, /\.task6-quote-list > \.task6-quote-block\[data-exiting\],[\s\S]*?\.task6-queue-chips > \.task6-queue-chip\[data-exiting\]\s*\{[^}]*animation:\s*task6-quote-out 140ms/);
   // reduced-motion：两动画进 task3.css 白名单关闭。
   assert.match(reduced, /\.task6-quote-list > \.task6-quote-block\[data-exiting\][\s\S]*?animation:\s*none/);
-  assert.match(reduced, /\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\[data-exiting\][\s\S]*?animation:\s*none/);
+  assert.match(reduced, /\.task6-queue-chips > \.task6-queue-chip\[data-exiting\][\s\S]*?animation:\s*none/);
 });
 
 test("draft persistence upgrades to envelope v2 and restores quotes with the scoped key", async () => {

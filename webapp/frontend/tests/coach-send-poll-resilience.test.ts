@@ -128,6 +128,27 @@ test("Coach @time links fall back through topic refs then deep-read refs", async
   assert.match(panel, /setDeepReadAnalysisSessionIds\(\[\]\);\s*setLoadError\(false\);/);
 });
 
+test("Coach historical @time links attribute per message by nearest mount time, not to the session-level default", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  // 1002 串视频修复（用户报障：先后分析两个项目后历史 @time 打开错误视频）：
+  // 已落库的历史消息按「attached_at ≤ 消息时间的最近挂载」逐消息时间就近归属
+  // （语义与边界在 lib/coach-timepoints 单测锁定）；无主题挂载的消息回落深读链。
+  assert.match(
+    panel,
+    /messageAnalysisRefs = useMemo\(\s*\(\) => resolveCoachMessageAnalysisRefs\(messages, analysisRefs\),\s*\[messages, analysisRefs\],\s*\);/,
+  );
+  assert.match(
+    panel,
+    /analysisRef=\{messageAnalysisRefs\.get\(message\.id\) \?\? deepReadRunRef \?\? deepReadSessionRef\}/,
+  );
+  // detail 的挂载台账接进组件状态，随会话切换/清空一起写入与清空。
+  assert.match(panel, /const \[analysisRefs, setAnalysisRefs\] = useState<CoachAnalysisMount\[\]>\(\[\]\);/);
+  assert.match(panel, /setAnalysisRefs\(detail\.analysis_refs \?\? \[\]\);/);
+  assert.match(panel, /setAnalysisRefs\(\[\]\);\s*setDeepReadAnalysisSessionIds\(\[\]\);/);
+  // 会话级单值只保留给活跃 run 的流式消息（topicRunRef 链），不被本修复破坏。
+  assert.match(panel, /analysisRef=\{defaultAnalysisRef\}/);
+});
+
 test("Coach discussion bar mounts only topic refs, never deep-read refs", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   // 「本次讨论」挂载条的数据源 memo 只做主题两级合并，不含任何深读字段。

@@ -155,3 +155,80 @@ export function projectCoachTimepoints(
     .sort((left, right) => left.timeMs - right.timeMs)
     .slice(0, limit);
 }
+
+// ── 历史 @time 链接的视频归属（1002 串视频修复）──────────────────────────
+//
+// @time chip 点击打开哪个分析的视频，过去用会话级单值（defaultAnalysisRef）：
+// 一个会话先后挂载 ≥2 个分析时，历史消息的 @time 会全部落到同一个分析上，
+// 点开别的训练项目的视频（用户报障）。归属改为逐消息计算。
+
+/** resolveCoachMessageAnalysisRefs 的消息入参（只需 id、role 与 created_at）。 */
+export interface CoachMessageRefInput {
+  id: number;
+  role: string;
+  created_at?: string | null;
+}
+
+/** 挂载记录入参（detail 的 analysis_refs，后端已按 attached_at 升序给出）。 */
+export interface CoachAnalysisRefInput {
+  id: number;
+  attached_at?: string | null;
+}
+
+/**
+ * 挂载/消息时间统一到 epoch ms：ISO 8601 带时区（pi 会话条目与 meta
+ * attached_at 都是 toISOString 的 UTC Z 形态）与 sqlite CURRENT_TIMESTAMP 的
+ * 无时区形态（"YYYY-MM-DD HH:MM:SS"，直接 Date.parse 会误按本地时区解析，
+ * 须按 UTC 补 Z）都接受；空串/不可解析回 null（挂载时间未知）。
+ */
+export function normalizeCoachTimestamp(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  const utcNaive = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmed);
+  const parsed = Date.parse(utcNaive ? `${trimmed.replace(" ", "T")}Z` : trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * 历史 assistant 消息的 @time 视频归属：时间就近——每条回复归属「attached_at
+ * ≤ 该消息 created_at 的最近一次挂载」；没有任何更早挂载（或消息缺时间）时
+ * 归第一个挂载。refs 为空返回 null 表（调用方再走深读兜底链）。
+ *
+ * 已知边界（生成侧问题，本函数不覆盖）：同一条回复引用多个分析的时间码无法
+ * 区分归属，整条消息共用算出的单个 ref；同一回合挂载多个分析时它们时间戳
+ * 相同，该回合的回复共用其中最后一个（并列取靠后的挂载）。
+ *
+ * 升级前的旧会话没有挂载时间戳（attached_at 全空）：退回序数近似——第 k 条
+ * 回复 → refs 里第 k 个挂载，超出挂载数的后续追问留在最后一个分析上（与
+ * 上一版行为一致，旧会话不回退）。
+ */
+export function resolveCoachMessageAnalysisRefs(
+  messages: ReadonlyArray<CoachMessageRefInput>,
+  refs: ReadonlyArray<CoachAnalysisRefInput>,
+): Map<number, string | null> {
+  const table = new Map<number, string | null>();
+  const mountTimes = refs.map((ref) => normalizeCoachTimestamp(ref.attached_at));
+  const allMountTimesUnknown = mountTimes.every((time) => time === null);
+  let assistantSeen = 0;
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    if (refs.length === 0) {
+      table.set(message.id, null);
+    } else if (allMountTimesUnknown) {
+      // 旧会话无挂载时间：序数近似（第 k 条回复 → 第 k 个挂载，超出留最后）。
+      table.set(message.id, `analysis:${refs[Math.min(assistantSeen, refs.length - 1)]!.id}`);
+      assistantSeen += 1;
+    } else {
+      // 时间就近：refs 已按 attached_at 升序，最后一个 ≤ 消息时间的挂载即最近。
+      const at = normalizeCoachTimestamp(message.created_at);
+      let nearest = -1;
+      for (let index = 0; index < refs.length; index++) {
+        const mountAt = mountTimes[index];
+        if (at !== null && mountAt !== null && mountAt <= at) nearest = index;
+      }
+      // 消息早于一切挂载或缺消息时间 → 归第一个挂载。
+      table.set(message.id, `analysis:${refs[nearest >= 0 ? nearest : 0]!.id}`);
+    }
+  }
+  return table;
+}

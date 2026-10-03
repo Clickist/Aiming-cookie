@@ -512,6 +512,19 @@
   margin-top: var(--space-4);
 }
 
+/* hero 入场桥（1002 动效审计）：离场有 WAAPI 飞升、进场却瞬切——
+   greet/composer/chips 复用消息气泡的 task6-enter 补对称入场；chips
+   只整体延一档 40ms，不做逐条级联。reduced-motion 由 theme.css 全局块压平。 */
+.task6-home-greet,
+.task6-home-composer,
+.task6-home-chips {
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
+}
+
+.task6-home-chips {
+  animation-delay: 40ms;
+}
+
 /* 发出首条的过渡帧：hero 骨架淡出让位；气泡飞升与 composer 滑落由
    CoachPanel 的 WAAPI 驱动，本动画只负责骨架本身。 */
 .task6-home-leaving {
@@ -999,10 +1012,20 @@
   box-shadow: none;
   white-space: nowrap;
   z-index: 2;
+  /* 入场桥（1002 动效审计）：随滚动瞬现太生硬；基础 transform 含
+     translateX(-50%)，keyframe 须原样携带避免水平跳位。 */
+  animation: task6-unread-in var(--duration-fast) var(--ease-out) backwards;
 }
 
 .task6-unread-prompt:hover {
   background: var(--surface-container-highest);
+}
+
+@keyframes task6-unread-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
 }
 
 .task6-streaming-cursor {
@@ -1389,6 +1412,24 @@ button.task6-discussion-chip:focus-visible {
   color: var(--on-surface-variant);
 }
 
+/* 浮层家族入场（1002 动效审计）：同区引用块与工作流行都有入场，composer
+   四菜单是仅剩的瞬切孤岛——挂载即播 150ms 淡入＋0.97 缩放，origin 钉在
+   触发点（向上弹的钉底缘、向下弹的钉顶缘）。reduced-motion 由 theme.css
+   全局块压平。 */
+@keyframes task6-menu-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
+@keyframes task6-menu-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
 .task6-discussion-menu {
   position: absolute;
   /* 0918 彩名报障「没有下拉栏」：菜单挂在顶栏内向下弹进面板区，而对话
@@ -1406,6 +1447,9 @@ button.task6-discussion-chip:focus-visible {
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   background: var(--surface-container-high);
+  /* 向下弹、右对齐：从顶栏 ▾ 触发点长出来。 */
+  transform-origin: 100% 0;
+  animation: task6-menu-in-down var(--duration-fast) var(--ease-out) backwards;
 }
 
 /* 嵌套圆角公式同 model menu：菜单外 R(lg=8) − 菜单 padding(space-1=4)
@@ -1644,6 +1688,9 @@ button.task6-discussion-chip:focus-visible {
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   background: var(--surface-container-high);
+  /* 向上弹、右对齐：从模型钮长出来。 */
+  transform-origin: 100% 100%;
+  animation: task6-menu-in-up var(--duration-fast) var(--ease-out) backwards;
 }
 
 /* 嵌套圆角公式：菜单外R(lg=8) − 菜单padding(space-1=4) = item 半径 sm=4 */
@@ -1735,6 +1782,9 @@ button.task6-discussion-chip:focus-visible {
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   background: var(--surface-container-high);
+  /* 同模型菜单：向上弹、右对齐。 */
+  transform-origin: 100% 100%;
+  animation: task6-menu-in-up var(--duration-fast) var(--ease-out) backwards;
 }
 
 /* ── 底行挤压响应（点点 0910 拍板）：.task6-composer-input 为 inline-size
@@ -1810,6 +1860,9 @@ button.task6-discussion-chip:focus-visible {
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   background: var(--surface-container-high);
+  /* 向上弹、左对齐（left:8px 见下块）：从输入卡左下角长出来。 */
+  transform-origin: 0 100%;
+  animation: task6-menu-in-up var(--duration-fast) var(--ease-out) backwards;
 }
 
 .task6-mention-menu {
@@ -1874,13 +1927,15 @@ button.task6-discussion-chip:focus-visible {
   }
 }
 
+/* 1002 动效审计：队列 chip 与引用块同语言，去掉 data-mention-refs 门槛
+   （chip 以 id 为 key，新增才挂载、不会重播动画）。 */
 .task6-quote-list > .task6-quote-block,
-.task6-queue-chips[data-mention-refs] > .task6-queue-chip {
+.task6-queue-chips > .task6-queue-chip {
   animation: task6-quote-in 160ms var(--ease-out) backwards;
 }
 
 .task6-quote-list > .task6-quote-block[data-exiting],
-.task6-queue-chips[data-mention-refs] > .task6-queue-chip[data-exiting] {
+.task6-queue-chips > .task6-queue-chip[data-exiting] {
   animation: task6-quote-out 140ms var(--ease-out) forwards;
 }
 
@@ -2116,6 +2171,8 @@ button.task6-discussion-chip:focus-visible {
   background: var(--error-container);
   overflow: hidden;
   color: var(--on-error-container);
+  /* 对话流内插卡与消息气泡同语言入场（1002 动效审计）。 */
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
 }
 
 .task6-error-card-head {
@@ -2158,6 +2215,8 @@ button.task6-discussion-chip:focus-visible {
   border-radius: var(--radius-lg);
   background: var(--surface-container-low);
   overflow: hidden;
+  /* 同错误卡：与消息气泡同语言入场。 */
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
 }
 
 .task6-cfm-head {
@@ -2306,4 +2365,37 @@ button.task6-discussion-chip:focus-visible {
 /* ④/⑨ 会员页内提示条（教练页内一份；主区那份见 task3.css 同名字体族）。 */
 .task6-coach-shell > .task3-member-notice {
   margin: var(--space-3) var(--space-4) 0;
+}
+
+/* 「未检测到 KovaaK's」引导卡（1002 方案 A）：首页空态 hero 内（greeting/
+   composer/chips 之下），视觉跟随 hero 的克制线框——surface 底 + 一像素
+   outline-variant 边，不与建议 chips 抢戏；已安装/指定目录后由判定侧消失。 */
+.task6-kovaak-guide {
+  position: relative;
+  max-width: 460px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: var(--text-body);
+  line-height: 1.6;
+  text-align: start;
+}
+
+.task6-kovaak-guide strong {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--on-surface);
+}
+
+.task6-kovaak-guide a {
+  color: var(--primary);
+}
+
+/* 小字提示（hero 与 notice 两个变体共用）。 */
+.kovaak-install-guide-hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-caption);
+  color: var(--on-surface-variant);
 }

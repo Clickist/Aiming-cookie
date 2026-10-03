@@ -1114,11 +1114,12 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
     animation: none;
   }
 
-  /* composer 引用块／@引用 chip 的加/减动效一并关闭（0912）。 */
+  /* composer 引用块／队列 chip 的加/减动效一并关闭（0912；1002 随
+     task6.css 选择器统一去掉 data-mention-refs 门槛——队列 chip 全量同语言）。 */
   .task6-quote-list > .task6-quote-block,
   .task6-quote-list > .task6-quote-block[data-exiting],
-  .task6-queue-chips[data-mention-refs] > .task6-queue-chip,
-  .task6-queue-chips[data-mention-refs] > .task6-queue-chip[data-exiting] {
+  .task6-queue-chips > .task6-queue-chip,
+  .task6-queue-chips > .task6-queue-chip[data-exiting] {
     animation: none;
   }
 
@@ -1146,6 +1147,10 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   background: var(--surface-container);
   color: var(--on-surface);
   box-shadow: var(--shadow-overlay);
+  /* 与同槽位的公告卡同语言入场（1002 动效审计）：release notice 有
+     task3-release-notice-in、更新卡却瞬切，同角两卡观感不一致——
+     keyframe 原样复用，零新 CSS。 */
+  animation: task3-release-notice-in var(--duration-surface) var(--ease-out);
 }
 
 .task3-update-prompt-title {

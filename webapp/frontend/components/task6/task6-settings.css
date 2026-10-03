@@ -105,6 +105,9 @@
   font-weight: 600;
   text-align: start;
   cursor: pointer;
+  /* hover/激活底色过渡（1002 动效审计）：全 app 可点面都走 150ms 色变，
+     导航条目是唯一瞬换的。 */
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
 .task6-settings-nav-link[data-current="true"],
@@ -178,6 +181,14 @@
    不再有分区间距；锚点平滑滚动随锚点长卷一起退役。 */
 .task6-settings-section {
   scroll-margin-top: var(--space-4);
+}
+
+/* 屏切换入场桥（1002 动效审计）：hidden 切换是整屏瞬跳——可见屏复用
+   task6-enter（定义于 task6.css，两文件在 layout 全局加载）播 200ms
+   淡入＋上浮；hidden 每次移除时选择器重新命中，动画自动重放。
+   本文件无 fixed 后代，transform 动画无锚定副作用。 */
+.task6-settings-section:not([hidden]) {
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
 }
 
 /* 合并屏（通用 / KovaaK / 高级）内的小节：保留原分区标题层级，

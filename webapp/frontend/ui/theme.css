@@ -567,6 +567,12 @@ a {
   inset: 50% auto auto 50%;
   z-index: 41;
   width: min(520px, calc(100vw - 32px));
+  /* 内容超高不得顶出窗口（1003 向导 40 类型实雷）：限高后只有 body 区滚动，
+     标题栏与 footer 恒在——fixed+translate 居中定位下，无 max-height 的
+     高内容会把顶部裁出视口外。 */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--space-6) * 2);
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
   border: 1px solid var(--outline-variant);
@@ -586,6 +592,12 @@ a {
 .ac-dialog__body,
 .ac-dialog__footer {
   padding: var(--space-4);
+}
+
+/* 限高后 body 自行滚动；min-height:0 允许 flex 收缩（否则内容仍撑爆容器）。 */
+.ac-dialog__body {
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .ac-dialog__header,

@@ -349,6 +349,13 @@ export const sharedZh = {
   // lib/desktop.ts —— 桌面能力兜底文案（批 1；与 Rust 侧重复条目批 6 去重）
   "desktop.kovaak.scenarioUnmapped": "本机 KovaaK 没有这个场景，需要先订阅/下载。",
   "desktop.kovaak.webPreviewBlocked": "当前网页预览不能启动 KovaaK，请在桌面版中操作",
+
+  // components/kovaak/KovaakInstallGuideCard.tsx —— 「未检测到 KovaaK's」引导卡
+  // （1002 方案 A：Coach 首页空态与 History 空态共用）
+  "kovaak.guide.title": "未检测到 KovaaK's",
+  "kovaak.guide.body": "Aiming Cookie 的分析依赖 KovaaK's 的训练对局数据。",
+  "kovaak.guide.storeLink": "前往 Steam 获取 KovaaK's",
+  "kovaak.guide.hint": "已安装？在 设置 → KovaaK 里手动指定目录。",
   "desktop.dialog.exportLogs": "导出运行日志",
   "desktop.dialog.pickVideo": "选择 MP4 录像",
   "desktop.dialog.pickCsv": "选择 KovaaK Stats CSV",

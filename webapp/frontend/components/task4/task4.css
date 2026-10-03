@@ -312,6 +312,11 @@
   background: var(--surface);
   /* 行 hover 高亮的圆角跟随面板内角：由面板统一裁剪，首尾行不必单配圆角。 */
   overflow: hidden;
+  /* 区块展开/筛选切换时面板瞬切太生硬（1002 动效审计）：挂载即播淡入
+     ＋4px 上浮，复用消息气泡的 task6-enter（task6.css 定义，两文件在
+     layout 全局加载）；页面首载时与 page-view 开合过渡叠加为一段入场。
+     面板内无 fixed 后代，transform 动画无锚定副作用。 */
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
 }
 
 .task4-state-panel {

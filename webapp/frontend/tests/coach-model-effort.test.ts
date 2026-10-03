@@ -45,6 +45,27 @@ test("CoachModelMenu offers a reasoning-gated effort section in the model menu",
   assert.match(menu, /switchProviderModel\(activeModelId, \{ reasoningEffort: nextEffort \}\)/);
 });
 
+test("custom profile model discovery projects catalog reasoning so the effort menu can appear", async () => {
+  // 1003 修复回归锁：custom 档模型发现此前不带 reasoning，力度菜单对
+  // 自定义 Provider（含推理模型）恒隐藏。投影必须透传 sidecar 元数据。
+  const types = await source("lib/types.ts");
+  assert.match(types, /interface CustomProviderModel \{[\s\S]*?reasoning\?: boolean;/);
+  const menu = await source("components/task6/CoachModelMenu.tsx");
+  assert.match(menu, /reasoning: model\.reasoning === true/);
+});
+
+test("effort menu renders model-supported levels instead of a hardcoded five", async () => {
+  // 1003 点点拍板：写死五档在不支持的模型上说谎（pi clamp 静默收敛，勾选态
+  // ≠实际运行档）。菜单按目录 reasoning_efforts 过滤；字段缺失回落全五档。
+  const types = await source("lib/types.ts");
+  assert.match(types, /interface CustomProviderModel \{[\s\S]*?reasoning_efforts\?: ProviderReasoningEffort\[\];/);
+  assert.match(types, /interface ProviderCatalogModel \{[\s\S]*?reasoning_efforts\?: ProviderReasoningEffort\[\];/);
+  const menu = await source("components/task6/CoachModelMenu.tsx");
+  assert.match(menu, /currentModel\?\.reasoning_efforts/);
+  assert.match(menu, /option\.value === "" \|\| !supportedEfforts \|\| supportedEfforts\.includes\(option\.value\)/);
+  assert.match(menu, /effortOptions\.map\(\(option\)/);
+});
+
 test("Settings provider wizard gates the effort select and includes it in the shared payload", async () => {
   const section = await source("components/task6/ProviderSettingsSection.tsx");
   const lib = await source("lib/provider-wizard.ts");
@@ -53,4 +74,15 @@ test("Settings provider wizard gates the effort select and includes it in the sh
   assert.match(section, /<Field label=\{t\("settings\.provider\.wizardEffortField"\)\}>/);
   // 干跑与入库共用 payload：一处声明两路生效（lib 纯函数 buildWizardPayload）。
   assert.match(lib, /builtinModelIsReasoning[\s\S]*?draft\.reasoningEffort\s*\?\s*draft\.reasoningEffort/);
+});
+
+test("wizard effort select renders model-supported levels with the stored value kept visible", async () => {
+  // 1003 点点拍板：向导下拉与 composer 菜单同语言——按目录 reasoning_efforts
+  // 过滤；旧 sidecar 无字段回落全量；已存档位不在支持表时保留显示（防 select
+  // 无 matching option 假装成「默认」的假一致）。
+  const section = await source("components/task6/ProviderSettingsSection.tsx");
+  assert.match(section, /const WIZARD_EFFORT_OPTIONS: ReadonlyArray<\{ value: ProviderReasoningEffort; label: MessageKey \}>/);
+  assert.match(section, /wizardModelEfforts\s*\?\s*WIZARD_EFFORT_OPTIONS\.filter/);
+  assert.match(section, /: WIZARD_EFFORT_OPTIONS;/);
+  assert.match(section, /storedExtra/);
 });

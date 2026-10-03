@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { deleteKovaakRun, getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
+import { shouldShowKovaakInstallGuide } from "@/lib/kovaak-install-guide";
+import { KovaakInstallGuideCard } from "@/components/kovaak/KovaakInstallGuideCard";
 import { isDesktopRuntime } from "@/lib/desktop";
 import { finalizationPendingText } from "@/lib/capture-events";
 import { getLocale, t, useT, type MessageKey } from "@/lib/i18n";
@@ -389,6 +391,8 @@ export function HistoryClient() {
   const [runDiscovery, setRunDiscovery] = useState<RunDiscoveryState>("loading");
   const [initialError, setInitialError] = useState(false);
   const [watcherStatus, setWatcherStatus] = useState<KovaaKWatcherStatusV1 | null>(null);
+  // 目录状态（1002 方案 A）：空态时顺路留存，喂「未检测到 KovaaK's」引导卡。
+  const [kovaakDirectories, setKovaakDirectories] = useState<KovaaKLocalDirectoriesV1 | null>(null);
   const [selectedRunIds, setSelectedRunIds] = useState<number[]>([]);
   const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<number[]>([]);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
@@ -434,14 +438,19 @@ export function HistoryClient() {
     }
     // 桌面版空列表本来就会随上方轮询再次进入这里：顺路读 watcher 健康，
     // 用于区分「没找到目录」和「KovaaK 未导出」两种空态；不新增定时器。
+    // 目录状态同期留存（1002 方案 A）：轮询让「设置里确认目录后卡片自动
+    // 消失」在同一刷新节奏内生效。
     if (!canDiscoverRuns) {
       setWatcherStatus(null);
+      setKovaakDirectories(null);
     } else if (allListsEmpty) {
       try {
         const directories: KovaaKLocalDirectoriesV1 = await getKovaaKLocalDirectories();
         setWatcherStatus(directories.watcher_status ?? null);
+        setKovaakDirectories(directories);
       } catch {
         setWatcherStatus(null);
+        setKovaakDirectories(null);
       }
     }
   }, [allListsEmpty]);
@@ -721,6 +730,11 @@ export function HistoryClient() {
       {refresh === "unavailable" ? <Notice tone="warning" title={t("history.notice.refreshUnavailableTitle")}>{t("history.notice.refreshUnavailableBody")}</Notice> : null}
       {runDiscovery === "browser_unavailable" ? <Notice tone="info" title={t("history.notice.runDiscoveryDesktopTitle")}>{t("history.notice.runDiscoveryDesktopBody")}</Notice> : null}
       {runDiscovery === "service_unavailable" ? <Notice tone="warning" title={t("history.notice.runUnavailableTitle")}>{t("history.notice.runUnavailableBody")}</Notice> : null}
+      {/* 「未检测到 KovaaK's」引导卡（1002 方案 A）：桌面空态且 stats 目录
+          未被发现时提示先装 KovaaK；目录确认后随上方轮询自动消失。 */}
+      {runDiscovery === "available" && allListsEmpty && shouldShowKovaakInstallGuide(kovaakDirectories) ? (
+        <KovaakInstallGuideCard variant="notice" />
+      ) : null}
 
       {watcherGuidance === "no_candidates" ? (
         <Empty className="task4-panel task4-state-panel" title={t("history.watcher.noCandidatesTitle")}>

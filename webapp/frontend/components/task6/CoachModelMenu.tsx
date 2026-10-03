@@ -94,6 +94,11 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
                 model_id: model.model_id,
                 context_window: model.context_window ?? undefined,
                 max_tokens: model.max_tokens ?? undefined,
+                // 1003 修复：透传目录 reasoning 元数据（sidecar 投影，与运行时
+                // 同源）——缺了它力度菜单对 custom 档恒隐藏。旧 sidecar 无此
+                // 字段时 === true 归 false，维持现状隐藏。
+                reasoning: model.reasoning === true,
+                reasoning_efforts: model.reasoning_efforts,
               })),
             }],
           });
@@ -194,6 +199,14 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
   // 力度按钮只在当前模型确认支持推理时出现（目录元数据）。
   const showEffortSection = currentModel?.reasoning === true;
 
+  // 档位按模型真支持渲染（1003 点点拍板：写死五档在不支持的模型上说谎——
+  // pi 运行时 clampThinkingLevel 会静默收敛，勾选态≠实际运行档）。目录未带
+  // reasoning_efforts（旧 sidecar）回落全五档；「默认」恒在 = 清回运行时默认。
+  const supportedEfforts = currentModel?.reasoning_efforts;
+  const effortOptions = EFFORT_OPTIONS.filter(
+    (option) => option.value === "" || !supportedEfforts || supportedEfforts.includes(option.value),
+  );
+
   return (
     <>
       <div className="task6-composer-model-wrap" ref={modelRef}>
@@ -252,7 +265,7 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
           </button>
           {effortOpen ? (
             <div aria-label={t("coach.model.effortMenuLabel")} className="task6-composer-effort-menu" role="menu">
-              {EFFORT_OPTIONS.map((option) => {
+              {effortOptions.map((option) => {
                 const selected = activeEffort === option.value;
                 return (
                   <button

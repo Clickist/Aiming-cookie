@@ -4,7 +4,9 @@ import { test } from "node:test";
 import {
   COACH_TIMEPOINT_DEDUPE_MS,
   COACH_TIMEPOINT_LIMIT,
+  normalizeCoachTimestamp,
   projectCoachTimepoints,
+  resolveCoachMessageAnalysisRefs,
 } from "./coach-timepoints";
 
 // 拍板：视频面板底部回看 chips 跟随 Coach 讲解内容（assistant 正文 @time），
@@ -122,4 +124,110 @@ test("mixed-language sessions pick the branch per message, not per session", () 
     points.map((point) => point.label),
     ["看那一甩", "flick land"],
   );
+});
+
+// ── 历史 @time 链接的视频归属（1002 串视频修复）──────────────────────────
+
+test("per-message analysis refs: two sequential mounts land every reply on its own analysis", () => {
+  // 常规形态（上一版序数近似漏掉的报障场景）：一次分析回 2 条消息时，第 2 条
+  // 曾被错归到下一个分析。时间就近：A1、A2 的 created_at 都在 101 挂载之后、
+  // 102 挂载之前 → 都归 101；B1 在 102 挂载之后 → 归 102。挂载时间取挂载
+  // run 的 started_at（后端语义），早于该回合全部回复。
+  const table = resolveCoachMessageAnalysisRefs(
+    [
+      { id: 1, role: "user", created_at: "2026-10-01T10:00:00.000Z" },
+      { id: 2, role: "assistant", created_at: "2026-10-01T10:00:05.000Z" },
+      { id: 3, role: "assistant", created_at: "2026-10-01T10:00:09.000Z" },
+      { id: 4, role: "user", created_at: "2026-10-01T10:04:00.000Z" },
+      { id: 5, role: "assistant", created_at: "2026-10-01T10:05:06.000Z" },
+    ],
+    [
+      { id: 101, attached_at: "2026-10-01T09:59:59.000Z" },
+      { id: 102, attached_at: "2026-10-01T10:04:59.000Z" },
+    ],
+  );
+  assert.equal(table.get(2), "analysis:101");
+  assert.equal(table.get(3), "analysis:101");
+  assert.equal(table.get(5), "analysis:102");
+  // 用户消息不参与归属。
+  assert.equal(table.has(1), false);
+  assert.equal(table.has(4), false);
+});
+
+test("per-message analysis refs: re-mounting an old analysis re-attributes later replies to it", () => {
+  // 回挂旧分析：后端把 101 的 attached_at 刷新并移到台账末尾，之后的追问归 101。
+  const table = resolveCoachMessageAnalysisRefs(
+    [
+      { id: 1, role: "assistant", created_at: "2026-10-01T10:05:30.000Z" },
+      { id: 2, role: "assistant", created_at: "2026-10-01T11:00:10.000Z" },
+    ],
+    [
+      { id: 102, attached_at: "2026-10-01T10:04:59.000Z" },
+      { id: 101, attached_at: "2026-10-01T11:00:00.000Z" },
+    ],
+  );
+  assert.equal(table.get(1), "analysis:102");
+  assert.equal(table.get(2), "analysis:101");
+});
+
+test("per-message analysis refs: replies older than every mount fall to the first mount", () => {
+  // 消息早于一切挂载（如挂载前的打招呼回复）：归第一个挂载。
+  const table = resolveCoachMessageAnalysisRefs(
+    [{ id: 1, role: "assistant", created_at: "2026-10-01T09:00:00.000Z" }],
+    [
+      { id: 11, attached_at: "2026-10-01T10:00:00.000Z" },
+      { id: 22, attached_at: "2026-10-01T11:00:00.000Z" },
+    ],
+  );
+  assert.equal(table.get(1), "analysis:11");
+});
+
+test("per-message analysis refs: a single mount keeps every reply on it, empty refs degrade to null", () => {
+  // 单挂载会话：所有回复都归它（与修复前行为一致）。
+  const single = resolveCoachMessageAnalysisRefs(
+    [
+      { id: 1, role: "assistant", created_at: "2026-10-01T10:00:05.000Z" },
+      { id: 2, role: "assistant", created_at: "2026-10-01T10:01:00.000Z" },
+    ],
+    [{ id: 7, attached_at: "2026-10-01T09:59:59.000Z" }],
+  );
+  assert.equal(single.get(1), "analysis:7");
+  assert.equal(single.get(2), "analysis:7");
+  // 无主题挂载：返回 null，由调用方走深读兜底链。
+  const none = resolveCoachMessageAnalysisRefs(
+    [{ id: 1, role: "assistant", created_at: "2026-10-01T10:00:00.000Z" }],
+    [],
+  );
+  assert.equal(none.get(1), null);
+});
+
+test("per-message analysis refs: legacy sessions without mount times keep the ordinal approximation", () => {
+  // 升级前的旧会话只有并集 id 列表（attached_at 全空）：退回上一版的序数近似，
+  // 旧会话行为不回退。
+  const table = resolveCoachMessageAnalysisRefs(
+    [
+      { id: 1, role: "assistant", created_at: "2026-10-01T10:00:00.000Z" },
+      { id: 2, role: "assistant", created_at: "2026-10-01T10:01:00.000Z" },
+      { id: 3, role: "assistant", created_at: "2026-10-01T10:02:00.000Z" },
+    ],
+    [{ id: 11, attached_at: "" }, { id: 22, attached_at: "" }],
+  );
+  assert.equal(table.get(1), "analysis:11");
+  assert.equal(table.get(2), "analysis:22");
+  assert.equal(table.get(3), "analysis:22");
+});
+
+test("normalizeCoachTimestamp unifies ISO and sqlite UTC stamps onto one epoch timeline", () => {
+  // ISO 8601（pi 会话条目与 meta attached_at 的实际形态）。
+  assert.equal(normalizeCoachTimestamp("2026-10-01T10:00:00.000Z"), Date.parse("2026-10-01T10:00:00.000Z"));
+  // 带时区偏移的 ISO 折算到同一时间线（+08:00 的 18 点 = UTC 10 点）。
+  assert.equal(normalizeCoachTimestamp("2026-10-01T18:00:00+08:00"), Date.parse("2026-10-01T10:00:00.000Z"));
+  // sqlite CURRENT_TIMESTAMP 形态（无时区）：必须按 UTC 解析，不落本地时区。
+  assert.equal(normalizeCoachTimestamp("2026-10-01 10:00:00"), Date.parse("2026-10-01T10:00:00.000Z"));
+  assert.equal(normalizeCoachTimestamp("2026-10-01 10:00:00.500"), Date.parse("2026-10-01T10:00:00.500Z"));
+  // 空串/缺参/乱码 → null（挂载时间未知）。
+  assert.equal(normalizeCoachTimestamp(""), null);
+  assert.equal(normalizeCoachTimestamp("  "), null);
+  assert.equal(normalizeCoachTimestamp(undefined), null);
+  assert.equal(normalizeCoachTimestamp("not-a-time"), null);
 });

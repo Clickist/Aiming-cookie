@@ -25,7 +25,10 @@ import { MemberNotice, memberEndDate, memberNotice, memberNoticeText } from "@/c
 import { t, useT, type MessageKey } from "@/lib/i18n";
 import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
+import { useKovaakInstallGuide } from "@/lib/kovaak-install-guide";
+import { KovaakInstallGuideCard } from "@/components/kovaak/KovaakInstallGuideCard";
 import { activeRunRefForSession, clearActiveRunRef, pinActiveRunRef } from "@/lib/coach-run-resume";
+import { resolveCoachMessageAnalysisRefs } from "@/lib/coach-timepoints";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
   activeMentionQuery,
@@ -61,6 +64,7 @@ import { CoachWorkStream, ElapsedTicker, freezeThinkingSegment, settleTerminalWo
 import type {
   CoachAgentRunEventV1,
   CoachAgentRunV1,
+  CoachAnalysisMount,
   CoachThreadMessageOut,
   CurrentTrainingItemV1,
   CurrentTrainingV1,
@@ -641,6 +645,7 @@ export function CoachPanel({
   const trainingPresence = useAnimatedPresence(trainingExpanded, 260);
   const [launchingScenarioRef, setLaunchingScenarioRef] = useState<string | null>(null);
   const [analysisSessionIds, setAnalysisSessionIds] = useState<number[]>([]);
+  const [analysisRefs, setAnalysisRefs] = useState<CoachAnalysisMount[]>([]);
   const [deepReadAnalysisSessionIds, setDeepReadAnalysisSessionIds] = useState<number[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -909,11 +914,26 @@ export function CoachPanel({
     : null;
   const defaultAnalysisRef = topicRunRef ?? topicSessionRef ?? deepReadRunRef ?? deepReadSessionRef;
 
+  // 历史 assistant 消息的 @time 视频归属（1002 串视频修复）：defaultAnalysisRef
+  // 是会话级单值，只服务活跃 run 的流式消息；已落库的历史消息若共用它，会话
+  // 先后挂载 ≥2 个分析时 @time 会全部打开同一个项目的视频（用户报障）。改为
+  // 逐消息时间就近——每条回复归属「attached_at ≤ 消息 created_at 的最近一次
+  // 挂载」（detail 的 analysis_refs 挂载台账，时间取挂载 run 的 started_at），
+  // 语义与边界见 resolveCoachMessageAnalysisRefs（lib/coach-timepoints.ts）；
+  // 旧会话无挂载时间时退回序数近似。无主题挂载的消息拿 null，渲染处回落深读
+  // 兜底链。run 活跃期不参与本表：流式消息仍走上面的 topicRunRef 链，历史
+  // 消息不被进行中回合的 refs 污染。
+  const messageAnalysisRefs = useMemo(
+    () => resolveCoachMessageAnalysisRefs(messages, analysisRefs),
+    [messages, analysisRefs],
+  );
+
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
     if (draftSession) {
       setMessages([]);
       setAnalysisSessionIds([]);
+      setAnalysisRefs([]);
       setDeepReadAnalysisSessionIds([]);
       setLoadError(false);
       return;
@@ -928,6 +948,7 @@ export function CoachPanel({
         setRun(null);
         setFailedCard(null);
         setAnalysisSessionIds([]);
+        setAnalysisRefs([]);
         setDeepReadAnalysisSessionIds([]);
         setLoadError(false);
         return;
@@ -938,6 +959,7 @@ export function CoachPanel({
       // 落地后 refresh 的合并逻辑会按 role+content 对乐观气泡去重接管。
       setMessages((current) => current.filter((message) => message.id < 0));
       setAnalysisSessionIds([]);
+      setAnalysisRefs([]);
       setDeepReadAnalysisSessionIds([]);
       setLoadError(false);
       return;
@@ -960,6 +982,7 @@ export function CoachPanel({
         return [...backendMessages, ...uniqueOptimistic];
       });
       setAnalysisSessionIds(detail.analysis_session_ids ?? []);
+      setAnalysisRefs(detail.analysis_refs ?? []);
       setDeepReadAnalysisSessionIds(detail.deep_read_analysis_session_ids ?? []);
       setLoadError(false);
     } catch {
@@ -2575,6 +2598,9 @@ export function CoachPanel({
   const homeGreeting = coachGreeting(new Date());
   // 不缓存：chips 文案经 t() 跟随当前 locale，useMemo 空依赖会把挂载时的语言定格。
   const homeChips = coachHomeChips();
+  // 「未检测到 KovaaK's」引导（1002 方案 A）：无 KovaaK 新用户落首页后无提示
+  // 的泄漏点；目录被发现/手动确认后 hook 自动回落 false，卡片消失。
+  const kovaakInstallGuideMissing = useKovaakInstallGuide();
   // 纯空对话（无消息、无 run、非过渡帧）才显示首页；发送首条后由常规消息流接管。
   const homeMode = messages.length === 0 && !run && !homeExit;
   // 空对话首页壳层（点点 0910 拍板）：header 状态行与"本次讨论"条是上次会话的
@@ -3067,6 +3093,7 @@ export function CoachPanel({
             <div className="task6-home-greet">{homeGreeting}</div>
             <div className="task6-home-composer" ref={homeComposerRef}>{composerCore}</div>
             {homeTail}
+            {kovaakInstallGuideMissing ? <KovaakInstallGuideCard /> : null}
           </div>
         ) : homeExit ? (
           /* 过渡帧：hero 骨架淡出让位（CSS 动画），飞行气泡由 WAAPI 驱动。 */
@@ -3089,8 +3116,13 @@ export function CoachPanel({
                 {message.role === "assistant" ? (
                   <>
                     {/* 受控富渲染（digests §10）：助手消息走 task7-rich 块结构，
-                       不再套 <p>（表格/列表不能内嵌在段落里）。 */}
-                    <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
+                       不再套 <p>（表格/列表不能内嵌在段落里）。@time 视频归属
+                       逐消息计算（1002 串视频修复），无主题挂载回落深读链。 */}
+                    <CoachMessageText
+                      text={message.content}
+                      analysisRef={messageAnalysisRefs.get(message.id) ?? deepReadRunRef ?? deepReadSessionRef}
+                      onOpenVideo={onOpenVideo}
+                    />
                     {/* 被停止的半截回复如实标记：与「停止生成」的停止尾标一致，
                         打断并转向后旧回复不再伪装成完整回答（0911 审计 §12.5）。 */}
                     {message.stopped ? <span className="task6-message-stopped">{t("coach.message.stopped")}</span> : null}

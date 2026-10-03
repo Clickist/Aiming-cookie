@@ -884,6 +884,8 @@ export interface ProviderCatalogModel {
   provider_id?: string;
   base_url?: string;
   reasoning?: boolean;
+  /** 该模型真实支持的 UI 语义档（sidecar 投影，与运行时同源）；旧 sidecar 无此字段。 */
+  reasoning_efforts?: ProviderReasoningEffort[];
   input?: string[];
   context_window?: number;
   max_tokens?: number;
@@ -1081,6 +1083,10 @@ export interface CustomProviderModel {
   model_id: string;
   context_window: number | null;
   max_tokens: number | null;
+  /** 目录元数据投影（1003 修复）：力度菜单显隐依据；旧 sidecar 无此字段。 */
+  reasoning?: boolean;
+  /** 该模型真实支持的 UI 语义档；旧 sidecar 无此字段时菜单回落全五档。 */
+  reasoning_efforts?: ProviderReasoningEffort[];
 }
 
 export interface CustomProviderModelListResponse {
@@ -1333,6 +1339,13 @@ export interface CoachPrimaryAttachResponse {
 export type CoachSessionKind = "primary" | "conversation";
 export type CoachSessionStatus = "active" | "archived" | "deleted";
 
+/** 会话内分析挂载台账明细（挂载顺序 + 挂载时刻）。 */
+export interface CoachAnalysisMount {
+  id: number;
+  /** 挂载时刻（ISO 8601，取挂载 run 的 started_at）；升级前旧会话为空串 = 挂载时间未知。 */
+  attached_at: string;
+}
+
 export interface CoachSessionOut {
   id: number;
   user_id: string;
@@ -1347,6 +1360,10 @@ export interface CoachSessionOut {
   analysis_session_ids: number[];
   /** 深读跨分析合并进讨论的 session ids；CoachSessionDetail（lib/api.ts）继承本字段。 */
   deep_read_analysis_session_ids?: number[];
+  /** 挂载顺序台账（按 attached_at 升序）：仅 GET /v1/sessions/:id detail 返回；
+   *  历史 @time 链接按「attached_at ≤ 消息时间的最近挂载」逐消息归属
+   *  （1002 串视频修复），列表等其他响应不带。 */
+  analysis_refs?: CoachAnalysisMount[];
   /** 首轮已落盘但模型命名尚未生成（AppShell 据此安排一次延迟补刷）。 */
   title_pending?: boolean;
 }

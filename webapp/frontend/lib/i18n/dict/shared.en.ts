@@ -345,6 +345,13 @@ export const sharedEn = {
   // lib/desktop.ts —— 桌面能力兜底文案（批 1；与 Rust 侧重复条目批 6 去重）
   "desktop.kovaak.scenarioUnmapped": "This scenario isn't installed in your local KovaaK. Subscribe or download it first.",
   "desktop.kovaak.webPreviewBlocked": "The web preview can't launch KovaaK. Use the desktop app.",
+
+  // components/kovaak/KovaakInstallGuideCard.tsx —— "KovaaK's not detected" guide
+  // card (1002 plan A: shared by the Coach home empty state and History empty state)
+  "kovaak.guide.title": "KovaaK's not detected",
+  "kovaak.guide.body": "Aiming Cookie's analyses rely on KovaaK's training match data.",
+  "kovaak.guide.storeLink": "Get KovaaK's on Steam",
+  "kovaak.guide.hint": "Already installed? Point Settings → KovaaK at the folder manually.",
   "desktop.dialog.exportLogs": "Export run logs",
   "desktop.dialog.pickVideo": "Select an MP4 recording",
   "desktop.dialog.pickCsv": "Select a KovaaK Stats CSV",
