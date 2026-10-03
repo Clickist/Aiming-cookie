@@ -33,6 +33,7 @@ from webapp.backend.external_telemetry_ingest import (
     ExternalTelemetryWatcher,
     epoch_anchor_for_source,
 )
+from kovaak_tracker import scenario_profiles
 from webapp.tests.test_worker_telemetry import _scenario_resolution
 
 
@@ -276,6 +277,93 @@ async def test_full_worker_pipeline_on_real_final0831_round7():
     )
     assert result["deterministic"]["visual_quality_profile_ref"] == (
         "visual-quality:external_telemetry@telemetry_signals.v1:fov103"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_tracking_scenario_runs_full_pipeline_on_real_telemetry():
+    """1002 拍板（支持名单退役）：不在 registry 的跟枪场景（name candidate、
+    unlisted）+ 真实遥测旁车 -> 完整 continuous_tracking.v1 指标，不再被降到
+    baseline。身份候选 limitation 照带（诚实来源），能力不扣减。"""
+    run, _summary = await _import_real_session(PIPELINE_ROUND)
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+    )
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name="narrow strafe tracking 90iw",
+    )
+    assert resolution["manifest_status"] == "unlisted"
+    assert "continuous_tracking.v1" in resolution["allowed_analyzers"]
+    job = {
+        "id": 424244,
+        "user_id": config.DESKTOP_LOCAL_PROFILE,
+        "analysis_type": "continuous_tracking",
+        "input_mode": "telemetry_multimodal",
+        "kovaak_run_id": run["id"],
+        "input_snapshot": {
+            **snapshot,
+            "scenario_resolution": resolution,
+        },
+        "video_path": None,
+        "csv_path": "",
+        "cm_per_360": 30.0,
+        "fov": 90.0,
+        "created_at": "2026-08-31 12:00:00",
+    }
+    completed: list[dict] = []
+
+    async def mark_done(_sid, result, _cost, *, worker_id):
+        completed.append(result)
+        return True
+
+    def identity_evidence(_job, result, **_kwargs):
+        return result
+
+    with patch(
+        "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
+    ), patch(
+        "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
+    ), patch(
+        "webapp.backend.queue.mark_done",
+        new=AsyncMock(side_effect=mark_done),
+    ), patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual",
+        return_value=MagicMock(cm_per_360=None, fov=None),
+    ), patch(
+        "webapp.backend.worker._maybe_commit_analysis_evidence",
+        side_effect=identity_evidence,
+    ), patch(
+        "webapp.backend.worker.run_visual_preprocessing_isolated",
+        new=AsyncMock(),
+    ) as cv_plain, patch(
+        "webapp.backend.worker.run_continuous_tracking_pipeline_isolated",
+        new=AsyncMock(),
+    ) as cv_pipeline:
+        assert await worker.process_one() is True
+
+    cv_plain.assert_not_called()
+    cv_pipeline.assert_not_called()
+    assert len(completed) == 1
+    result = completed[0]
+    assert result["analysis_version"] == "continuous_tracking.v1", (
+        result["analysis_version"],
+        result.get("warnings"),
+        (result.get("deterministic") or {}).get("limitations"),
+    )
+    metrics = result["deterministic"]["metrics"]
+    available = {
+        key: metric
+        for key, metric in metrics.items()
+        if metric.get("availability") == "available"
+    }
+    assert available, f"no available tracking metrics: {sorted(metrics)}"
+    assert (
+        result["deterministic"]["visual_validation"]["producer_version"]
+        == "telemetry_signals.v1"
+    )
+    carried = (result.get("input_snapshot") or {}).get("scenario_resolution") or {}
+    assert "scenario_name_is_a_candidate_not_an_identity" in (
+        carried.get("limitations") or []
     )
 
 

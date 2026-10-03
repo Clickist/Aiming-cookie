@@ -1685,9 +1685,10 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         and "static_clicking" in (resolution.get("allowed_metric_families") or [])
     ):
         return NATIVE_ANALYSIS_VERSION
+    # 1002 拍板：场景支持名单退役——family 分发只看家族归类 + 数据档位，
+    # 不再看 manifest_status（未复核身份的诚实标记留在 resolution limitations）。
     if (
-        resolution.get("manifest_status") == "active"
-        and resolution.get("family_analyzer_dispatch") == "allowed"
+        resolution.get("family_analyzer_dispatch") == "allowed"
         and resolution.get("aim_family") == "dynamic_clicking"
         and input_mode == "multimodal"
         and DYNAMIC_CLICKING_ANALYSIS_VERSION
@@ -1696,8 +1697,7 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
     ):
         return DYNAMIC_CLICKING_ANALYSIS_VERSION
     if (
-        resolution.get("manifest_status") == "active"
-        and resolution.get("family_analyzer_dispatch") == "allowed"
+        resolution.get("family_analyzer_dispatch") == "allowed"
         and resolution.get("aim_family") == "continuous_tracking"
         and input_mode == "multimodal"
         and CONTINUOUS_TRACKING_ANALYSIS_VERSION
@@ -1738,8 +1738,10 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         and resolution.get("claim_ceiling") == "descriptive_only"
         and resolution.get("aim_family") in _FAMILY_BASELINE_DISPATCH_FAMILIES
         and baseline_analyzer in (resolution.get("allowed_analyzers") or [])
-        and set(resolution.get("allowed_metric_families") or [])
-        == {"outcome", "input_kinematics"}
+        # 完整家族分析器授予后未复核 resolution 会带家族指标（超集）；
+        # 无视觉数据的 input_native / producer 失败场景仍落到输入运动学基线。
+        and {"outcome", "input_kinematics"}
+        <= set(resolution.get("allowed_metric_families") or [])
         and input_mode in {"input_native", "multimodal"}
     ):
         return baseline_analyzer

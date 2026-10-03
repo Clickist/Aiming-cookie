@@ -2932,7 +2932,7 @@ def test_name_heuristic_switching_without_video_dispatches_baseline_kinematics()
     ) == "outcome_only"
 
 
-def test_challenge_shape_tracking_dispatches_baseline_without_visual_pipeline():
+def test_challenge_shape_tracking_dispatches_full_visual_pipeline_with_multimodal():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
     snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
@@ -2950,11 +2950,12 @@ def test_challenge_shape_tracking_dispatches_baseline_without_visual_pipeline():
         {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
         "input_native",
     ) == "continuous_tracking.baseline.v1"
-    # 形态候选不进标定视觉管线；multimodal 档出 baseline + 可回放视频。
+    # 1002 拍板：支持名单退役——形态候选 multimodal 档也进完整视觉管线，
+    # 遥测真值/CV 质量闸照常 fail-closed。
     assert worker._scenario_dispatch(
         {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
         "multimodal",
-    ) == "continuous_tracking.baseline.v1"
+    ) == "continuous_tracking.v1"
 
 
 def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_changes():

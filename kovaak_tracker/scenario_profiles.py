@@ -608,6 +608,16 @@ def active_scenario_profile_refs(
     return registry_refs & manifest_refs
 
 
+# 1002 拍板（点点）：场景支持名单退役——能力跟家族与数据走，不跟 review
+# 状态走。未复核身份只保留来源 limitation（candidate/unknown），不再扣减
+# 分析器能力。switching 的完整管线依赖逐场景标定的视觉 episode producer
+#（数据件，非名单），static 的 native 档与 baseline 同为输入运动学，均不在此授予。
+_FAMILY_FULL_ANALYZER_BY_FAMILY = {
+    "dynamic_clicking": "dynamic_clicking.v1",
+    "continuous_tracking": "continuous_tracking.v1",
+}
+
+
 def _family_baseline_resolution(
     *,
     scenario_hash: str | None,
@@ -621,6 +631,12 @@ def _family_baseline_resolution(
     subdomains: Sequence[str] = (),
     limitations: Sequence[str] = (),
 ) -> dict[str, Any]:
+    full_analyzer = _FAMILY_FULL_ANALYZER_BY_FAMILY.get(aim_family)
+    allowed_analyzers = [f"{aim_family}.baseline.v1"]
+    allowed_metric_families = ["outcome", "input_kinematics"]
+    if full_analyzer is not None:
+        allowed_analyzers.append(full_analyzer)
+        allowed_metric_families.append(aim_family)
     return {
         "schema_version": RESOLUTION_SCHEMA_VERSION,
         "scenario_hash": scenario_hash,
@@ -642,8 +658,8 @@ def _family_baseline_resolution(
         "aim_family": aim_family,
         "subdomains": list(subdomains),
         "target_motion": dict(target_motion),
-        "allowed_analyzers": [f"{aim_family}.baseline.v1"],
-        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "allowed_analyzers": allowed_analyzers,
+        "allowed_metric_families": allowed_metric_families,
         "claim_ceiling": "descriptive_only",
         "family_analyzer_dispatch": "allowed",
         "limitations": list(limitations),

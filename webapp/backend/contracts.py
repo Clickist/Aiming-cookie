@@ -820,13 +820,32 @@ def validate_scenario_resolution_v1(value: object) -> dict:
         ):
             raise ValueError("scenario_resolution active dispatch is inconsistent")
     elif dispatch == "allowed":
-        # Baseline family dispatch: the identified family pipeline runs on
-        # native facts without exact visual calibration. It is granted by a
-        # verified local scenario definition, the Stats-derived challenge
-        # shape, the telemetry-observed feature tree, a name-only family
-        # candidate, the unresolved default, a user-confirmed scenario
-        # override, or a reviewed profile whose manifest gate is not active
-        # (exact-review provenance kept, visual claims withheld).
+        # 1002 拍板（点点）：场景支持名单退役。baseline dispatch 的能力授予
+        # 升级为家族完整分析器（tracking/dynamic，能力跟家族与数据走，不跟
+        # review 状态走）；static/switching 保持纯基线（switching 完整管线
+        # 依赖逐场景标定数据件，static native 与 baseline 同为输入运动学）。
+        # 旧快照（升级前冻结、重析时重验）的纯基线形状继续接受。
+        full_analyzer = (
+            f"{aim_family}.v1"
+            if aim_family in {"dynamic_clicking", "continuous_tracking"}
+            else None
+        )
+        valid_analyzers = (
+            [
+                [f"{aim_family}.baseline.v1", full_analyzer],
+                [f"{aim_family}.baseline.v1"],  # pre-1002 frozen snapshots
+            ]
+            if full_analyzer is not None
+            else [[f"{aim_family}.baseline.v1"]]
+        )
+        valid_metrics = (
+            [
+                ["outcome", "input_kinematics", aim_family],
+                ["outcome", "input_kinematics"],  # pre-1002 frozen snapshots
+            ]
+            if full_analyzer is not None
+            else [["outcome", "input_kinematics"]]
+        )
         if not (
             manifest_status != "active"
             and aim_family in {
@@ -834,8 +853,8 @@ def validate_scenario_resolution_v1(value: object) -> dict:
                 "continuous_tracking", "target_switching",
             }
             and claim_ceiling == "descriptive_only"
-            and allowed_analyzers == [f"{aim_family}.baseline.v1"]
-            and allowed_metric_families == ["outcome", "input_kinematics"]
+            and allowed_analyzers in valid_analyzers
+            and allowed_metric_families in valid_metrics
             and limitations
         ):
             raise ValueError("scenario_resolution baseline dispatch is inconsistent")

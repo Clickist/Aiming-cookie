@@ -31,8 +31,8 @@ def normalize_locale_header(value: str | None) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时执行 reconciliation（DB schema 初始化已移除）。"""
-    # 存储迁移后的库内绝对路径一次性重写（0929 真机 40 行断链的永久机制）。
-    # 必须在对外服务前完成；fail-soft，结果只进日志。
+    # 存储迁移后的旧根绝对路径一次性重写（db 列 + sessions/*.json 字段，
+    # 各自独立标志）。必须在对外服务前完成；fail-soft，结果只进日志。
     rewrite_status = await asyncio.to_thread(
         storage_path_rewrite.run_startup_path_rewrite
     )

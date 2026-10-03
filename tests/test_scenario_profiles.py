@@ -196,7 +196,9 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
     assert same_name_unknown["classification_source"] == "name_heuristic"
     assert same_name_unknown["classification_confidence"] == "candidate"
     assert same_name_unknown["aim_family"] == "dynamic_clicking"
-    assert same_name_unknown["allowed_analyzers"] == ["dynamic_clicking.baseline.v1"]
+    assert same_name_unknown["allowed_analyzers"] == [
+        "dynamic_clicking.baseline.v1", "dynamic_clicking.v1",
+    ]
     assert same_name_unknown["family_analyzer_dispatch"] == "allowed"
     assert same_name_unknown["claim_ceiling"] == "descriptive_only"
 
@@ -457,7 +459,9 @@ Category=SemiAuto
     assert resolution["target_motion"] == {
         "model": "reactive", "target_count_model": "concurrent",
     }
-    assert resolution["allowed_analyzers"] == ["dynamic_clicking.baseline.v1"]
+    assert resolution["allowed_analyzers"] == [
+        "dynamic_clicking.baseline.v1", "dynamic_clicking.v1",
+    ]
     assert resolution["claim_ceiling"] == "descriptive_only"
     assert resolution["family_analyzer_dispatch"] == "allowed"
 
@@ -543,7 +547,12 @@ def test_name_keywords_route_unreviewed_scenarios_to_family_candidates(display_n
     assert resolution["classification_source"] == "name_heuristic"
     assert resolution["classification_confidence"] == "candidate"
     assert resolution["aim_family"] == aim_family
-    assert resolution["allowed_analyzers"] == [f"{aim_family}.baseline.v1"]
+    # 1002 拍板：支持名单退役——tracking/dynamic 未复核身份也授予完整家族
+    # 分析器；switching/static 的完整管线依赖数据件或与 baseline 同层，不授予。
+    expected_analyzers = [f"{aim_family}.baseline.v1"]
+    if aim_family in {"continuous_tracking", "dynamic_clicking"}:
+        expected_analyzers.append(f"{aim_family}.v1")
+    assert resolution["allowed_analyzers"] == expected_analyzers
     assert resolution["family_analyzer_dispatch"] == "allowed"
     assert resolution["claim_ceiling"] == "descriptive_only"
     assert "scenario_name_is_a_candidate_not_an_identity" in resolution["limitations"]
@@ -654,8 +663,13 @@ def test_challenge_shape_fire_mode_routes_zero_kill_tracking_without_name_keywor
     assert resolution["classification_source"] == "challenge_shape"
     assert resolution["classification_confidence"] == "candidate"
     assert resolution["aim_family"] == "continuous_tracking"
-    assert resolution["allowed_analyzers"] == ["continuous_tracking.baseline.v1"]
-    assert resolution["allowed_metric_families"] == ["outcome", "input_kinematics"]
+    # 1002 拍板：支持名单退役——challenge_shape 候选同样授予完整家族分析器。
+    assert resolution["allowed_analyzers"] == [
+        "continuous_tracking.baseline.v1", "continuous_tracking.v1",
+    ]
+    assert resolution["allowed_metric_families"] == [
+        "outcome", "input_kinematics", "continuous_tracking",
+    ]
     assert resolution["family_analyzer_dispatch"] == "allowed"
     assert resolution["claim_ceiling"] == "descriptive_only"
     assert (
