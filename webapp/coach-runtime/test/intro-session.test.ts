@@ -84,10 +84,18 @@ test("intro-session SKILL.md carries the hard constraints", () => {
   ]) {
     assert.ok(raw.includes(fragment), `SKILL.md must contain ${fragment}`);
   }
-  assert.ok(raw.includes("禁止出现「歌单」「官方基准」字样"), "SKILL.md must state the banned-term rule");
+  // [fix 2026-10-04] 措辞收窄（铁律作用域限定为开场分析会话对外话术）后，
+  // 断言同步新句式：禁令行改述为「这两个词不出现在你的对外回复里」。
+  assert.ok(
+    raw.includes("「歌单」「官方基准」这两个词不出现在你的对外回复里"),
+    "SKILL.md must state the banned-term rule",
+  );
   for (const line of raw.split(/\r?\n/)) {
     if (line.includes("歌单") || line.includes("官方基准")) {
-      assert.ok(line.includes("禁止"), `banned term must only appear in the prohibition line: ${line}`);
+      assert.ok(
+        line.includes("不出现在你的对外回复里") || line.includes("术语铁律"),
+        `banned term must only appear in the scoped prohibition statement: ${line}`,
+      );
     }
   }
 });
