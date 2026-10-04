@@ -111,7 +111,7 @@ function buildIndex(registry: KnowledgeRegistry, packDisplayName?: string): Know
 function prescriptionRecommendation(entry: KnowledgeEntryV2): string {
   const cue = entry.cue;
   const raw = cue !== undefined && cue !== "not_applicable" ? cue.text : entry.definition.text;
-  return raw.replace(/^推荐做法（[^）]*）：/, "");
+  return raw.replace(/^(?:来源做法|推荐做法)（[^）]*）：/, "");
 }
 
 /** Scenario availability codes extracted from the scope text ("场景可用性：..."). */

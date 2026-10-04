@@ -326,7 +326,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-09-20.v13"
+    assert result["registry_version"] == "2026-10-04.v14"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -942,7 +942,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-09-20.v13"
+    assert registry.load_registry()["registry_version"] == "2026-10-04.v14"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1322,7 +1322,7 @@ _V12_PRESCRIPTION_COUNT = 60
 def test_v12_corpus_prescriptions_are_the_default_registry():
     root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
     schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
-    packaged = json.loads((root / "registry.v13.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v14.json").read_text(encoding="utf-8"))
 
     Draft202012Validator.check_schema(schema)
     errors = sorted(
@@ -1332,15 +1332,36 @@ def test_v12_corpus_prescriptions_are_the_default_registry():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry()
     assert loaded == registry.validate_registry(packaged)
-    assert loaded["registry_version"] == "2026-09-20.v13"
+    assert loaded["registry_version"] == "2026-10-04.v14"
     assert loaded["schema_version"] == "coach_knowledge_registry.v3"
     assert len(loaded["entries"]) == 118
     assert len(loaded["sources"]) == 135
 
-    # The 111 v12 entries are carried over untouched.
-    previous = registry.load_registry(registry_version="2026-09-12.v12")
-    assert loaded["entries"][: len(previous["entries"])] == previous["entries"]
-    assert loaded["signal_aliases"] == previous["signal_aliases"]
+    # v13 keeps the 111 v12 entries untouched (append-only discipline).
+    v12 = registry.load_registry(registry_version="2026-09-12.v12")
+    v13 = registry.load_registry(registry_version="2026-09-20.v13")
+    assert v13["entries"][: len(v12["entries"])] == v12["entries"]
+
+    # v14 is the knowledge-audit remediation: same entry set, text-only
+    # definition/scope/cue amendments on exactly the audited entries
+    # (migrations/2026-10-04-v13-to-v14-audit.json); everything else,
+    # including signal_aliases, is carried over byte-identically.
+    audit = json.loads(
+        (Path(__file__).resolve().parents[2] / "knowledge" / "coach" / "migrations" / "2026-10-04-v13-to-v14-audit.json").read_text(encoding="utf-8")
+    )
+    amended = set(audit["amended_entry_ids"])
+    by_id = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    assert set(by_id) == {entry["entry_id"] for entry in v13["entries"]}
+    assert loaded["signal_aliases"] == v13["signal_aliases"]
+    for old in v13["entries"]:
+        new = by_id[old["entry_id"]]
+        if old["entry_id"] in amended:
+            for key, value in old.items():
+                if key in ("definition", "scope", "cue"):
+                    continue
+                assert new[key] == value, (old["entry_id"], key)
+        else:
+            assert new == old, old["entry_id"]
 
     prescriptions = [
         entry for entry in loaded["entries"]

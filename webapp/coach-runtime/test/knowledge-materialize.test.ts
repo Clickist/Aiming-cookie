@@ -185,7 +185,7 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
     registry_version: string;
     entries: Array<{ entry_file: string; topics: string[]; signals: string[]; metric_refs: string[] }>;
   };
-  assert.equal(index.registry_version, "2026-09-20.v13");
+  assert.equal(index.registry_version, "2026-10-04.v14");
   assert.ok(!index.entries.some((entry) => entry.entry_file.startsWith("prescription.")));
   assert.equal(index.entries.length, 58);
   assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 118);

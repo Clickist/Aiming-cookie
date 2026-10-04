@@ -564,16 +564,38 @@ test("v11 closes the signal gaps when loaded as history", () => {
 
 test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () => {
   const registry = loadKnowledgeRegistry();
-  assert.equal(registry.registry_version, "2026-09-20.v13");
+  assert.equal(registry.registry_version, "2026-10-04.v14");
   assert.equal(registry.schema_version, "coach_knowledge_registry.v3");
   assert.equal(registry.entries.length, 118);
   assert.equal(registry.sources!.length, 135);
 
   const previous = loadKnowledgeRegistry("2026-09-12.v12");
-  assert.deepEqual(
-    registry.entries.slice(0, previous.entries.length),
-    previous.entries,
-  );
+  // v13 keeps the v12 corpus untouched (append-only discipline).
+  const v13 = loadKnowledgeRegistry("2026-09-20.v13");
+  assert.deepEqual(v13.entries.slice(0, previous.entries.length), previous.entries);
+  // v14 is the knowledge-audit remediation: same entry set; only the audited
+  // definition/scope/cue texts differ (migrations/2026-10-04-v13-to-v14-audit.json).
+  const audit = JSON.parse(
+    readFileSync(new URL("../../../knowledge/coach/migrations/2026-10-04-v13-to-v14-audit.json", import.meta.url), "utf8"),
+  ) as { amended_entry_ids: string[] };
+  const amended = new Set(audit.amended_entry_ids);
+  assert.equal(registry.entries.length, v13.entries.length);
+  for (let i = 0; i < v13.entries.length; i += 1) {
+    const oldEntry = v13.entries[i];
+    const newEntry = registry.entries[i];
+    assert.equal(newEntry.entry_id, oldEntry.entry_id);
+    if (amended.has(oldEntry.entry_id)) continue;
+    assert.deepEqual(newEntry, oldEntry, oldEntry.entry_id);
+  }
+  for (const id of amended) {
+    const oldEntry = v13.entries.find((entry) => entry.entry_id === id);
+    const newEntry = registry.entries.find((entry) => entry.entry_id === id);
+    assert.ok(oldEntry && newEntry, id);
+    for (const key of Object.keys(oldEntry)) {
+      if (key === "definition" || key === "scope" || key === "cue") continue;
+      assert.deepEqual(newEntry[key as keyof typeof newEntry], oldEntry[key as keyof typeof oldEntry], `${id}.${key}`);
+    }
+  }
   assert.deepEqual(registry.signal_aliases, previous.signal_aliases);
 
   const prescriptions = registry.entries.filter((entry) =>

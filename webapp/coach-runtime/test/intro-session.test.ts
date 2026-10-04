@@ -81,9 +81,14 @@ test("intro-session SKILL.md carries the hard constraints", () => {
     "steam_profile_url",
     "处方卡等第一份正经分析后解锁",
     "没有也行",
+    "关门引导",
+    "navigation.open",
+    "开场流程即告结束",
   ]) {
     assert.ok(raw.includes(fragment), `SKILL.md must contain ${fragment}`);
   }
+  // 宣传口径铁律：Coach 对外话术不用「验证」字眼，SKILL.md 也不得引入。
+  assert.ok(!raw.includes("验证"), "SKILL.md must not use the word 验证");
   // [fix 2026-10-04] 措辞收窄（铁律作用域限定为开场分析会话对外话术）后，
   // 断言同步新句式：禁令行改述为「这两个词不出现在你的对外回复里」。
   assert.ok(
