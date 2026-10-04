@@ -111,6 +111,7 @@ def _write_frozen_external_run(
     tmp_data_root: Path,
     *,
     alignment_accepted: bool = True,
+    round_verdicts: dict | None = None,
 ) -> Path:
     """在 DATA_ROOT 里落一个冻结 ext 目录 + meta.json（对齐回执可切换）。"""
     ext_dir = tmp_data_root / "external" / EXTERNAL_RUN_ID
@@ -156,6 +157,8 @@ def _write_frozen_external_run(
         "alignment": {"method": "fixture", "accepted": alignment_accepted},
         "check": {"median_deg": 0.4, "n": 1},
     }
+    if round_verdicts is not None:
+        manifest["alignment"]["round_verdicts"] = round_verdicts
     (ext_dir / "merge_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8",
     )
@@ -546,6 +549,38 @@ async def test_alignment_rejected_manifest_falls_back_to_cv():
     assert len(builder_calls) == 1
     mocks["cv_pipeline"].assert_called_once()
     marker = "external_telemetry_unavailable:telemetry_alignment_not_accepted"
+    result = mocks["result"]
+    assert {"code": marker} in result["warnings"]
+    assert marker in result["deterministic"]["limitations"]
+
+
+@pytest.mark.asyncio
+async def test_round_rejected_verdict_falls_back_to_cv():
+    """③b [fix 2026-10-04] 逐轮部分验收：manifest.alignment.accepted=true 但该轮
+    round_verdicts=false（merge 端 session 级双挂、本轮流脏）→ 投影前拒绝，
+    limitation 归并为 telemetry_alignment_round_rejected，CV 兜底不受影响。"""
+    ext_dir = _write_frozen_external_run(
+        _data_root(), round_verdicts={"1": False})
+    job = _telemetry_job(ext_dir)
+    job["video_path"] = "managed.mp4"
+
+    real_builder = worker._build_external_telemetry_visual_result
+    builder_calls: list[dict] = []
+
+    def spy_builder(spy_job):
+        builder_calls.append(spy_job)
+        return real_builder(spy_job)
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=spy_builder,
+        cv_pipeline=lambda _job: (_cv_visual(), _family_fixture()),
+        tracking_analysis=lambda _job, _visual: _family_fixture(),
+    )
+
+    assert len(builder_calls) == 1
+    mocks["cv_pipeline"].assert_called_once()
+    marker = "external_telemetry_unavailable:telemetry_alignment_round_rejected"
     result = mocks["result"]
     assert {"code": marker} in result["warnings"]
     assert marker in result["deterministic"]["limitations"]

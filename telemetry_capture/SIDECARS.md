@@ -84,6 +84,20 @@
     点击无关）在 index 锚上评估，锚真错位时数量级恶化（2156 负对照：正确锚中位
     1.75°/<10°占56% vs 错位 ±1.125s → 34°/10% 与 44°/3%），不会静默放过坏锚。
     两级都不过 ⇒ 拒写旁车（退出码 2）。
+  - **[fix 2026-10-04] `click_geom` 场景守卫**：死亡-点击配对率
+    （`xcorr.click_to_death_latency_ms.n / n_deaths`）< 0.5 ⇒ 跟枪/hold-fire 语义，
+    kill-click 几何回执无判别力（现网实证：tracking 局中位 43° 为语义噪音，同局
+    tracking_aim 1.23° 真值健康），该级判 False 但不作为旁车拒绝依据，仅诊断。
+  - **[fix 2026-10-04] 逐轮部分验收**：session 级双挂时常因个别脏轮（厚血场景死亡
+    动画期位置停更、多目标混杂轮）拉爆汇总分布，其余轮回执其实健康（zxldewil 1003
+    案：唯一进考场的 session 被 4 目标混杂轮拖死，3 局干净轮陪葬）。此时按轮独立
+    fail-closed：轮级判据 `aim_check.per_round[].n≥3 且 median_deg≤5° 且
+    share_lt_10deg≥0.5`，有过验轮 ⇒ `alignment.accept_grade="tracking_aim_per_round"`、
+    `alignment.round_verdicts`（round 字符串 → bool）入 manifest；过验轮照常写
+    views/inputs，脏轮**不写**且 `rounds[].alignment_rejected=true`（重跑时清旧副本）；
+    全挂仍退出码 2。消费侧（worker 投影）按 `round_verdicts` 拒被拒轮 →
+    `telemetry_alignment_round_rejected`。注意轮级 n=3 的短尾轮（死亡瞬间甩靶）
+    median 可达 5°+，被拒是 fail-closed 对小样本的保守行为，非数据损坏。
   - 无精确锚的旧判据与 fail-closed 不变。
 - 不达峰且无 t0_epoch ⇒ **拒绝写任何旁车**（退出码 2，fail-closed）。
 - `rounds[]`：每轮 `{n_views, view_gaps_gt_200ms, n_inputs}` 覆盖统计。

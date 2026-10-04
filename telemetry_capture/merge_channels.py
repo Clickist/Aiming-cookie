@@ -58,6 +58,16 @@ CLICK_CHECK_MIN_N = 5       # click_geom 级：click 几何回执最少配对数
 AIM_CHECK_MIN_N = 5         # tracking_aim 级：aim-at-death 回执最少 life 数
 AIM_MEDIAN_MAX_DEG = 5.0    # tracking_aim 级：窗最小夹角中位上限
 AIM_SHARE10_MIN = 0.5       # tracking_aim 级：窗最小夹角 <10° 占比下限
+# [fix 2026-10-04] click_geom 场景守卫：死亡-点击配对率低于此 ⇒ 跟枪/hold-fire
+# 语义，kill-click 几何回执无判别力（实测 tracking 局中位 43° 为语义噪音，同局
+# tracking_aim 1.23° 真值健康），不得据此拒旁车，只作诊断。
+CLICK_SEMANTICS_MIN_SHARE = 0.5
+# [fix 2026-10-04] 逐轮部分验收：session 级双挂时常因个别脏轮（厚血场景死亡动画期
+# 位置停更、多目标混杂轮）拉爆汇总分布，其余轮回执其实健康（zxldewil 1003 案：
+# 唯一进考场的 session 被 4 目标混杂轮拖死，3 局干净轮陪葬）。逐轮独立 fail-closed：
+# 过验轮写旁车，脏轮拒绝并全透明记录；全挂才退出码 2。判据与 tracking_aim 同门，
+# n 门放宽到 PER_ROUND_MIN_N（单目标轮 lives 少）。
+PER_ROUND_MIN_N = 3
 GAP_MS = 200.0              # 视角轨迹空洞标注阈值（终验口径 >200ms 计空洞）
 
 
@@ -226,6 +236,22 @@ def atomic_write_jsonl(path, rows):
     os.replace(tmp, path)
 
 
+def _per_round_aim_verdicts(aim_result):
+    """session 级未过时的逐轮独立判据（tracking_aim 同门，n 门放宽到 PER_ROUND_MIN_N）。
+
+    返回 round(str) → bool；调用方对全 False 仍走整体拒绝。"""
+    verdicts = {}
+    for pr in (aim_result or {}).get("per_round", []):
+        verdicts[str(pr["round"])] = (
+            pr["n"] >= PER_ROUND_MIN_N
+            and pr["median_deg"] is not None
+            and pr["median_deg"] <= AIM_MEDIAN_MAX_DEG
+            and pr.get("share_lt_10deg") is not None
+            and pr["share_lt_10deg"] >= AIM_SHARE10_MIN
+        )
+    return verdicts
+
+
 def main():
     ap = argparse.ArgumentParser(description="相机/输入并入 cleaned 轮次（旁车）")
     ap.add_argument("--round-dir", required=True)
@@ -306,12 +332,20 @@ def main():
     check_result = None
     aim_result = None
     accept_grade = None
+    round_verdicts = None   # 逐轮部分验收：round(str) → bool；None=session 级判定，未启用轮级
     if t0_epoch is not None:
         check_result = kill_click_check(round_dir, rounds, cam, cam_ts, s,
                                         click_epochs)
         aim_result = death_aim_check(round_dir, rounds, cam, cam_ts)
         xcorr_dev_s = abs(xcr["s"] - s)
-        click_geom_ok = (check_result["n"] >= CLICK_CHECK_MIN_N
+        paired_deaths = xcr["click_to_death_latency_ms"]["n"] or 0
+        total_deaths = xcr["n_deaths"] or 0
+        click_semantics = (
+            total_deaths > 0
+            and paired_deaths / total_deaths >= CLICK_SEMANTICS_MIN_SHARE
+        )
+        click_geom_ok = (click_semantics
+                         and check_result["n"] >= CLICK_CHECK_MIN_N
                          and check_result["median_deg"] is not None
                          and check_result["median_deg"] <= 1.0
                          and xcorr_dev_s <= XCORR_DEV_MAX_S)
@@ -324,14 +358,24 @@ def main():
         elif aim_ok:
             accept_grade = "tracking_aim"
         accepted = accept_grade is not None
-        print("[align] 精确锚分级验收: click_geom(n=%d 中位=%s°, xcorr偏差=%.0fms)"
+        print("[align] 精确锚分级验收: click_geom(n=%d 中位=%s°, xcorr偏差=%.0fms,"
+              " 点击语义=%s)"
               "=%s | tracking_aim(n=%d 窗最小中位=%s°, <10°占%.0f%%)=%s"
               " => grade=%s accepted=%s"
               % (check_result["n"], check_result["median_deg"],
-                 xcorr_dev_s * 1000.0, click_geom_ok,
+                 xcorr_dev_s * 1000.0, click_semantics, click_geom_ok,
                  aim_result["n"], aim_result["median_deg"],
                  100.0 * (aim_result["share_lt_10deg"] or 0.0), aim_ok,
                  accept_grade, accepted))
+        if not accepted:
+            verdicts = _per_round_aim_verdicts(aim_result)
+            if any(verdicts.values()):
+                accept_grade = "tracking_aim_per_round"
+                accepted = True
+                round_verdicts = verdicts
+                print("[align] session 级未过 → 逐轮部分验收: %d/%d 轮过验 %s"
+                      % (sum(1 for v in verdicts.values() if v), len(verdicts),
+                         [k for k, v in verdicts.items() if v]))
         if not accepted:
             print("!! 精确锚对齐验收未过（click 几何与 aim-at-death 双回执均不达标）"
                   "—— 拒绝写旁车")
@@ -373,17 +417,28 @@ def main():
         b2 = bisect.bisect_right(ev_ts, hi)
         irows = [{"t": round(t, 3), "dx": dx, "dy": dy, "btn": list(btn)}
                  for (t, dx, dy, btn) in ev_rows[a2:b2]]
-        if views:
+        rejected = round_verdicts is not None and not round_verdicts.get(str(nn), False)
+        if rejected:
+            # 脏轮不写旁车；重跑场景下清掉旧副本，防消费侧读到过期 views。
+            for stale in (os.path.join(round_dir, "views_%02d.jsonl" % nn),
+                          os.path.join(round_dir, "inputs_%02d.jsonl" % nn)):
+                if os.path.isfile(stale):
+                    os.remove(stale)
+        if views and not rejected:
             atomic_write_jsonl(os.path.join(round_dir, "views_%02d.jsonl" % nn), views)
-        if irows:
+        if irows and not rejected:
             atomic_write_jsonl(os.path.join(round_dir, "inputs_%02d.jsonl" % nn), irows)
-        manifest_rounds.append({
+        entry_out = {
             "round": nn, "file": r.get("file", "round_%02d.jsonl" % nn),
             "t_start": lo, "t_end": hi,
             "n_views": len(views), "view_gaps_gt_200ms": gaps,
-            "n_inputs": len(irows)})
-        print("  round %2d  [%7.1f, %7.1f]s  views=%-6d gaps>200ms=%-3d inputs=%-6d" % (
-            nn, lo, hi, len(views), gaps, len(irows)))
+            "n_inputs": len(irows)}
+        if rejected:
+            entry_out["alignment_rejected"] = True
+        manifest_rounds.append(entry_out)
+        print("  round %2d  [%7.1f, %7.1f]s  views=%-6d gaps>200ms=%-3d inputs=%-6d%s" % (
+            nn, lo, hi, len(views), gaps, len(irows),
+            "  [alignment_rejected]" if rejected else ""))
 
     aln = {"method": method, "seed_epoch": round(seed, 3),
            "s_epoch_of_t0": s, "xcorr": xcr, "accepted": accepted,
@@ -391,12 +446,20 @@ def main():
     if t0_epoch is not None:   # [fix 2026-09-01] 分级验收语义自描述，供 AC 侧审计
         aln["accept_grade"] = accept_grade
         aln["accept_rule"] = (
-            "click_geom: check.n>=%d and check.median_deg<=1.0 and "
-            "|xcorr.s-index_s|<=%.3fs | tracking_aim: aim_check.n>=%d and "
-            "aim_check.median_deg<=%.1f and aim_check.share_lt_10deg>=%.2f "
+            "click_geom: click语义(死亡-点击配对率>=%.2f) and check.n>=%d and "
+            "check.median_deg<=1.0 and |xcorr.s-index_s|<=%.3fs | tracking_aim: "
+            "aim_check.n>=%d and aim_check.median_deg<=%.1f and "
+            "aim_check.share_lt_10deg>=%.2f "
             "(死亡前200ms窗最小夹角; xcorr 峰在 click 稀疏局被场景动力学锁偏, 仅诊断)"
-            % (CLICK_CHECK_MIN_N, XCORR_DEV_MAX_S, AIM_CHECK_MIN_N,
-               AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
+            % (CLICK_SEMANTICS_MIN_SHARE, CLICK_CHECK_MIN_N, XCORR_DEV_MAX_S,
+               AIM_CHECK_MIN_N, AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
+        if round_verdicts is not None:   # [fix 2026-10-04] 逐轮部分验收语义
+            aln["round_verdicts"] = round_verdicts
+            aln["accept_rule"] += (
+                " | per_round partial: session 级双挂时逐轮独立 fail-closed"
+                "(轮级 n>=%d and median_deg<=%.1f and share_lt_10deg>=%.2f)，"
+                "过验轮写旁车，脏轮 alignment_rejected 不写"
+                % (PER_ROUND_MIN_N, AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
     manifest = {
         "schema_version": "round_merge.v1",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -574,7 +637,9 @@ def death_aim_check(round_dir, rounds, cam, cam_ts, win_ms=200):
             errs_all.extend(errs)
             per_round.append({
                 "round": r["round"], "n": len(errs),
-                "median_deg": round(statistics.median(errs), 3)})
+                "median_deg": round(statistics.median(errs), 3),
+                "share_lt_5deg": round(sum(1 for e in errs if e < 5.0) / len(errs), 3),
+                "share_lt_10deg": round(sum(1 for e in errs if e < 10.0) / len(errs), 3)})
     errs_all.sort()
     out = {
         "note": "死亡前 %dms 窗内 准星→垂死目标 最小夹角（跟枪兼容锚验收；锚错位⇒数量级恶化）"

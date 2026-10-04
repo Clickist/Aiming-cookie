@@ -1527,6 +1527,15 @@ def _build_external_telemetry_visual_result(job: dict) -> dict:
     )
     if alignment is None or alignment.get("accepted") is not True:
         raise TelemetryPipelineError("telemetry_alignment_not_accepted")
+    # [fix 2026-10-04] 逐轮部分验收：merge 端 session 级未过但部分轮过验时，manifest
+    # 记 round_verdicts；被拒轮（alignment_rejected，无 views/inputs）在投影前拒绝，
+    # 归并为稳定 limitation，不吞掉其余过验轮的动作层。
+    round_verdicts = (
+        alignment.get("round_verdicts")
+        if isinstance(alignment.get("round_verdicts"), dict) else None
+    )
+    if round_verdicts is not None and round_verdicts.get(str(round_number)) is False:
+        raise TelemetryPipelineError("telemetry_alignment_round_rejected")
     # 冻结副本文件名映射：轮帧固定为 round.jsonl；views/inputs 保留源名，
     # NN 取自 origin.round_file，避免轮号补零口径差异。
     round_file = str(origin.get("round_file") or "").replace("\\", "/").rsplit("/", 1)[-1]
