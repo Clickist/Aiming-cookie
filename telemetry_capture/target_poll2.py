@@ -34,6 +34,7 @@ tp1.Proc.read 无共享可变状态（每次新建缓冲）。
 """
 import ctypes
 import json
+import math
 import os
 import struct
 import sys
@@ -43,8 +44,13 @@ import traceback
 
 import tp1 as t
 import names as nm
+import camera_probe as cp   # [flags 2026-10-05] is_ptr/fname_of/CHAIN_LAYOUT/anchor_offset_pos 复用
 
 OUT_PATH = t.OUT_PATH
+
+# [flags 2026-10-05] hp 读值有效性域（exp8 同款）：非有限（NaN/Inf）或出域判无效，
+# 该帧无标志（不触发死亡事件）。实测存活 hp 1.0/54.0，1e6 上界裕量充足。
+HP_MAX = 1e6
 
 # [fix 2026-08-30] 全量重扫周期（秒）：兜底 chunk 差分的机制盲区（见 discovery 注释）
 # [fix 2026-08-30b] 周期语义不变；执行移至后台线程，不再阻塞采样循环
@@ -93,13 +99,13 @@ def nm_subclasses(p, root, cls_set, max_hops=8):
     精确类相等匹配会漏 BP/原生子类——与 camera_probe 相机全 null 同源的坑
     （活实例是 MetaGameplayCameraManager 这类原生子类时逐帧校验恒 False）。"""
     out = {root}
-    for cp in cls_set:
-        if not cp or cp in out:
+    for cls in cls_set:
+        if not cls or cls in out:
             continue
-        s, hops = cp, 0
+        s, hops = cls, 0
         while s and hops < max_hops:
             if s == root:
-                out.add(cp)
+                out.add(cls)
                 break
             s = p.u64(s + 0x40)
             hops += 1
@@ -107,20 +113,145 @@ def nm_subclasses(p, root, cls_set, max_hops=8):
 
 
 def find_named_class(p, blocks_rt, obc, meta, name):
-    for cp in obc:
-        if cp == meta:
+    for cp_ in obc:
+        if cp_ == meta:
             continue
-        c2 = p.u64(cp + 0x10)
+        c2 = p.u64(cp_ + 0x10)
         if not c2 or p.u64(c2 + 0x10) != meta:
             continue
-        fi = p.i32(cp + 0x18)
+        fi = p.i32(cp_ + 0x18)
         if fi and nm.read_class_name(p, blocks_rt, fi) == name:
-            return cp
+            return cp_
     return None
 
 
+# ---------------- [flags 2026-10-05] 目标死亡标志位（Health/DeathCount） ----------------
+# 设计与活体实证见 .zcode/anchor-research-1005/REPORT.md FLAGS-FEASIBILITY：
+#   FPSCharacter_C→MetaCharacter 类链带 Health(float,>0 活) 与 DeathCount(int,单调
+#   死亡计数)。偏移按属性名经 UE4 运行时反射定位（camera_probe.walk_fields 同款
+#   ChildProperties FField 链），per UClass 指针缓存——不写死偏移、不进 offsets.json，
+#   游戏更新后属性名不变即自动重定位。类链无 MetaCharacter（计时靶/一枪死家族）
+#   → 无标志，该目标回退坐标推导，不 fail-fast。
+
+FLAG_FIELDS = ("Health", "DeathCount")
+
+# [flags 2026-10-05c] dc 合理上限：身份换绑后字段类型错位（float 比特被当 i32 读）
+# 时，读数 ≥ 0x3F800000(=1065353216，即 1.0f 的比特)——1e6 上界全覆盖此类垃圾
+# （真实死亡计数会话内远小于此）。超限帧按不可信冻结处理（update_flag_state 对
+# None 输入维持冻结语义）。cleaner 侧 DC_MAX 同值（模块独立，勿单边改动）。
+DC_MAX = 1000000
+
+
+def sanitize_flags(hp_raw, dc_raw):
+    """[flags 2026-10-05] 错读防护①：hp 有限性/非负域门 + dc 非负/上限门。
+    NaN/Inf/负/出域（hp>HP_MAX、dc>DC_MAX，自由内存/类型错位复读特征）→
+    None（该帧无标志，不触发死亡事件）。dc 负值同理（死亡计数不可能为负）。"""
+    hp = hp_raw if (hp_raw is not None and math.isfinite(hp_raw)
+                    and 0.0 <= hp_raw <= HP_MAX) else None
+    dc = dc_raw if (dc_raw is not None and 0 <= dc_raw <= DC_MAX) else None
+    return hp, dc
+
+
+def resolve_flags(p, blocks_rt, offset_pos, owner, cache):
+    """owner 类链上按属性名反射 Health/DeathCount 偏移（per UClass 缓存）。
+    返回 (hp_off, dc_off, class_name)，找不到的分量 None。offset_pos 为
+    FField.Offset_Internal 在 FField 内的位置（camera_probe.anchor_offset_pos
+    以 RootComponent==0x130 锚定）；None → 直接不可用。实现同研究脚本
+    exp8_flag_watch.resolve_flags（真机已跑通）。"""
+    ocls = p.u64(owner + 0x10) if owner else None
+    if not ocls or offset_pos is None:
+        return (None, None, None)
+    if ocls in cache:
+        return cache[ocls]
+    cn0 = cp.fname_of(p, blocks_rt, ocls)
+    offs = {}
+    lvl = ocls
+    for _ in range(8):          # 类链最深 8 级（实测 FPSCharacter_C→Actor 6 级）
+        if not cp.is_ptr(p, lvl, 0x60):
+            break
+        name_off, next_off = cp.CHAIN_LAYOUT[0x50]   # ChildProperties FField 链
+        cur = p.u64(lvl + 0x50)
+        n = 0
+        while cp.is_ptr(p, cur, 0x50) and n < 600:
+            n += 1
+            fi = p.i32(cur + name_off)
+            fname = nm.read_class_name(p, blocks_rt, fi) if fi else None
+            off = p.i32(cur + offset_pos)
+            esize = p.i32(cur + 0x3C)    # ElementSize：float/int32 均为 4
+            if fname and off is not None and fname in FLAG_FIELDS \
+                    and fname not in offs and (esize or 4) == 4:
+                offs[fname] = off
+            nxt = p.u64(cur + next_off)
+            if not cp.is_ptr(p, nxt, 0x50) or nxt == cur:
+                break
+            cur = nxt
+        if len(offs) == len(FLAG_FIELDS):
+            break
+        sup = p.u64(lvl + 0x40)          # SuperStruct
+        if not cp.is_ptr(p, sup, 0x60) or sup == lvl:
+            break
+        lvl = sup
+    got = (offs.get("Health"), offs.get("DeathCount"), cn0)
+    cache[ocls] = got
+    return got
+
+
+def update_flag_state(fstate, idx, hp, dc):
+    """单目标死亡标志状态机（纯逻辑，test_death_flags 直测）。
+
+    输入本帧已过有效性门（有限性/非负）的 hp/dc，None=无标志/读失败/无效。
+    返回 (hp_out, dc_out, death)：
+      hp_out/dc_out —— 身份存疑帧（见下）弃本帧标志返回 (None, None)；
+      death         —— True 表示本帧产生一条 death 事件：主判据 = dc 恰 +1
+                       （同一槽位一个 5ms 帧内物理上不可能死两次，跳变更大火者
+                       是池化槽位身份更替/瞬态错读——重新播种基线不当死亡，
+                       防 1005 冒烟局 dc=158 半路幻影边沿）；次判据 = hp 连续
+                       2 帧==0（无 dc 的标志家族回退用，防错读确认）。
+    dc 回退（dc<pdc）：hp 有效视为计数器复位（换图/重开）——重新播种基线；
+    hp 不可信（None）判自由内存复读——弃本帧标志且状态不更新（原读法，防
+    永久失灵只放行 hp 可信帧）。
+    状态 fstate[idx] = [prev_dc, zero_streak, fired]；首次观察只播种不触发
+    （防新附着时把附着前旧值当边沿）。"""
+    st = fstate.get(idx)
+    if hp is None and dc is None:
+        return None, None, False
+    if st is None:
+        fstate[idx] = [dc, 1 if hp == 0.0 else 0, False]
+        return hp, dc, False
+    pdc, zst, fired = st
+    if dc is not None and pdc is not None and dc < pdc:
+        if hp is not None:
+            fstate[idx] = [dc, 1 if hp == 0.0 else 0, False]
+            return hp, dc, False    # 计数器复位且 hp 可信：重播种，不当死亡
+        return None, None, False    # 自由内存复读：本帧标志不可信，状态不更新
+    if dc is not None and pdc is not None and dc - pdc > 1:
+        fstate[idx] = [dc, 1 if hp == 0.0 else 0, False]
+        return hp, dc, False        # 跳变>1：身份更替/瞬态错读，重播种不当死亡
+    death = False
+    if dc is not None and pdc is not None and dc > pdc:
+        death = True                # 主判据：DeathCount 恰 +1
+        fired = True
+        zst = 0
+    if hp == 0.0:
+        zst += 1
+        if zst >= 2 and not fired:
+            death = True                # 次判据：hp 连续 2 帧为 0
+            fired = True
+    elif hp is not None:
+        zst = 0                         # hp 回到正数：重新武装次判据
+        fired = False
+    fstate[idx] = [dc, zst, fired]
+    return hp, dc, death
+
+
 def calibrate(p, items, nume):
-    cands = nm.find_blocks(p)
+    # [fix 2026-10-04] 表驱动优先 + 空 cands 守卫：原裸调 find_blocks 后直接
+    # cands[0][0]，返回 [] 时抛 IndexError——而 main 重试循环只捕
+    # (RuntimeError, OSError)，IndexError 穿透杀进程，第一次校准失败即零重试
+    # 当场崩（1004 案 target 通道死因）。改 raise RuntimeError 走既有重试链。
+    cands = nm.find_blocks_table_first(p)
+    if not cands:
+        raise RuntimeError("FNamePool Blocks 未找到（表直读与扫描均失败）")
     blocks_rt = p.base + cands[0][0]
     obc = {}
     for obj in items():
@@ -131,9 +262,9 @@ def calibrate(p, items, nume):
             obc[cls] = obc.get(cls, 0) + 1
     meta = None
     best = -1
-    for cp, cnt in obc.items():
-        if p.u64(cp + 0x10) == cp and cnt > best:
-            meta, best = cp, cnt
+    for cls, cnt in obc.items():
+        if p.u64(cls + 0x10) == cls and cnt > best:
+            meta, best = cls, cnt
 
     hud = find_named_class(p, blocks_rt, obc, meta, "TargetHudComponent")
     if hud is None:
@@ -163,9 +294,9 @@ def calibrate(p, items, nume):
         family_roots.append(tmt)
     for extra in ("TheMetaTrainerTargetPlatform", "TheMetaTrainerReloadTarget",
                   "CTargetNPC", "CSpawnTargetNPC"):
-        cp = find_named_class(p, blocks_rt, obc, meta, extra)
-        if cp:
-            family_roots.append(cp)
+        cls = find_named_class(p, blocks_rt, obc, meta, extra)
+        if cls:
+            family_roots.append(cls)
     # 注：TheMetaTrainerTargetStart 不入族——地图常驻出生点标记，入族会引入永久幽灵
     family_set = set()
     for root in family_roots:
@@ -225,13 +356,51 @@ def calibrate(p, items, nume):
         raise RuntimeError(
             "偏移哨兵: ComponentToWorld 样例全部出域或为零 —— 疑似游戏更新使 "
             "0x130/0x1c0 失效，拒绝采样（更新后需重验偏移）")
+
+    # [flags 2026-10-05] 死亡标志位偏移解析：运行时反射按属性名沿类链定位
+    # （per UClass 缓存）。失败不 fail-fast（该目标回退坐标推导，录制继续），
+    # 降级可观测：flag_reflection = ok(≥1 目标类双字段解析) | degraded(锚定
+    # 机制在但零解析——类链无 MetaCharacter 或属性名被改) | unavailable(PCM/
+    # Offset_Internal 锚定机制不可用)。同 camera_probe reflection=degraded 先例。
+    flag_offset_pos = None
+    try:
+        pcm_cls = find_named_class(p, blocks_rt, obc, meta, "PlayerCameraManager")
+        if pcm_cls:
+            flag_offset_pos = cp.anchor_offset_pos(p, blocks_rt, meta, pcm_cls)
+    except Exception as e:
+        print("[calib] flag 反射锚定失败: %s" % e)
+        flag_offset_pos = None
+    flag_cache = {}     # UClass 指针 -> (hp_off, dc_off, class_name)，跨线程共享只增
+    n_flagged = 0
+    owners0 = set(targets.values())
+    if flag_offset_pos is not None:
+        for o in owners0:
+            hp_o, dc_o, cn = resolve_flags(p, blocks_rt, flag_offset_pos, o,
+                                           flag_cache)
+            if hp_o is not None and dc_o is not None:
+                n_flagged += 1
+                print("[calib] flag: %s Health=%s DeathCount=%s"
+                      % (cn, hex(hp_o), hex(dc_o)))
+    if flag_offset_pos is None:
+        flag_reflection = "unavailable"
+    elif n_flagged > 0:
+        flag_reflection = "ok"
+    else:
+        flag_reflection = "degraded"
+        print("[calib] !! flag_reflection=degraded（目标类链无 MetaCharacter 或 "
+              "Health/DeathCount 反射不到——属性名被改/重构的信号，需人工核对；"
+              "死亡推导回退坐标路径）")
+    print("[calib] flag_reflection=%s（%d/%d 目标类有标志位）"
+          % (flag_reflection, n_flagged, len(owners0)))
     return {"targets": targets, "item_addr": t.make_item_addr(p),
             "root_off": root_off, "xform_off": xform_off,
             "hud": hud, "owner_classes": owner_classes, "last_index": idx,
             "tmt": tmt, "tmt_cdo": tmt_cdo,
             "blocks_rt": blocks_rt,   # [fix 2026-08-30] 家族路径读 CDO 名字用
             "hud_set": hud_set, "family_roots": family_roots,
-            "family_set": family_set}   # [fix 2026-08-30] 族集随 cal 下发
+            "family_set": family_set,   # [fix 2026-08-30] 族集随 cal 下发
+            "flag_offset_pos": flag_offset_pos, "flag_cache": flag_cache,
+            "flag_reflection": flag_reflection}   # [flags 2026-10-05]
 
 
 def run(p, cal, hz, scale=False, out_dir=None):
@@ -255,6 +424,21 @@ def run(p, cal, hz, scale=False, out_dir=None):
     # 变更一律收进 st_lock；sets 单写者（后台线程），读侧靠 GIL 原子取值
     st_lock = threading.Lock()
     stop = threading.Event()
+    # [flags 2026-10-05] 标志位偏移与死亡边沿状态（与 serials 同生命周期：
+    # 发现时解析、摘除时清理）：
+    #   flg    idx -> (hp_off, dc_off)，None 分量=该类无标志（回退坐标推导）
+    #   fstate idx -> [prev_dc, zero_streak, fired]（update_flag_state 状态机）
+    # 写入方：calibrate 初装（下）、差分/重扫线程发现新目标时（st_lock 内）；
+    # 采样线程只读 flg、私有 fstate（单线程消费）。反射复用函数头 blocks_rt。
+    flag_offset_pos = cal.get("flag_offset_pos")
+    flag_cache = cal.get("flag_cache")
+    if not isinstance(flag_cache, dict):
+        flag_cache = {}
+    flg = {}
+    fstate = {}
+    for _i, _o in targets.items():
+        flg[_i] = (resolve_flags(p, blocks_rt, flag_offset_pos, _o, flag_cache)[:2]
+                   if flag_offset_pos is not None else (None, None))
     out_path = OUT_PATH.replace(".jsonl", "_" + time.strftime("%m%d_%H%M%S") + ".jsonl")
     if out_dir:
         out_path = os.path.join(out_dir, os.path.basename(out_path))
@@ -264,9 +448,13 @@ def run(p, cal, hz, scale=False, out_dir=None):
     # [v2.1] 首行 clock_map：本文件绝对 epoch 锚（此前只有文件名墙钟 ±1s）。
     # 先写锚再取 t0 ⇒ 帧 epoch ≈ clock_map.t + t（<1ms，与 camera_probe 同序约定）。
     # cleaner 配套：跳过非 frame 行，并把锚透传为 rounds_index 的 t0_epoch。
+    # [flags 2026-10-05] 附 flag_reflection（ok/degraded/unavailable），downstream
+    # 审计与 merge manifest 透传用（同 camera reflection=degraded 先例）。
     f.write(json.dumps({"ev": "clock_map", "t": time.time(),
                         "note": "epoch anchor; frame t = time.time()-t0, "
-                                "t0 taken right after this line"}) + "\n")
+                                "t0 taken right after this line",
+                        "flag_reflection":
+                            cal.get("flag_reflection") or "unavailable"}) + "\n")
     t0 = time.time()
     n = 0
     # [fix 2026-08-31] 进程死亡熔断：RPM 对已退出进程返回 None 而不抛异常，run()
@@ -350,6 +538,15 @@ def run(p, cal, hz, scale=False, out_dir=None):
                 adds.append((idx, sn, ptr, False))
         if not adds:
             return
+        # [flags 2026-10-05] 新 owner 的标志位偏移解析（锁外执行——链反射是几十次
+        # 小读，不能进 st_lock 挡采样快照；per UClass 缓存命中近零开销）
+        flag_new = None
+        if flag_offset_pos is not None:
+            flag_new = {}
+            for _idx, _sn, o, _hud in adds:
+                if o not in flag_new:
+                    flag_new[o] = resolve_flags(p, blocks_rt, flag_offset_pos,
+                                                o, flag_cache)[:2]
         with st_lock:
             for idx, sn, o, is_hud in adds:
                 if o in owners:
@@ -357,6 +554,8 @@ def run(p, cal, hz, scale=False, out_dir=None):
                 targets[idx] = o
                 serials[idx] = sn
                 owners.add(o)
+                # [flags] None 分量=该类无标志；flg 与 targets 同生共死
+                flg[idx] = flag_new.get(o) if flag_new is not None else (None, None)
                 if is_hud:
                     print("    +新目标(HUD) owner=0x%x (idx=%d)" % (o, idx))
                 else:
@@ -486,17 +685,33 @@ def run(p, cal, hz, scale=False, out_dir=None):
                 # sets 单写者（本线程）：键赋值 GIL 原子，采样侧读到新旧皆有效
                 if nh is not None:
                     sets["hud"], sets["family"] = nh, fam
+                # [flags 2026-10-05] 新 owner 标志位解析（锁外，同差分路径）
+                flag_new = None
+                if flag_offset_pos is not None:
+                    flag_new = {}
+                    for _idx, _sn, o in add_hud:
+                        if o not in flag_new:
+                            flag_new[o] = resolve_flags(
+                                p, blocks_rt, flag_offset_pos, o, flag_cache)[:2]
+                    for _idx, _sn, o in add_fam:
+                        if o not in flag_new:
+                            flag_new[o] = resolve_flags(
+                                p, blocks_rt, flag_offset_pos, o, flag_cache)[:2]
                 with st_lock:
                     for idx in dead_props:
                         if idx in targets:
                             owners.discard(targets[idx])
                             del targets[idx]
+                            flg.pop(idx, None)      # [flags] 摘除同步清理
+                            fstate.pop(idx, None)
                     for idx, sn, owner in add_hud:
                         if owner in owners:
                             continue
                         targets[idx] = owner
                         serials[idx] = sn
                         owners.add(owner)
+                        flg[idx] = flag_new.get(owner) if flag_new is not None \
+                            else (None, None)       # [flags]
                         print("    +新目标(HUD) owner=0x%x (idx=%d) [后台重扫]"
                               % (owner, idx))
                     for idx, sn, ptr in add_fam:
@@ -505,6 +720,8 @@ def run(p, cal, hz, scale=False, out_dir=None):
                         targets[idx] = ptr
                         serials[idx] = sn
                         owners.add(ptr)
+                        flg[idx] = flag_new.get(ptr) if flag_new is not None \
+                            else (None, None)       # [flags]
                         print("    +新目标(族) obj=0x%x (idx=%d) [后台重扫]"
                               % (ptr, idx))
                 print("    [rescan] 后台完成 用时 %.2fs hud候选=%d 族候选=%d 摘除=%d"
@@ -565,6 +782,8 @@ def run(p, cal, hz, scale=False, out_dir=None):
             if scale_due:
                 last_scale = now
             dead = []
+            death_rows = []   # [flags 2026-10-05] 本帧死亡事件行（随帧落盘）
+            flag_rows = []    # [flags 2026-10-05b] 坐标缺席帧的 flag 观测行（dc 减法口径用）
             for i, owner in tg:
                 ia = item_addr(i)
                 sn = p.u32(ia + 0x10)
@@ -572,6 +791,8 @@ def run(p, cal, hz, scale=False, out_dir=None):
                     dead.append(i)   # 槽位被复用 = 原对象已销毁
                     continue
                 comp = p.u64(owner + root_off)
+                coord_ok = False
+                px = py = pz = None
                 if comp:
                     # [spd 2026-10-04] 平移 12B 连续：一次 RPM 替代 3 次 f32。
                     # 同地址同字节同解法（"<3f" ≡ 逐个 "<f"）；读失败/短读整点跳过
@@ -579,13 +800,42 @@ def run(p, cal, hz, scale=False, out_dir=None):
                     blob = p.read(comp + xo + 16, 12)
                     if blob is not None and len(blob) >= 12:
                         px, py, pz = struct.unpack_from("<3f", blob, 0)
-                        arr.append([owner, px, py, pz])
-                        if scale_due:
-                            s3 = [p.f32(comp + xo + 32 + k * 4) for k in range(3)]
-                            if all(v is not None and 0.01 <= abs(v) <= 1000.0 for v in s3):
-                                scale_rows.append({"ev": "scale", "t": round(now, 4),
-                                                   "addr": owner,
-                                                   "s": [round(v, 4) for v in s3]})
+                        coord_ok = True
+                # [flags 2026-10-05b] flag/dc 读取脱离坐标分支：死亡计数不依赖
+                # 坐标（RootComponent 悬空/transform 读失败的槽位照常计 dc），
+                # 每目标每帧仍恰 +2 次 4B RPM，不破坏 200Hz 帧预算。有效性门见
+                # sanitize_flags（有限性/非负）；单调性/身份更替在 update_flag_state；
+                # 指针有效性由读失败→None 与既有 serial 检查兜底。
+                hp = dc = None
+                fo = flg.get(i)
+                if fo is not None:
+                    if fo[0] is not None:
+                        d = p.read(owner + fo[0], 4)
+                        if d and len(d) >= 4:
+                            hp = struct.unpack("<f", d)[0]
+                    if fo[1] is not None:
+                        d = p.read(owner + fo[1], 4)
+                        if d and len(d) >= 4:
+                            dc = struct.unpack("<i", d)[0]
+                    hp, dc = sanitize_flags(hp, dc)
+                hp, dc, died = update_flag_state(fstate, i, hp, dc)
+                if coord_ok:
+                    arr.append([owner, px, py, pz, hp, dc])
+                elif fo is not None and (hp is not None or dc is not None):
+                    # 坐标缺席但 flag 在：发 flag 行补 dc 观测（cleaner 的
+                    # deaths_summary 减法口径对采样空洞免疫的依据）。坐标路径
+                    # 帧不重复发（dc 已在帧条目第 5/6 列）。
+                    flag_rows.append({"ev": "flag", "t": round(now, 4),
+                                      "addr": owner, "hp": hp, "dc": dc})
+                if died and dc is not None:   # dc 未读到时不产行（行 schema 恒 int dc）
+                    death_rows.append({"ev": "death", "t": round(now, 4),
+                                       "addr": owner, "dc": dc})
+                if coord_ok and scale_due:
+                    s3 = [p.f32(comp + xo + 32 + k * 4) for k in range(3)]
+                    if all(v is not None and 0.01 <= abs(v) <= 1000.0 for v in s3):
+                        scale_rows.append({"ev": "scale", "t": round(now, 4),
+                                           "addr": owner,
+                                           "s": [round(v, 4) for v in s3]})
             if dead:
                 with st_lock:
                     for i in dead:
@@ -594,7 +844,13 @@ def run(p, cal, hz, scale=False, out_dir=None):
                         if i in targets and serials.get(i) != p.u32(item_addr(i) + 0x10):
                             owners.discard(targets[i])
                             del targets[i]
+                            flg.pop(i, None)        # [flags] 摘除同步清理
+                            fstate.pop(i, None)
             f.write(json.dumps({"ev": "frame", "t": round(now, 4), "targets": arr}) + "\n")
+            for drow in death_rows:   # [flags 2026-10-05] 死亡事件行（cleaner 消费）
+                f.write(json.dumps(drow) + "\n")
+            for frow in flag_rows:    # [flags 2026-10-05b] 坐标缺席帧的 dc 观测行
+                f.write(json.dumps(frow) + "\n")
             for srow in scale_rows:   # [v2.1] scale 旁线（cleaner 跳过）
                 f.write(json.dumps(srow) + "\n")
             n += 1

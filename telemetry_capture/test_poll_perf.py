@@ -214,10 +214,11 @@ def main():
     out_dir = tempfile.mkdtemp(prefix="poll_perf_")
     p = FakeProc()
     cal, owners, coords = build_world(p)
-    expect3 = [[owners[k], f32(coords[k][0]), f32(coords[k][1]), f32(coords[k][2])]
-               for k in range(3)]
+    # [flags 2026-10-05] 无标志位世界：hp/dc 恒 None（6 列条目）
+    expect3 = [[owners[k], f32(coords[k][0]), f32(coords[k][1]), f32(coords[k][2]),
+                None, None] for k in range(3)]
     expect4 = expect3 + [[NEW_OWNER, f32(NEW_XYZ[0]), f32(NEW_XYZ[1]),
-                          f32(NEW_XYZ[2])]]
+                          f32(NEW_XYZ[2]), None, None]]
 
     cap = _Capture()
     result = {}
@@ -264,6 +265,8 @@ def main():
     # ---- ② schema：clock_map + 逐帧字节级校验 ----
     cm = json.loads(lines[0])
     assert cm["ev"] == "clock_map" and isinstance(cm["t"], float) and "note" in cm
+    # [flags 2026-10-05] mock 世界无反射机制 → flag_reflection=unavailable（诚实降级）
+    assert cm.get("flag_reflection") == "unavailable"
     assert lines[0] == json.dumps(cm), "clock_map 非 json.dumps 规范形"
     frames = []
     for ln in lines[1:]:
@@ -273,10 +276,13 @@ def main():
         assert isinstance(o["t"], float)
         assert ln == json.dumps(o), "frame 行非 json.dumps 规范形（字节级不兼容）"
         for tg in o["targets"]:
-            assert len(tg) == 4, tg
+            # [flags 2026-10-05] targets 条目 [ptr,x,y,z,hp,dc]；mock 无标志位
+            # → hp/dc 为 None（回退语义，cleaner/merge 只显式取 e[0..3] 不受影响）
+            assert len(tg) == 6, tg
             assert isinstance(tg[0], int) and not isinstance(tg[0], bool)
-            for v in tg[1:]:
+            for v in tg[1:4]:
                 assert isinstance(v, float)
+            assert tg[4] is None and tg[5] is None, tg
         frames.append(o)
     assert frames, "无 frame 行"
 

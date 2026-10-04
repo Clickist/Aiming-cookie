@@ -915,7 +915,8 @@ def _freeze_windowed_jsonl(
                             target.write(stripped + "\n")
                             kept += 1
                             continue
-                        if channel == "target" and ev not in (None, "frame"):
+                        # death 行（目标死亡边沿，flag 路径）与 frame 同域同锚，放行
+                        if channel == "target" and ev not in (None, "frame", "death"):
                             continue
                         if channel == "camera" and ev != "cam":
                             continue

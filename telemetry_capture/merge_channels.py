@@ -97,8 +97,11 @@ def find_index_and_source(round_dir):
 # ---------------- 相机 / 输入 通道读取 ----------------
 
 def load_camera(path):
-    """首行 clock_map(epoch 锚) + cam 帧流。null 行只计数（无 t，§2.4-2）。"""
+    """首行 clock_map(epoch 锚) + cam 帧流。null 行只计数（无 t，§2.4-2）。
+    [B 2026-10-04] 透传首行 clock_map 的 reflection 标记（camera_probe 常量回退
+    在效时为 'degraded'；旧文件无此字段 → None，manifest 不写该键）。"""
     epoch = None
+    reflection = None
     frames = []          # (t, pos, rot, fov)
     nulls = 0
     extra_maps = 0
@@ -117,6 +120,8 @@ def load_camera(path):
             elif rec.get("ev") == "clock_map":
                 if epoch is None:
                     epoch = float(rec["t"])
+                    if isinstance(rec.get("reflection"), str):
+                        reflection = rec["reflection"]
                 else:
                     extra_maps += 1
             elif rec.get("ev") == "cam":
@@ -127,7 +132,7 @@ def load_camera(path):
     dts = [b[0] - a[0] for a, b in zip(frames, frames[1:])]
     return {
         "path": path, "epoch": epoch, "frames": frames, "n_null": nulls,
-        "n_extra_map": extra_maps,
+        "n_extra_map": extra_maps, "reflection": reflection,
         "dt": {"median_ms": round(statistics.median(dts) * 1000, 2),
                "p95_ms": round(sorted(dts)[int(len(dts) * 0.95)] * 1000, 2),
                "max_ms": round(max(dts) * 1000, 2)} if dts else {},
@@ -469,7 +474,12 @@ def main():
         "camera": {"path": os.path.abspath(args.camera), "epoch_anchor": cam["epoch"],
                    "n_cam": len(cam["frames"]), "n_null": cam["n_null"],
                    "n_extra_map": cam["n_extra_map"], "dt": cam["dt"],
-                   "span_s": cam["span_s"]},
+                   "span_s": cam["span_s"],
+                   # [B 2026-10-04] 降级透传：camera_probe 常量回退在效时为
+                   # "degraded"（0xe9c 为 08-30 旧 build 实测，3.9.10 未复测）；
+                   # 旧相机文件无标记则不写键，schema 语义不变，验收阶梯不动。
+                   **({"reflection": cam["reflection"]}
+                      if cam.get("reflection") else {})},
         "input": {"path": os.path.abspath(args.input),
                   "delta_epoch_perf": round(inp["delta"], 6),
                   "drift_s": inp["drift_s"], "n_events": inp["n_events"],
@@ -477,6 +487,10 @@ def main():
                   "n_clicks_clustered": inp["n_clicks_clustered"],
                   "span_perf": inp["span_perf"]},
         "alignment": aln,
+        # [flags 2026-10-05b] additive 回声：cleaner 减法口径死亡总数（源级，
+        # 每槽 dc 差分 clean-prefix 合计）。缺键不写（旧 index 语义不变）。
+        **({"deaths_summary": src_entry_deaths}
+           if (src_entry_deaths := entry.get("deaths_summary")) is not None else {}),
         "t_domain_note": ("sidecar 与轮文件同 t 域（源文件相对秒）；"
                           "epoch = s_epoch_of_t0 + t"),
         "rounds": manifest_rounds,

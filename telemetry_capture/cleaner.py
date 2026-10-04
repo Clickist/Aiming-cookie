@@ -23,6 +23,14 @@
      池化复用的真目标同样命中三联判据，直接整轨删除会令 assign_rounds 拿到空目标 → 0 轮。
   5. 轮次切分：按"一批新目标同时出生"聚类——出生事件间隔 >10s，或全灭持续 >0.05s
      （约 2 帧）后再有出生 → 新一轮（同 10 秒窗口内出生算同轮，池化地址复用也算出生）。
+  6. [flags 2026-10-05] 三道门（对所有数据生效，阈值标定见常量块注释）：
+     连续坏点迟滞（单点野值/原点不切段）、段最短时长 0.15s、轨道 valid-ratio<40%
+     且段数≥3 整轨丢弃；有 ev=="death" 行（target_poll2 标志位）时 life 的 t_end
+     以 death 行为权威边界，无 death 行（旧文件）回退坐标推导现行为。
+  7. [flags 2026-10-05b] deaths_summary（减法口径，源级）：每槽死亡总数 = 源窗
+     起止 dc 差分（观测源=帧条目 dc 列 + ev=="flag" 补采行，对采样空洞免疫），
+     clean-prefix 信任规则（换绑/跨身份累计步截断，前缀仍可信）；death 行只
+     负责 life 边界与时刻，不参与总数。
 
 用法:
     PYTHONIOENCODING=utf-8 ~/AppData/Local/Programs/Python/Python39/python cleaner.py <input.jsonl> [more.jsonl ...]
@@ -59,6 +67,35 @@ PHANTOM_SPEED = 10.0    # 幽灵轨道速度上限 u/s（实测幽灵 0~2.8 u/s�
 # [fix 2026-10-04] 窗口模式幽灵豁免（D2 判据）：bbox 净跨度 ≥ 该值判真目标保留。
 # 慢速真目标也会单调漂移（5 u/s × 60s = 300u），CDO/预览体变换冻结、跨度 ≈0 —— 二者可判别。
 PHANTOM_SPAN_KEEP = 50.0
+# ---- [flags 2026-10-05] 三道门（数据侧防御，对所有数据生效）+ death 行消费 ----
+# 阈值依据 .zcode/anchor-research-1005/REPORT.md 三局标定（54075 31Hz 健康 /
+# 54077 200Hz 温和池化 / 54078 200Hz 池化事故）：
+BAD_STREAK_CUT = 2        # 门1 连续坏点迟滞：连续 ≥2 个野值/原点点才切段，单点不切。
+                          # 200Hz 把死亡瞬态拆成 valid→origin→garbage 逐态采样，
+                          # 单点即切把一个死亡周期切成多段（54078: 315 lives/215 垃圾，
+                          # 31Hz 同场景仅 41）；真实死亡的原点残留持续多帧，不受影响。
+MIN_SEG_DUR = 0.15        # 门2 段最短时长 s：替代 Hz 相关的 MIN_SAMPLES=3（200Hz 下
+                          # 3 帧=15ms 的闪烁微段全部成为合法 life，54078 垃圾微段
+                          # 中位 18 样本/0.09s）；真实 strafing life p25≥1.2s，裕量大。
+TRACK_VALID_RATIO = 0.40  # 门3 轨道级 valid-ratio：有效点(非野值/原点)占比 < 该值且
+                          # 段数 ≥ TRACK_MIN_SEGMENTS → 整轨丢弃入审计。标定：池化
+                          # 幽灵 tid15 valid 2331/13046=18%，真目标 >80%（REPORT E7）。
+TRACK_MIN_SEGMENTS = 3    # 门3 联合条件"段数多"：54078 幽灵轨 13~84 段，
+                          # 真目标偶发 1~2 段（局末清场/出窗）不波及。
+DEATH_PAIR_AFTER = 0.25   # 有 death 行时 life 权威边界的后垫配对窗 s：死亡帧坐标
+                          # 可能已坏使坐标段提前 1~2 帧结束；窗值与 merge 的
+                          # CLICK2DEATH_MAX(0.25) 同族，E2 实测配对残差 ±150ms 内。
+DC_MAX = 1000000         # [flags 2026-10-05c] dc 合理上限：身份换绑后 float 比特被
+                          # 当 i32 读的垃圾值 ≥0x3F800000(=1065353216，1.0f 比特)，
+                          # 1e6 上界全覆盖（真实死亡计数会话内远小于此）；超限观测
+                          # 视为无观测丢弃（mini#2 语料 0x23c3b19e020/0x53020100/
+                          # 0x5302c040 实证）。与 target_poll2.DC_MAX 同值勿单边改。
+RESYNC_MIN_RUN = 3       # [flags 2026-10-05c] 异常重同步前瞻：坏步（跳变≥2/回退）
+                          # 之后连续干净 +1 步数达该值 → 判定坏步=身份边界（读断层
+                          # 累积/换绑复位），从坏步后新基线续计；不足 → 截断。
+                          # 全语料（smoke1/2/3 共 14 局）标定：唯一需回溯的真实跳变
+                          # （mini#2 e020 断层 +10）跳后 +1 游程=33；全部幻影跳变
+                          # （158/572/126/59 冻结类）跳后游程=0——区分度充分。
 COORD_DP = 3            # 输出坐标小数位（float32 在 4096 量级分辨率 ≈0.0005）
 
 
@@ -74,8 +111,18 @@ def load_frames(path, epoch_window=None):
     注意：旧版 cleaner 吃新录制文件会把 clock_map 的 epoch 值当 t 排到末尾——
     两个补丁必须配套升级。
     [v2.2] epoch_window=(lo, hi)（绝对纪元秒）：按 epoch(t)=clock_map.t+t 只保留
-    窗内帧（按局增量切窗用）；文件缺 clock_map 锚时返回空（该源记零轮次）。"""
+    窗内帧（按局增量切窗用）；文件缺 clock_map 锚时返回空（该源记零轮次）。
+    [flags 2026-10-05] 带出 ev=="death" 事件行（target_poll2 标志位死亡边沿）
+    → [{t, addr, dc}]，同样受 epoch_window 过滤；帧 targets 条目的第 5/6 列
+    （hp/dc）此处不消费——权威边界只吃 death 行，hp 列留给伤害/TTK 分析。
+    返回 (frames, bad, clock_map, deaths)；deaths 为空 = 旧文件，走坐标推导
+    现行为（逐字节不变）。
+    [flags 2026-10-05b] 帧条目第 6 列 dc 与 ev=="flag" 观测行（坐标缺席帧的
+    dc 补采，target_poll2 配套）→ dc_obs：{addr: [(t, dc)] 升序}，供
+    deaths_summary 减法口径（窗口起止 dc 差分，对采样空洞免疫）。"""
     frames = []
+    deaths = []
+    dc_obs = {}
     bad = 0
     clock_map = None
     with open(path, encoding="utf-8") as f:
@@ -91,6 +138,21 @@ def load_frames(path, epoch_window=None):
             if rec.get("ev") not in (None, "frame"):
                 if rec.get("ev") == "clock_map" and clock_map is None and "t" in rec:
                     clock_map = rec
+                elif rec.get("ev") == "death":
+                    try:
+                        deaths.append({"t": float(rec["t"]),
+                                       "addr": int(rec["addr"]),
+                                       "dc": int(rec["dc"])})
+                    except (KeyError, TypeError, ValueError):
+                        bad += 1
+                elif rec.get("ev") == "flag":
+                    try:
+                        dcv = int(rec["dc"])
+                        if 0 <= dcv <= DC_MAX:
+                            dc_obs.setdefault(int(rec["addr"]), []).append(
+                                (float(rec["t"]), dcv))
+                    except (KeyError, TypeError, ValueError):
+                        bad += 1
                 continue
             t = rec.get("t")
             ents = rec.get("targets") or []
@@ -107,15 +169,33 @@ def load_frames(path, epoch_window=None):
                     continue
                 seen.add(a)
                 pts.append((a, x, y, z))
+                # [flags 2026-10-05b] dc 列观测（与坐标有效性无关——死亡计数
+                # 不依赖坐标；坐标 NaN/野值帧的 dc 照样入账）。
+                # [flags 2026-10-05c] DC_MAX 域外观测（float 比特错位垃圾）视为
+                # 无观测丢弃——账本里不留错位值，前后真实观测的步进语义不变。
+                if len(e) >= 6 and e[5] is not None:
+                    try:
+                        dcv = int(e[5])
+                        if 0 <= dcv <= DC_MAX:
+                            dc_obs.setdefault(a, []).append((float(t), dcv))
+                    except (TypeError, ValueError):
+                        bad += 1
             frames.append({"t": float(t), "targets": pts})
     frames.sort(key=lambda fr: fr["t"])
+    deaths.sort(key=lambda d: d["t"])
+    for a in dc_obs:
+        dc_obs[a].sort()
     if epoch_window is not None:
         if clock_map is None:
-            return [], bad, None
+            return [], bad, None, [], {}
         lo, hi = epoch_window
         t0 = float(clock_map["t"])
         frames = [fr for fr in frames if lo <= t0 + fr["t"] <= hi]
-    return frames, bad, clock_map
+        deaths = [d for d in deaths if lo <= t0 + d["t"] <= hi]
+        dc_obs = {a: [(t, d) for t, d in s if lo <= t0 + t <= hi]
+                  for a, s in dc_obs.items()}
+        dc_obs = {a: s for a, s in dc_obs.items() if s}
+    return frames, bad, clock_map, deaths, dc_obs
 
 
 def is_bad_coord(x, y, z, bound):
@@ -200,6 +280,11 @@ def split_track(pts, cfg):
     切段时机：野值/原点点、单帧位移 > jump_dist、单帧速度 > jump_speed、
     [fix 2026-08-30] 二级短距重生判据（速度/位移低于主阈值但方向学为换道跳，见 2b）。
     返回的段只含有效点；全原点/野值段整体丢弃（计入 stats）。
+    [flags 2026-10-05] 三道门之一/之二（对所有数据生效）：
+      门1 连续坏点迟滞：连续 ≥ bad_streak_cut 个野值/原点点才切段，单点不切——
+          跳过坏点、段与 prev 保持，下一个有效点仍走跳变判据（重生跳经坏点不漏切，
+          传感器单帧闪坏不再把一个 life 切成两段）；
+      门2 段最短时长：kept 需 duration ≥ min_seg_dur（MIN_SAMPLES 保留兜底）。
     """
     lives = []
     cur = []
@@ -208,22 +293,27 @@ def split_track(pts, cfg):
     n_jump_cut = 0   # 因跳变切段次数
     n_respawn2_cut = 0   # [fix 2026-08-30] 二级短距重生判据切段次数
     prev = None
+    bad_streak = 0
+    cut_streak = max(1, int(cfg.get("bad_streak_cut", BAD_STREAK_CUT)))
     for pi, p in enumerate(pts):
         t, x, y, z = p
         if is_bad_coord(x, y, z, cfg["bound"]):
             n_bad += 1
-            if cur:
+            bad_streak += 1
+            if bad_streak >= cut_streak and cur:
                 lives.append(cur)
                 cur = []
-            prev = None
+                prev = None
             continue
         if is_origin(x, y, z, cfg["origin_eps"]):
             n_origin += 1
-            if cur:
+            bad_streak += 1
+            if bad_streak >= cut_streak and cur:
                 lives.append(cur)
                 cur = []
-            prev = None
+                prev = None
             continue
+        bad_streak = 0
         cut = False
         if prev is not None and cur:
             d = math.dist(prev[1:4], (x, y, z))
@@ -249,15 +339,123 @@ def split_track(pts, cfg):
     # 丢噪声段与无效段
     kept = []
     n_noise = 0
+    n_short = 0
+    min_dur = float(cfg.get("min_seg_dur", MIN_SEG_DUR))
     for seg in lives:
         if len(seg) < cfg["min_samples"]:
             n_noise += 1
             continue
+        if seg[-1][0] - seg[0][0] < min_dur:
+            n_short += 1       # 门2：时长不足的闪烁微段（additive 统计）
+            continue
         kept.append(seg)
     stats = {"nan_or_bound_points": n_bad, "origin_points": n_origin,
              "jump_cuts": n_jump_cut, "noise_segments": n_noise,
-             "respawn2_cuts": n_respawn2_cut}   # [fix 2026-08-30]
+             "respawn2_cuts": n_respawn2_cut,   # [fix 2026-08-30]
+             "short_segments": n_short}   # [flags 2026-10-05] additive
     return kept, stats
+
+
+def bind_deaths(segs, death_ts, pair_after=DEATH_PAIR_AFTER):
+    """[flags 2026-10-05] 用 death 行做 life 权威边界（原位修改 segs，点为
+    (t,x,y,z) 元组列表、按时间升序）。每个 death 配对到覆盖它的段：
+    seg.t_start ≤ t ≤ seg.t_end + pair_after（后垫吸收死亡帧坐标已坏导致
+    坐标段提前 1~2 帧结束的情形；窗值来源见 DEATH_PAIR_AFTER 注释）。
+    配对成功的段：丢弃 t > death 的点（死亡后复读帧），末点时间戳改写为
+    death t —— t_end 从此权威，不再靠坐标消失猜。段内 path/n 不变（只动
+    末点时刻）。返回未配对的 death 数（审计）。"""
+    remaining = sorted(death_ts)
+    for seg in segs:
+        if not remaining:
+            break
+        t_end = seg[-1][0]
+        mine = [d for d in remaining if seg[0][0] <= d <= t_end + pair_after]
+        if not mine:
+            continue
+        for d in mine:
+            remaining.remove(d)
+        death = max(mine)
+        seg[:] = [p for p in seg if p[0] <= death]
+        if seg:
+            seg[-1] = (death,) + seg[-1][1:]
+    return len(remaining)
+
+
+def dc_slot_deaths(series, resync_run=RESYNC_MIN_RUN):
+    """[flags 2026-10-05b/c] 单槽减法口径：分段差分求和（对采样空洞免疫）。
+
+    series: [(t, dc)] 升序（同槽，源窗内）。账本按"可信段"累计：
+      步长 ∈ {0, +1} = 干净（观测空洞免疫——dc 单调计数器，段内首末即差分）；
+      坏步（跳变 ≥2 或回退 <0）= 身份更替/类型错位/换绑复位，处理按前瞻：
+        坏步后 +1 游程（0 步不打断）≥ resync_run → 坏步是身份边界，从坏步后
+          新基线续计（新段）——
+          跳变续计 = 同槽读断层累积（mini#2 e020：断层 +10，跳后 33 步全 +1）；
+          回退续计 = 换绑复位后同地址干净爬升（TF180/1wall：carryover 基值
+          掉 0 后整局 +N 全 +1，6 目标 22+18+17+17+18+14=106 严丝合缝）；
+        游程不足 → 截断（trusted=False，前缀段照计）——全部幻影跳变
+          （smoke1 dc=158 冻结、572、smoke2 0→126、mini#2 1→59）跳后游程=0，
+          在全语料上零复活。
+    deaths = Σ 各可信段（段末-段基）；trusted=False 表示存在未通过前瞻的坏步
+    （untrusted_from=截断时刻），前缀段已计入。返回 dict 或 None（series 空）。"""
+    if not series:
+        return None
+    n = len(series)
+    t0, d0 = series[0]
+    base = d0              # 当前段基线
+    last_dc = d0           # 最近一次可信观测值
+    last_t = t0
+    deaths = 0
+    trusted = True
+    cut = None
+    i = 1
+    while i < n:
+        t, dc = series[i]
+        step = dc - last_dc
+        if step in (0, 1):
+            deaths += step
+            last_dc, last_t = dc, t
+            i += 1
+            continue
+        # 坏步：前瞻 +1 游程（0 步不打断游程计数，到下一坏步为止）
+        run = 0
+        j = i + 1
+        while j < n:
+            s2 = series[j][1] - series[j - 1][1]
+            if s2 == 1:
+                run += 1
+                j += 1
+            elif s2 == 0:
+                j += 1
+            else:
+                break
+        if run >= resync_run:
+            # 身份边界：新段从坏步后观测重新起基（坏步帧本身弃读）。
+            # 跳变重同步：跳变差值=观测断层期累积的真实死亡，回溯计入；
+            # 回退重同步：计数器复位，新基线从 0 起算（差值为负不计入）。
+            if step >= 2:
+                deaths += step
+            base = dc
+            last_dc, last_t = dc, t
+            i += 1
+            continue
+        # 前瞻失败：本异常判垃圾（池化换绑/类型错位，冻延续无账）——跳过其
+        # 冻结延续到下一个坏步重评（典型三连：carryover 基值→垃圾尖峰→掉 0
+        # →整局干净爬升；爬升段由下一个坏步的重同步回收）。
+        trusted = False
+        if cut is None:
+            cut = t
+        if j > i:
+            last_dc, last_t = series[j - 1][1], series[j - 1][0]
+            i = j
+        else:
+            i += 1
+    return {"start_dc": d0, "end_dc": series[-1][1],
+            "deaths": deaths,
+            "trusted": trusted,
+            "prefix_only": not trusted,
+            "untrusted_from": round(cut, 4) if cut is not None else None,
+            "first_t": round(t0, 4), "last_t": round(last_t, 4),
+            "n_obs": len(series)}
 
 
 def seg_stats(seg):
@@ -395,7 +593,14 @@ def assign_rounds(targets, cfg):
 # ---------------- 5. 主流程 ----------------
 def clean_file(path, outdir, cfg):
     name = os.path.splitext(os.path.basename(path))[0]
-    frames, bad_recs, t0_map = load_frames(path, epoch_window=cfg.get("epoch_window"))
+    frames, bad_recs, t0_map, deaths, dc_obs = load_frames(
+        path, epoch_window=cfg.get("epoch_window"))
+    # [flags 2026-10-05] death 行 → per-addr 权威死亡时刻。有 death 行才启用标志
+    # 路径（t_end 权威 + death_event 标记）；无 death 行（旧文件）零影响。
+    deaths_by_addr = {}
+    for d in deaths:
+        deaths_by_addr.setdefault(d["addr"], []).append(d["t"])
+    flag_path = bool(deaths)
     tracks = build_tracks(frames)
 
     discarded = {
@@ -403,17 +608,30 @@ def clean_file(path, outdir, cfg):
         "phantom_tracks": {},     # 幽灵轨道（HUD 扫描误捞的非目标对象）
         "origin_ghost_tracks": {},  # 全程只有原点读数的轨道（死亡残留/CDO）
         "static_ghost_tracks": {},  # 寿命<2s 且无移动（任务规则）
+        "low_valid_tracks": {},   # [flags 2026-10-05] 门3：valid-ratio 过低的池化幽灵轨
         "garbage_points": 0,      # NaN/出界/原点点数合计
         "noise_segments": 0,
+        "short_segments": 0,      # [flags 2026-10-05] 门2：时长不足微段数
     }
 
     cleaned = {}       # addr -> [life_seg,...]
     per_addr_stats = {}
+    n_death_unpaired = 0
     for a, pts in tracks.items():
         lives, st = split_track(pts, cfg)
         per_addr_stats[a] = st
         discarded["garbage_points"] += st["nan_or_bound_points"] + st["origin_points"]
         discarded["noise_segments"] += st["noise_segments"]
+        discarded["short_segments"] += st["short_segments"]
+        if flag_path and deaths_by_addr.get(a):
+            # [flags 2026-10-05] 标志路径：权威边界改写（坐标垃圾段由此降级为
+            # 普通坏点——死亡后的复读帧/坏点不再决定 life 形状）
+            un = bind_deaths(lives, deaths_by_addr[a],
+                             pair_after=float(cfg.get("death_pair_after",
+                                                      DEATH_PAIR_AFTER)))
+            n_death_unpaired += un
+            st["death_events_bound"] = len(deaths_by_addr[a]) - un
+            st["death_events_unpaired"] = un
         if lives:
             cleaned[a] = lives
         elif st["origin_points"] > 0:
@@ -428,6 +646,22 @@ def clean_file(path, outdir, cfg):
         if track_life < cfg["min_life"] and track_path < cfg["min_move"]:
             discarded["static_ghost_tracks"][fmt_addr(a)] = {
                 "life": round(track_life, 3), "path": round(track_path, 1)}
+            del cleaned[a]
+
+    # [flags 2026-10-05] 三道门之三：轨道级 valid-ratio。有效点占比过低且段数多
+    # = 池化幽灵复读已释放内存（54078 tid15：valid 2331/13046=18%、84 段）；
+    # 真目标即便多死 valid 占比也 >80%。整轨丢弃入审计。
+    for a in list(cleaned):
+        st = per_addr_stats[a]
+        total = len(tracks[a])
+        valid = total - st["nan_or_bound_points"] - st["origin_points"]
+        ratio = (valid / total) if total else 0.0
+        if total and ratio < float(cfg.get("track_valid_ratio", TRACK_VALID_RATIO)) \
+                and len(cleaned[a]) >= int(cfg.get("track_min_segments",
+                                                   TRACK_MIN_SEGMENTS)):
+            discarded["low_valid_tracks"][fmt_addr(a)] = {
+                "valid_ratio": round(ratio, 4), "valid_points": valid,
+                "total_points": total, "n_lives": len(cleaned[a])}
             del cleaned[a]
 
     # 幽灵轨道 → 丢；[fix 2026-10-04] 窗口模式下生命周期复核存疑的轨道保留并留审计痕
@@ -480,12 +714,23 @@ def clean_file(path, outdir, cfg):
                 "n_samples": sum(s["n"] for s in segs),
                 "n_lives": len(segs),   # 段数 = 出生(含池化重生)次数
                 "path_length": round(total_path, 1),  # 总移动（段内累计位移，不含重生跳）
-                "lives": [{"t_start": round(s["t_start"], 4), "t_end": round(s["t_end"], 4),
-                           "n": s["n"], "path": round(s["path"], 1)} for s in segs],
                 "domain": {"x": [round(min(d[0] for d in xs), 1), round(max(d[1] for d in xs), 1)],
                            "y": [round(min(d[2] for d in xs), 1), round(max(d[3] for d in xs), 1)],
                            "z": [round(min(d[4] for d in xs), 1), round(max(d[5] for d in xs), 1)]},
             }
+            if flag_path:
+                # [flags 2026-10-05] 标志路径：逐 life 标记 t_end 是否由 death 行
+                # 权威改写（False = 坐标推导边界：出窗/局末清场/无标志家族）。
+                # 旧文件（无 death 行）不写该键，lives 条目 schema 逐字节不变。
+                dmom = deaths_by_addr.get(a, ())
+                tm["lives"] = [
+                    {"t_start": round(s["t_start"], 4), "t_end": round(s["t_end"], 4),
+                     "n": s["n"], "path": round(s["path"], 1),
+                     "death_event": any(abs(d - s["t_end"]) < 1e-6 for d in dmom)}
+                    for s in segs]
+            else:
+                tm["lives"] = [{"t_start": round(s["t_start"], 4), "t_end": round(s["t_end"], 4),
+                                "n": s["n"], "path": round(s["path"], 1)} for s in segs]
             if a in kept_ambiguous:
                 # [fix 2026-10-04] 命中幽灵三联判据但被窗口模式生命周期复核保留的目标打标
                 tm["phantom_ambiguous"] = True
@@ -525,6 +770,7 @@ def clean_file(path, outdir, cfg):
             "targets": tmeta,
         })
 
+
     # [fix 2026-10-04] 观测计数（additive）：供报障包定罪 H1——poll 全程看不到目标时
     # frames_total>0 而 frames_with_targets==0。"首帧"取首个非空帧，与幽灵判据同义。
     n_frames_with_targets = sum(1 for fr in frames if fr["targets"])
@@ -546,6 +792,41 @@ def clean_file(path, outdir, cfg):
         # [v2.1] 精确 epoch 锚（录制器首行 clock_map）：epoch(t) = t0_epoch + t，
         # 替代下游"文件名墙钟 ±1s"粗锚（merge_channels / AC 导入侧直接消费）
         src_meta["t0_epoch"] = round(float(t0_map["t"]), 4)
+        # [flags 2026-10-05] 死亡信号来源与降级可观测（additive）：
+        #   deaths_source "flag"=death 行权威边界 / "coords"=坐标推导（旧文件）；
+        #   flag_reflection 透传采集器 clock_map 的 ok/degraded/unavailable。
+        src_meta["deaths_source"] = "flag" if flag_path else "coords"
+        src_meta["n_death_events"] = len(deaths)
+        src_meta["n_death_events_unpaired"] = n_death_unpaired
+        if isinstance(t0_map.get("flag_reflection"), str):
+            src_meta["flag_reflection"] = t0_map["flag_reflection"]
+        # [flags 2026-10-05b] deaths_summary（减法口径，源级）：每槽死亡总数 =
+        # 源窗起止 dc 差分（观测源 = 帧条目 dc 列 + ev=="flag" 坐标缺席帧补采，
+        # 对采样空洞免疫）。轮切分是出生聚类、会 challenges 内碎裂，dc 却跨轮
+        # 连续——按轮做差分再求和会丢轮间空隙的账，故挂在源级（切窗流程下一
+        # 源=一局）。只计 clean-prefix 可信槽位（点点合同「官方 85 我们就 85」）；
+        # death 行仍负责 life 边界与时刻，不参与总数。无 dc 观测（旧文件）不写键。
+        if dc_obs:
+            slots = {}
+            total = 0
+            for a, series in dc_obs.items():
+                info = dc_slot_deaths(series)
+                if info is None:
+                    continue
+                slots[fmt_addr(a)] = info
+                total += info["deaths"]
+            src_meta["deaths_summary"] = {
+                "method": "dc_subtraction",
+                "window": [round(frames[0]["t"], 4) if frames else None,
+                           round(frames[-1]["t"], 4) if frames else None],
+                "note": "每槽死亡总数=源窗起止 dc 差分（clean-prefix：换绑/跨身份"
+                        "累计步截断，前缀仍是可信账本）；death 行不参与总数",
+                "total": total,
+                "n_slots": len(slots),
+                "n_slots_tainted": sum(1 for s in slots.values() if not s["trusted"]),
+                "slots": slots,
+            }
+            src_meta["deaths_total"] = total   # 便捷别名（= deaths_summary.total）
     print("[ok] %s → %d 轮, %s" % (name, len(index_rounds),
           ", ".join("R%d:%d目标[%.1f~%.1fs]" % (r["round"], r["n_targets"], r["t_start"], r["t_end"])
                     for r in index_rounds) or "无轮次"))
@@ -583,6 +864,12 @@ def main():
            "respawn2_speed": RESPAWN2_SPEED, "respawn2_dist": RESPAWN2_DIST,
            "lane_cos": LANE_COS, "ambient_static_speed": AMBIENT_STATIC_SPEED,
            "respawn2_static_dist": RESPAWN2_STATIC_DIST,
+           # [flags 2026-10-05] 三道门 + death 行配对窗（常量，未开 CLI；阈值来源
+           # 见常量块注释，标定数据 .zcode/anchor-research-1005/REPORT.md）
+           "bad_streak_cut": BAD_STREAK_CUT, "min_seg_dur": MIN_SEG_DUR,
+           "track_valid_ratio": TRACK_VALID_RATIO,
+           "track_min_segments": TRACK_MIN_SEGMENTS,
+           "death_pair_after": DEATH_PAIR_AFTER,
            "epoch_window": (args.epoch_min, args.epoch_max)
            if args.epoch_min is not None else None}
     index = {
