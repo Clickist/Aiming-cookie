@@ -1226,6 +1226,7 @@ async def analyze_kovaak_run(
         managed_video_source=video_source,
         idempotency_key=idempotency_key,
         allow_parallel=request.allow_parallel,
+        force=request.force,
         locale=_request_locale(http_request),
     )
     _raise_product_command_error(

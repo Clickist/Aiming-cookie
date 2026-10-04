@@ -16,7 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import analysis_output, queue
-from .config import DATA_ROOT, DESKTOP_LOCAL_PROFILE, HEARTBEAT_INTERVAL_SECONDS
+from .config import (
+    ANALYSIS_TOTAL_BUDGET_SECONDS,
+    DATA_ROOT,
+    DESKTOP_LOCAL_PROFILE,
+    HEARTBEAT_INTERVAL_SECONDS,
+)
 from .contracts import (
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     ANALYSIS_VERSION,
@@ -3037,20 +3042,21 @@ def _build_video_fallback_result_v2(
 
 # --- 编排 ---
 
-async def process_one() -> bool:
-    """处理一个 job。True=处理了(无论成败),False=队列空。"""
-    # Stale-lease recovery runs from the idle loop (throttled). Doing it here
-    # made every job start a full sessions-directory scan on top of claim_next's.
-    job = await queue.claim_next(WORKER_ID)
-    if job is None:
-        return False
-    sid = job["id"]
+async def _execute_claimed_job(job: dict, sid: int) -> None:
+    """执行已 claim 的单个 job：分析、落盘、终态标记与心跳清理。
+
+    [fix 2026-10-04] 原 process_one claim 之后的 try 块整体提取为独立协程：
+    心跳只证消费循环活着、不证任务在前进，单个挂死的分析协程会被心跳持续
+    续租（lease 永不过期、作业永不终态）还占死串行消费循环。提取后由
+    process_one 的 wait_for 总预算兜底；取消路径上子进程清理护栏
+    （CancelledError → kill child）与 finally 的心跳清理照常执行。
+    """
+    # raw_input_mode 仅供视频合同校验区分遥测档；执行语义一律走归一化值。
+    raw_input_mode = job.get("input_mode") or "video_fallback"
+    input_mode = _execution_input_mode(raw_input_mode, default="video_fallback")
     stop_hb = asyncio.Event()
     hb_task = asyncio.create_task(_heartbeat_loop(sid, stop_hb))
     try:
-        # raw_input_mode 仅供视频合同校验区分遥测档；执行语义一律走归一化值。
-        raw_input_mode = job.get("input_mode") or "video_fallback"
-        input_mode = _execution_input_mode(raw_input_mode, default="video_fallback")
         created_at_iso = _sqlite_created_at_to_iso_z(job.get("created_at"))
         completed_at_iso = _utc_now_iso_z()
         frozen_stats = None
@@ -3905,7 +3911,49 @@ async def process_one() -> bool:
             await hb_task
         except Exception:
             log.exception("heartbeat task join failed session=%s", sid)
+
+
+async def process_one() -> bool:
+    """处理一个 job。True=处理了(无论成败),False=队列空。"""
+    # Stale-lease recovery runs from the idle loop (throttled). Doing it here
+    # made every job start a full sessions-directory scan on top of claim_next's.
+    job = await queue.claim_next(WORKER_ID)
+    if job is None:
+        return False
+    sid = job["id"]
+    # [fix 2026-10-04] 任务级总预算兜底：超时取消执行协程并把作业标为可重试
+    # 失败（回收路径晚到时 mark_failed 的租约检查会挡住重复终态）。
+    # CancelledError 是 BaseException，不会被 except Exception 吞掉，停机
+    # 语义不受影响。TimeoutError 只可能来自本层 wait_for：body 内部的
+    # 子进程/adapter 超时都在各自 except 里转成了带码的 RuntimeError。
+    try:
+        await asyncio.wait_for(
+            _execute_claimed_job(job, sid),
+            timeout=ANALYSIS_TOTAL_BUDGET_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raw_input_mode = job.get("input_mode") or "video_fallback"
+        input_mode = _execution_input_mode(raw_input_mode, default="video_fallback")
+        trace_id = str(uuid.uuid4())
+        log.warning(
+            "analysis exceeded total budget session=%s trace_id=%s", sid, trace_id,
+        )
+        error_v1 = build_error_v1(
+            category="local_cv_runtime",
+            code="analysis_deadline_exceeded",
+            message="分析超过总时限未完成，已停止本次执行，可点击重试。",
+            retryable=True,
+            trace_id=trace_id,
+        )
+        domain = "video" if input_mode == "multimodal" else "kinematics"
+        # failure_domain 走 mark_failed 的带租约守卫参数：旁路清扫已把作业
+        # 标失败时（worker_id 清空）这里整体 no-op，不会改写已终态的会话。
+        if not await queue.mark_failed(
+            sid, error_v1, worker_id=WORKER_ID, failure_domain=domain,
+        ):
+            log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
     return True
+
 
 async def _run_loop_async() -> None:
     """单 event loop 跑消费循环(db._conn 不跨 loop)。"""

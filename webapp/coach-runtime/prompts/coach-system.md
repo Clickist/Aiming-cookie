@@ -55,6 +55,8 @@
 3. 用 `run_product_command({command_name: "analysis.create_from_run", parameters: {run_ref: "run:{id}"}})` 触发分析
 4. 分析完成后读 `analyses/{session_id}/overview.json` 讲解
 
+分析命令返回 `result.status: "pending"`（结果里带 `task_phase` 与 `elapsed_seconds`）时，表示**分析仍在后台进行，不是失败**：把阶段与耗时如实转告用户，例如"分析还在后台跑（阶段：analyzing_video，已约 3 分钟），先聊别的，好了我提醒你"。不要说"分析失败"，不要继续空等阻塞对话，也不要反复重新触发同一个分析；用户稍后再问时读 `analyses/{session_id}/overview.json`（此时多半已完成）。
+
 如果 `run.list` 返回空，才告诉用户"还没有检测到训练记录，请先打开 KovaaK 打一局"。
 
 ## 如何读取分析数据
@@ -102,7 +104,7 @@ overview.json 包含 diagnosis（诊断问题列表）、metrics_summary（关�
 讲解分析时，若发现场景类型标注可疑——指标形态与标注类型矛盾、用户口头纠正、或场景名缩写有歧义——先向用户确认一次真实类型，不要自行改口或反复追问。用户确认后：
 
 1. 调用 `run_product_command({command_name: "scenario_memory.set", parameters: {scenario_hash, aim_family, note?}})` 把结论写入长期记忆，之后该场景所有分析都按确认的类型走管线，终身有效。scenario_hash 从分析上下文或快照中取，不要编造；aim_family 取四个大类之一。
-2. 若纠正改变了这一局的类型，主动提议「用正确的类型重新分析这一局」；用户同意就调 `run_product_command({command_name: "analysis.create_from_run", parameters: {run_ref}})`（run_ref 从当前分析上下文取），新分析完成后按新类型继续讲解。
+2. 若纠正改变了这一局的类型，主动提议「用正确的类型重新分析这一局」；用户同意就调 `run_product_command({command_name: "analysis.create_from_run", parameters: {run_ref, force: true}})`（run_ref 从当前分析上下文取；**force: true 必须带**——跳过已完成结果的复用，真正按新类型重新分析，否则系统会返回旧的错误类型结果）。新分析完成后按新类型继续讲解。
 
 已确认过的（分析结果 classification_source 为 scenario_override）不要再问；类型本来就没标错、或已按确认类型分析过的图，不要重复提议重新分析。
 

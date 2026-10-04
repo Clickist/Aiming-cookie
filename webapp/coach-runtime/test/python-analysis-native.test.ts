@@ -8,6 +8,8 @@ import test from "node:test";
 // DATA_ROOT must be set before python-analysis.ts reads the config file.
 process.env.DATA_ROOT = mkdtempSync(join(tmpdir(), "coach-python-analysis-"));
 process.env.AIMING_COOKIE_ANALYSIS_POLL_INTERVAL_MS = "10";
+// [fix 2026-10-04] pending 语义用例需要短等待预算（默认 120s 不可测）。
+process.env.AIMING_COOKIE_ANALYSIS_TIMEOUT_MS = "120";
 
 const { executeNativePythonAnalysis, isNativePythonAnalysisCommand } = await import(
   "../src/python-analysis.ts"
@@ -143,6 +145,86 @@ test("analysis.create_from_run polls until the worker finishes", async () => {
     assert.equal(result.status, "succeeded");
     assert.equal(result.result_ref, "analysis:43");
     assert.equal(sessionPolls, 2);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// [fix 2026-10-04] 等待超时 ≠ 失败：返回 succeeded + result.status="pending"，
+// 带阶段事实与转告指引，分析仍在 Python 侧后台继续。
+test("analysis.create_from_run returns pending with phase facts when the wait times out", async () => {
+  const startedAt = new Date(Date.now() - 90_000).toISOString();
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/7/analyze",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: 46 }));
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/46",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          status: "running",
+          task_phase: "analyzing_video",
+          started_at: startedAt,
+          attempts: 1,
+        }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run", { run_ref: "run:7" }, "owner-a", "idem-key-pending",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.result_ref, "analysis:46");
+    assert.equal(result.result?.status, "pending");
+    assert.equal(result.result?.task_phase, "analyzing_video");
+    assert.equal(result.result?.attempts, 1);
+    assert.ok((result.result?.elapsed_seconds ?? 0) >= 90);
+    assert.match(result.result?.guidance ?? "", /analyzing_video/);
+    assert.match(result.result?.guidance ?? "", /不要继续阻塞等待/);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// [fix 2026-10-04] 场景类型修正后的显式重跑：force 必须透传到 Python 侧。
+test("analysis.create_from_run forwards force to the Python backend", async () => {
+  const bodies: unknown[] = [];
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/7/analyze",
+      handler: (req, res) => {
+        let raw = "";
+        req.on("data", (chunk: Buffer) => (raw += chunk.toString("utf8")));
+        req.on("end", () => {
+          bodies.push(raw ? JSON.parse(raw) : {});
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ session_id: 47 }));
+        });
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/47",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "done" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  writeOverview(47);
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run", { run_ref: "run:7", force: true }, "owner-a", "idem-key-force",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.deepEqual(bodies, [{ force: true }]);
   } finally {
     await closeServer(server);
   }

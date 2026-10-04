@@ -8,7 +8,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from .config import DEFAULT_MAX_ATTEMPTS, DESKTOP_LOCAL_PROFILE, LEASE_TTL_SECONDS
+from .config import (
+    ANALYSIS_PHASE_BUDGET_SECONDS,
+    ANALYSIS_TOTAL_BUDGET_SECONDS,
+    ANALYSIS_VIDEO_PHASE_BUDGET_SECONDS,
+    DEFAULT_MAX_ATTEMPTS,
+    DESKTOP_LOCAL_PROFILE,
+    LEASE_TTL_SECONDS,
+)
 from .contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
@@ -334,6 +341,9 @@ async def enqueue(
             "attempt_number": 1,
             "task_state": initial_task_state,
             "task_phase": None,
+            # [fix 2026-10-04] 阶段起点：expire_stalled_analyses 按它判「本阶段
+            # 多久没前进」；缺省回退 started_at（老会话无此字段仍可清扫）。
+            "phase_started_at": None,
             "failure_domain": None,
             "partial_outcome": None,
             "calibration_request": calibration_request,
@@ -377,6 +387,9 @@ async def claim_next(worker_id: str) -> Optional[dict]:
         candidate["status"] = "running"
         candidate["task_state"] = "running"
         candidate["task_phase"] = "preparing_training_record"
+        # [fix 2026-10-04] claim 即阶段起点：重试的第二次 attempt 不能继承
+        # 上一次的 phase_started_at，否则清扫会拿旧起点误判新 attempt 僵尸。
+        candidate["phase_started_at"] = now
         candidate["attempts"] = int(candidate.get("attempts", 0)) + 1
         candidate["worker_id"] = worker_id
         if not candidate.get("started_at"):
@@ -429,6 +442,12 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                 session["status"] = "queued"
                 session["task_state"] = "queued"
                 session["task_phase"] = "preparing_training_record"
+                # [fix 2026-10-04] 阶段时钟随 requeue 归零，下次 claim 重建。
+                # started_at 同理：claim_next 只在为空时写入，不归零会让
+                # expire_stalled_analyses 的总预算兜底拿第一次 attempt 的旧
+                # 起点误杀 requeue 后刚重启的健康 attempt。
+                session["phase_started_at"] = None
+                session["started_at"] = None
                 session["worker_id"] = None
                 session["lease_expires_at"] = None
                 session["heartbeat_at"] = None
@@ -459,6 +478,75 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                 failed += 1
                 log.warning("stale job failed session_id=%s", session["id"])
     return {"requeued": requeued, "failed": failed}
+
+
+# [fix 2026-10-04] 阶段僵尸清扫（模式仿 recover_stale_jobs / expire_stale_pending_runs）。
+# recover_stale_jobs 只看 lease 过期，而挂死的分析协程会被心跳续租——lease 永不
+# 过期、作业永不终态（实机走查：卡死 13 分钟无自愈）。phase_started_at 只证
+# 阶段曾开始、不证阶段在前进，超预算即判僵尸；started_at 兜底总预算。清扫由
+# desktop_runtime 的诊断监控循环节流调用（worker 卡死时 idle 分支同样不可达，
+# 回收不能放在 worker 循环里）。
+async def expire_stalled_analyses(now: str | None = None) -> dict:
+    stalled = 0
+    async with _QUEUE_LOCK:
+        now_dt = (
+            datetime.now(timezone.utc)
+            if now is None
+            else (_parse_utc(now) or datetime.now(timezone.utc))
+        )
+        for session in _all_sessions():
+            if session.get("status") != "running":
+                continue
+            phase_anchor = _parse_utc(
+                session.get("phase_started_at") or session.get("started_at")
+            )
+            started_dt = _parse_utc(session.get("started_at"))
+            phase_budget = (
+                ANALYSIS_VIDEO_PHASE_BUDGET_SECONDS
+                if session.get("task_phase") == "analyzing_video"
+                else ANALYSIS_PHASE_BUDGET_SECONDS
+            )
+            phase_stalled = (
+                phase_anchor is not None
+                and (now_dt - phase_anchor).total_seconds() >= phase_budget
+            )
+            # 总预算兜底：阶段快速轮换会不断重置 phase_started_at，
+            # 只有任务级总时长能挡住「一直在动但永远做不完」的活僵尸。
+            total_stalled = (
+                started_dt is not None
+                and (now_dt - started_dt).total_seconds() >= ANALYSIS_TOTAL_BUDGET_SECONDS
+            )
+            if not (phase_stalled or total_stalled):
+                continue
+            stalled_phase = session.get("task_phase")
+            err = build_error_v1(
+                category="local_cv_runtime",
+                code="analysis_stalled",
+                message="分析长时间无进展已被系统回收，请点击重试。",
+                retryable=True,
+                trace_id=None,
+            )
+            # 不自动 requeue：僵尸晚到的 mark_done/mark_failed 会被既有
+            # status/worker_id 租约检查挡住（mark_done/mark_failed 双段校验）。
+            session["status"] = "failed"
+            session["task_state"] = "failed"
+            session["task_phase"] = None
+            session["phase_started_at"] = None
+            session["error"] = err
+            session["failure_domain"] = "kinematics"
+            session["worker_id"] = None
+            session["lease_expires_at"] = None
+            session["heartbeat_at"] = None
+            session["finished_at"] = _utc_now()
+            session["updated_at"] = _utc_now()
+            _save_session(session)
+            stalled += 1
+            log.warning(
+                "stalled analysis failed session_id=%s phase=%s",
+                session["id"],
+                stalled_phase,
+            )
+    return {"stalled": stalled}
 
 
 async def requeue_for_retry(session_id: int) -> dict:
@@ -692,6 +780,9 @@ async def get_run_analysis_states(user_id: str, run_id: int) -> list[dict]:
             "status": s.get("status"),
             "kovaak_run_id": s.get("kovaak_run_id"),
             "analysis_version": s.get("_analysis_version"),
+            # [fix 2026-10-04] force 重跑判定需要：类型修正后旧 done 结果的
+            # analysis_type 与新快照不同时不再复用（见 analysis_service）。
+            "analysis_type": s.get("analysis_type"),
         })
     return states
 
@@ -990,8 +1081,12 @@ async def set_task_phase(
             if session.get("status") != "running" or session.get("worker_id") != worker_id:
                 return False
         session["task_phase"] = phase
+        # [fix 2026-10-04] 每次阶段切换重置阶段起点：阶段僵尸清扫按它判「本
+        # 阶段多久没前进」，不重置会拿上一个阶段的旧起点误杀后续阶段。
+        now = _utc_now()
+        session["phase_started_at"] = now
         session["task_state"] = "running"
-        session["updated_at"] = _utc_now()
+        session["updated_at"] = now
         _save_session(session)
     return True
 

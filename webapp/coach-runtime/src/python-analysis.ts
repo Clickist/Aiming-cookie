@@ -28,7 +28,14 @@ const ANALYZE_POLL_INTERVAL_MS = (() => {
   const value = Number(process.env.AIMING_COOKIE_ANALYSIS_POLL_INTERVAL_MS);
   return Number.isFinite(value) && value > 0 ? value : 2_000;
 })();
-const ANALYZE_TIMEOUT_MS = 5 * 60 * 1000;
+// [fix 2026-10-04] 2 分钟即停等：Python 侧有任务级总预算与阶段僵尸清扫，
+// 分析不会无声卡死；等待超时改为返回 pending（分析仍在后台继续），由教练
+// 如实转告用户，桥本身不再长时间占住对话。Env 覆盖仅供测试注入短预算，
+// 与 ANALYZE_POLL_INTERVAL_MS 同一模式。
+const ANALYZE_TIMEOUT_MS = (() => {
+  const value = Number(process.env.AIMING_COOKIE_ANALYSIS_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 120_000;
+})();
 const REQUEST_TIMEOUT_MS = 15_000;
 // The Python worker marks the session done before writing analyses/{id}/overview.json;
 // wait a bounded time for the file so the returned analysis_ref is immediately readable.
@@ -37,6 +44,8 @@ const OVERVIEW_WAIT_INTERVAL_MS = 250;
 
 const FORWARDED_BODY_FIELDS = [
   "allow_parallel",
+  // [fix 2026-10-04] 场景类型修正后的显式重跑：跳过 Python 侧 done 复用门。
+  "force",
   "video_path",
   "cm_per_360",
   "fov",
@@ -136,12 +145,23 @@ async function waitForOverviewFile(sessionId: number, signal?: AbortSignal): Pro
   }
 }
 
+interface AnalysisOutcome {
+  status: "done" | "failed" | "pending";
+  error?: AnyDict;
+  // [fix 2026-10-04] pending 时随结果透出进度事实（来自 Python 会话读模型），
+  // 供教练如实向用户汇报阶段与耗时，而不是笼统的"失败"。
+  task_phase?: string | null;
+  started_at?: string | null;
+  attempts?: number;
+  elapsed_seconds?: number;
+}
+
 async function pollAnalysisStatus(
   sessionId: number,
   config: { baseUrl: string; token: string },
   locale: "zh-CN" | "en-US",
   signal?: AbortSignal,
-): Promise<{ status: string; error?: AnyDict }> {
+): Promise<AnalysisOutcome> {
   const deadline = Date.now() + ANALYZE_TIMEOUT_MS;
   for (;;) {
     if (signal?.aborted) {
@@ -167,7 +187,21 @@ async function pollAnalysisStatus(
       return { status, error: body.error && typeof body.error === "object" ? body.error : undefined };
     }
     if (Date.now() >= deadline) {
-      throw new PythonAnalysisError("analysis_timeout", "分析仍在进行中，等待已超时");
+      // [fix 2026-10-04] 等待超时 ≠ 分析失败：Python 侧总预算/僵尸清扫仍在
+      // 管理这个作业。返回 pending 并带阶段事实，由教练转告用户后结束本次
+      // 等待，不再阻塞对话也不返回笼统 failed。
+      const startedAt = typeof body.started_at === "string" ? body.started_at : null;
+      const startedMs = startedAt ? Date.parse(startedAt) : NaN;
+      const elapsedSeconds = Number.isFinite(startedMs)
+        ? Math.max(0, Math.round((Date.now() - startedMs) / 1000))
+        : Math.round(ANALYZE_TIMEOUT_MS / 1000);
+      return {
+        status: "pending",
+        task_phase: typeof body.task_phase === "string" ? body.task_phase : null,
+        started_at: startedAt,
+        attempts: typeof body.attempts === "number" ? body.attempts : undefined,
+        elapsed_seconds: elapsedSeconds,
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, ANALYZE_POLL_INTERVAL_MS));
   }
@@ -217,6 +251,31 @@ export async function executeNativePythonAnalysis(
         warning_or_error: {
           code: typeof outcome.error?.code === "string" ? outcome.error.code : "analysis_failed",
           message: typeof outcome.error?.message === "string" ? outcome.error.message : "分析失败",
+        },
+      };
+    }
+    if (outcome.status === "pending") {
+      // [fix 2026-10-04] 等待超时但分析仍在后台进行：按 pending 如实返回
+      // （不是 failed），带阶段与耗时事实和转告指引；不 reportAnalysisRead
+      // （overview.json 未就绪，分析还不是可讨论的主题）。
+      const phaseLabel = outcome.task_phase ?? "unknown";
+      const minutes = Math.max(1, Math.round((outcome.elapsed_seconds ?? 0) / 60));
+      return {
+        status: "succeeded",
+        command_id: commandId,
+        audit_ref: auditRef,
+        result_ref: `analysis:${sessionId}`,
+        result: {
+          session_id: sessionId,
+          analysis_ref: `analysis:${sessionId}`,
+          status: "pending",
+          task_phase: outcome.task_phase,
+          started_at: outcome.started_at,
+          attempts: outcome.attempts,
+          elapsed_seconds: outcome.elapsed_seconds,
+          guidance:
+            `分析仍在后台进行（阶段：${phaseLabel}，已 ${minutes} 分钟）；` +
+            "请把当前阶段与耗时告诉用户，不要继续阻塞等待。",
         },
       };
     }

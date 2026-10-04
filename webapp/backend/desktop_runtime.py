@@ -19,7 +19,7 @@ from typing import Any
 
 import uvicorn
 
-from . import config, file_store, kovaak_ingest, kovaak_run_store, worker
+from . import config, file_store, kovaak_ingest, kovaak_run_store, queue, worker
 from . import kovaak_stats_export_setup
 from . import external_telemetry_ingest
 from . import telemetry_capture_service
@@ -464,6 +464,10 @@ async def monitor_kovaak_ingestion_diagnostics(
 ) -> None:
     # 僵尸兜底清扫按小时节流即可；启动时的一次性清扫在桌面启动序列里做。
     next_expire_monotonic = 0.0
+    # [fix 2026-10-04] 阶段僵尸清扫按 60s 节流：挂死的分析协程会被心跳续租，
+    # recover_stale_jobs 的 lease 判据永不命中；回收放在 runtime 侧而不是
+    # worker idle 循环——worker 被僵尸占死时 idle 分支同样不可达。
+    next_stalled_sweep_monotonic = 0.0
     # 运行期复查统计导出设置按 KOVAAK_EXPORT_RECHECK_SECONDS 节流（启动时已查过，
     # 这里首次顺延一个周期，避免和启动检查重复）。确保函数自带硬重启 + 退避，
     # 且整体 fail-soft：任何异常只进日志，不影响诊断监控循环。
@@ -479,6 +483,12 @@ async def monitor_kovaak_ingestion_diagnostics(
                 await kovaak_run_store.expire_stale_pending_runs(config.DESKTOP_LOCAL_PROFILE)
             except Exception:
                 log.exception("Stale pending run expiry sweep failed")
+        if time.monotonic() >= next_stalled_sweep_monotonic:
+            next_stalled_sweep_monotonic = time.monotonic() + 60.0
+            try:
+                await queue.expire_stalled_analyses()
+            except Exception:
+                log.exception("Stalled analysis sweep failed")
         if time.monotonic() >= next_export_recheck_monotonic:
             next_export_recheck_monotonic = (
                 time.monotonic() + KOVAAK_EXPORT_RECHECK_SECONDS

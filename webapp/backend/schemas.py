@@ -47,6 +47,8 @@ class KovaaKAnalysisRequest(BaseModel):
     """Create an Analysis from a persisted local Run."""
 
     allow_parallel: bool = False
+    # [fix 2026-10-04] 场景类型修正后的显式重跑：跳过 done 复用门产出新分析。
+    force: bool = False
     video_path: Optional[str] = None
     cm_per_360: Optional[float] = None
     fov: Optional[float] = None

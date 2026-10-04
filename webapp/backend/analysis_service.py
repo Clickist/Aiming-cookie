@@ -644,6 +644,7 @@ async def create_analysis_from_run(
     *,
     input_mode: Literal["multimodal"] = "multimodal",
     allow_parallel: bool = False,
+    force: bool = False,
     cm_per_360: float | None = None,
     fov: float | None = None,
     profile_default: Mapping[str, object] | None = None,
@@ -657,6 +658,10 @@ async def create_analysis_from_run(
     ``input_mode`` remains an internal compatibility argument for older callers.
     New Run Analysis never trusts it: the frozen snapshot is the sole source
     of the selected tier.
+
+    [fix 2026-10-04] ``force`` 跳过 done 复用门（场景类型修正后的重跑必须
+    产出新分析，不能返回缓存旧结果）；run_active 复用门保留——已有在途
+    分析时不叠加第二个。
     """
     existing = await queue.get_run_analysis_states(owner_id, run_id)
     # A done analysis is the reusable answer for this Run unless the
@@ -676,7 +681,13 @@ async def create_analysis_from_run(
     reclassified = (
         completed is not None and await _run_may_be_reclassified(owner_id, run_id)
     )
-    if completed is not None and not reclassified:
+    # [fix 2026-10-04] 复用判定 = done 且 force 未设且（非 reclassifiable 或
+    # 解析后快照的类型与 completed.analysis_type 相同）。force=True 是用户
+    # 纠正场景类型后的显式重跑，必须产出新分析，两条复用路都跳过；类型
+    # 一致性由下方 reclassifiable 分支用解析后快照核对（override 会改
+    # aim_family，raw snapshot 判型会判错）。无 override 且类型本来就一致的
+    # 日常重复调用维持纯复用快路径，不额外构建 snapshot。
+    if completed is not None and not force and not reclassified:
         session_id = int(completed["id"])
         return {
             "session_id": session_id,
@@ -722,7 +733,8 @@ async def create_analysis_from_run(
     # 旁车观测层：旁车 JSONL 读取较重，放线程避免阻塞事件循环。
     snapshot = await asyncio.to_thread(_apply_telemetry_observed_resolution, snapshot)
     snapshot = _apply_challenge_shape_resolution(run, snapshot)
-    if reclassified:
+    if reclassified and not force:
+        # [fix 2026-10-04] 补 not force：显式重跑即使类型一致也不复用。
         # The override leaves the done analysis stale only when it changes the
         # dispatch: a same-family confirmation (or an exact reviewed hash
         # keeping priority) keeps the done analysis as this Run's answer.
@@ -1006,6 +1018,7 @@ async def execute_trusted_analysis_create(
     managed_video_source: Path | None = None,
     idempotency_key: str | None = None,
     allow_parallel: bool = False,
+    force: bool = False,
     locale: str = "zh-CN",
 ) -> dict[str, Any]:
     """Execute the validated desktop Analysis write and return the canonical result."""
@@ -1033,6 +1046,7 @@ async def execute_trusted_analysis_create(
             managed_video_source=managed_video_source,
             managed_video_fingerprint=video_fingerprint,
             allow_parallel=allow_parallel,
+            force=force,
             locale=locale,
         )
     except ProductCommandError as exc:

@@ -2541,6 +2541,84 @@ async def test_override_matching_the_done_family_keeps_the_reuse(
 
 
 @pytest.mark.asyncio
+async def test_force_rerun_bypasses_done_reuse_gate(monkeypatch, tmp_path: Path):
+    """[fix 2026-10-04] done + force=True 产出新 session；无 force 仍走复用快路径。
+
+    场景：用户纠正场景类型后显式重跑——不能返回缓存的旧结果，但日常重复
+    调用的纯复用快路径必须原样保留。
+    """
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-force-done"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    _mark_session_done(first["session_id"])
+
+    # 无 force：done 复用门照常命中（快路径回归锚）。
+    repeat = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert repeat["session_id"] == first["session_id"]
+    assert repeat["reused"] is True
+
+    # force=True：跳过 done 复用门，产出新分析。
+    forced = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video, force=True,
+    )
+    assert forced["session_id"] != first["session_id"]
+    assert "reused" not in forced
+    states = await queue.get_run_analysis_states(owner, run["id"])
+    assert len(states) == 2
+    # 复用判定取最新 done（_all_sessions 倒序）：force 的新结果不会被旧结果遮蔽。
+    assert states[0]["id"] == forced["session_id"]
+
+
+@pytest.mark.asyncio
+async def test_force_rerun_skips_same_family_override_reuse(monkeypatch, tmp_path: Path):
+    """[fix 2026-10-04] override 与 done 同族：无 force 仍复用，带 force 即使类型一致也新建。
+
+    钉住 reclassified 分支的 ``not force`` 门：显式重跑即使解析后类型与
+    done 分析一致，也不能返回旧结果。
+    """
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-force-same-family"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+    _mark_session_done(first["session_id"])
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "static_clicking", "confirmed_by": "user"},
+    })
+
+    # 同族确认：无 force 仍复用（既有行为不变）。
+    repeat = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert repeat["session_id"] == first["session_id"]
+    assert repeat["reused"] is True
+
+    # 显式 force：即使类型一致也不复用。
+    forced = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video, force=True,
+    )
+    assert forced["session_id"] != first["session_id"]
+    assert "reused" not in forced
+
+
+@pytest.mark.asyncio
 async def test_repeat_create_without_override_reuses_without_freezing(
     monkeypatch, tmp_path: Path,
 ):

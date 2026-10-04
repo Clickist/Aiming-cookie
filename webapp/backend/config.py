@@ -409,6 +409,15 @@ LEASE_TTL_SECONDS = int(os.environ.get("LEASE_TTL_SECONDS", "300"))
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30"))
 DEFAULT_MAX_ATTEMPTS = int(os.environ.get("DEFAULT_MAX_ATTEMPTS", "3"))
 
+# [fix 2026-10-04] 分析任务级预算。心跳只证消费循环活着、不证任务在前进：
+# 挂死的分析协程会被心跳持续续租，lease 永不过期，作业永不终态还占死串行
+# 消费循环（实机走查：卡死 13 分钟无自愈）。总预算由 process_one 的
+# wait_for 强制；阶段预算供 expire_stalled_analyses 旁路清扫（analyzing_video
+# 含 CV 子进程链路，单独放宽）。
+ANALYSIS_TOTAL_BUDGET_SECONDS = 1800
+ANALYSIS_PHASE_BUDGET_SECONDS = 600
+ANALYSIS_VIDEO_PHASE_BUDGET_SECONDS = 900
+
 # Product Coach has one runtime and one policy stack. Provider/runtime failures
 # stay retryable; they never switch to the legacy Python coach.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
