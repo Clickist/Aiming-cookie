@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.3.9",
+      "date": "2026-10-04",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复部分新用户注册后一直停在登录引导、进不了主界面的问题——浏览器完成注册后返回应用时凭证不再丢失（应用未就绪会自动重试），重开应用重新选择会员档也能接回之前完成的注册",
+          "en": "Fixed some new users getting stuck on sign-in onboarding: the one-time credential from the browser sign-in is no longer lost — it is retried automatically if the app isn't ready, and reopening the app picks the earlier sign-up back up"
+        },
+        {
+          "type": "fix",
+          "zh": "启动更稳：应用启动时页面加载失败会自动重试，不再偶发白屏；双开应用时不再出现窗口突然变空白的问题",
+          "en": "More resilient startup: page-load failures now retry instead of leaving a rare blank screen, and launching a second copy no longer blanks the first window"
+        },
+        {
+          "type": "fix",
+          "zh": "动作层训练诊断修复：跟枪类场景（跟踪/横移目标）现在能正常生成准星与目标关系的动作诊断，不再被误判跳过；同一批训练里个别数据异常的局不再拖累其他局的动作分析",
+          "en": "Motion-layer diagnostics fixed: tracking-style scenarios now produce crosshair-versus-target motion analysis instead of being skipped, and one faulty round no longer drags down the rest of a session"
+        }
+      ]
+    },
+    {
       "version": "1.3.8",
       "date": "2026-10-04",
       "items": [
