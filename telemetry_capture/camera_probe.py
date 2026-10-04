@@ -148,10 +148,17 @@ def reflect_struct_fields(p, blocks_rt, obc, meta, struct_name, offset_pos):
 
 
 def calibrate(p):
-    cands = nm.find_blocks(p)
+    # [fix 2026-10-04] 表驱动优先：offsets.json 的 rva_blocks_expect（同 sha256
+    # 已验证扫描产物，RVA 机器无关）直读 → 验证不过 → 落回 find_blocks 扫描 →
+    # 再败才 raise。对「1TB 堆值域门 vs 4MB 分块 RPM 抖动」两种扫描成因都不敏感。
+    cands = nm.find_blocks_table_first(p)
     if not cands:
         raise RuntimeError("FNamePool Blocks 未找到")
     blocks_rt = p.base + cands[0][0]
+    # [B 2026-10-04] 降级可观测：任一常量回退在效（cache_off=0xe9c 或 MVI 4.26
+    # 标准布局）即 reflection=degraded，随 cal 下发 → run 的 clock_map 行与
+    # 输出标记，merge manifest camera 段透传（区分反射值 vs 常量值）。
+    reflection_degraded = False
     items, nume = t.parse_object_array(p)
 
     obc = {}
@@ -181,14 +188,19 @@ def calibrate(p):
 
     cache_off = pcm_props.get("CameraCachePrivate")
     if cache_off is None:
-        # 2026-08-30 --scan 差分实测验证值（POV=cache+4，含两个历史副本 0x1aec/0x20ec）
+        # 2026-08-30 --scan 差分实测验证值（POV=cache+4，含两个历史副本 0x1aec/0x20ec）；
+        # 注意该值取自 08-30 旧 build，3.9.10 未复测（第二道网=merge 几何验收）
         cache_off = 0xe9c
-        print("[calib] 反射失败，使用实测常量 CameraCachePrivate=0xe9c")
+        reflection_degraded = True
+        print("[calib] 反射失败，使用实测常量 CameraCachePrivate=0xe9c"
+              "（08-30 旧 build 实测，3.9.10 未复测）")
 
     mvi = reflect_struct_fields(p, blocks_rt, obc, meta, "MinimalViewInfo", offset_pos)
     loc_off = mvi.get("Location", MVI_LOCATION)
     rot_off = mvi.get("Rotation", MVI_ROTATION)
     fov_off = mvi.get("FOV", MVI_FOV)
+    if not mvi:
+        reflection_degraded = True
     print("[calib] MinimalViewInfo: Location=%s Rotation=%s FOV=%s  %s"
           % (hex(loc_off), hex(rot_off), hex(fov_off),
              "(反射)" if mvi else "(4.26 标准回退)"))
@@ -225,8 +237,10 @@ def calibrate(p):
     if insts and not _pov_sane(read_pov(p, insts[0] + cache_off + POV_TO_POV_FIELD,
                                         loc_off, rot_off, fov_off)):
         print("[calib] !! 反射 CameraCachePrivate=%s 不过 POV 哨兵，回退实测常量 0xe9c"
+              "（08-30 旧 build 实测，3.9.10 未复测）"
               % hex(cache_off))
         cache_off = 0xe9c
+        reflection_degraded = True
     pov0 = insts[0] + cache_off + POV_TO_POV_FIELD
     sample = read_pov(p, pov0, loc_off, rot_off, fov_off)
     print("[calib] POV@0x%x 样例: %s" % (pov0, sample))
@@ -236,12 +250,16 @@ def calibrate(p):
         raise RuntimeError("POV 样例不可信（pos/rot/fov 越域），拒绝以可疑偏移录制")
     ok = True
     print("[calib] 数值合理性: OK")
+    if reflection_degraded:
+        print("[calib] reflection=degraded（相机偏移含常量回退；0xe9c 为 08-30 旧 "
+              "build 实测值，3.9.10 未复测；第二道网=merge 几何验收）")
 
     return {"blocks_rt": blocks_rt, "pcm_cls": pcm_cls,
             "pcm_set": pcm_set,   # [fix 2026-08-30] 类族随 cal 下发，check_serial 用
             "cache_off": cache_off,
             "loc_off": loc_off, "rot_off": rot_off, "fov_off": fov_off,
-            "insts": insts, "offset_pos": offset_pos, "item_addr": t.make_item_addr(p)}
+            "insts": insts, "offset_pos": offset_pos, "item_addr": t.make_item_addr(p),
+            "reflection_degraded": reflection_degraded}   # [B 2026-10-04] 降级标记
 
 
 def _pov_sane(sample):
@@ -304,10 +322,17 @@ def run(p, cal, hz, secs=0.0, out_dir=None):
     print("[run] %dHz → %s（%s）（Ctrl+C 停止）"
           % (hz, out_path, ("限时 %.0fs" % secs) if secs > 0 else "不限时"))
     f = open(out_path, "a", encoding="utf-8")
-    f.write(json.dumps({"ev": "clock_map", "t": time.time(),
-                        "povs": [hex(x) for x in pov],
-                        "offsets": {"cache": cal["cache_off"], "loc": loc_off,
-                                    "rot": rot_off, "fov": fov_off}}) + "\n")
+    clock_map = {"ev": "clock_map", "t": time.time(),
+                 "povs": [hex(x) for x in pov],
+                 "offsets": {"cache": cal["cache_off"], "loc": loc_off,
+                             "rot": rot_off, "fov": fov_off}}
+    if cal.get("reflection_degraded"):
+        # [B 2026-10-04] 降级可观测：常量回退在效时标记 reflection=degraded
+        #（0xe9c 为 08-30 旧 build 实测值，3.9.10 未复测）；merge manifest
+        # camera 段透传该字段。正常反射路径不写字段（既有 schema 语义不变）。
+        clock_map["reflection"] = "degraded"
+        print("[run] reflection=degraded（相机偏移含常量回退，未全反射验证）")
+    f.write(json.dumps(clock_map) + "\n")
     dt = 1.0 / hz
     t0 = time.time()
     n = 0
@@ -348,7 +373,10 @@ def run(p, cal, hz, secs=0.0, out_dir=None):
 
 def scan(p, cal_cache_off_missing=True, secs=10.0):
     """备用路线：差分 PCM 对象内存，找随时间变化的 float 区段（人工确认 POV）。"""
-    cands = nm.find_blocks(p)
+    # [fix 2026-10-04] 表驱动优先 + 空 cands 守卫（原裸取 cands[0]，扫描失败即 IndexError）
+    cands = nm.find_blocks_table_first(p)
+    if not cands:
+        raise RuntimeError("FNamePool Blocks 未找到")
     blocks_rt = p.base + cands[0][0]
     items, nume = t.parse_object_array(p)
     obc = {}

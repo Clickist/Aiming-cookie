@@ -60,21 +60,101 @@ def read_entry(p, block, off):
     return s if all(32 <= ord(c) < 127 for c in s) else None
 
 
+# [fix 2026-10-04] 块指针下限：原 1TB(0x10000000000) 是机器相关启发式而非保证——
+# FName 块落在 1TB 以下的机器（1004 4080 案）候选全被误杀。64KB 对齐
+# （VirtualAlloc 粒度）+ 模块镜像区排除 + 全量 None/四链验证已足够排垃圾。
+BLOCK_PTR_MIN = 0x10000
+
+
+def is_block_ptr(p, v):
+    return BLOCK_PTR_MIN < v < 0x7FFFFFFFFFFF and (v & 0xFFFF) == 0 \
+        and not (p.base <= v < p.base + SCAN_HI)
+
+
+def _block_ptr_gates(p, v):
+    """is_block_ptr 的逐门判定文本（诊断日志专用；判据须与 is_block_ptr 保持一致）。"""
+    return "下限(>0x%x)=%s 上限=%s 64KB对齐=%s 非模块区=%s" % (
+        BLOCK_PTR_MIN, BLOCK_PTR_MIN < v, v < 0x7FFFFFFFFFFF,
+        (v & 0xFFFF) == 0, not (p.base <= v < p.base + SCAN_HI))
+
+
+# FName 索引=块内 2 字节槽号，与 EName 枚举值不同：None 占槽 0-2，
+# 故 ByteProperty=3、IntProperty=10、BoolProperty=17、FloatProperty=24
+_FNAME_CHAIN = ((3, "ByteProperty"), (10, "IntProperty"),
+                (17, "BoolProperty"), (24, "FloatProperty"))
+
+
+def _check_fname_chain(p, v0):
+    """Blocks[0] 起的四属性链验证，返回 [(expect, got)]。"""
+    return [(expect, read_entry(p, v0, idx * 2)) for idx, expect in _FNAME_CHAIN]
+
+
+def find_blocks_at(p, rva):
+    """[fix 2026-10-04] 表驱动直读：offsets.json 的 rva_blocks_expect 就是
+    find_blocks 要找的 Blocks[0] 槽 RVA（同 sha256 二进制上已验证扫描的产物，
+    RVA 属模块镜像内偏移、机器无关）。直读后复用与 find_blocks 完全相同的
+    判据验证（Blocks[0]='None' + 四属性链）；2 字节级小读也绕开 4MB 分块
+    RPM 抖动。验证不过返回 None——表值可能因瞬态小读失败假阴，调用方必须
+    落回扫描，不能一票否决。成功返回与 find_blocks 同构的 [(rva, run_len, bits)]。"""
+    print("[names] 表直读 Blocks @ RVA 0x%x（rva_blocks_expect）" % rva)
+    v0 = p.u64(p.base + rva)
+    if not v0:
+        print("[names] 表直读失败: 该 RVA 读不到指针（表值失效/瞬态读失败）")
+        return None
+    if not is_block_ptr(p, v0):
+        print("[names] 表直读失败: Blocks[0]=0x%x 非块指针（%s）"
+              % (v0, _block_ptr_gates(p, v0)))
+        return None
+    e0 = read_entry(p, v0, 0)
+    if e0 != "None":
+        print("[names] 表直读失败: Blocks[0]=0x%x 首表项=%r ≠ 'None'" % (v0, e0))
+        return None
+    chain = _check_fname_chain(p, v0)
+    ok = sum(1 for expect, got in chain if got == expect)
+    if ok != 4:
+        detail = " ".join("%s=%r" % (e, g) for e, g in chain if g != e)
+        print("[names] 表直读失败: 'None' 过，四链 %d/4（%s）" % (ok, detail))
+        return None
+    # run 长度：沿表数连续块指针（遇 null/坏指针/读失败即止；封顶 2^16=表容量）
+    run_len = 1
+    while run_len < 0x10000:
+        v = p.u64(p.base + rva + run_len * 8)
+        if v is None or not is_block_ptr(p, v):
+            break
+        run_len += 1
+    print("[names] 表直读命中！Blocks[0] 槽 RVA = 0x%x（链长 %d）" % (rva, run_len))
+    return [(rva, run_len, 16)]
+
+
+def find_blocks_table_first(p):
+    """[fix 2026-10-04] 表驱动优先的 Blocks 定位（camera_probe/target_poll2 校准共用）：
+    表值直读（t.RVA_BLOCKS_EXPECT 为 None 时跳过）→ 验证不过 → 落回 find_blocks
+    扫描 → 再败返回 []（由调用方 raise）。表值可能瞬态假阴，不能一票否决扫描。"""
+    if t.RVA_BLOCKS_EXPECT:
+        cands = find_blocks_at(p, t.RVA_BLOCKS_EXPECT)
+        if cands:
+            return cands
+    return find_blocks(p)
+
+
 def find_blocks(p):
     """定位 FNamePool.Entries.Blocks（.data 里的指针数组）：
     - 条目都是 64KB 对齐的堆指针（VirtualAlloc 粒度），连续 ≥3 个；
     - Blocks[0] 指向的块开头必是 index0='None'（len=4，非宽；注意头部含 5bit 探测哈希）；
-    - 链验证 index1..4 = ByteProperty/IntProperty/BoolProperty/ObjectProperty。"""
-    def is_block_ptr(v):
-        return 0x10000000000 < v < 0x7FFFFFFFFFFF and (v & 0xFFFF) == 0 \
-            and not (p.base <= v < p.base + SCAN_HI)
-
+    - 链验证 index1..4 = ByteProperty/IntProperty/BoolProperty/ObjectProperty。
+    [fix 2026-10-04] ① is_block_ptr 下限 1TB→0x10000（BLOCK_PTR_MIN，机器相关
+    启发式放宽，靠 64KB 对齐+模块区排除+全量链验证排垃圾）；② 候选不再截前
+    12 个——下限放宽后低地址垃圾链会按 RVA 升序排在真实候选前，截断可能把
+    真品挤出前 12（窗口 ~35MB、run 数量级几十，全验成本可忽略）；③ 每道门
+    一行诊断日志（候选指针值+各门判定），失败现场 bundle 可一行定因。"""
     runs = []
     chunk = 4 * 1024 * 1024
     overlap = 64
     for lo in range(SCAN_LO, SCAN_HI, chunk - overlap):
         blob = p.read(p.base + lo, min(chunk, SCAN_HI - lo))
         if not blob:
+            print("[names] 扫描窗 RVA 0x%x..0x%x 读失败，跳过（RPM 抖动/未映射）"
+                  % (lo, lo + chunk))
             continue
         n = len(blob) // 8
         if n < 4:
@@ -82,9 +162,10 @@ def find_blocks(p):
         vals = struct.unpack_from("<%dQ" % n, blob, 0)
         i = 0
         while i < n - 3:
-            if is_block_ptr(vals[i]) and is_block_ptr(vals[i + 1]) and is_block_ptr(vals[i + 2]):
+            if is_block_ptr(p, vals[i]) and is_block_ptr(p, vals[i + 1]) \
+                    and is_block_ptr(p, vals[i + 2]):
                 j = i
-                while j < n and is_block_ptr(vals[j]):
+                while j < n and is_block_ptr(p, vals[j]):
                     j += 1
                 if j - i >= 3:
                     runs.append((lo + i * 8, j - i))
@@ -93,21 +174,21 @@ def find_blocks(p):
                 i += 1
     print("[names] 64KB 对齐堆指针链候选: %d" % len(runs))
 
-    for rva, run_len in runs[:12]:
+    for rva, run_len in runs:
         v0 = p.u64(p.base + rva)
         if not v0:
+            print("[names] 候选 @ RVA 0x%x: Blocks[0] 槽读不到指针，拒" % rva)
             continue
         e0 = read_entry(p, v0, 0)
         if e0 != "None":
+            print("[names] 候选 @ RVA 0x%x: v0=0x%x 首表项=%r ≠ 'None'，拒"
+                  % (rva, v0, e0))
             continue
-        # FName 索引=块内 2 字节槽号，与 EName 枚举值不同：None 占槽 0-2，
-        # 故 ByteProperty=3、IntProperty=10、BoolProperty=17、FloatProperty=24
-        ok = 0
-        for idx, expect in ((3, "ByteProperty"), (10, "IntProperty"),
-                            (17, "BoolProperty"), (24, "FloatProperty")):
-            if read_entry(p, v0, idx * 2) == expect:
-                ok += 1
-        print("[names] 候选 Blocks @ RVA 0x%x: 'None'=%r 链 %d/4" % (rva, e0, ok))
+        chain = _check_fname_chain(p, v0)
+        ok = sum(1 for expect, got in chain if got == expect)
+        detail = " ".join("%s=%r" % (e, g) for e, g in chain if g != e)
+        print("[names] 候选 Blocks @ RVA 0x%x: v0=0x%x 'None'=%r 链 %d/4%s"
+              % (rva, v0, e0, ok, ("（" + detail + "）") if ok < 4 else ""))
         if ok == 4:
             print("[names] 命中！Blocks[0] 槽 RVA = 0x%x（链长 %d）" % (rva, run_len))
             return [(rva, run_len, 16)]
