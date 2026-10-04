@@ -219,23 +219,45 @@ def calibrate(p):
     # [fix 2026-08-31] 反射 CameraCachePrivate 必须过 POV 实测哨兵：本构建反射值 0x1ae0
     # 与运行时实测 0xe9c 不符（引擎魔改致 PCM 反射偏移陈旧；Actor 层 RootComponent=0x130
     # 反射与实测一致，故仅对 PCM 缓存偏移加门禁，不过哨兵即回退实测常量）。
-    if insts and read_pov(p, insts[0] + cache_off + POV_TO_POV_FIELD,
-                          loc_off, rot_off, fov_off) is None:
+    # [fix 2026-10-04] 哨兵判据从「可读性」升级为「数值域」：反射偏移 0x1ae0 错位但
+    # 可读时读出死值（pos=0,0,0 / yaw 越界 / fov=13.1），旧 is None 判据放行导致整局
+    # 相机死数据（1004 实机局实锤，merge 验收拒收 → 该局遥测档全丢）。
+    if insts and not _pov_sane(read_pov(p, insts[0] + cache_off + POV_TO_POV_FIELD,
+                                        loc_off, rot_off, fov_off)):
         print("[calib] !! 反射 CameraCachePrivate=%s 不过 POV 哨兵，回退实测常量 0xe9c"
               % hex(cache_off))
         cache_off = 0xe9c
     pov0 = insts[0] + cache_off + POV_TO_POV_FIELD
     sample = read_pov(p, pov0, loc_off, rot_off, fov_off)
     print("[calib] POV@0x%x 样例: %s" % (pov0, sample))
-    ok = sample and all(v is not None for v in sample["pos"] + sample["rot"]) \
-        and abs(sample["rot"][1]) <= 190.0
-    print("[calib] 数值合理性: %s" % ("OK" if ok else "可疑（进场景后用 --run 观察 pos 是否随移动变化）"))
+    if not _pov_sane(sample):
+        # 回退实测常量后仍不可信（PCM 未就绪/布局再变）：拒绝带病录制，
+        # 由外层失联重附着链路重新校准。带病数据 = 整局遥测档丢失。
+        raise RuntimeError("POV 样例不可信（pos/rot/fov 越域），拒绝以可疑偏移录制")
+    ok = True
+    print("[calib] 数值合理性: OK")
 
     return {"blocks_rt": blocks_rt, "pcm_cls": pcm_cls,
             "pcm_set": pcm_set,   # [fix 2026-08-30] 类族随 cal 下发，check_serial 用
             "cache_off": cache_off,
             "loc_off": loc_off, "rot_off": rot_off, "fov_off": fov_off,
             "insts": insts, "offset_pos": offset_pos, "item_addr": t.make_item_addr(p)}
+
+
+def _pov_sane(sample):
+    """POV 数值域哨兵：pos/rot 全非 None、yaw 绝对值≤190°、fov 在物理域内。
+
+    [fix 2026-10-04] 反射偏移 0x1ae0 错位但可读时读出死值（pos=0,0,0、yaw=-672、
+    fov=13.1），旧哨兵只判 read_pov is None（可读性）而放行，导致整局相机死数据。
+    KovaaK FOV 实测 103、滑杆域约 60~140，取 20~170 为保守域。"""
+    if not sample:
+        return False
+    if any(v is None for v in sample["pos"] + sample["rot"]):
+        return False
+    if abs(sample["rot"][1]) > 190.0:
+        return False
+    fov = sample.get("fov")
+    return fov is not None and 20.0 <= fov <= 170.0
 
 
 def read_pov(p, pov_addr, loc_off, rot_off, fov_off):
