@@ -18,6 +18,9 @@
      跳跃动画的起落弧（前后相邻步与跳变反向等幅）。
   3. 全原点段（死亡残留）丢弃；整轨寿命 <2s 且总位移 ≈0 的轨道丢弃；
   4. 幽灵轨道剔除（首帧即出现 + 出现帧占比 >95% + 近零移动，如 CDO/预览体）；
+     [fix 2026-10-04] 窗口模式（--epoch-min/max 按局切窗）下三联命中者追加真目标生命周期
+     复核（多段/切段、原点残留、bbox 跨度任一命中即保留，fail-open）：切窗使上一局仍在场/
+     池化复用的真目标同样命中三联判据，直接整轨删除会令 assign_rounds 拿到空目标 → 0 轮。
   5. 轮次切分：按"一批新目标同时出生"聚类——出生事件间隔 >10s，或全灭持续 >0.05s
      （约 2 帧）后再有出生 → 新一轮（同 10 秒窗口内出生算同轮，池化地址复用也算出生）。
 
@@ -53,6 +56,9 @@ DEAD_GAP = 0.05         # 全灭持续 > 该值后再有出生 → 新一轮。
                         # 实测：局内重生空窗 ≤1 帧(0.031s)，换局空窗 ≥2 帧(0.063s)，取中间。
 PHANTOM_RATIO = 0.95    # 出现帧占比 > 该值 → 幽灵候选
 PHANTOM_SPEED = 10.0    # 幽灵轨道速度上限 u/s（实测幽灵 0~2.8 u/s；真目标 ≥90 u/s）
+# [fix 2026-10-04] 窗口模式幽灵豁免（D2 判据）：bbox 净跨度 ≥ 该值判真目标保留。
+# 慢速真目标也会单调漂移（5 u/s × 60s = 300u），CDO/预览体变换冻结、跨度 ≈0 —— 二者可判别。
+PHANTOM_SPAN_KEEP = 50.0
 COORD_DP = 3            # 输出坐标小数位（float32 在 4096 量级分辨率 ≈0.0005）
 
 
@@ -270,15 +276,29 @@ def seg_stats(seg):
 
 
 # ---------------- 3. 幽灵轨道判定 ----------------
-def find_phantoms(frames, cleaned, cfg):
+def find_phantoms(frames, cleaned, cfg, cut_stats=None):
     """幽灵轨道：首帧(首个非空帧)即出现 + 出现帧占比>阈值 + 近零移动。
 
     机制：TargetHudComponent owner 扫描会把 CDO/预览体等非目标对象一并捞进来，
-    它们从采样开始就存在、贯穿全部帧、几乎不动。真目标不可能贯穿局间空窗。
+    它们从采样开始就存在、贯穿全部帧、几乎不动。
+    [fix 2026-10-04] 窗口模式（epoch_window 非空）下，"真目标不可能贯穿局间空窗"的
+    前提不成立：切窗把多局内容裁进同一段轨，上一局仍在场/池化复用的真目标（target_poll2
+    校准注释即按此假设建模）会以同样的三联特征命中判据，整轨删除会让 assign_rounds
+    拿到空目标 → 0 轮。故窗口模式对命中三联判据的轨道追加"真目标生命周期复核"，
+    任一命中即保留（fail-open），返回 (phantoms, kept_ambiguous)；全程模式复核分支
+    不进入、行为不变。判别原理——CDO/预览体是类默认对象，变换冻结、永不死亡：
+      D1a 多段（len(lives)>1）或发生过跳变/二级重生切段：真目标被击杀必有切段，
+          CDO 恒单段零切段；
+      D1b 出现过原点残留点：真目标死亡时 RootComponent 读回 0 留原点残留
+          （FORMAT §1.3.4），CDO 永不读原点；
+      D2  bbox 净跨度 ≥ phantom_span_keep：慢速真目标也单调漂移（5 u/s × 60s = 300u），
+          CDO 冻结跨度 ≈0。
+    cut_stats：clean_file 的 per_addr_stats（addr → {jump_cuts, respawn2_cuts,
+    origin_points, ...}），供 D1 判据取段统计；None 时判据退化为仅用 lives 形状。
     """
     total = len(frames)
     if total == 0:
-        return {}
+        return {}, {}
     first_addrs = set()
     for fr in frames:
         if fr["targets"]:
@@ -289,7 +309,10 @@ def find_phantoms(frames, cleaned, cfg):
         for a, *_ in fr["targets"]:
             if a in counts:
                 counts[a] += 1
+    window_mode = cfg.get("epoch_window") is not None   # [fix 2026-10-04]
+    span_keep = cfg.get("phantom_span_keep", PHANTOM_SPAN_KEEP)
     phantoms = {}
+    kept_ambiguous = {}
     for a, lives in cleaned.items():
         if not lives:
             continue
@@ -297,10 +320,37 @@ def find_phantoms(frames, cleaned, cfg):
         life = lives[-1][-1][0] - lives[0][0][0]
         speed = path / life if life > 0 else 0.0
         ratio = counts.get(a, 0) / total
-        if a in first_addrs and ratio > cfg["phantom_ratio"] and speed < cfg["phantom_speed"]:
-            phantoms[a] = {"presence_ratio": round(ratio, 4),
-                           "speed_ups": round(speed, 2), "path": round(path, 1)}
-    return phantoms
+        if not (a in first_addrs and ratio > cfg["phantom_ratio"] and speed < cfg["phantom_speed"]):
+            continue
+        info = {"presence_ratio": round(ratio, 4),
+                "speed_ups": round(speed, 2), "path": round(path, 1)}
+        if not window_mode:
+            phantoms[a] = info
+            continue
+        # [fix 2026-10-04] 窗口模式真目标生命周期复核（fail-open：任一命中即保留）
+        st = (cut_stats or {}).get(a, {})
+        xs = [p[1] for seg in lives for p in seg]
+        ys = [p[2] for seg in lives for p in seg]
+        zs = [p[3] for seg in lives for p in seg]
+        span = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+        n_cuts = st.get("jump_cuts", 0) + st.get("respawn2_cuts", 0)
+        reasons = []
+        if len(lives) > 1 or n_cuts > 0:
+            reasons.append("D1a")
+        if st.get("origin_points", 0) > 0:
+            reasons.append("D1b")
+        if span >= span_keep:
+            reasons.append("D2")
+        if reasons:
+            info.update({"n_lives": len(lives),
+                         "jump_cuts": st.get("jump_cuts", 0),
+                         "respawn2_cuts": st.get("respawn2_cuts", 0),
+                         "origin_points": st.get("origin_points", 0),
+                         "bbox_span": round(span, 1), "reason": "+".join(reasons)})
+            kept_ambiguous[a] = info
+        else:
+            phantoms[a] = info
+    return phantoms, kept_ambiguous
 
 
 # ---------------- 4. 轮次切分 ----------------
@@ -380,11 +430,20 @@ def clean_file(path, outdir, cfg):
                 "life": round(track_life, 3), "path": round(track_path, 1)}
             del cleaned[a]
 
-    # 幽灵轨道 → 丢
-    for a, info in find_phantoms(frames, cleaned, cfg).items():
+    # 幽灵轨道 → 丢；[fix 2026-10-04] 窗口模式下生命周期复核存疑的轨道保留并留审计痕
+    phantoms, kept_ambiguous = find_phantoms(frames, cleaned, cfg, cut_stats=per_addr_stats)
+    for a, info in phantoms.items():
         info["addr"] = fmt_addr(a)
         discarded["phantom_tracks"][fmt_addr(a)] = info
         cleaned.pop(a, None)
+    # [fix 2026-10-04] 幽灵闸审计块：kept_ambiguous 是"命中幽灵三联判据、但被真目标生命周期
+    # 复核保留"的轨道。保留轨不是丢弃，但闸决策属于丢弃报表语义，故挂在 discarded 下自描述；
+    # webapp ingest 侧把 discarded 逐字透传进 meta.quality.discarded，诊断链路零改动即可读。
+    discarded["phantom_gate"] = {
+        "mode": "window" if cfg.get("epoch_window") is not None else "full",
+        "rule_version": 2,
+        "kept_ambiguous": {fmt_addr(a): info for a, info in kept_ambiguous.items()},
+    }
 
     # 轮次切分
     rounds = assign_rounds(cleaned, cfg)
@@ -410,7 +469,7 @@ def clean_file(path, outdir, cfg):
             moving = move_speed > 50.0   # 静态局段内位移≈0；移动局 ≥~600 u/s
             n_moving += moving
             xs = [s["domain"] for s in segs]
-            tmeta.append({
+            tm = {
                 "tid": tid_of[a],
                 "addr": a,
                 "addr_hex": fmt_addr(a),
@@ -426,7 +485,11 @@ def clean_file(path, outdir, cfg):
                 "domain": {"x": [round(min(d[0] for d in xs), 1), round(max(d[1] for d in xs), 1)],
                            "y": [round(min(d[2] for d in xs), 1), round(max(d[3] for d in xs), 1)],
                            "z": [round(min(d[4] for d in xs), 1), round(max(d[5] for d in xs), 1)]},
-            })
+            }
+            if a in kept_ambiguous:
+                # [fix 2026-10-04] 命中幽灵三联判据但被窗口模式生命周期复核保留的目标打标
+                tm["phantom_ambiguous"] = True
+            tmeta.append(tm)
 
         # 写轮次帧文件
         fname = "round_%02d.jsonl" % ri
@@ -462,12 +525,18 @@ def clean_file(path, outdir, cfg):
             "targets": tmeta,
         })
 
+    # [fix 2026-10-04] 观测计数（additive）：供报障包定罪 H1——poll 全程看不到目标时
+    # frames_total>0 而 frames_with_targets==0。"首帧"取首个非空帧，与幽灵判据同义。
+    n_frames_with_targets = sum(1 for fr in frames if fr["targets"])
+    first_targets = next((fr["targets"] for fr in frames if fr["targets"]), [])
     src_meta = {
         "source": os.path.basename(path),
         "outdir": name,
         "t_min": round(frames[0]["t"], 4) if frames else None,
         "t_max": round(frames[-1]["t"], 4) if frames else None,
         "frames_total": len(frames),
+        "frames_with_targets": n_frames_with_targets,
+        "first_frame_target_count": len(first_targets),
         "n_rounds": len(index_rounds),
         "rounds": index_rounds,
         "discarded": discarded,
@@ -507,6 +576,9 @@ def main():
            "min_samples": MIN_SAMPLES, "birth_gap": args.birth_gap,
            "dead_gap": args.dead_gap, "phantom_ratio": PHANTOM_RATIO,
            "phantom_speed": PHANTOM_SPEED,
+           # [fix 2026-10-04] 窗口模式幽灵豁免跨度阈值（additive 随 params 入 index；
+           # format_version 保持 1 不动——ingest 对版本 fail-closed）
+           "phantom_span_keep": PHANTOM_SPAN_KEEP,
            # [fix 2026-08-30] 二级短距重生判据（常量，未开 CLI；见文件头 2b 与 cleaner_fix_0830.md）
            "respawn2_speed": RESPAWN2_SPEED, "respawn2_dist": RESPAWN2_DIST,
            "lane_cos": LANE_COS, "ambient_static_speed": AMBIENT_STATIC_SPEED,

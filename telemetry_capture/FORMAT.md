@@ -453,7 +453,10 @@ n_frames、n_targets、n_moving_targets、motion_mix(moving/static/mixed)、targ
 | `domain` | 全 life 并集的位置域 min/max（场景归一化依据） |
 
 `discarded`：`malformed_records / phantom_tracks{} / origin_ghost_tracks{} / static_ghost_tracks{} /
-garbage_points / noise_segments`（审计用）。
+garbage_points / noise_segments`（审计用）；`phantom_gate`（[fix 2026-10-04]）记录幽灵闸决策
+`{mode: window|full, rule_version, kept_ambiguous{addr: 复核诊断}}`——窗口模式下命中幽灵三联
+判据但被真目标生命周期复核**保留**的轨道清单（非丢弃，闸决策挂在丢弃报表语义下自描述；
+ingest 侧逐字透传进 meta.quality.discarded）。
 
 ### 6.3 边界情况：重生跳 vs 野值
 
@@ -494,7 +497,14 @@ cleaner 统一切段，再按"新段位置合法性 + 段长"决定去留 ⇒ li
 - 其余点级规则：NaN/Inf/\|coord\|>8192 野值剔除；距原点 <1.0 死亡残留剔除；段 <3 样本丢噪声；
   整轨寿命 <2 s 且位移 <1 丢弃。
 - 幽灵轨道剔除：首个非空帧即出现 ∧ 出现帧占比 >95% ∧ 速度 <10 u/s（实测幽灵 0~2.8 u/s，
-  真目标 ≥90 u/s）[confirmed：v1 验证数据]。
+  真目标 ≥90 u/s）[confirmed：v1 验证数据]。**[fix 2026-10-04] 窗口模式豁免**：按局增量切窗
+  （epoch_window）会把上一局仍在场/池化复用的真目标也裁成"首帧即在场、占比>95%、速度<10 u/s"，
+  三联判据前提（真目标不可能贯穿局间空窗）不成立，整轨删除会致 0 轮；故窗口模式对命中轨道追加
+  真目标生命周期复核，**任一命中即保留（fail-open）**：多段或发生过切段（真目标被杀必有切段，
+  CDO 变换冻结恒单段零切段）/ 出现过原点残留点（真目标死亡 RootComponent 读回 0，CDO 永不读
+  原点）/ bbox 净跨度 ≥50 u（慢速真目标单调漂移 5 u/s×60s=300u，CDO 冻结跨度≈0）。保留轨记入
+  `discarded.phantom_gate.kept_ambiguous`、tmeta 打 `phantom_ambiguous: true`；全程模式复核
+  不进入，行为不变。
 - 轮次切分：出生事件间隔 >10 s，或全灭空窗 >0.05 s 后再有出生 → 新一轮（实测局内重生空窗 ≤1 帧
   0.031 s、换局 ≥2 帧 0.063 s、局间隔可达 112 s）[confirmed：v1 验证]。
 
