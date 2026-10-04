@@ -1,0 +1,119 @@
+__pycache__/
+*.pyc
+.venv/
+
+# videos (large: user recordings + reference downloads)
+*.mp4
+!design/opendesign-landing/hero-demo.mp4
+
+# throwaway analysis scripts (logic to be promoted into kovaak_tracker/)
+_tmp_*.py
+
+# macOS filesystem metadata
+.DS_Store
+
+# webapp local SQLite (dev/test 产物)
+aiming_cookie*.db
+aiming_cookie*.db-shm
+aiming_cookie*.db-wal
+
+# taste-skill (frontend design skill — development tool, not project code)
+.agents/
+.claude/skills/
+skills-lock.json
+
+# superpowers brainstorm mockups (design exploration, not project code)
+.superpowers/
+
+# local research evidence and generated snapshots (kept outside product commits)
+.firecrawl/
+artifacts/
+
+# secrets (LLM API keys etc.)
+.env
+.env.*
+*.secret
+
+# vendored pi (third_party/pi) — never commit installed deps
+third_party/pi/node_modules/
+third_party/pi/**/node_modules/
+webapp/coach-runtime/node_modules/
+
+# session recordings under data/ stay tracked (override *.mp4
+!design/opendesign-landing/hero-demo.mp4 above)
+!data/*.mp4
+!design/opendesign-landing/hero-demo.mp4
+
+# dev server logs
+webapp/frontend/mock-*.log
+webapp/frontend/*.err.log
+webapp/frontend/*.out.log
+
+# Playwright 输出目录
+test-results/
+
+# local desktop runtime data (runs, sessions, conversations, teaching state)
+app-data/
+
+# local research material (YouTube reference downloads)
+viscose-youtube/
+
+# wrangler local state
+.wrangler/
+
+# 本地参考料/运行产物（09-06 清扫出库，文件保留在本地不入库）
+output/
+.firecrawl/
+macos-vibrancy-style-pack/
+aiming-theory-compendium*.html
+
+# 本地 agent 工作区与运行日志（09-10 审计补口：PROGRESS 09-06 声称已忽略，实际漏加）
+.zcode/
+*.log
+
+# 本地参考快照与废弃素材（不入库：x76 原站 robots ai-train=no；logo.jfif 为废弃草稿）
+x76-wiki-markdown-*/
+*.jfif
+
+# 构建期注入值（开源仓库不含真实中转站地址，见 provider-models.ts / build-windows-runtime.ps1）
+webapp/coach-runtime/relay-base-url.local.txt
+
+# wrangler 本地状态缓存（ac-downloads Worker，0918）
+ac-downloads-worker/.wrangler/
+
+# 构建期注入值（开源仓库不含真实会员/联盟域名，见 next.config.ts / build-windows-runtime.ps1 / docs/DEVELOPMENT.md）
+infra-urls.local.txt
+
+# agent 协作合同仅保留本地（0930 点点拍板：不进 GitHub）
+AGENTS.md
+CLAUDE.md
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
