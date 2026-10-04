@@ -418,6 +418,7 @@ ANALYSIS_TOTAL_BUDGET_SECONDS = 1800
 ANALYSIS_PHASE_BUDGET_SECONDS = 600
 ANALYSIS_VIDEO_PHASE_BUDGET_SECONDS = 900
 
+
 # Product Coach has one runtime and one policy stack. Provider/runtime failures
 # stay retryable; they never switch to the legacy Python coach.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent

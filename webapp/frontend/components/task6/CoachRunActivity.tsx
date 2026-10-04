@@ -135,11 +135,15 @@ export function ElapsedTicker({
   if (sinceMs === null) {
     return etaSeconds != null ? <span className="task6-tool-eta">{t("coach.activity.eta", { n: etaSeconds })}</span> : null;
   }
+  const elapsedSeconds = (now - sinceMs) / 1000;
+  // 预估只在未超时前展示：elapsed 一旦超过 eta，「预计约 N 秒」就从参考变成
+  // 打脸——只剩经过时间说话（历史样本缺新管线时长时 eta 会是地板价 5s）。
+  const etaVisible = etaSeconds != null && elapsedSeconds <= etaSeconds;
   return (
     // aria-live off：每秒变化不进读屏播报队列，状态由整行文本表达。
     <span className="task6-tool-eta" aria-live="off">
-      {formatClock((now - sinceMs) / 1000)}
-      {etaSeconds != null ? <> {t("coach.activity.etaSuffix", { n: etaSeconds })}</> : null}
+      {formatClock(elapsedSeconds)}
+      {etaVisible ? <> {t("coach.activity.etaSuffix", { n: etaSeconds })}</> : null}
     </span>
   );
 }

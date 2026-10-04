@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
         stale_uploads["cleaned"],
         stale_uploads["failed"],
     )
+    # [reverted 2026-10-05] 科学栈开机预热（后台线程 import numpy/scipy）在冻结
+    # 运行时上实机五连杀（进程无痕消失，死点均在 scipy 导入；无预热则只是首局
+    # 分析楔 ~10 分钟后自愈）。冻结环境的安全首导方案未定（子进程预热待研），
+    # 先回退，代价=每次启动后第一局分析慢（已知限制，Coach 阶段话术如实）。
     yield
 
 

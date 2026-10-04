@@ -31,7 +31,9 @@ workflow 全量代码评审（10 领域 68 发现，67 经独立复核确认）�
 
 测试基线：cargo 177/pytest 869/coach-runtime 523/前端 unit 216/contracts 336 全绿（3 处既有红不在本批域）；L3 沙箱冒烟 + 覆盖装真机 CDP e2e（surface/coach 回合/设置/历史/console 零错误）。
 
-发版新坑三账：①`build:tauri` 只备前端静态产物，真打包= `build-windows-installer.ps1`（含运行时重建——改 coach-runtime 必须走它）；②更新签名密码=空串但须显式 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""`，否则无 tty 下挂死；③`test-windows-installer.ps1` 冒烟不恢复 NSIS 安装目录注册表 → 真机静默装被导回冒烟临时目录（本次已修：save/restore）。coach-runtime 在途 WIP（串视频 9 文件）继续留工作区未随发。
+发版新坑三账：①`build:tauri` 只备前端静态产物，真打包= `build-windows-installer.ps1`（含运行时重建——改 coach-runtime 必须走它）；②更新签名密码=空串但须显式 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""`，否则无 tty 下挂死；③`test-windows-installer.ps1` 冒烟不恢复 NSIS 安装目录注册表 → 真机静默装被导回冒烟临时目录（本次已修：save/restore）。
+
+发版新坑再账（1005 凌晨 agent 打包实录）：④空串参数经 bash→`powershell -File` 嵌套转发会被**吞掉**（`-UpdaterSigningKeyPassword ""` 传不到，脚本报缺参）——签名 env 在自写 wrapper 里直接 `$env:...=""` 设置、**不传参**（脚本仅在传参时才覆盖 env，不传即透传）；⑤wrapper .ps1 含中文路径（如 C:\Users\袜子\...）必被 PS5.1 按 GBK 读成乱码 → -File 指向不存在路径**假失败**——wrapper 纯 ASCII、路径用 `$env:USERPROFILE`/`$PSScriptRoot` 运行时拼；⑥tauri NSIS 收尾的更新签名会挂等密码（进程存活零 CPU）——杀掉构建树，exe 已产出，`TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri-keys/aiming-cookie.key)" npx tauri signer sign <exe>` 补签 1 分钟（**-k 收的是钥匙内容不是路径**），再手补 .sha256/.unsigned.txt；⑦一切以**产物时间戳**判定成败，退出码 0 可能是内层早退。coach-runtime 在途 WIP（串视频 9 文件）继续留工作区未随发。
 
 ## 2026-10-01 — v1.3.4 发布：B1 空回复止血热修（手术式拆分，pi 解耦不随发）
 
