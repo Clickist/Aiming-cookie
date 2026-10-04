@@ -64,6 +64,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 # 与 telemetry_signals 同源的旁车读取与几何数学（复用而非重写）。
 from .telemetry_signals import (
     _LIFE_FRAME_EPSILON_S,
@@ -179,10 +181,58 @@ def _round(value: float | None, digits: int = 4) -> float | None:
 
 
 def _percentile(sorted_values: Sequence[float], share: float) -> float | None:
-    if not sorted_values:
+    if len(sorted_values) == 0:
         return None
     index = min(len(sorted_values) - 1, max(0, int(share * len(sorted_values))))
     return float(sorted_values[index])
+
+
+def _median_sorted(sorted_values: Sequence[float]) -> float | None:
+    """statistics.median 同式（奇取中、偶取两中均值），接受已排序 numpy 数组。"""
+    count = len(sorted_values)
+    if count == 0:
+        return None
+    mid = count // 2
+    if count % 2:
+        return float(sorted_values[mid])
+    return (float(sorted_values[mid - 1]) + float(sorted_values[mid])) / 2.0
+
+
+def _dying_bearing_deg(
+    world: _ObservedWorld,
+    addr_lives: Mapping[int, list[tuple[float, float]]],
+    addr: int,
+    life_t0: float,
+    life_t1: float,
+    window_view_t: np.ndarray,
+    window_view_pos: np.ndarray,
+    *,
+    neighborhood_s: float = 0.25,
+) -> float | None:
+    """死亡目标在死亡时刻附近的方位角（度）；选取口径与
+    _ObservedWorld.dying_target_bearing_deg 一致（覆盖判定按该 addr 任一
+    过滤后生命窗，最近采样优先，同距取更早 view；插值限定在死亡生命窗内）。"""
+    lo = int(np.searchsorted(window_view_t, life_t1 - neighborhood_s, side="left"))
+    hi = int(np.searchsorted(window_view_t, life_t1 + neighborhood_s, side="right"))
+    if hi <= lo:
+        return None
+    query_t = window_view_t[lo:hi]
+    covered = np.zeros(hi - lo, dtype=bool)
+    for other_t0, other_t1 in addr_lives.get(addr, ()):
+        covered |= (query_t >= other_t0) & (query_t <= other_t1)
+    if not covered.any():
+        return None
+    gaps = np.where(covered, np.abs(query_t - life_t1), np.inf)
+    best = int(np.argmin(gaps))
+    arrays = world._addr_arrays.get(addr)
+    if arrays is None:
+        return None
+    segment = _interp_life_arrays(arrays, life_t0, life_t1)
+    if segment is None:
+        return None
+    px, py, _pz = _interp_segment_xyz(query_t[best:best + 1], *segment)
+    pos = window_view_pos[lo + best]
+    return math.degrees(math.atan2(float(py[0]) - float(pos[1]), float(px[0]) - float(pos[0])))
 
 
 def _view_direction(rot: Sequence[float]) -> tuple[float, float, float]:
@@ -251,8 +301,65 @@ def _presence_lives(
     return lives
 
 
+def _interp_life_arrays(
+    addr_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    life_t0: float,
+    life_t1: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """生命窗内的点段（t/x/y/z 数组）；切片口径与 _interp_in_life 的 segment 一致。"""
+    t_arr, xs, ys, zs = addr_arrays
+    lo = np.searchsorted(t_arr, life_t0 - _LIFE_FRAME_EPSILON_S, side="left")
+    hi = np.searchsorted(t_arr, life_t1 + _LIFE_FRAME_EPSILON_S, side="right")
+    if hi <= lo:
+        return None
+    return t_arr[lo:hi], xs[lo:hi], ys[lo:hi], zs[lo:hi]
+
+
+def _interp_segment_xyz(
+    query_t: np.ndarray,
+    seg_t: np.ndarray,
+    seg_x: np.ndarray,
+    seg_y: np.ndarray,
+    seg_z: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """生命点段内向量化线性插值（与 _interp_in_life 同算术、同 clamp 语义）。
+
+    t < 首点 → 精确取首点；t >= 末点 → 精确取末点；相邻点同刻 → 取前点
+    （weight=0，与旧版 span<=0 分支一致）；插值算式同为
+    left + (right - left) * ((t - left) / span)。
+    """
+    count = int(seg_t.shape[0])
+    if count == 1:
+        return (
+            np.full(query_t.shape, seg_x[0]),
+            np.full(query_t.shape, seg_y[0]),
+            np.full(query_t.shape, seg_z[0]),
+        )
+    index = np.searchsorted(seg_t, query_t, side="right") - 1
+    left = np.clip(index, 0, count - 2)
+    right = left + 1
+    span = seg_t[right] - seg_t[left]
+    weight = np.divide(
+        query_t - seg_t[left], span, out=np.zeros_like(query_t), where=span > 0
+    )
+    px = seg_x[left] + (seg_x[right] - seg_x[left]) * weight
+    py = seg_y[left] + (seg_y[right] - seg_y[left]) * weight
+    pz = seg_z[left] + (seg_z[right] - seg_z[left]) * weight
+    px = np.where(index < 0, seg_x[0], np.where(index >= count - 1, seg_x[count - 1], px))
+    py = np.where(index < 0, seg_y[0], np.where(index >= count - 1, seg_y[count - 1], py))
+    pz = np.where(index < 0, seg_z[0], np.where(index >= count - 1, seg_z[count - 1], pz))
+    return px, py, pz
+
+
 class _ObservedWorld:
-    """一轮旁车在判别窗内的轻量查询视图（生命窗内插值/最近目标/活性计数）。"""
+    """一轮旁车在判别窗内的轻量查询视图（生命窗内插值/最近目标/活性计数）。
+
+    numpy 向量化实现：每条生命一次 searchsorted 切出 view 区间与点段，一次
+    算术批量完成插值/角误差/距离归约（旧版逐帧×逐生命 bisect + list-slice
+    在冻结环境被按操作数放大 ~100 倍，是主要热点）。对外行为（lives /
+    alive_at / alive_mean / dying_target_bearing_deg / radius_at）不变；
+    alive_at 改为按需构建（扁平 (view, life) 对数组 + 缓存）。
+    """
 
     def __init__(
         self,
@@ -266,17 +373,85 @@ class _ObservedWorld:
             if life[2] - life[1] >= CHURN_MIN_LIFE_S
         ]
         self.radius_windows = list(radius_windows)
-        # view 索引 -> 该帧时刻存活的过滤后目标 [(addr, x, y, z)]。
-        self._alive_by_view: dict[int, list[tuple[int, float, float, float]]] = {}
-        for index, (frame_t, _pos, _rot, _fov) in enumerate(views):
-            alive = []
-            for addr, life_t0, life_t1 in self.lives:
-                if not life_t0 <= frame_t <= life_t1:
-                    continue
-                point = self._interp_in_life(addr, life_t0, life_t1, frame_t)
-                if point is not None:
-                    alive.append((addr, point[0], point[1], point[2]))
-            self._alive_by_view[index] = alive
+
+        view_count = len(views)
+        self.view_t = np.fromiter(
+            (item[0] for item in views), dtype=np.float64, count=view_count
+        )
+        self.view_pos = np.array(
+            [item[1] for item in views], dtype=np.float64
+        ).reshape(view_count, 3)
+        pitch = np.radians(np.fromiter(
+            (float(item[2][0]) for item in views), dtype=np.float64, count=view_count
+        ))
+        self.view_yaw = np.radians(np.fromiter(
+            (float(item[2][1]) for item in views), dtype=np.float64, count=view_count
+        ))
+        cos_pitch = np.cos(pitch)
+        self.view_fwd = np.stack(
+            [cos_pitch * np.cos(self.view_yaw), cos_pitch * np.sin(self.view_yaw), np.sin(pitch)],
+            axis=1,
+        )
+        self._addr_arrays: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+        for addr, points in positions.items():
+            if not points:
+                continue
+            flat = np.array(points, dtype=np.float64)
+            self._addr_arrays[addr] = (flat[:, 0], flat[:, 1], flat[:, 2], flat[:, 3])
+
+        # 逐生命批量归约：存活计数 / 最小角误差（NaN=无存活目标）/ 最近距离。
+        alive_counts = np.zeros(view_count, dtype=np.int64)
+        min_err = np.full(view_count, np.nan)
+        min_dist = np.full(view_count, np.nan)
+        pair_view_parts: list[np.ndarray] = []
+        pair_life_parts: list[np.ndarray] = []
+        pair_xyz_parts: list[np.ndarray] = []
+        for life_index, (addr, life_t0, life_t1) in enumerate(self.lives):
+            arrays = self._addr_arrays.get(addr)
+            if arrays is None:
+                continue
+            segment = _interp_life_arrays(arrays, life_t0, life_t1)
+            if segment is None:
+                continue
+            view_lo = int(np.searchsorted(self.view_t, life_t0, side="left"))
+            view_hi = int(np.searchsorted(self.view_t, life_t1, side="right"))
+            if view_hi <= view_lo:
+                continue
+            query_t = self.view_t[view_lo:view_hi]
+            px, py, pz = _interp_segment_xyz(query_t, *segment)
+            alive_counts[view_lo:view_hi] += 1
+            view_ref = self.view_pos[view_lo:view_hi]
+            dx = px - view_ref[:, 0]
+            dy = py - view_ref[:, 1]
+            dz = pz - view_ref[:, 2]
+            norm = np.sqrt(dx * dx + dy * dy + dz * dz)
+            np.fmin(min_dist[view_lo:view_hi], norm, out=min_dist[view_lo:view_hi])
+            positive = norm > 0
+            nx = np.divide(dx, norm, out=np.zeros_like(dx), where=positive)
+            ny = np.divide(dy, norm, out=np.zeros_like(dy), where=positive)
+            nz = np.divide(dz, norm, out=np.zeros_like(dz), where=positive)
+            fwd = self.view_fwd[view_lo:view_hi]
+            dot = fwd[:, 0] * nx + fwd[:, 1] * ny + fwd[:, 2] * nz
+            err_deg = np.where(
+                positive, np.degrees(np.arccos(np.clip(dot, -1.0, 1.0))), np.nan
+            )
+            np.fmin(min_err[view_lo:view_hi], err_deg, out=min_err[view_lo:view_hi])
+            pair_view_parts.append(np.arange(view_lo, view_hi, dtype=np.int64))
+            pair_life_parts.append(np.full(view_hi - view_lo, life_index, dtype=np.int64))
+            pair_xyz_parts.append(np.stack([px, py, pz], axis=1))
+        self.view_alive_counts = alive_counts
+        self.min_angle_error = min_err
+        self.min_target_dist = min_dist
+        if pair_view_parts:
+            order = np.argsort(np.concatenate(pair_view_parts), kind="stable")
+            self._pair_view = np.concatenate(pair_view_parts)[order]
+            self._pair_life = np.concatenate(pair_life_parts)[order]
+            self._pair_xyz = np.concatenate(pair_xyz_parts)[order]
+        else:
+            self._pair_view = np.empty(0, dtype=np.int64)
+            self._pair_life = np.empty(0, dtype=np.int64)
+            self._pair_xyz = np.empty((0, 3), dtype=np.float64)
+        self._alive_cache: dict[int, list[tuple[int, float, float, float]]] = {}
 
     def _interp_in_life(
         self,
@@ -309,13 +484,25 @@ class _ObservedWorld:
         )
 
     def alive_at(self, view_index: int) -> list[tuple[int, float, float, float]]:
-        return self._alive_by_view.get(view_index, ())
+        cached = self._alive_cache.get(view_index)
+        if cached is not None:
+            return cached
+        lo = int(np.searchsorted(self._pair_view, view_index, side="left"))
+        hi = int(np.searchsorted(self._pair_view, view_index, side="right"))
+        alive = [
+            (self.lives[life_index][0], float(row[0]), float(row[1]), float(row[2]))
+            for life_index, row in zip(
+                self._pair_life[lo:hi].tolist(), self._pair_xyz[lo:hi]
+            )
+        ]
+        self._alive_cache[view_index] = alive
+        return alive
 
     def alive_mean(self, view_indices: Sequence[int]) -> float | None:
         if not view_indices:
             return None
-        total = sum(len(self._alive_by_view.get(index, ())) for index in view_indices)
-        return total / len(view_indices)
+        index_array = np.fromiter(view_indices, dtype=np.int64, count=len(view_indices))
+        return int(self.view_alive_counts[index_array].sum()) / len(view_indices)
 
     def dying_target_bearing_deg(
         self,
@@ -384,20 +571,24 @@ def compute_observed_features(
     window: tuple[float, float],
     official_kills: int | None,
 ) -> dict[str, float | None]:
-    """判别窗内的全部观测特征；不可计算的特征置 None（absent 语义）。"""
+    """判别窗内的全部观测特征；不可计算的特征置 None（absent 语义）。
+
+    热路径 numpy 向量化：view/目标点一次入数组，逐生命 searchsorted 切片后
+    批量插值与误差归约（见 _ObservedWorld）；各特征口径与逐点实现一致。
+    """
     t_lo, t_hi = window
     duration = t_hi - t_lo
     features: dict[str, float | None] = {key: None for key in _FEATURE_KEYS}
     if duration <= 0:
         return features
     world = _ObservedWorld(positions, views, radius_windows)
-    window_views = [
-        (index, frame_t, pos, rot)
-        for index, (frame_t, pos, rot, _fov) in enumerate(views)
-        if t_lo <= frame_t <= t_hi
-    ]
-    if not window_views:
+    view_lo = int(np.searchsorted(world.view_t, t_lo, side="left"))
+    view_hi = int(np.searchsorted(world.view_t, t_hi, side="right"))
+    if view_hi <= view_lo:
         return features
+    window_view_t = world.view_t[view_lo:view_hi]
+    window_min_err = world.min_angle_error[view_lo:view_hi]
+    window_min_dist = world.min_target_dist[view_lo:view_hi]
     window_downs = [t for t in downs if t_lo <= t <= t_hi]
     window_ups = [t for t in ups if t_lo <= t <= t_hi]
 
@@ -432,15 +623,18 @@ def compute_observed_features(
     # ---- 点击时刻误差（±60ms 邻近样本，误差取邻近最优） ----
     click_errors: list[float] = []
     for click_t in window_downs:
-        candidates = [
-            error
-            for index, frame_t, pos, rot in window_views
-            if abs(frame_t - click_t) <= CLICK_NEIGHBORHOOD_S
-            for error in (_min_angular_error_deg(world, index, pos, rot),)
-            if error is not None
-        ]
-        if candidates:
-            click_errors.append(min(candidates))
+        near_lo = int(np.searchsorted(
+            window_view_t, click_t - CLICK_NEIGHBORHOOD_S, side="left"
+        ))
+        near_hi = int(np.searchsorted(
+            window_view_t, click_t + CLICK_NEIGHBORHOOD_S, side="right"
+        ))
+        if near_hi <= near_lo:
+            continue
+        near = window_min_err[near_lo:near_hi]
+        near = near[~np.isnan(near)]
+        if near.size:
+            click_errors.append(float(near.min()))
     if click_errors:
         features["err_at_click_p50"] = _round(statistics.median(click_errors), 3)
         features["err_at_click_lt1deg_share"] = _round(
@@ -448,34 +642,31 @@ def compute_observed_features(
         )
 
     # ---- 休息位误差（非点击期误差下沿 p10） ----
-    rest_errors: list[float] = []
-    for index, frame_t, pos, rot in window_views:
-        if window_downs and min(abs(frame_t - click) for click in window_downs) <= NONCLICK_RADIUS_S:
-            continue
-        error = _min_angular_error_deg(world, index, pos, rot)
-        if error is not None:
-            rest_errors.append(error)
-    rest_errors.sort()
+    if window_downs:
+        downs_arr = np.array(window_downs, dtype=np.float64)
+        insertion = np.searchsorted(downs_arr, window_view_t)
+        right = downs_arr[np.minimum(insertion, downs_arr.size - 1)]
+        left = downs_arr[np.maximum(insertion - 1, 0)]
+        near_click = np.minimum(
+            np.abs(window_view_t - left), np.abs(window_view_t - right)
+        )
+        rest_mask = near_click > NONCLICK_RADIUS_S
+    else:
+        rest_mask = np.ones(window_view_t.shape[0], dtype=bool)
+    rest_values = window_min_err[rest_mask]
+    rest_errors = np.sort(rest_values[~np.isnan(rest_values)])
     features["err_p10"] = _round(_percentile(rest_errors, 0.1), 3)
 
     # ---- 误差锯齿率（持续火力转火的遥测兜底签名，0901 实证） ----
     # 逐帧“准心->最近存活目标最小角误差”序列中 >15° excursion 次数/s；
     # 口径与 heldfire_analysis.py 研究脚本一致（>15° 进入、<=15° 退出计一次，
     # 窗末仍未退出的 excursion 不计；无存活目标帧跳过）。
+    valid_errors = window_min_err[~np.isnan(window_min_err)]
     err_spikes = 0
-    in_excursion = False
-    err_sample_count = 0
-    for index, _frame_t, pos, rot in window_views:
-        error = _min_angular_error_deg(world, index, pos, rot)
-        if error is None:
-            continue
-        err_sample_count += 1
-        if error > ERR_SPIKE_EXCURSION_MIN_DEG:
-            in_excursion = True
-        elif in_excursion:
-            in_excursion = False
-            err_spikes += 1
-    if err_sample_count:
+    if valid_errors.size >= 2:
+        above = valid_errors > ERR_SPIKE_EXCURSION_MIN_DEG
+        err_spikes = int(np.count_nonzero(above[:-1] & ~above[1:]))
+    if valid_errors.size:
         features["err_spike_rate_per_s"] = _round(err_spikes / duration, 4)
 
     # ---- 节奏 ----
@@ -490,41 +681,46 @@ def compute_observed_features(
         )
 
     # ---- 角速度（rot 差分，dt>0.2s 丢弃；3D 角差自带 yaw wrap ±180 语义） ----
-    omegas: list[float] = []
+    fwd_window = world.view_fwd[view_lo:view_hi]
+    yaw_window = world.view_yaw[view_lo:view_hi]
+    dt = np.diff(window_view_t)
+    pair_ok = (dt > 0) & (dt <= OMEGA_DT_MAX_S)
+    omegas = np.empty(0, dtype=np.float64)
     flips = 0
-    previous_sign = 0
-    for (_a, frame_a, _pos_a, rot_a), (_b, frame_b, _pos_b, rot_b) in zip(
-        window_views, window_views[1:]
-    ):
-        dt = frame_b - frame_a
-        if dt <= 0 or dt > OMEGA_DT_MAX_S:
-            continue
-        omegas.append(
-            _angle_between_deg(_view_direction(rot_a), _view_direction(rot_b)) / dt
+    if pair_ok.any():
+        dot = (
+            fwd_window[:-1, 0] * fwd_window[1:, 0]
+            + fwd_window[:-1, 1] * fwd_window[1:, 1]
+            + fwd_window[:-1, 2] * fwd_window[1:, 2]
         )
-        dyaw = math.degrees(
-            _wrap_pi(math.radians(float(rot_b[1])) - math.radians(float(rot_a[1])))
+        omega_all = np.degrees(np.arccos(np.clip(dot, -1.0, 1.0))) / dt
+        omegas = np.sort(omega_all[pair_ok])
+        # view_yaw 已是弧度；wrap ±180 语义与 _wrap_pi 同式。
+        dyaw = np.degrees(
+            np.mod(
+                yaw_window[1:] - yaw_window[:-1] + math.pi,
+                2.0 * math.pi,
+            )
+            - math.pi
         )
-        if abs(dyaw) / dt > _FLIP_SPEED_MIN_DEG_S:
-            sign = 1 if dyaw > 0 else -1
-            if previous_sign and sign != previous_sign:
-                flips += 1
-            previous_sign = sign
-    omegas.sort()
+        active = pair_ok & (np.abs(dyaw) / dt > _FLIP_SPEED_MIN_DEG_S)
+        signs = np.sign(dyaw[active])
+        if signs.size:
+            flips = int(np.count_nonzero(signs[1:] != signs[:-1]))
     features["omega_p99"] = _round(_percentile(omegas, 0.99), 2)
     # omegas 为空（views 断流超过 dt 上限）置 None：absent 语义，不得 ZeroDivisionError。
     features["omega_frac_20_200"] = (
         _round(
-            sum(1 for omega in omegas if 20.0 <= omega <= 200.0) / len(omegas)
+            int(np.count_nonzero((omegas >= 20.0) & (omegas <= 200.0))) / omegas.size
         )
-        if omegas
+        if omegas.size
         else None
     )
     features["dir_flips_per_s"] = _round(flips / duration, 4)
 
     # ---- 活性（churn 过滤后） ----
     features["alive_mean"] = _round(
-        world.alive_mean([index for index, _t, _p, _r in window_views]), 3
+        world.alive_mean(range(view_lo, view_hi)), 3
     )
 
     # ---- 击杀方位角差 ----
@@ -533,12 +729,19 @@ def compute_observed_features(
     # deaths≠kills 的计数红线只约束 kills 数值（clicks_per_kill 用官方 kills），
     # 这里只取击杀时刻的方位序列；无存活佐证（官方 kills 缺失）时分支仍要求
     # bearing 强信号。
-    data_end = window_views[-1][1]
+    data_end = float(window_view_t[-1])
+    window_view_pos = world.view_pos[view_lo:view_hi]
+    addr_lives: dict[int, list[tuple[float, float]]] = {}
+    for addr, life_start, life_end in world.lives:
+        addr_lives.setdefault(addr, []).append((life_start, life_end))
     bearings: list[float] = []
     for addr, life_start, life_end in world.lives:
         if not t_lo <= life_end < data_end - _TIMEOUT_CENSOR_EPS_S:
             continue
-        bearing = world.dying_target_bearing_deg(addr, life_start, life_end, window_views)
+        bearing = _dying_bearing_deg(
+            world, addr_lives, addr, life_start, life_end,
+            window_view_t, window_view_pos,
+        )
         if bearing is not None:
             bearings.append(bearing)
     bearing_deltas = [
@@ -552,42 +755,55 @@ def compute_observed_features(
 
     # ---- 几何（bb 缺失 → absent，不用 30cm 兜底） ----
     if radius_windows:
-        dists: list[float] = []
-        angular_radii: list[float] = []
-        for index, frame_t, pos, _rot in window_views:
-            best_dist: float | None = None
-            for _addr, x, y, z in world.alive_at(index):
-                dist = math.dist((x, y, z), pos)
-                if best_dist is None or dist < best_dist:
-                    best_dist = dist
-            if best_dist is None or best_dist <= 0:
-                continue
-            dists.append(best_dist)
-            radius = world.radius_at(frame_t)
-            if radius is not None:
-                angular_radii.append(math.degrees(math.atan(radius / best_dist)))
-        if dists:
-            features["dist_med"] = _round(statistics.median(dists), 1)
-        if angular_radii:
-            features["ang_radius_med"] = _round(statistics.median(angular_radii), 3)
+        dist_ok = ~np.isnan(window_min_dist) & (window_min_dist > 0)
+        dists = np.sort(window_min_dist[dist_ok])
+        if dists.size:
+            features["dist_med"] = _round(_median_sorted(dists), 1)
+        # radius_at 的“列表序首个命中窗”语义：倒序刷写让更早的窗保留优先级。
+        radius_at_t = np.full(window_view_t.shape[0], np.nan)
+        for win_lo, win_hi, radius in reversed(radius_windows):
+            radius_at_t[(window_view_t >= win_lo) & (window_view_t <= win_hi)] = radius
+        radius_ok = dist_ok & ~np.isnan(radius_at_t)
+        if radius_ok.any():
+            angular_radii = np.sort(
+                np.degrees(np.arctan(radius_at_t[radius_ok] / window_min_dist[radius_ok]))
+            )
+            features["ang_radius_med"] = _round(_median_sorted(angular_radii), 3)
 
     # ---- 目标运动（过滤后生命的轮帧差分，cm/s） ----
-    speeds: list[float] = []
+    speeds_parts: list[np.ndarray] = []
     for addr, life_start, life_end in world.lives:
-        points = [
-            point for point in positions.get(addr, ())
-            if life_start <= point[0] <= life_end and t_lo <= point[0] <= t_hi
-        ]
-        for left, right in zip(points, points[1:]):
-            dt = right[0] - left[0]
-            if dt <= 0:
-                continue
-            speeds.append(math.dist(left[1:], right[1:]) / dt)
-    if speeds:
+        arrays = world._addr_arrays.get(addr)
+        if arrays is None:
+            continue
+        t_arr = arrays[0]
+        seg_lo = int(np.searchsorted(t_arr, life_start, side="left"))
+        seg_hi = int(np.searchsorted(t_arr, life_end, side="right"))
+        if seg_hi - seg_lo < 2:
+            continue
+        seg_t = t_arr[seg_lo:seg_hi]
+        in_window = (seg_t >= t_lo) & (seg_t <= t_hi)
+        seg_t = seg_t[in_window]
+        if seg_t.size < 2:
+            continue
+        dt_pairs = np.diff(seg_t)
+        forward_dt = dt_pairs > 0
+        if not forward_dt.any():
+            continue
+        seg_x = arrays[1][seg_lo:seg_hi][in_window]
+        seg_y = arrays[2][seg_lo:seg_hi][in_window]
+        seg_z = arrays[3][seg_lo:seg_hi][in_window]
+        dxs = seg_x[1:] - seg_x[:-1]
+        dys = seg_y[1:] - seg_y[:-1]
+        dzs = seg_z[1:] - seg_z[:-1]
+        seg_speeds = np.sqrt(dxs * dxs + dys * dys + dzs * dzs) / dt_pairs
+        speeds_parts.append(seg_speeds[forward_dt])
+    if speeds_parts:
+        speeds = np.concatenate(speeds_parts)
         features["moving_time_share"] = _round(
-            sum(1 for speed in speeds if speed > MOVING_SPEED_MIN_CM_S) / len(speeds)
+            int(np.count_nonzero(speeds > MOVING_SPEED_MIN_CM_S)) / speeds.size
         )
-        features["target_speed_p50"] = _round(statistics.median(speeds), 2)
+        features["target_speed_p50"] = _round(_median_sorted(np.sort(speeds)), 2)
 
     return features
 

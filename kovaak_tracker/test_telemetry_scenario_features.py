@@ -1004,3 +1004,128 @@ def test_session0904_challenge_windows(
     if want_family == "target_switching":
         assert verdict["basis"] == "telemetry_observed_basis_heldfire_switch_by_kill_rate"
         assert verdict["target_motion"]["target_count_model"] == "sequential"
+
+
+# ---------------------------------------------------------------- 向量化等值回归
+#
+# telemetry_scenario_features 热路径已 numpy 向量化（修复冻结运行时 ~100x 放大
+# 的性能回退）。对拍回归：与向量化前的参照实现快照（.zcode/anchor-research-
+# 1005/verify/telemetry_scenario_features_ref.py，gitignored 研究底稿）在合成
+# 小数据 + 54095 切窗真数据（E:\ACData 只读）上逐键对比 profile——结构、键、
+# verdict 严格一致，浮点允许 _round 末位差异。参照件或数据缺失时整段 SKIP，
+# 与上方真数据用例同组织方式。
+
+_VECTOR_REF_MODULE = (
+    Path(__file__).resolve().parents[1]
+    / ".zcode" / "anchor-research-1005" / "verify"
+    / "telemetry_scenario_features_ref.py"
+)
+_VECTOR_DATA_54095 = Path(
+    r"E:\ACData\external-capture\cleaned\incr\cut-run54095-1791148149427"
+    r"\target_poll_out_1005_050706"
+)
+
+# 各特征/窗口字段的 _round 位数（等值容差 = 末位一个单位）。
+_VEC_ROUND_DIGITS = {
+    "mean_hold_ms": 2, "clicks_per_min": 3, "clicks_per_kill": 4,
+    "err_at_click_p50": 3, "err_p10": 3, "err_spike_rate_per_s": 4,
+    "inter_click_cv": 4, "omega_p99": 2, "dir_flips_per_s": 4,
+    "alive_mean": 3, "bearing_delta_at_kill_med": 2, "ang_radius_med": 3,
+    "dist_med": 1, "target_speed_p50": 2, "t_start": 3, "t_end": 3,
+    "duration_s": 3, "official_kill_rate_per_s": 4,
+}
+
+_requires_vector_ref = pytest.mark.skipif(
+    not _VECTOR_REF_MODULE.is_file() or not _VECTOR_DATA_54095.is_dir(),
+    reason="vectorization reference snapshot or 54095 data is not available",
+)
+
+
+def _vec_values_equal(a: object, b: object, key: str) -> bool:
+    if a is None or b is None:
+        return (a is None) == (b is None)
+    if isinstance(a, (str, bool)) or isinstance(b, (str, bool)):
+        return a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if a == b:
+            return True
+        tolerance = 10 ** (-_VEC_ROUND_DIGITS.get(key, 4)) * 1.0001
+        return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=tolerance)
+    return False
+
+
+def _vec_deep_diffs(a: object, b: object, path: str = "") -> list[str]:
+    if isinstance(a, dict) and isinstance(b, dict):
+        if set(a) != set(b):
+            return [f"{path}: key mismatch"]
+        diffs: list[str] = []
+        for key in a:
+            diffs.extend(_vec_deep_diffs(a[key], b[key], f"{path}.{key}" if path else str(key)))
+        return diffs
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return [f"{path}: length mismatch"]
+        diffs = []
+        for index, (item_a, item_b) in enumerate(zip(a, b)):
+            diffs.extend(_vec_deep_diffs(item_a, item_b, f"{path}[{index}]"))
+        return diffs
+    key = path.rsplit(".", 1)[-1].split("[")[0]
+    return [] if _vec_values_equal(a, b, key) else [f"{path}: {a!r} vs {b!r}"]
+
+
+def _load_vector_ref_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "telemetry_scenario_features_ref", _VECTOR_REF_MODULE
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@_requires_vector_ref
+def test_vectorized_profile_matches_reference_synthetic(tmp_path):
+    """合成小数据对拍：生命窗边界/几何/点击邻域/运动差分语义一致。"""
+    reference = _load_vector_ref_module()
+    duration = 12.0
+    clicks = [round(1.0 + 0.4 * i, 4) for i in range(22)]
+    round_dir = _write_sidecar(
+        tmp_path / "vecsyn",
+        views=_views(duration, yaw_at=lambda t: 3.0 * math.sin(t)),
+        frames=_frames_from_lives(
+            _static_target_lives(duration, count=3, dist=2500.0)
+        ),
+        inputs=_inputs_from_clicks(clicks),
+    )
+    kwargs: dict = {"official_window_t": (0.0, duration), "official_kills": 22}
+    profile_ref = reference.build_scenario_observed_profile(round_dir, 1, **kwargs)
+    profile_new = build_scenario_observed_profile(round_dir, 1, **kwargs)
+    diffs = _vec_deep_diffs(profile_ref, profile_new)
+    assert not diffs, f"vectorized profile diverges: {diffs[:10]}"
+    assert profile_new["verdict"] is not None
+
+
+@_requires_vector_ref
+def test_vectorized_profile_matches_reference_run54095():
+    """54095 切窗真数据对拍：全轮 fallback 与官方窗两种取窗下逐键一致。"""
+    reference = _load_vector_ref_module()
+    for kwargs in (
+        {},
+        {
+            "official_window_epoch_ms": (1791148156000, 1791148168000),
+            "official_kills": 12,
+        },
+    ):
+        profile_ref = reference.build_scenario_observed_profile(
+            _VECTOR_DATA_54095, 1, **kwargs
+        )
+        profile_new = build_scenario_observed_profile(
+            _VECTOR_DATA_54095, 1, **kwargs
+        )
+        diffs = _vec_deep_diffs(profile_ref, profile_new)
+        assert not diffs, f"vectorized profile diverges ({kwargs}): {diffs[:10]}"
+        assert (
+            profile_ref["verdict"]["aim_family"]
+            == profile_new["verdict"]["aim_family"]
+        )
