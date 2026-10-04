@@ -18,6 +18,16 @@
           "type": "fix",
           "zh": "动作层训练诊断修复：跟枪类场景（跟踪/横移目标）现在能正常生成准星与目标关系的动作诊断，不再被误判跳过；同一批训练里个别数据异常的局不再拖累其他局的动作分析",
           "en": "Motion-layer diagnostics fixed: tracking-style scenarios now produce crosshair-versus-target motion analysis instead of being skipped, and one faulty round no longer drags down the rest of a session"
+        },
+        {
+          "type": "fix",
+          "zh": "修复「目标较大且移动较慢」类训练场景整理不出数据的问题：上一局残留的目标不再被误当作画面残影清理掉，这类场景的数据整理与分析恢复正常",
+          "en": "Fixed “larger + slowed” style scenarios failing to process their data: targets carried over from the previous run are no longer mistaken for on-screen debris, so these scenarios process and analyze normally again"
+        },
+        {
+          "type": "new",
+          "zh": "训练记录的整理进度一目了然：整理中的记录会显示具体在等什么、还排着几局，整理完成后会主动弹提醒——不用再对着「整理中」干等",
+          "en": "Training-record processing is now visible at a glance: rows show what is still being processed and how many runs are queued, and a notification pops up when everything is ready"
         }
       ]
     },
