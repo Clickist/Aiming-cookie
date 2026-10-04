@@ -29,6 +29,9 @@ export const task45En = {
   "history.notice.runDiscoveryDesktopBody": "The browser can show analysis records; open History in the desktop app to see auto-captured runs.",
   "history.notice.runUnavailableTitle": "Runs temporarily unavailable",
   "history.notice.runUnavailableBody": "The desktop service returned no training runs; this doesn't mean \"no records\". Refresh once the service recovers.",
+  // Finalization transparency (issue #5 A+D): real stages and real counts only, no speculative progress.
+  "history.finalization.organizing": "Organizing {n} runs",
+  "history.notice.runsReady": "Training runs are ready to analyze",
   "history.coachPill.idle": "Ask Coach to analyze",
   "history.coachPill.withCount": "Ask Coach to analyze ({n})",
   "history.coachPill.limitNotice": "Select up to {n} runs at a time to hand to Coach.",

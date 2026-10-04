@@ -227,6 +227,10 @@ class CaptureStatusResponse(BaseModel):
     pause_fail_closed: bool
     runs: list[CaptureRunAttachment] = Field(default_factory=list)
     error: Optional[dict] = None
+    # 遥测整理（run cut）服务摘要，additive 可选字段；null = 服务未初始化或
+    # 读取失败。只含聚合计数，不含 session 等敏感明细（脱敏口径同
+    # telemetry_capture_service._persist_diagnostics 的「会话名不入诊断」）。
+    telemetry_capture: Optional[dict] = None
 
 
 class TaskFailure(BaseModel):

@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { deleteKovaakRun, getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
+import { deleteKovaakRun, getCaptureStatus, getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { shouldShowKovaakInstallGuide } from "@/lib/kovaak-install-guide";
 import { KovaakInstallGuideCard } from "@/components/kovaak/KovaakInstallGuideCard";
 import { isDesktopRuntime } from "@/lib/desktop";
@@ -17,9 +17,9 @@ import {
   getHistoryStatusText,
   presentRecordLabel,
 } from "@/lib/contracts";
-import type { KovaaKLocalDirectoriesV1, KovaaKRunListItem, KovaaKWatcherStatusV1, SessionListItem } from "@/lib/types";
+import type { KovaaKLocalDirectoriesV1, KovaaKRunListItem, KovaaKWatcherStatusV1, SessionListItem, TelemetryCaptureSummaryV1 } from "@/lib/types";
 import { IconAlertCircle, IconCheck, IconChevronDown, IconChevronLeft, IconRefresh, IconTrash } from "@/ui/icons";
-import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
+import { Button, Empty, ErrorState, IconButton, Notice, Toast } from "@/ui/primitives";
 import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
 type RefreshState = "idle" | "loading" | "unavailable";
@@ -218,6 +218,9 @@ function RunRow({
   // 异常标（0911 点点第三批 F）：limitations 非空或来源不可用终态 → 红色
   // 感叹号圈标（悬停 title 人话）；正常行完全无标记。
   const issue = runIssueText(run);
+  // 收尾局等待落盘的中间态（issue #5 方案 A）：从行尾悬停 title 提升为行内
+  // 可见小字；此时感叹号不再重复渲染——同一事实已在行内可见。
+  const pendingText = finalizationPendingText(run.finalization_error);
   // 整行可点勾选（0911 点点第二批）：disabled 行不接管点击、cursor 默认；
   // 键盘仍走原生 checkbox（Tab + 空格切换）。
   const interactive = Boolean(onToggle) && !disabled;
@@ -247,10 +250,11 @@ function RunRow({
       ) : null}
       {/* 单行布局（0911 点点第三批 B）：场景名弹性占满，分数/时间/异常标右聚。 */}
       <span className="task4-name">{presentRecordLabel({ scenario: run.scenario, titleOnly: true })}</span>
+      {pendingText ? <span className="task4-run-pending">{pendingText}</span> : null}
       {!isPending ? runRecordBadge(run) : null}
       {run.score != null ? <span className="task4-run-score">{formatScore(run.score)}</span> : null}
       <span className="task4-run-time">{trainingTimeLabel(trainingAt)}</span>
-      {issue ? (
+      {issue && !pendingText ? (
         <span
           aria-label={t("history.aria.runIssue", { issue })}
           className="task4-run-issue"
@@ -410,21 +414,35 @@ export function HistoryClient() {
   const [runExpand, setRunExpand] = useState<RunExpandState>({ pending: false, records: false, analysis: false });
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  // 遥测整理服务摘要（issue #5 方案 A）：只取 run_cuts_in_flight 做「正在整理
+  // N 局」真实计数；run_cuts_total 是进程生命周期累计值，不展示（避免误导）。
+  const [telemetrySummary, setTelemetrySummary] = useState<TelemetryCaptureSummaryV1 | null>(null);
+  // 整理完成提示（issue #5 方案 D）：seq 兼作 Toast key，防迟到的旧 onClose
+  // 误清新提示（与 AppShell sessionFeedback 同款）。
+  const [readyNoticeSeq, setReadyNoticeSeq] = useState(0);
   const selectedCount = selectedRunIds.length + selectedAnalysisIds.length;
   const allListsEmpty = runs.length === 0 && sessions.length === 0;
+  // 「正在整理 N 局」（issue #5 方案 A）：真实计数，仅在 >0 时显示。
+  const organizingCount = telemetrySummary?.run_cuts_in_flight ?? 0;
 
   const loadHistory = useCallback(async (initial = false) => {
     setRefresh("loading");
     const canDiscoverRuns = isDesktopRuntime();
     setRunDiscovery(canDiscoverRuns ? "loading" : "browser_unavailable");
-    const [runResult, sessionResult] = await Promise.allSettled([
+    const [runResult, sessionResult, captureResult] = await Promise.allSettled([
       canDiscoverRuns ? listKovaakRuns() : Promise.reject(new Error("Run discovery is desktop-only")),
       getHistorySessions(),
+      // 队列深度搭同一读取节奏（issue #5 方案 A）：不新增定时器；浏览器无此能力。
+      canDiscoverRuns ? getCaptureStatus() : Promise.reject(new Error("Capture status is desktop-only")),
     ]);
     setRunDiscovery(runResult.status === "fulfilled" ? "available" : canDiscoverRuns ? "service_unavailable" : "browser_unavailable");
     const anySuccess = runResult.status === "fulfilled" || sessionResult.status === "fulfilled";
     if (runResult.status === "fulfilled") setRuns(runResult.value.runs);
     if (sessionResult.status === "fulfilled") setSessions(sessionResult.value.sessions);
+    // 读取失败时不保留旧摘要：宁可少显示，不显示过期队列深度。
+    setTelemetrySummary(
+      captureResult.status === "fulfilled" ? captureResult.value.telemetry_capture ?? null : null,
+    );
     if (!anySuccess) {
       setRefresh("unavailable");
       if (initial) setInitialError(true);
@@ -602,6 +620,23 @@ export function HistoryClient() {
     return () => window.clearInterval(timer);
   }, [shouldPollHistory, loadHistory]);
 
+  // 整理完成检测（issue #5 方案 D）：记录上一轮各 run 的「可分析」状态，
+  // 某 run 从不可分析（finalization_state ∈ pending/retryable 或无可用输入
+  // 模式）迁移到可分析（finalized 且有输入模式）时弹一次提示。页面打开时
+  // 已就绪的 run 没有可观察的迁移（首帧 prev 为 null 不提示）；终态由最后
+  // 一拍轮询带回时即触发，随后轮询自然停止，无漏报。
+  const prevAnalyticRef = useRef<Map<string, boolean> | null>(null);
+  useEffect(() => {
+    const prev = prevAnalyticRef.current;
+    const analytic = new Map(
+      runs.map((run) => [run.run_ref, run.finalization_state === "finalized" && run.supported_input_modes.length > 0]),
+    );
+    if (prev !== null && [...analytic].some(([runRef, now]) => now && prev.get(runRef) === false)) {
+      setReadyNoticeSeq((seq) => seq + 1);
+    }
+    prevAnalyticRef.current = analytic;
+  }, [runs]);
+
   const toggleRun = (run: KovaaKRunListItem) => {
     if (selectedRunIds.includes(run.id)) {
       setSelectionNotice(null);
@@ -768,6 +803,11 @@ export function HistoryClient() {
             <IconChevronDown />
           </button>
         </div>
+        {/* 整理队列深度（issue #5 方案 A）：真实阶段 + 真实计数，不做进度条、
+            不显示推测百分比（产品原则）；0 时不渲染，不常驻。 */}
+        {organizingCount > 0 ? (
+          <p className="task4-queue-note">{t("history.finalization.organizing", { n: organizingCount })}</p>
+        ) : null}
         {pendingRecordsOpen ? (filteredSections.pendingRuns.length === 0 ? (
           normalizedFilter ? (
             <Empty className="task4-panel task4-state-panel" title={t("history.filter.emptyTitle")}>{t("history.filter.emptyBody")}</Empty>
@@ -922,6 +962,16 @@ export function HistoryClient() {
       </section>
         </div>
         </div>
+      {/* 整理完成提示（issue #5 方案 D）：复用全局 Toast 先例（AppShell 同款，
+          固定右下角，5s 自动退场 + 可手动关闭）；seq 防迟到 onClose 误清新提示。 */}
+      {readyNoticeSeq > 0 ? (
+        <Toast
+          key={readyNoticeSeq}
+          onClose={() => setReadyNoticeSeq((current) => (current === readyNoticeSeq ? 0 : current))}
+        >
+          {t("history.notice.runsReady")}
+        </Toast>
+      ) : null}
       </div>
   );
 }

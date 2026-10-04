@@ -692,6 +692,15 @@ export interface CaptureRunAttachment {
   video_attached: boolean;
 }
 
+/** 遥测整理（run cut）服务摘要（capture_status.v1 additive 字段）。 */
+export interface TelemetryCaptureSummaryV1 {
+  state: string | null;
+  /** 进行中的按局切窗数（真实计数，供「正在整理 N 局」文案）。 */
+  run_cuts_in_flight: number | null;
+  /** 进程生命周期累计切窗数（累计值，界面不直接展示，避免误导）。 */
+  run_cuts_total: number | null;
+}
+
 export interface CaptureStatusV1 {
   schema_version: "capture_status.v1";
   availability: "available" | "unavailable";
@@ -706,6 +715,8 @@ export interface CaptureStatusV1 {
   pause_fail_closed: boolean;
   runs: CaptureRunAttachment[];
   error: PublicReadModelError | null;
+  /** 遥测整理服务摘要；缺省/null = 服务未初始化或读取失败。 */
+  telemetry_capture?: TelemetryCaptureSummaryV1 | null;
 }
 
 export type TaskState = "importing" | "queued" | "running" | "done" | "failed" | "retrying";

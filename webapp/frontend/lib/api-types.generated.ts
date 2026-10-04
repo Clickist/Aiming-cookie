@@ -1092,6 +1092,10 @@ export interface components {
              * @constant
              */
             schema_version: "capture_status.v1";
+            /** Telemetry Capture */
+            telemetry_capture?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** CurrentTrainingItem */
         CurrentTrainingItem: {

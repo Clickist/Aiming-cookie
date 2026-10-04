@@ -494,6 +494,8 @@ async def get_capture_status(
     _: None = Depends(require_desktop_token),
 ):
     """Aggregate native coordinator status with path-free Run attachments."""
+    # 遥测整理摘要独立于主状态读取：主投影失败时队列深度仍可透出。
+    telemetry_summary = _current_telemetry_capture_summary(request)
     try:
         # 1s 轮询专用轻投影：不做全量 summaries 投影、不触发任何 session
         # 解析或重扫描（native status 本身 1-2ms，必须与重活拆开）。
@@ -527,7 +529,7 @@ async def get_capture_status(
     except Exception:
         log.exception("capture status read failed")
         status = build_capture_status_v1(read_error="capture_status_unavailable")
-    return CaptureStatusResponse(**status)
+    return CaptureStatusResponse(telemetry_capture=telemetry_summary, **status)
 
 
 def _task_groups(rows: list[dict]) -> list[dict]:
@@ -1748,6 +1750,37 @@ def _current_external_watcher_snapshot(request: Request) -> Optional[dict]:
     except Exception:
         log.exception("External telemetry diagnostics read failed")
         return None
+
+
+def _current_telemetry_capture_summary(request: Request) -> Optional[dict]:
+    """遥测整理（run cut）服务摘要（capture-status 附加投影）。
+
+    照 _current_external_watcher_snapshot 先例读 diagnostics()，但只取三个
+    聚合字段；session/children 等敏感明细不进公开响应（脱敏口径同
+    telemetry_capture_service._persist_diagnostics）。服务未初始化或读取
+    失败返回 None，不影响主状态投影。
+    """
+    service = getattr(request.app.state, "telemetry_capture_service", None)
+    diagnostics = getattr(service, "diagnostics", None)
+    if not callable(diagnostics):
+        return None
+    try:
+        snapshot = diagnostics()
+    except Exception:
+        log.exception("Telemetry capture diagnostics read failed")
+        return None
+    if not isinstance(snapshot, dict):
+        return None
+    state = snapshot.get("state")
+    in_flight = snapshot.get("run_cuts_in_flight")
+    total = snapshot.get("run_cuts_total")
+    return {
+        "state": state if isinstance(state, str) else None,
+        "run_cuts_in_flight": (
+            in_flight if isinstance(in_flight, int) and not isinstance(in_flight, bool) else None
+        ),
+        "run_cuts_total": total if isinstance(total, int) and not isinstance(total, bool) else None,
+    }
 
 
 @router.get("/external-telemetry", response_model=ExternalTelemetryConfigResponse)

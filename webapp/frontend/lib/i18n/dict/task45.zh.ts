@@ -30,6 +30,9 @@ export const task45Zh = {
   "history.notice.runDiscoveryDesktopBody": "浏览器可以查看分析记录；要查看自动采集的 Run，请在桌面应用中打开 History。",
   "history.notice.runUnavailableTitle": "Run 暂时不可用",
   "history.notice.runUnavailableBody": "桌面服务没有返回训练 Run；这不是\"没有记录\"。恢复服务后可以刷新。",
+  // 整理过程透明化（issue #5 方案 A+D）：只说真实阶段与真实计数，不做推测进度。
+  "history.finalization.organizing": "正在整理 {n} 局训练",
+  "history.notice.runsReady": "训练记录已整理完成，可以分析了",
   "history.coachPill.idle": "让 Coach 分析",
   "history.coachPill.withCount": "让 Coach 分析（{n}）",
   "history.coachPill.limitNotice": "最多同时选 {n} 条一起交给 Coach。",

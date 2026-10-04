@@ -245,6 +245,14 @@
   font: 500 var(--text-micro) var(--font-mono);
 }
 
+/* 整理队列小字（issue #5 方案 A）：「正在整理 N 局」真实计数，仅 >0 时渲染；
+   字号/颜色跟随历史行小字规格，不发明新视觉体系。 */
+.task4-queue-note {
+  margin: 0 0 var(--space-3);
+  color: var(--on-surface-variant);
+  font: 400 var(--text-caption) var(--font-ui);
+}
+
 /* 可折叠区块头（0911 点点第二批 8；第四轮升级为线框 .fold 圆角面板行，
    「训练记录」「分析记录」共用）：整个头可点切换，键盘走右侧箭头按钮
    （aria-expanded）；描边、圆角与面板同款（--radius-md 10px = 线框），
@@ -396,6 +404,18 @@
   flex: none;
   min-width: 40px;
   text-align: right;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 收尾局行内整理状态小字（issue #5 方案 A）：「正在等待输入/训练数据落盘」
+   从悬停 title 提升为行内可见；规格随 .task4-run-time 同款小字。 */
+.task4-run-pending {
+  flex: none;
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--on-surface-variant);
   font-variant-numeric: tabular-nums;
 }
