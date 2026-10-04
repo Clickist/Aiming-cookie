@@ -6,12 +6,19 @@
 //! 清理——tauri 2 的 setup 钩子运行时 config 窗口（含 WebView2 环境）已建好，
 //! 所以唯一够早的位置是 `run()` 最顶部、tauri builder 启动之前。
 //!
-//! 只杀同时满足两条的 msedgewebview2：
+//! 只杀同时满足三条的 msedgewebview2：
 //! ① 命令行包含本应用的 WebView2 用户数据目录（tauri Windows 默认
 //!    `%LOCALAPPDATA%/{identifier}`；实测 browser/gpu/utility/renderer/
 //!    crashpad 的 `--user-data-dir` 都带该路径，区别仅在有无引号与大小写）；
 //! ② 父进程在当前进程表里已不存在，或父进程在本次待杀集合里（杀掉浏览器
-//!    进程后其子进程同属孤儿，不依赖 WebView2 job object 兜底）。
+//!    进程后其子进程同属孤儿，不依赖 WebView2 job object 兜底）；
+//! ③ 当前没有**另一个存活的本应用主实例**——第二实例启动时主实例正在跑，
+//!    它可能已把上次崩溃实例残留的旧浏览器池并入自己在用（共享同一
+//!    user-data-dir 的池无法并存，新环境只会加入既有浏览器进程），而那些被
+//!    采纳的浏览器进程父进程（已崩溃实例）早已死亡，单看条件②会把在用池
+//!    误判成孤儿、把主实例正在使用的浏览器杀掉（主窗口瞬间空白）。因此只要
+//!    进程表里还有 exe 名与当前进程相同的其他 pid，本轮直接放弃清理；真正
+//!    的孤儿等下一次冷启动（无其他实例）时再清。
 //!
 //! 语义说明：「父进程已不存在」以 Toolhelp 快照的当前进程表为准——本应用
 //! 无论崩溃还是正常退出，残留池的父（应用进程）都已不在，均属清理对象；
@@ -19,8 +26,8 @@
 //! 残留多留一轮，保守方向是对的。其他应用（小组件、Outlook 等）的 WebView2
 //! 父进程健在，连 PowerShell 查询都不会发生，零启动开销，且绝不按名误杀。
 //!
-//! 任何失败（快照失败、PowerShell 不可用、目录解析失败）一律静默返回 0，
-//! 绝不阻塞或拖垮启动。
+//! 任何失败（快照失败、PowerShell 不可用、目录解析失败、认不出自身进程名）
+//! 一律静默返回 0，绝不阻塞或拖垮启动。
 
 use std::collections::{HashMap, HashSet};
 #[cfg(windows)]
@@ -100,13 +107,42 @@ fn select_kill_set(
     pids
 }
 
+/// 当前进程的可执行文件名（小写）。认不出（极端环境）返回 None → 放弃本轮
+/// 清理：兄弟实例检测失效时宁可不清，绝不冒误杀主实例在用池的风险。
+#[cfg(windows)]
+fn current_process_exe_name() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.to_string_lossy().into_owned();
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_lowercase())
+}
+
+/// 是否存在另一个存活的本应用主实例（进程表里 exe 名与当前进程相同的其他
+/// pid）。RC3 不变量的判据：第二实例启动时主实例必然在跑，它可能正通过共享
+/// user-data-dir 并用着「父已死」的旧浏览器池，此时任何候选都不可信。
+#[cfg(windows)]
+fn live_sibling_instance_present(own_exe_pids: &HashSet<u32>, current_pid: u32) -> bool {
+    own_exe_pids.iter().any(|&pid| pid != current_pid)
+}
+
 /// 入口：返回实际终止的孤儿进程数。同步执行——终止必须在本次启动的
 /// WebView2 环境创建之前完成，放进带超时的后台线程反而会与本次启动竞态。
 #[cfg(windows)]
 pub fn cleanup_orphans() -> usize {
-    let Some((alive_pids, candidates)) = snapshot_processes() else {
+    let Some(own_exe_name) = current_process_exe_name() else {
         return 0;
     };
+    let Some((alive_pids, candidates, own_exe_pids)) = snapshot_processes(&own_exe_name) else {
+        return 0;
+    };
+    // RC3：还有另一个本应用主实例活着 → 它可能在用「父已死」的旧池（采纳自
+    // 上次崩溃实例），本轮放弃清理，绝不冒杀掉主实例在用浏览器进程的风险。
+    if live_sibling_instance_present(&own_exe_pids, std::process::id()) {
+        return 0;
+    }
     // 没有候选，或所有候选父进程健在 → 不可能有孤儿。跳过昂贵的 PowerShell
     // 查询：其他应用的 WebView2 常驻是常态，不能让它们拖慢每次启动。
     if candidates
@@ -148,9 +184,12 @@ fn webview2_user_data_dir() -> Option<String> {
     )
 }
 
-/// Toolhelp 快照：返回（全部存活 pid，WebView2 候选）。失败返回 None。
+/// Toolhelp 快照：返回（全部存活 pid，WebView2 候选，exe 名与 `own_exe_name`
+/// 相同的进程 pid 集）。失败返回 None。
 #[cfg(windows)]
-fn snapshot_processes() -> Option<(HashSet<u32>, Vec<WebviewProcess>)> {
+fn snapshot_processes(
+    own_exe_name: &str,
+) -> Option<(HashSet<u32>, Vec<WebviewProcess>, HashSet<u32>)> {
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::processthreadsapi::GetCurrentProcessId;
     use winapi::um::tlhelp32::{
@@ -166,15 +205,17 @@ fn snapshot_processes() -> Option<(HashSet<u32>, Vec<WebviewProcess>)> {
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut alive_pids = HashSet::new();
+        let mut own_exe_pids = HashSet::new();
         let mut candidates = Vec::new();
         if Process32FirstW(snapshot, &mut entry) != 0 {
             loop {
                 alive_pids.insert(entry.th32ProcessID);
                 let exe = String::from_utf16_lossy(&entry.szExeFile);
-                if exe
-                    .trim_end_matches('\0')
-                    .eq_ignore_ascii_case("msedgewebview2.exe")
-                {
+                let exe = exe.trim_end_matches('\0');
+                if exe.eq_ignore_ascii_case(own_exe_name) {
+                    own_exe_pids.insert(entry.th32ProcessID);
+                }
+                if exe.eq_ignore_ascii_case("msedgewebview2.exe") {
                     candidates.push(WebviewProcess {
                         pid: entry.th32ProcessID,
                         parent_pid: entry.th32ParentProcessID,
@@ -189,7 +230,10 @@ fn snapshot_processes() -> Option<(HashSet<u32>, Vec<WebviewProcess>)> {
         // 兜底：本进程视为存活，防止 pid 巧合复用把「父=当前 pid」的残留
         // 进程误判成孤儿（虽然概率极低，误杀当前启动链路的代价不可接受）。
         alive_pids.insert(GetCurrentProcessId());
-        Some((alive_pids, candidates))
+        // 本进程的 exe 名必然与自身匹配；万一快照/路径有出入，这里补上，
+        // 保证「仅自己一个实例」时兄弟检测不会误报。
+        own_exe_pids.insert(GetCurrentProcessId());
+        Some((alive_pids, candidates, own_exe_pids))
     }
 }
 
@@ -345,5 +389,16 @@ mod tests {
         );
         // 空候选 → 空集
         assert!(select_kill_set(&[], &alive, &command_lines, dir).is_empty());
+    }
+
+    #[test]
+    fn sibling_instance_gate_blocks_cleanup_while_main_instance_is_alive() {
+        // 仅自己一个实例（第二实例冷启动 / 首次启动）→ 不存在存活兄弟，允许清理。
+        assert!(!live_sibling_instance_present(&HashSet::from([123]), 123));
+        // 另一个本应用主实例存活（第二实例启动时主实例在跑）→ 必须放弃清理：
+        // 它可能正用着「父已死」的旧池（采纳自上次崩溃实例），绝不能误杀。
+        assert!(live_sibling_instance_present(&HashSet::from([123, 456]), 123));
+        // 空集（快照异常兜底后不可能出现，但语义上）→ 无兄弟。
+        assert!(!live_sibling_instance_present(&HashSet::new(), 123));
     }
 }

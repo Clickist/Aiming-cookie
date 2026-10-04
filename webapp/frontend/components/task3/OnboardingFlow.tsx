@@ -36,7 +36,17 @@ import {
 import { isDesktopRuntime, openExternalUrl, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { useT, type TranslateFn } from "@/lib/i18n";
 import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
-import { MEMBER_COPY, maskEmail } from "@/lib/member";
+import { MEMBER_COPY, maskEmail, parseMemberDeepLink } from "@/lib/member";
+import {
+  clearPendingDeepLink,
+  isTerminalExchangeCode,
+  noteMemberDeepLinkEvent,
+  peekPendingDeepLink,
+  PENDING_FIRST_RETRY_DELAY_MS,
+  PENDING_MAX_ATTEMPTS,
+  PENDING_RETRY_INTERVAL_MS,
+  stagePendingDeepLink,
+} from "@/lib/member-deeplink";
 import { parseTrialState } from "@/lib/trial";
 import { isMemberWizardType, wizardTypeOptions } from "@/lib/provider-wizard";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
@@ -160,43 +170,6 @@ export function OnboardingFlow() {
     setDesktop(isDesktopRuntime());
   }, []);
 
-  /**
-   * 换票第一步 + 打开系统浏览器（契约 §3.1/§3.2）：device/start → login_url →
-   * 系统浏览器。客户端停留等待页，只等 deep-link，不轮询。
-   */
-  const startMemberFlow = useCallback(async (): Promise<void> => {
-    setMemberStage("waiting");
-    setMemberMessage("");
-    if (!isDesktopRuntime()) {
-      setMemberMessage(t("onboarding.member.browserPreviewBlocked"));
-      return;
-    }
-    const result = await startMemberLogin();
-    if (!result.ok) {
-      setMemberMessage(result.message);
-      return;
-    }
-    setMemberLoginUrl(result.login_url);
-    try {
-      await openExternalUrl(result.login_url);
-    } catch {
-      setMemberMessage(t("onboarding.member.browserFailed"));
-    }
-  }, [t]);
-
-  /** 「重新打开浏览器页面」：复用已起的 login_url；没有则重起一轮 device_code。 */
-  const reopenMemberBrowser = useCallback(async (): Promise<void> => {
-    if (memberLoginUrl) {
-      try {
-        await openExternalUrl(memberLoginUrl);
-        return;
-      } catch {
-        /* 落到重起一轮 */
-      }
-    }
-    await startMemberFlow();
-  }, [memberLoginUrl, startMemberFlow]);
-
   /** 收到 deep-link / 手动重试后的收口：刷新会员状态并决定中间态（①b）。 */
   const syncMemberState = useCallback(async (): Promise<MemberMe | null> => {
     const status = await fetchMemberStatus().catch(() => null);
@@ -234,13 +207,103 @@ export function OnboardingFlow() {
     }
   }, [t]);
 
+  /**
+   * RC1（dc 覆盖死结）：生成新 device_code 之前，先把未消费的 pending deep-link
+   * 拿旧 dc 试换一次。sidecar 只存一个待用 dc（member.json 的 pending），新
+   * start 一旦覆盖，旧浏览器页的票就结构上救不回来了。返回 true = 本轮不生成
+   * 新 dc（换票成功或瞬态失败待重试）；false = 放行新一轮登录。
+   */
+  const consumePendingDeepLinkBeforeRestart = useCallback(async (): Promise<boolean> => {
+    const entry = peekPendingDeepLink();
+    if (!entry) return false;
+    const link = parseMemberDeepLink(entry.url);
+    if (!link || !link.ticket || !link.dc) {
+      // 无票可换（scene=open 等兜底形态）：不留着挡道，放行新流。
+      clearPendingDeepLink(entry.url);
+      return false;
+    }
+    // 瞬态失败累计到上限后不再阻塞新流（终态失败不受此限，直接放行）。
+    if (entry.attempts >= PENDING_MAX_ATTEMPTS) {
+      noteMemberDeepLinkEvent("pending deep-link retries exhausted; starting a new flow");
+      return false;
+    }
+    setMemberBusy(true);
+    try {
+      const result = await exchangeMemberTicket({ ticket: link.ticket, dc: link.dc });
+      if (result.ok) {
+        clearPendingDeepLink(entry.url);
+        await syncMemberState();
+        return true;
+      }
+      if (isTerminalExchangeCode(result.code)) {
+        noteMemberDeepLinkEvent(`pending deep-link terminally rejected: ${result.code}`);
+        clearPendingDeepLink(entry.url);
+        return false;
+      }
+      // 瞬态失败（sidecar 抖动 / 账号服务不可达）：保留 pending，暂不覆盖 dc。
+      stagePendingDeepLink(entry.url);
+      noteMemberDeepLinkEvent(`pending deep-link exchange failed transiently: ${result.code}`);
+      return true;
+    } catch (error) {
+      // sidecar 未就绪：ticket 未被消费，保留 pending，暂不覆盖 dc。
+      stagePendingDeepLink(entry.url);
+      noteMemberDeepLinkEvent(
+        `pending deep-link deferred (runtime unavailable): ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return true;
+    } finally {
+      setMemberBusy(false);
+    }
+  }, [syncMemberState]);
+
+  /**
+   * 换票第一步 + 打开系统浏览器（契约 §3.1/§3.2）：device/start → login_url →
+   * 系统浏览器。客户端停留等待页，只等 deep-link，不轮询。
+   * RC1：起流（覆盖 dc）之前先尝试消费未完成的 pending deep-link。
+   */
+  const startMemberFlow = useCallback(async (): Promise<void> => {
+    setMemberStage("waiting");
+    setMemberMessage("");
+    if (!isDesktopRuntime()) {
+      setMemberMessage(t("onboarding.member.browserPreviewBlocked"));
+      return;
+    }
+    if (await consumePendingDeepLinkBeforeRestart()) return;
+    const result = await startMemberLogin();
+    if (!result.ok) {
+      setMemberMessage(result.message);
+      return;
+    }
+    setMemberLoginUrl(result.login_url);
+    try {
+      await openExternalUrl(result.login_url);
+    } catch {
+      setMemberMessage(t("onboarding.member.browserFailed"));
+    }
+  }, [consumePendingDeepLinkBeforeRestart, t]);
+
+  /** 「重新打开浏览器页面」：复用已起的 login_url；没有则重起一轮 device_code。 */
+  const reopenMemberBrowser = useCallback(async (): Promise<void> => {
+    if (memberLoginUrl) {
+      try {
+        await openExternalUrl(memberLoginUrl);
+        return;
+      } catch {
+        /* 落到重起一轮 */
+      }
+    }
+    await startMemberFlow();
+  }, [memberLoginUrl, startMemberFlow]);
+
   // 选中会员档即起流（线框 ① 注：选中后按钮变「登录并订阅」→ 打开系统浏览器）。
   useEffect(() => {
     if (!memberSelected) return;
     void startMemberFlow();
   }, [memberSelected, startMemberFlow]);
 
-  // deep-link 监听：只在会员流内消费；scene 无关，失败一律静默（§3.3-7）。
+  // deep-link 监听：只在会员流内消费；scene 无关，拒绝与降级依旧不弹错误
+  // （§3.3-7）。RC1：只在处理落定后标记 handled；瞬态失败（sidecar 未就绪/
+  // 网络）把 URL 暂存重试，不再让一次性 ticket 无声丢失。
   const handledUrlsRef = useRef(new Set<string>());
   useEffect(() => {
     if (!memberSelected || !desktop) return undefined;
@@ -249,14 +312,19 @@ export function OnboardingFlow() {
 
     const process = async (urls: string[] | null) => {
       const fresh = (urls ?? []).filter((url) => !handledUrlsRef.current.has(url));
-      for (const url of fresh) handledUrlsRef.current.add(url);
       if (!fresh.length) return;
-      const link = (await import("@/lib/member")).firstMemberDeepLink(fresh);
+      const sourceUrl = fresh.find((url) => parseMemberDeepLink(url) !== null);
+      if (!sourceUrl) {
+        for (const url of fresh) handledUrlsRef.current.add(url);
+        return;
+      }
+      const link = parseMemberDeepLink(sourceUrl);
       if (!link) return;
       if (link.scene === "open" || !link.ticket || !link.dc) {
         // §3.2 触发 2：无 ticket 的第二次跳转（支付成功唤醒）不报错，只用已有
-        // 凭证刷新；会员态变化照常推进中间态。
+        // 凭证刷新；会员态变化照常推进中间态。无一次性消费，直接落定。
         await syncMemberState();
+        for (const url of fresh) handledUrlsRef.current.add(url);
         return;
       }
       setMemberBusy(true);
@@ -264,10 +332,20 @@ export function OnboardingFlow() {
         const result = await exchangeMemberTicket({ ticket: link.ticket, dc: link.dc });
         if (disposed) return;
         if (!result.ok) {
-          // dc 不匹配 / ticket 过期 / 已消费：都降级为「用已有凭证刷新」。
+          if (isTerminalExchangeCode(result.code)) {
+            // dc 不匹配 / ticket 过期 / 已消费：重试无意义，落定为「用已有凭证刷新」。
+            for (const url of fresh) handledUrlsRef.current.add(url);
+          } else {
+            // network_error：票可能还没被消费，暂存等 sidecar 就绪后重试。
+            stagePendingDeepLink(sourceUrl);
+            noteMemberDeepLinkEvent(`onboarding exchange failed transiently: ${result.code}`);
+          }
           await syncMemberState();
           return;
         }
+        // 换票已落定（连通测试结果不影响票的消费事实）：标记并清暂存。
+        for (const url of fresh) handledUrlsRef.current.add(url);
+        clearPendingDeepLink(sourceUrl);
         if (result.connection_ok === false) {
           const me = await syncMemberState();
           if (me?.member) {
@@ -278,10 +356,27 @@ export function OnboardingFlow() {
         }
         const me = await syncMemberState();
         if (me?.member) setMemberStage("member");
+      } catch (error) {
+        // RC1：sidecar 未就绪等瞬态失败——ticket 未被消费，暂存等重试，
+        // 不标记 handled（标记了这张一次性票就永久丢了）。
+        stagePendingDeepLink(sourceUrl);
+        noteMemberDeepLinkEvent(
+          `onboarding exchange deferred: ${error instanceof Error ? error.message : String(error)}`,
+        );
       } finally {
         if (!disposed) setMemberBusy(false);
       }
     };
+
+    // 暂存重试（RC1）：与 lib/member-deeplink 同节奏的本地轮询兜底。
+    const retryPending = () => {
+      if (disposed) return;
+      const entry = peekPendingDeepLink();
+      if (!entry || handledUrlsRef.current.has(entry.url)) return;
+      void process([entry.url]);
+    };
+    const firstRetry = window.setTimeout(retryPending, PENDING_FIRST_RETRY_DELAY_MS);
+    const retryTimer = window.setInterval(retryPending, PENDING_RETRY_INTERVAL_MS);
 
     void (async () => {
       try {
@@ -304,6 +399,8 @@ export function OnboardingFlow() {
     return () => {
       disposed = true;
       unlisten?.();
+      window.clearTimeout(firstRetry);
+      window.clearInterval(retryTimer);
     };
   }, [memberSelected, desktop, syncMemberState]);
 

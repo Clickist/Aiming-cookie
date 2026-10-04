@@ -372,10 +372,13 @@ export async function exchangeMemberTicket(input: {
   }
   // §3.3-5：同一 ticket 重复到达（single-instance 转发/浏览器重试）不重复 exchange。
   if (state.consumed_tickets.includes(ticket)) {
+    // 不再无声吞（RC1 修复要求）：留观测痕迹，但不记 ticket/dc 明文。
+    console.warn("[member-auth] drop ticket: already consumed");
     return { ok: false, code: "already_consumed", message: "这条登录票据已经处理过。" };
   }
   // §3.3-4：dc 绑定校验（防会话固定）——本地没有待用 dc、或 dc 不符 → 丢弃 ticket。
   if (!state.pending || state.pending.device_code !== dc) {
+    console.warn(`[member-auth] drop ticket: dc mismatch (pending=${state.pending ? "set" : "none"})`);
     return { ok: false, code: "dc_mismatch", message: "登录票据与发起设备不匹配，已忽略。" };
   }
 

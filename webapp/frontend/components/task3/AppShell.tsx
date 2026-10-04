@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import {
   createCoachAgentRun,
@@ -67,6 +67,49 @@ const CAPTURE_RESTORE_MAX_DELAY_MS = 30_000;
 
 // 试用欢迎提示的一次性去重键（与 lib/trial.ts 去重键同风格）：写 "1" = 已告知。
 const TRIAL_WELCOMED_KEY = "aiming-cookie.trial.welcomed";
+
+// ── 启动路由守卫（RC2）──────────────────────────────────────────────────────
+// getProductState 首败（后端/PyInstaller 尚未就绪）不再直接放行：退避重试，
+// 全败才放行并留观测痕迹。冷启动路由用本地持久化的 onboarding 完成态镜像做
+// 同步预判（上次已知未完成时，挂载期绘制前直接 replace 到 /onboarding，避免
+// 先落工作区空壳再异步弹走）。镜像只加速不裁决——异步 getProductState 仍是
+// 权威，配置被清等漂移会在异步守卫里纠正。tauri.conf.json 的静态窗口 url 无
+// 法按完成态分支（指向 /onboarding 会误伤已完成用户），不采用。
+const STARTUP_ROUTE_MAX_ATTEMPTS = 10;
+const STARTUP_ROUTE_FIRST_DELAY_MS = 1_000;
+const STARTUP_ROUTE_MAX_DELAY_MS = 30_000;
+const ONBOARDING_DONE_KEY = "aiming-cookie.onboarding.completed";
+
+/** 上次已知 onboarding 完成态镜像；true=已完成 false=未完成 null=无记录。 */
+function readOnboardingCompletedFlag(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ONBOARDING_DONE_KEY);
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOnboardingCompletedFlag(done: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ONBOARDING_DONE_KEY, done ? "1" : "0");
+  } catch {
+    /* 存储不可用：退回纯异步守卫 */
+  }
+}
+
+// SSR/CSR 同构 layout effect：客户端在首帧绘制前跑（同步预判冷启动路由），
+// 服务端退回 useEffect，避免 React 的 SSR useLayoutEffect 警告。
+const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+// 同步预判的会话内一次性闩：预测触发过一次就不再触发。onboarding 完成
+// push 回 "/" 时本 effect 会再跑，此刻镜像可能仍是旧值 false，不闩上会把
+// 刚完成引导的用户弹回 onboarding（镜像要等异步守卫下一次成功读数才更新）。
+let startupRoutePredicted = false;
 
 function parseSessionId(raw: string | null): number | null {
   if (!raw || !/^[1-9][0-9]*$/.test(raw)) return null;
@@ -214,24 +257,61 @@ export function AppShell({ children }: { children: ReactNode }) {
   const settingsOverlayChildren = settingsRoute ? children : settingsChildrenRef.current;
   const settingsOverlayVisible = (settingsRoute || settingsPresence.present) && settingsOverlayChildren !== null;
 
+  // 冷启动同步路由预判（RC2）：上次已知 onboarding 未完成时，挂载期（首帧
+  // 绘制前）直接 replace 到 /onboarding，避免先落工作区空壳再异步弹走。
+  // 镜像只加速不裁决：异步守卫（下方 effect）仍是权威；每个会话最多预判一次
+  //（见 startupRoutePredicted）。
+  useIsoLayoutEffect(() => {
+    if (!coachWorkspaceRoute || startupRouteResolved || startupRoutePredicted) return;
+    if (readOnboardingCompletedFlag() !== false) return;
+    startupRoutePredicted = true;
+    router.replace("/onboarding");
+  }, [coachWorkspaceRoute, router, startupRouteResolved]);
+
+  // 启动路由守卫（RC2）：getProductState 首败（后端/PyInstaller 未就绪）不再
+  // 直接放行——指数退避重试（1s 起步、封顶 30s、最多 10 次，与捕获恢复同款），
+  // 全败才放行默认路由并留观测痕迹。成功时顺手把 onboarding 完成态镜像进
+  // localStorage，供下次冷启动做同步路由预判（只在 available 的明确读数下写，
+  // 不可用读数不写，避免毒化镜像）。
   useEffect(() => {
     if (!coachWorkspaceRoute) return undefined;
-    const controller = new AbortController();
-    void getProductState({ signal: controller.signal })
-      .then(async (state) => {
-        if (controller.signal.aborted) return;
-        if (state.availability === "available" && state.onboarding_completed !== true) {
-          router.replace("/onboarding");
-          return;
-        }
-        // onboarding 明确完成才放行首启「开场分析」触发；null/unknown 一律不触发。
-        setOnboardingResolved(state.onboarding_completed === true);
-        setStartupRouteResolved(true);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setStartupRouteResolved(true);
-      });
-    return () => controller.abort();
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const resolve = (attempt: number): void => {
+      void getProductState()
+        .then(async (state) => {
+          if (cancelled) return;
+          if (state.availability === "available") {
+            writeOnboardingCompletedFlag(state.onboarding_completed === true);
+          }
+          if (state.availability === "available" && state.onboarding_completed !== true) {
+            router.replace("/onboarding");
+            return;
+          }
+          // onboarding 明确完成才放行首启「开场分析」触发；null/unknown 一律不触发。
+          setOnboardingResolved(state.onboarding_completed === true);
+          setStartupRouteResolved(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          if (attempt + 1 >= STARTUP_ROUTE_MAX_ATTEMPTS) {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.warn(`[appshell] getProductState failed ${STARTUP_ROUTE_MAX_ATTEMPTS} times; proceeding with the default route: ${detail}`);
+            logFrontendError("startup-route", `getProductState failed ${STARTUP_ROUTE_MAX_ATTEMPTS} times; proceeding: ${detail}`);
+            setStartupRouteResolved(true);
+            return;
+          }
+          timer = setTimeout(
+            () => resolve(attempt + 1),
+            Math.min(STARTUP_ROUTE_FIRST_DELAY_MS * 2 ** attempt, STARTUP_ROUTE_MAX_DELAY_MS),
+          );
+        });
+    };
+    resolve(0);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [coachWorkspaceRoute, router]);
 
   // 桌面端捕获总开关的自动恢复：此前它挂在冷启动的一次 getProductState 上，
