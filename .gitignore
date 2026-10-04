@@ -87,3 +87,7 @@ infra-urls.local.txt
 # agent 协作合同仅保留本地（0930 点点拍板：不进 GitHub）
 AGENTS.md
 CLAUDE.md
+
+# 构建产物/缓存（可再生，2026-10-04 工作区清理时补录）
+webapp/node_modules/
+webapp/frontend/src-tauri/resources/

@@ -1,5 +1,7 @@
 use crate::raw_input::{RawInputState, SnapshotBarrierReceipt};
-use crate::window_capture::{CaptureClockMetadata, ReplayExportReceipt, WindowCaptureState};
+use crate::window_capture::{
+    CaptureClockMetadata, ReplayExportReceipt, WindowCaptureState, WindowCaptureStatus,
+};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,6 +30,13 @@ const RAW_UNHEALTHY_RESTART_TIMEOUT: Duration = Duration::from_secs(6);
 // 时序竞态等），超过该阈值强制释放采集源并回落到 WaitingForKovaak。
 // 必须大于桌面后端的 release 硬 grace（30s），留出正常 release 的窗口。
 const FINALIZING_STALE_TIMEOUT: Duration = Duration::from_secs(45);
+// 尺寸重建安静门（0930 拍板：resize 终态化后按新尺寸自动重开采集）：
+// 最后一个已编码 packet 距今 ≥30s 才允许重建——确证没有正在录/刚录完
+// 待收尾的局会被重建毁掉证据。
+const RESIZE_REBUILD_QUIET_DURATION: Duration = Duration::from_secs(30);
+// 尺寸重建限频门：距上次重建尝试 ≥10s 才允许下一次（拖窗口边框的连续
+// resize 抖动不会打爆重建）。
+const RESIZE_REBUILD_MIN_INTERVAL: Duration = Duration::from_secs(10);
 const DIAGNOSTIC_EVENT_LIMIT: usize = 64;
 // 捕获总开关的持久化文件，落在 capture 数据根（= app_data_dir）。用户显式
 // 关闭也是一种要记住的状态，因此只写这一个布尔位、没有删除语义。
@@ -304,6 +313,49 @@ fn raw_snapshot_flush_allowed(phase: CapturePhase, raw_state: CaptureSourceState
         raw_state,
         CaptureSourceState::Capturing | CaptureSourceState::Finalizing
     )
+}
+
+/// 「现在」投影到 WGC packet PTS 时基（QPC/100ns）：安静门用 packet 年龄
+/// 判证。时基锚不可用（异常环境）返回 None，安静门按不安静处理。
+fn capture_clock_now_pts_100ns() -> Option<i64> {
+    let anchor = crate::raw_input::capture_clock_anchor();
+    i64::try_from(anchor.monotonic_elapsed_ns / 100).ok()
+}
+
+/// 尺寸重建安全门的纯判定（0930 拍板）。返回 None 表示四门全开、允许重建；
+/// Some(reason) 为阻塞裸码（只进 dlog，不进控制面 reason 合同）。
+/// 「recording_terminated_by_resize」门由调用方先行短路（tick 幂等语义），
+/// 不在本函数重复。
+fn resize_rebuild_block_reason(
+    replay_export_in_flight: bool,
+    last_packet_age_100ns: Option<i64>,
+    since_last_rebuild: Option<Duration>,
+) -> Option<&'static str> {
+    if replay_export_in_flight {
+        return Some("resize_rebuild_export_in_flight");
+    }
+    let quiet_100ns =
+        i64::try_from(RESIZE_REBUILD_QUIET_DURATION.as_nanos() / 100).unwrap_or(i64::MAX);
+    match last_packet_age_100ns {
+        // 年龄未知（无 packet 或时基换算失败）→ 无法证明安静，推迟。
+        None => return Some("resize_rebuild_buffer_unquiet"),
+        // 负年龄意味着时基错位，同样按不安静处理。
+        Some(age) if age < quiet_100ns => return Some("resize_rebuild_buffer_unquiet"),
+        _ => {}
+    }
+    if since_last_rebuild.is_some_and(|elapsed| elapsed < RESIZE_REBUILD_MIN_INTERVAL) {
+        return Some("resize_rebuild_rate_limited");
+    }
+    None
+}
+
+/// 一次尺寸重建尝试的结果。Deferred 表示执行瞬间安全门未开（不消耗限频
+/// 配额，下一 tick 重估）；Failed 为真实启动失败，走现有 degraded 兜底。
+#[derive(Debug, PartialEq, Eq)]
+enum ResizeRebuildOutcome {
+    Rebuilt,
+    Deferred(&'static str),
+    Failed(String),
 }
 
 #[derive(Clone, Debug)]
@@ -668,6 +720,9 @@ pub struct CaptureCoordinatorState {
     // 负载下可能形成分钟级重启循环，事件按「首条 + 每 30s 一条」限频，
     // 避免 6s 周期的重启风暴刷爆 64 条事件环；错误细节同时完整进 dlog。
     raw_health_restart_event_at: Mutex<Option<Instant>>,
+    // 尺寸重建的限频锚点（0930 拍板）：记录上次重建尝试时刻，10s 内不再
+    // 重试，防止拖窗口边框的连续 resize 打爆重建。
+    last_resize_rebuild_at: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
@@ -730,6 +785,7 @@ impl CaptureCoordinatorState {
             raw_unhealthy_since: Mutex::new(None),
             video_capture_failure_log_at: Mutex::new(None),
             raw_health_restart_event_at: Mutex::new(None),
+            last_resize_rebuild_at: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
@@ -955,7 +1011,10 @@ impl CaptureCoordinatorState {
         }
         if current.phase == CapturePhase::Capturing {
             self.recover_unhealthy_raw();
-            self.report_resized_video(&current);
+            self.report_or_rebuild_resized_video(&current, hwnd, |capture, hwnd| {
+                capture.stop();
+                capture.start_for_window(hwnd)
+            });
             return;
         }
         if let Err(error) = self.raw_input.set_enabled(true) {
@@ -1121,16 +1180,129 @@ impl CaptureCoordinatorState {
         true
     }
 
-    // F6 联动：录制会话因窗口尺寸漂移被诚实终态化后，把 video 子状态降级
-    // 为显式原因，运行中的状态与事件流即可见，而不是“静默断流但显示采集中”。
-    fn report_resized_video(&self, current: &CaptureCoordinatorStatus) {
-        let terminated = self
-            .window_capture
-            .lock()
-            .map(|capture| capture.recording_terminated_by_resize())
-            .unwrap_or(false);
-        if let Some(replacement) = resized_video_degraded_status(current, terminated) {
+    // F6 联动：录制会话因窗口尺寸漂移被诚实终态化后，先把 video 子状态
+    // 降级为显式原因（运行中的状态与事件流可见，而不是“静默断流但显示
+    // 采集中”）；安全门全开时再按当前窗口尺寸自动重建采集（0930 拍板），
+    // 后续局不再因一次 resize 全灭。capture_session_id 与 raw 后端完全不动。
+    fn report_or_rebuild_resized_video(
+        &self,
+        current: &CaptureCoordinatorStatus,
+        hwnd: Option<usize>,
+        restart: impl FnOnce(&mut WindowCaptureState, usize) -> Result<WindowCaptureStatus, String>,
+    ) {
+        let (terminated, export_in_flight, last_packet_pts_100ns) = match self.window_capture.lock()
+        {
+            Ok(capture) => (
+                capture.recording_terminated_by_resize(),
+                capture.replay_export_in_flight(),
+                capture.status().last_packet_pts_100ns,
+            ),
+            Err(_) => return,
+        };
+        // 无终态化事件时不做任何事：tick 幂等，不重复刷状态与事件流。
+        if !terminated {
+            return;
+        }
+        if let Some(replacement) = resized_video_degraded_status(current, true) {
             self.replace_status(replacement);
+        }
+        let Some(hwnd) = hwnd else {
+            return;
+        };
+        // 安静门：packet 年龄 = 「现在」- 最后已编码 packet PTS（同 QPC/100ns
+        // 时基）。年龄未知或为负（时基错位）一律按不安静推迟。
+        let quiet_age_100ns =
+            capture_clock_now_pts_100ns().and_then(|now| now.checked_sub(last_packet_pts_100ns?));
+        if resize_rebuild_block_reason(
+            export_in_flight,
+            quiet_age_100ns,
+            self.resize_rebuild_rate_limit_elapsed(),
+        )
+        .is_some()
+        {
+            return;
+        }
+        match self.attempt_resize_rebuild(hwnd, restart) {
+            ResizeRebuildOutcome::Rebuilt => {
+                // 重建成功：video 回 capturing；phase/session/raw 保持不动。
+                self.replace_status(CaptureCoordinatorStatus {
+                    video: CaptureSourceStatus {
+                        state: CaptureSourceState::Capturing,
+                        reason: None,
+                    },
+                    ..current.clone()
+                });
+            }
+            ResizeRebuildOutcome::Deferred(reason) => {
+                crate::dlog!(
+                    "[capture-coordinator] resize rebuild deferred at execution: {reason}"
+                );
+            }
+            ResizeRebuildOutcome::Failed(error) => {
+                // reason 只放纯错误码（控制面合同 ^[a-z][a-z0-9_]{0,63}$），
+                // 人类可读细节进 native 日志，不得拼进 reason（0929 整改）。
+                if self.video_capture_failure_log_allowed() {
+                    crate::dlog!(
+                        "[capture-coordinator] resize rebuild start failed: {}",
+                        bounded_diagnostic_text(&error)
+                    );
+                }
+                // 复用现有 video start 失败语义（phase 降级 → 主路径逐 tick
+                // 重试 start；session id 不变），不发明新错误码。
+                let reason = "video_capture_unavailable".to_string();
+                self.replace_status(CaptureCoordinatorStatus {
+                    enabled: true,
+                    phase: CapturePhase::Degraded,
+                    capture_session_id: current.capture_session_id.clone(),
+                    kovaak_process_present: true,
+                    window_handle: Some(hwnd),
+                    reason: Some(reason.clone()),
+                    raw: CaptureSourceStatus {
+                        state: CaptureSourceState::Capturing,
+                        reason: None,
+                    },
+                    video: CaptureSourceStatus {
+                        state: CaptureSourceState::Degraded,
+                        reason: Some(reason),
+                    },
+                });
+            }
+        }
+    }
+
+    /// 尺寸重建限频锚点的已流逝时长；从未重建过为 None。
+    fn resize_rebuild_rate_limit_elapsed(&self) -> Option<Duration> {
+        self.last_resize_rebuild_at
+            .lock()
+            .ok()
+            .and_then(|slot| *slot)
+            .map(|at| at.elapsed())
+    }
+
+    /// 执行一次重建尝试：停当前 window capture 后按当前窗口尺寸重新
+    /// start（新尺寸自动生效）。导出在途复检放在同一把锁内，与
+    /// handle_export 的排队互斥，杜绝「门检通过 → 导出插入 → stop 毁
+    /// 证据」的亚 tick 竞态；推迟不消耗限频配额。
+    fn attempt_resize_rebuild(
+        &self,
+        hwnd: usize,
+        restart: impl FnOnce(&mut WindowCaptureState, usize) -> Result<WindowCaptureStatus, String>,
+    ) -> ResizeRebuildOutcome {
+        let Ok(mut capture) = self.window_capture.lock() else {
+            return ResizeRebuildOutcome::Failed("window capture state is unavailable".to_string());
+        };
+        if capture.replay_export_in_flight() {
+            return ResizeRebuildOutcome::Deferred("replay_export_in_flight");
+        }
+        if let Ok(mut slot) = self.last_resize_rebuild_at.lock() {
+            *slot = Some(Instant::now());
+        }
+        crate::dlog!(
+            "[capture-coordinator] resize rebuild: restarting window capture at the current window size"
+        );
+        match restart(&mut capture, hwnd) {
+            Ok(_) => ResizeRebuildOutcome::Rebuilt,
+            Err(error) => ResizeRebuildOutcome::Failed(error),
         }
     }
 
@@ -1250,6 +1422,10 @@ impl CaptureCoordinatorState {
                 Err(error) => Err(error),
             };
         }
+        // 重建安全门 (b)：导出在途计数从排入 mux 队列前开始，到 receipt
+        // 收尾为止；guard Drop 保证 panic/提前返回都不会漏减，停采集的
+        // 重建决策据此避开在途导出。
+        let _export_in_flight = ReplayExportInFlightGuard::begin(&self.window_capture);
         let receiver = {
             let capture = self
                 .window_capture
@@ -1367,6 +1543,31 @@ impl CaptureCoordinatorState {
     }
 }
 
+/// 在途导出记账的 RAII guard：handle_export 的导出段（排队 → mux →
+/// receipt 落盘）持有一个，Drop 时计数 -1，panic/提前返回也不会漏减。
+struct ReplayExportInFlightGuard {
+    capture: Arc<Mutex<WindowCaptureState>>,
+}
+
+impl ReplayExportInFlightGuard {
+    fn begin(capture: &Arc<Mutex<WindowCaptureState>>) -> Self {
+        if let Ok(state) = capture.lock() {
+            state.replay_export_begin();
+        }
+        Self {
+            capture: Arc::clone(capture),
+        }
+    }
+}
+
+impl Drop for ReplayExportInFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(state) = self.capture.lock() {
+            state.replay_export_end();
+        }
+    }
+}
+
 fn replay_failure_code(kind: crate::window_capture::ReplayExportFailureKind) -> &'static str {
     use crate::window_capture::ReplayExportFailureKind;
 
@@ -1480,12 +1681,18 @@ impl ControlServer {
                             );
                             let secret = thread_connection.secret.clone();
                             let coordinator = coordinator.clone();
+                            let connection_shutdown = Arc::clone(&thread_shutdown);
                             match thread::Builder::new()
                                 .name("aiming-cookie-capture-connection".to_string())
                                 .spawn(move || {
                                     let result = std::panic::catch_unwind(
                                         std::panic::AssertUnwindSafe(|| {
-                                            handle_control_connection(stream, &secret, coordinator);
+                                            handle_control_connection(
+                                                stream,
+                                                &secret,
+                                                coordinator,
+                                                connection_shutdown,
+                                            );
                                         }),
                                     );
                                     if let Err(panic) = result {
@@ -1544,111 +1751,168 @@ fn handle_control_connection(
     mut stream: TcpStream,
     secret: &str,
     coordinator: Weak<CaptureCoordinatorState>,
+    shutdown: Arc<AtomicBool>,
 ) {
-    let started = Instant::now();
-    crate::dlog!("[capture-export] conn: reading request");
+    // 0930 提案 C：控制协议走持久长连接（业界标准做法，gRPC/Redis/CDP 同
+    // 理）——部分用户机器上本机回环新建 TCP 会被安全软件随机 RST（实测
+    // 8%~39%），一次一连的旧模式会让整局轨迹取不回。行协议、鉴权、单请求
+    // 单响应语义全部不变，写完响应不关连接、继续读下一行，因此老客户端
+    // （一请求即关）天然向后兼容：读完响应关闭连接后，服务端下一次 read
+    // 得到干净 EOF，直接退出。
+    //
+    // 监听器为 accept 而设为非阻塞，Windows 上 accept 出来的 stream 会
+    // 继承该模式——读超时对非阻塞 socket 无效（read 直接 WouldBlock）。
+    // 持久连接必须真阻塞等下一个请求，这里显式切回阻塞模式。
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT));
-    let request =
-        read_control_line(&mut stream).and_then(|line| parse_control_request(&line, secret));
-    let response = match request {
-        Ok(request) => {
-            crate::dlog!("[capture-export] conn: request accepted: {request:?}");
-            let response_type = response_type_for_request(&request);
-            let result = match request {
-                ControlRequest::Status => coordinator
-                    .upgrade()
-                    .map(|coordinator| {
+    loop {
+        let started = Instant::now();
+        crate::dlog!("[capture-export] conn: reading request");
+        let line = match read_control_line(&mut stream) {
+            Ok(Some(line)) => line,
+            Ok(None) => {
+                crate::dlog!("[capture-export] conn: peer closed, cleaning up");
+                break;
+            }
+            // 读超时是持久连接的空闲心跳，不是错误：不回写任何字节（避免
+            // 打乱客户端严格的一问一答配对），继续等下一个请求；仅在进程
+            // 收尾时借超时唤醒退出（最坏退出延迟 = 一个读超时）。
+            Err(ControlReadError::Idle) => {
+                if shutdown.load(Ordering::Acquire) {
+                    break;
+                }
+                continue;
+            }
+            Err(ControlReadError::Failed(code)) => {
+                crate::dlog!("[capture-export] conn: request rejected: {code}");
+                let response = control_error_response("controlError", &code);
+                write_control_response(&mut stream, &response, started);
+                // 读侧错误（IO 错误/截断/超限）：行协议已无法可靠续读，
+                // 错误响应写完即退出，避免半死连接空转。
+                break;
+            }
+        };
+        let request = match parse_control_request(&line, secret) {
+            Ok(request) => request,
+            Err(code) => {
+                crate::dlog!("[capture-export] conn: request rejected: {code}");
+                let response = control_error_response("controlError", &code);
+                if !write_control_response(&mut stream, &response, started) {
+                    break;
+                }
+                // 协议级拒绝（鉴权/格式/窗口）不终止持久连接：传输层健康，
+                // 老客户端读完即关（下一次 read 得到干净 EOF 退出），新
+                // 客户端可继续复用同一连接。
+                continue;
+            }
+        };
+        crate::dlog!("[capture-export] conn: request accepted: {request:?}");
+        let response_type = response_type_for_request(&request);
+        let result = match request {
+            ControlRequest::Status => coordinator
+                .upgrade()
+                .map(|coordinator| {
+                    serde_json::json!({
+                        "type": "statusResult",
+                        "ok": true,
+                        "status": coordinator.status(),
+                    })
+                })
+                .ok_or_else(|| "capture_unavailable".to_string()),
+            ControlRequest::FlushRawSnapshot { capture_session_id } => coordinator
+                .upgrade()
+                .ok_or_else(|| "capture_unavailable".to_string())
+                .and_then(|coordinator| {
+                    coordinator
+                        .flush_raw_snapshot(&capture_session_id)
+                        .map(|snapshot| {
+                            serde_json::json!({
+                                "type": "flushRawSnapshotResult",
+                                "ok": true,
+                                "captureSessionId": capture_session_id,
+                                "snapshot": snapshot,
+                            })
+                        })
+                }),
+            ControlRequest::ExportReplay(request) => coordinator
+                .upgrade()
+                .ok_or_else(|| "capture_unavailable".to_string())
+                .and_then(|coordinator| {
+                    coordinator.handle_export(request).map(|receipt| {
                         serde_json::json!({
-                            "type": "statusResult",
+                            "type": "exportReplayResult",
                             "ok": true,
-                            "status": coordinator.status(),
+                            "requestDigest": receipt.request_digest,
+                            "captureSessionId": receipt.capture_session_id,
+                            "requestedStartEpochMs": receipt.start_epoch_ms,
+                            "requestedEndEpochMs": receipt.end_epoch_ms,
+                            "replay": receipt.replay,
+                            "file": receipt.file,
                         })
                     })
-                    .ok_or_else(|| "capture_unavailable".to_string()),
-                ControlRequest::FlushRawSnapshot { capture_session_id } => coordinator
-                    .upgrade()
-                    .ok_or_else(|| "capture_unavailable".to_string())
-                    .and_then(|coordinator| {
-                        coordinator
-                            .flush_raw_snapshot(&capture_session_id)
-                            .map(|snapshot| {
-                                serde_json::json!({
-                                    "type": "flushRawSnapshotResult",
-                                    "ok": true,
-                                    "captureSessionId": capture_session_id,
-                                    "snapshot": snapshot,
-                                })
-                            })
-                    }),
-                ControlRequest::ExportReplay(request) => coordinator
-                    .upgrade()
-                    .ok_or_else(|| "capture_unavailable".to_string())
-                    .and_then(|coordinator| {
-                        coordinator.handle_export(request).map(|receipt| {
+                }),
+            ControlRequest::ReleaseCaptureSession { capture_session_id } => coordinator
+                .upgrade()
+                .ok_or_else(|| "capture_unavailable".to_string())
+                .and_then(|coordinator| {
+                    coordinator
+                        .release_capture_session(&capture_session_id)
+                        .map(|status| {
                             serde_json::json!({
-                                "type": "exportReplayResult",
+                                "type": "releaseCaptureSessionResult",
                                 "ok": true,
-                                "requestDigest": receipt.request_digest,
-                                "captureSessionId": receipt.capture_session_id,
-                                "requestedStartEpochMs": receipt.start_epoch_ms,
-                                "requestedEndEpochMs": receipt.end_epoch_ms,
-                                "replay": receipt.replay,
-                                "file": receipt.file,
+                                "status": status,
                             })
                         })
-                    }),
-                ControlRequest::ReleaseCaptureSession { capture_session_id } => coordinator
-                    .upgrade()
-                    .ok_or_else(|| "capture_unavailable".to_string())
-                    .and_then(|coordinator| {
-                        coordinator
-                            .release_capture_session(&capture_session_id)
-                            .map(|status| {
-                                serde_json::json!({
-                                    "type": "releaseCaptureSessionResult",
-                                    "ok": true,
-                                    "status": status,
-                                })
-                            })
-                    }),
-            };
-            result.unwrap_or_else(|code| {
-                crate::dlog!("[capture-export] conn: request failed: {code}");
-                control_error_response(response_type, &code)
-            })
-        }
-        Err(code) => {
-            crate::dlog!("[capture-export] conn: request rejected: {code}");
-            control_error_response("controlError", &code)
-        }
-    };
-    match serde_json::to_vec(&response) {
-        Ok(payload) => {
-            crate::dlog!(
-                "[capture-export] conn: writing response type={} ok={} bytes={} elapsed_ms={}",
-                response
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("?"),
-                response
-                    .get("ok")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
-                payload.len(),
-                started.elapsed().as_millis()
-            );
-            let write = stream
-                .write_all(&payload)
-                .and_then(|()| stream.write_all(b"\n"))
-                .and_then(|()| stream.flush());
-            if let Err(error) = write {
-                crate::dlog!("[capture-export] conn: response write failed: {error}");
-            }
-        }
-        Err(error) => {
-            crate::dlog!("[capture-export] conn: response serialize failed: {error}");
+                }),
+        };
+        let response = result.unwrap_or_else(|code| {
+            crate::dlog!("[capture-export] conn: request failed: {code}");
+            control_error_response(response_type, &code)
+        });
+        if !write_control_response(&mut stream, &response, started) {
+            break;
         }
     }
+}
+
+/// 写一个完整响应行（payload + '\n' + flush）。返回 false 表示响应没能
+/// 送达（序列化失败或对端不可达），调用方必须终止连接。
+fn write_control_response(
+    stream: &mut TcpStream,
+    response: &serde_json::Value,
+    started: Instant,
+) -> bool {
+    let payload = match serde_json::to_vec(response) {
+        Ok(payload) => payload,
+        Err(error) => {
+            crate::dlog!("[capture-export] conn: response serialize failed: {error}");
+            return false;
+        }
+    };
+    crate::dlog!(
+        "[capture-export] conn: writing response type={} ok={} bytes={} elapsed_ms={}",
+        response
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?"),
+        response
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        payload.len(),
+        started.elapsed().as_millis()
+    );
+    let write = stream
+        .write_all(&payload)
+        .and_then(|()| stream.write_all(b"\n"))
+        .and_then(|()| stream.flush());
+    if let Err(error) = write {
+        crate::dlog!("[capture-export] conn: response write failed: {error}");
+        return false;
+    }
+    true
 }
 
 fn response_type_for_request(request: &ControlRequest) -> &'static str {
@@ -1673,26 +1937,62 @@ fn control_error_response(response_type: &'static str, code: &str) -> serde_json
     })
 }
 
-fn read_control_line(reader: &mut impl Read) -> Result<Vec<u8>, String> {
+/// read_control_line 的读侧失败分类：Idle 是读超时（持久连接的空闲心跳，
+/// 继续等下一个请求）；Failed 是真实读侧失败，code 保持线上错误码合同
+/// （control_read_failed / control_message_invalid）。
+#[derive(Debug, PartialEq, Eq)]
+enum ControlReadError {
+    Idle,
+    Failed(String),
+}
+
+/// 读一行请求。Ok(None) 表示对端在本请求开始前干净关闭连接（持久连接
+/// 的正常退出路径）；Ok(Some(line)) 是完整一行；Err 为空闲超时/截断/
+/// 超限/IO 错误。
+fn read_control_line(reader: &mut impl Read) -> Result<Option<Vec<u8>>, ControlReadError> {
     let mut line = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|_| "control_read_failed".to_string())?;
+        let count = reader.read(&mut buffer).map_err(|error| {
+            match error.kind() {
+                // 阻塞 socket 的读超时（Windows 为 TimedOut）：空闲而非故障。
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+                    ControlReadError::Idle
+                }
+                _ => {
+                    // 线上错误码合同不变，只丰富日志：kind + raw_os_error
+                    // 是定位安全软件随机 RST（10054 等）的关键证据。
+                    crate::dlog!(
+                        "[capture-export] control read failed: kind={:?} raw_os_error={:?}",
+                        error.kind(),
+                        error.raw_os_error()
+                    );
+                    ControlReadError::Failed("control_read_failed".to_string())
+                }
+            }
+        })?;
         if count == 0 {
-            return Err("control_message_invalid".to_string());
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return Err(ControlReadError::Failed(
+                "control_message_invalid".to_string(),
+            ));
         }
         for (index, byte) in buffer[..count].iter().copied().enumerate() {
             if line.len() == CONTROL_MAX_MESSAGE_BYTES {
-                return Err("control_message_invalid".to_string());
+                return Err(ControlReadError::Failed(
+                    "control_message_invalid".to_string(),
+                ));
             }
             line.push(byte);
             if byte == b'\n' {
                 if index + 1 != count {
-                    return Err("control_message_invalid".to_string());
+                    return Err(ControlReadError::Failed(
+                        "control_message_invalid".to_string(),
+                    ));
                 }
-                return Ok(line);
+                return Ok(Some(line));
             }
         }
     }
@@ -1927,20 +2227,27 @@ fn is_current_kovaak_window(_hwnd: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_diagnostic_text, capture_enabled_file_path, control_error_response,
-        join_control_connections, load_capture_enabled_file, managed_export_paths,
-        monitor_start_failure_status, parse_control_request, raw_health_restart_event,
-        raw_health_restart_event_allowed, raw_snapshot_flush_allowed, read_control_line,
-        replay_failure_code, resized_video_degraded_status, response_type_for_request, sha256_hex,
+        bounded_diagnostic_text, capture_clock_now_pts_100ns, capture_enabled_file_path,
+        control_error_response, join_control_connections, load_capture_enabled_file,
+        managed_export_paths, monitor_start_failure_status, parse_control_request,
+        raw_health_restart_event, raw_health_restart_event_allowed, raw_snapshot_flush_allowed,
+        read_control_line, replay_failure_code, resize_rebuild_block_reason,
+        resized_video_degraded_status, response_type_for_request, sha256_hex,
         track_control_connection_thread, video_capture_failure_log_allowed,
-        write_capture_enabled_file, CaptureCoordinatorStatus, CapturePhase, CaptureSourceState,
-        CaptureSourceStatus, ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
-        StreamingSha256, CONTROL_MAX_MESSAGE_BYTES,
+        write_capture_enabled_file, CaptureCoordinatorState, CaptureCoordinatorStatus,
+        CapturePhase, CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
+        FileFingerprint, ReceiptRecord, ResizeRebuildOutcome, StreamingSha256,
+        CONTROL_MAX_MESSAGE_BYTES, RESIZE_REBUILD_MIN_INTERVAL, RESIZE_REBUILD_QUIET_DURATION,
     };
-    use crate::window_capture::ReplayExportFailureKind;
+    use crate::window_capture::{
+        HardwareEncoderFailure, ReplayExportFailureKind, WindowCaptureState,
+        DEFAULT_FRAME_QUEUE_CAPACITY,
+    };
     use std::fs;
-    use std::io::Cursor;
-    use std::time::Instant;
+    use std::io::{Cursor, Read, Write};
+    use std::net::TcpStream;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn video_capture_failure_log_rate_limits_to_first_and_every_30s() {
@@ -2323,13 +2630,52 @@ mod tests {
 
     #[test]
     fn control_reader_bounds_before_allocating_and_requires_newline() {
+        // 干净 EOF（一个字节都没读）= 持久连接的正常退出路径，不再是错误。
+        assert_eq!(
+            read_control_line(&mut Cursor::new(Vec::new())).unwrap(),
+            None
+        );
+        // 没有换行符的不完整消息仍是错误（连接在半途被杀不得当成干净 EOF）。
         assert!(read_control_line(&mut Cursor::new(b"{}".to_vec())).is_err());
         assert!(
             read_control_line(&mut Cursor::new(vec![b'x'; CONTROL_MAX_MESSAGE_BYTES + 1])).is_err()
         );
         assert_eq!(
             read_control_line(&mut Cursor::new(b"{}\n".to_vec())).unwrap(),
-            b"{}\n"
+            Some(b"{}\n".to_vec())
+        );
+        assert!(read_control_line(&mut Cursor::new(br#"{"type":"status"}"#.to_vec())).is_err());
+    }
+
+    #[test]
+    fn control_reader_maps_read_timeouts_to_idle_not_fatal() {
+        use super::ControlReadError;
+        // 阻塞 socket 的读超时（WouldBlock/TimedOut）是持久连接的空闲心跳，
+        // 必须归为 Idle 而不是致命读错误；超时解除后同一 reader 继续可读。
+        struct WouldBlockOnce {
+            payload: Vec<u8>,
+            blocked: bool,
+        }
+        impl Read for WouldBlockOnce {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.blocked {
+                    self.blocked = false;
+                    return Err(std::io::Error::from(std::io::ErrorKind::WouldBlock));
+                }
+                let count = buffer.len().min(self.payload.len());
+                buffer[..count].copy_from_slice(&self.payload[..count]);
+                self.payload.drain(..count);
+                Ok(count)
+            }
+        }
+        let mut reader = WouldBlockOnce {
+            payload: b"{}\n".to_vec(),
+            blocked: true,
+        };
+        assert_eq!(read_control_line(&mut reader), Err(ControlReadError::Idle));
+        assert_eq!(
+            read_control_line(&mut reader).unwrap(),
+            Some(b"{}\n".to_vec())
         );
     }
 
@@ -2579,5 +2925,304 @@ mod tests {
         );
         assert!(source.contains("\"raw_input_unavailable\".to_string()"));
         assert!(source.contains("\"video_capture_unavailable\".to_string()"));
+    }
+
+    // ---- 尺寸重建（0930 拍板）与持久控制连接的测试 ----
+
+    fn test_coordinator(label: &str) -> Arc<CaptureCoordinatorState> {
+        let data_root = std::env::temp_dir().join(format!(
+            "aiming-cookie-coordinator-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&data_root);
+        let raw = crate::raw_input::RawInputState::new(data_root.join("raw-input.bin"));
+        let window_capture =
+            WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).expect("window capture state");
+        CaptureCoordinatorState::new(
+            data_root,
+            Arc::new(raw),
+            Arc::new(Mutex::new(window_capture)),
+        )
+        .expect("coordinator")
+    }
+
+    fn capturing_status_fixture(session: &str) -> CaptureCoordinatorStatus {
+        CaptureCoordinatorStatus {
+            enabled: true,
+            phase: CapturePhase::Capturing,
+            capture_session_id: Some(session.to_string()),
+            kovaak_process_present: true,
+            window_handle: Some(0x1234),
+            reason: None,
+            raw: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+            video: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+        }
+    }
+
+    /// 把 F6 终态化标志 + 「31s 前的最后一个 packet」一起种进队列探针，
+    /// 使重建四门中除限频外的门全部满足。
+    fn seed_terminated_and_quiet(coordinator: &CaptureCoordinatorState) {
+        let now_pts = capture_clock_now_pts_100ns().expect("capture clock");
+        let quiet_pts = now_pts - 31 * 10_000_000;
+        coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .set_resize_rebuild_probe_for_test(
+                Some(HardwareEncoderFailure::CaptureResizedUnsupported),
+                Some(quiet_pts),
+            );
+    }
+
+    #[test]
+    fn resize_rebuild_gate_blocks_until_every_condition_is_safe() {
+        // 纯判定契约：四门必须同时满足才放行；任一门单独不满足都以显式
+        // 裸码阻塞（只进 dlog，不进控制面 reason 合同）。
+        let quiet_boundary =
+            i64::try_from(RESIZE_REBUILD_QUIET_DURATION.as_nanos() / 100).expect("fits i64");
+        let quiet = quiet_boundary + 1;
+        assert_eq!(resize_rebuild_block_reason(false, Some(quiet), None), None);
+
+        assert_eq!(
+            resize_rebuild_block_reason(true, Some(quiet), None),
+            Some("resize_rebuild_export_in_flight")
+        );
+        assert_eq!(
+            resize_rebuild_block_reason(false, None, None),
+            Some("resize_rebuild_buffer_unquiet")
+        );
+        // 差 100ns 不满 30s：按不安静处理（年龄按 ≥ 判安静）。
+        assert_eq!(
+            resize_rebuild_block_reason(false, Some(quiet_boundary - 1), None),
+            Some("resize_rebuild_buffer_unquiet")
+        );
+        // 负年龄意味着时基错位，同样按不安静处理。
+        assert_eq!(
+            resize_rebuild_block_reason(false, Some(-1), None),
+            Some("resize_rebuild_buffer_unquiet")
+        );
+        assert_eq!(
+            resize_rebuild_block_reason(
+                false,
+                Some(quiet),
+                Some(RESIZE_REBUILD_MIN_INTERVAL - Duration::from_millis(1)),
+            ),
+            Some("resize_rebuild_rate_limited")
+        );
+        // 恰好达到 ≥10s 限频门槛即放行。
+        assert_eq!(
+            resize_rebuild_block_reason(false, Some(quiet), Some(RESIZE_REBUILD_MIN_INTERVAL)),
+            None
+        );
+    }
+
+    #[test]
+    fn resize_rebuild_restarts_capture_and_preserves_the_session_identity() {
+        let coordinator = test_coordinator("resize-rebuild");
+        let current = capturing_status_fixture("session-1");
+        seed_terminated_and_quiet(&coordinator);
+        assert!(coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .recording_terminated_by_resize());
+
+        coordinator.report_or_rebuild_resized_video(&current, Some(0x1234), |capture, _hwnd| {
+            // 仿真真实 start 入口对队列的效果（start 会 reset 队列，F6 标志
+            // 随之清除，见 window_capture::start 与
+            // resize_termination_surfaces_explicit_code_until_queue_reset）。
+            capture.stop();
+            capture.set_resize_rebuild_probe_for_test(None, None);
+            Ok(capture.status())
+        });
+
+        // 重建成功：phase/raw/session 完全不动，video 回 capturing。
+        let status = coordinator.status();
+        assert_eq!(status.phase, CapturePhase::Capturing);
+        assert_eq!(status.capture_session_id.as_deref(), Some("session-1"));
+        assert_eq!(status.raw.state, CaptureSourceState::Capturing);
+        assert_eq!(status.video.state, CaptureSourceState::Capturing);
+        assert_eq!(status.video.reason, None);
+        // F6 终态标志随重建（start 的队列 reset）清除，不跨重建粘连。
+        assert!(!coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .recording_terminated_by_resize());
+        // 限频锚点已按尝试记账。
+        assert!(coordinator.resize_rebuild_rate_limit_elapsed().is_some());
+    }
+
+    #[test]
+    fn resize_rebuild_defers_while_a_replay_export_is_in_flight() {
+        let coordinator = test_coordinator("resize-rebuild-defer");
+        {
+            let capture = coordinator.window_capture.lock().expect("window capture");
+            capture.replay_export_begin();
+        }
+        let outcome = coordinator.attempt_resize_rebuild(0x1234, |_capture, _hwnd| {
+            panic!("restart must not run while a replay export is in flight");
+        });
+        assert_eq!(
+            outcome,
+            ResizeRebuildOutcome::Deferred("replay_export_in_flight")
+        );
+        // 推迟不消耗限频配额：导出收尾后下一 tick 立即可重建。
+        assert!(coordinator.resize_rebuild_rate_limit_elapsed().is_none());
+    }
+
+    #[test]
+    fn resize_rebuild_failure_falls_back_to_the_existing_degraded_path() {
+        let coordinator = test_coordinator("resize-rebuild-fail");
+        let current = capturing_status_fixture("session-1");
+        seed_terminated_and_quiet(&coordinator);
+
+        coordinator.report_or_rebuild_resized_video(&current, Some(0x1234), |_capture, _hwnd| {
+            Err("window capture startup timed out".to_string())
+        });
+
+        // 复用现有 video start 失败语义（phase 降级 → 主路径逐 tick 重试
+        // start；session id 不变；reason 保持既有裸码，不发明新码）。
+        let status = coordinator.status();
+        assert_eq!(status.phase, CapturePhase::Degraded);
+        assert_eq!(status.capture_session_id.as_deref(), Some("session-1"));
+        assert_eq!(status.raw.state, CaptureSourceState::Capturing);
+        assert_eq!(status.video.state, CaptureSourceState::Degraded);
+        assert_eq!(
+            status.video.reason.as_deref(),
+            Some("video_capture_unavailable")
+        );
+        // 失败的尝试同样消耗限频配额。
+        assert!(coordinator.resize_rebuild_rate_limit_elapsed().is_some());
+    }
+
+    #[test]
+    fn resize_rebuild_rate_limits_successive_attempts_within_ten_seconds() {
+        let coordinator = test_coordinator("resize-rebuild-rate");
+        let current = capturing_status_fixture("session-1");
+        seed_terminated_and_quiet(&coordinator);
+        let restarts = std::cell::Cell::new(0);
+
+        coordinator.report_or_rebuild_resized_video(&current, Some(0x1234), |capture, _hwnd| {
+            restarts.set(restarts.get() + 1);
+            capture.set_resize_rebuild_probe_for_test(None, None);
+            Ok(capture.status())
+        });
+        assert_eq!(restarts.get(), 1);
+
+        // 10s 内再次 resize（复种 F6 标志与安静 packet 锚）：限频门拦截，
+        // 不得在拖窗口边框的连续 resize 下打爆重建。
+        seed_terminated_and_quiet(&coordinator);
+        coordinator.report_or_rebuild_resized_video(
+            &coordinator.status(),
+            Some(0x1234),
+            |capture, _hwnd| {
+                restarts.set(restarts.get() + 1);
+                Ok(capture.status())
+            },
+        );
+        assert_eq!(restarts.get(), 1, "rate limit must suppress the retry");
+        // 限频阻塞轮里 video 保持降级可见（等待下一 tick 重估）。
+        assert_eq!(
+            coordinator.status().video.state,
+            CaptureSourceState::Degraded
+        );
+    }
+
+    fn read_tcp_line(stream: &mut TcpStream) -> Vec<u8> {
+        let mut line = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let count = stream.read(&mut buffer).expect("read response");
+            assert!(count > 0, "peer closed before a full response line");
+            for (index, byte) in buffer[..count].iter().copied().enumerate() {
+                line.push(byte);
+                if byte == b'\n' {
+                    assert_eq!(index + 1, count, "unexpected bytes after the newline");
+                    return line;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn control_connection_serves_multiple_requests_on_one_stream() {
+        let coordinator = test_coordinator("control-persistent");
+        let connection = coordinator.control_connection().expect("control server");
+        let mut stream = TcpStream::connect(connection.address).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("write timeout");
+        let request = format!(
+            "{{\"type\":\"status\",\"secret\":\"{}\"}}\n",
+            connection.secret
+        );
+
+        // 持久连接新行为：同一条 TcpStream 上连发两个请求，得到两个独立
+        // 响应（一次一连的旧实现会在首个响应后关闭，第二个读必为 EOF）。
+        for _ in 0..2 {
+            stream.write_all(request.as_bytes()).expect("write request");
+            let response: serde_json::Value =
+                serde_json::from_slice(&read_tcp_line(&mut stream)).expect("response json");
+            assert_eq!(response["type"], "statusResult");
+            assert_eq!(response["ok"], true);
+        }
+
+        // 协议级拒绝（错误 secret）不终止持久连接：连接仍继续服务下一请求。
+        stream
+            .write_all(b"{\"type\":\"status\",\"secret\":\"wrong\"}\n")
+            .expect("write rejected request");
+        let rejected: serde_json::Value =
+            serde_json::from_slice(&read_tcp_line(&mut stream)).expect("rejected json");
+        assert_eq!(rejected["type"], "controlError");
+        assert_eq!(rejected["code"], "control_auth_failed");
+
+        stream.write_all(request.as_bytes()).expect("write request");
+        let response: serde_json::Value =
+            serde_json::from_slice(&read_tcp_line(&mut stream)).expect("response json");
+        assert_eq!(response["type"], "statusResult");
+        assert_eq!(response["ok"], true);
+
+        drop(stream);
+        coordinator.shutdown();
+    }
+
+    #[test]
+    fn control_connection_cleans_up_after_legacy_single_request_client() {
+        let coordinator = test_coordinator("control-legacy");
+        let connection = coordinator.control_connection().expect("control server");
+        {
+            // 老客户端行为：一请求一连接，读完响应立即关闭。服务端必须在
+            // 干净 EOF 后静默清理连接线程，不影响后续连接。
+            let mut stream = TcpStream::connect(connection.address).expect("connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("read timeout");
+            let request = format!(
+                "{{\"type\":\"status\",\"secret\":\"{}\"}}\n",
+                connection.secret
+            );
+            stream.write_all(request.as_bytes()).expect("write request");
+            let response: serde_json::Value =
+                serde_json::from_slice(&read_tcp_line(&mut stream)).expect("response json");
+            assert_eq!(response["type"], "statusResult");
+            assert_eq!(response["ok"], true);
+        }
+        // 已关闭的连接不得拖住退出：shutdown 在连接线程 EOF 退出后立即完成。
+        let started = Instant::now();
+        coordinator.shutdown();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "shutdown must not be wedged by a closed legacy connection"
+        );
     }
 }

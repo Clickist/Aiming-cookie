@@ -122,7 +122,9 @@ mod tests {
         init(dir.clone());
         write_line("via global sink");
         let contents = fs::read_to_string(&log).expect("log file");
-        assert!(contents.ends_with(" via global sink\n"), "{contents}");
+        // 全局 sink 进程内共享：协调器控制连接等测试会并行 dlog，末行可能
+        // 是别的测试写的，这里只断言本行已落盘（contains 而非 ends_with）。
+        assert!(contents.contains(" via global sink\n"), "{contents}");
     }
 
     #[test]

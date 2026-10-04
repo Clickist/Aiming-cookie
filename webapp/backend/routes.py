@@ -506,11 +506,7 @@ async def get_capture_status(
         if config.NATIVE_CAPTURE_CONTROL_ADDR and config.NATIVE_CAPTURE_CONTROL_SECRET:
             # Status polls must not inherit the 65 s read timeout sized for
             # replay exports; a slow control link would stall the settings page.
-            client = NativeCaptureClient(
-                config.NATIVE_CAPTURE_CONTROL_ADDR,
-                config.NATIVE_CAPTURE_CONTROL_SECRET,
-                read_timeout_seconds=5.0,
-            )
+            client = _native_capture_status_client(request)
             native_status = await asyncio.to_thread(client.status)
         elif bool(config.NATIVE_CAPTURE_CONTROL_ADDR) != bool(
             config.NATIVE_CAPTURE_CONTROL_SECRET
@@ -530,6 +526,24 @@ async def get_capture_status(
         log.exception("capture status read failed")
         status = build_capture_status_v1(read_error="capture_status_unavailable")
     return CaptureStatusResponse(telemetry_capture=telemetry_summary, **status)
+
+
+def _native_capture_status_client(request: Request) -> NativeCaptureClient:
+    """/capture-status 1s 轮询共享的客户端单例（app.state 持有，0930 提案 C）。
+
+    本机回环新建 TCP 会被部分安全软件随机 RST（实测 8%~39%），每请求新建
+    客户端会让 1s 状态轮询反复踩建连；共享单例配合持久控制连接把建连次数
+    降到 1。读超时保持 5s 的 status 专用值，不与 65s 导出客户端共用。
+    """
+    client = getattr(request.app.state, "native_capture_status_client", None)
+    if client is None:
+        client = NativeCaptureClient(
+            config.NATIVE_CAPTURE_CONTROL_ADDR,
+            config.NATIVE_CAPTURE_CONTROL_SECRET,
+            read_timeout_seconds=5.0,
+        )
+        request.app.state.native_capture_status_client = client
+    return client
 
 
 def _task_groups(rows: list[dict]) -> list[dict]:

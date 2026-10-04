@@ -1551,3 +1551,14 @@ async def test_finalize_skips_reimport_of_user_deleted_source(
 
     assert exc_info.value.code == "source_deleted_by_user"
     assert await kovaak_run_store.list_kovaak_runs("u1") == []
+
+
+def test_transport_corruption_codes_are_not_terminal_video_errors() -> None:
+    # 0930 提案 D 回归锁：传输层被腐蚀的症状（control_read_failed /
+    # control_message_invalid）在客户端侧已归可重试码，finalizer 不得再把
+    # 它们映射成终态 video 错误；鉴权失败仍是终态。
+    from webapp.backend.kovaak_capture_finalizer import _TERMINAL_VIDEO_ERRORS
+
+    assert "control_message_invalid" not in _TERMINAL_VIDEO_ERRORS
+    assert "control_read_failed" not in _TERMINAL_VIDEO_ERRORS
+    assert "control_auth_failed" in _TERMINAL_VIDEO_ERRORS

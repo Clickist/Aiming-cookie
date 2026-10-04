@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 import socket
+import threading
 from typing import Any
 
 from .kovaak_ingest import NonRetryableIngestionError, RetryableIngestionError
@@ -40,6 +41,10 @@ _RETRYABLE_CODES = {
     "raw_snapshot_timed_out",
     "raw_snapshot_failed",
     "raw_snapshot_unavailable",
+    # 传输层被腐蚀的症状（0930 提案 D）：按可重试处理，收尾管线稍后自动
+    # 重试，而不是把整局视频判成终态失败。
+    "control_read_failed",
+    "control_message_invalid",
 }
 
 
@@ -270,6 +275,11 @@ class NativeCaptureClient:
         self._secret = secret
         self._connect_timeout_seconds = float(connect_timeout_seconds)
         self._read_timeout_seconds = float(read_timeout_seconds)
+        # 持久控制连接（0930 提案 C）：本机回环新建 TCP 会被部分安全软件
+        # 随机 RST（实测 8%~39%），控制协议改为惰性建立、串行复用长连接；
+        # 行协议本身严格一问一答，用锁串行化请求即可，无需后台线程。
+        self._control_lock = threading.Lock()
+        self._control_connection: socket.socket | None = None
 
     def status(self) -> dict[str, object]:
         for attempt in range(3):
@@ -348,7 +358,9 @@ class NativeCaptureClient:
             raise ValueError("native capture export request is invalid")
         for attempt in range(3):
             try:
-                response = self._request(
+                # 导出走独立一次性连接（0930 提案 C）：导出可阻塞数十秒，
+                # 不得占用持久控制连接饿死 status/flush 心跳。
+                response = self._request_oneshot(
                     {
                         "type": "exportReplay",
                         "secret": self._secret,
@@ -427,17 +439,84 @@ class NativeCaptureClient:
         request: dict[str, object],
         expected_type: str,
     ) -> dict[str, object]:
+        """status / flushRawSnapshot / releaseCaptureSession 走持久控制连接。
+
+        惰性建立；锁内串行复用；任何传输层失败（OSError/超时/响应丢失）
+        或响应流腐蚀后作废连接，下次请求自动重连。协议级错误响应（服务端
+        正常返回的 ok:false）不算传输失败，连接保持可用。
+        """
+        payload = self._encode_request(request)
+        with self._control_lock:
+            try:
+                if self._control_connection is None:
+                    self._control_connection = self._open_connection()
+                return self._exchange(
+                    self._control_connection, payload, expected_type,
+                )
+            except (NativeCaptureRetryableError, NativeCaptureProtocolError):
+                # 传输层失效或响应流腐蚀后连接状态不可信：作废重连。
+                self._discard_control_connection()
+                raise
+
+    def _request_oneshot(
+        self,
+        request: dict[str, object],
+        expected_type: str,
+    ) -> dict[str, object]:
+        """exportReplay 专用：独立一次性连接。
+
+        导出可在 native 侧阻塞数十秒，绝不能占用/阻塞持久控制连接，
+        否则 status/release 心跳会被饿死。
+        """
+        payload = self._encode_request(request)
+        connection = self._open_connection()
+        try:
+            return self._exchange(connection, payload, expected_type)
+        finally:
+            connection.close()
+
+    def _encode_request(self, request: dict[str, object]) -> bytes:
         payload = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
         if len(payload) > CONTROL_MAX_MESSAGE_BYTES:
             raise ValueError("native capture request exceeds the message limit")
+        return payload
+
+    def _open_connection(self) -> socket.socket:
         try:
-            with socket.create_connection(
+            connection = socket.create_connection(
                 self._address,
                 timeout=self._connect_timeout_seconds,
-            ) as connection:
-                connection.settimeout(self._read_timeout_seconds)
-                connection.sendall(payload)
-                response_bytes = self._read_response(connection)
+            )
+        except socket.timeout as error:
+            raise NativeCaptureRetryableError("capture_control_timeout") from error
+        except OSError as error:
+            raise NativeCaptureRetryableError("capture_control_unavailable") from error
+        try:
+            connection.settimeout(self._read_timeout_seconds)
+            # 控制协议是严格一问一答的小消息：禁 Nagle 省掉合并延迟。
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError as error:
+            connection.close()
+            raise NativeCaptureRetryableError("capture_control_unavailable") from error
+        return connection
+
+    def _discard_control_connection(self) -> None:
+        connection, self._control_connection = self._control_connection, None
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
+
+    def _exchange(
+        self,
+        connection: socket.socket,
+        payload: bytes,
+        expected_type: str,
+    ) -> dict[str, object]:
+        try:
+            connection.sendall(payload)
+            response_bytes = self._read_response(connection)
         except socket.timeout as error:
             raise NativeCaptureRetryableError("capture_control_timeout") from error
         except OSError as error:

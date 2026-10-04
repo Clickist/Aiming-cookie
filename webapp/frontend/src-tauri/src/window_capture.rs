@@ -2067,6 +2067,10 @@ pub struct WindowCaptureState {
     // 快照必须幸存到诊断包与下一局；成功 start 才清除。Arc 共享给采集
     // 线程，失败现场（含逐适配器尝试）由线程侧写入。
     last_start_failure: Arc<Mutex<Option<StartFailureSnapshot>>>,
+    // 在途 replay 导出计数（尺寸重建安全门 b）：>0 表示 mux worker 正在
+    // 为导出服务，此时停采集会毁掉在途证据。锁保护；poison 按保守方向
+    // （视为在途）处理，宁可推迟重建也不冒险毁证据。
+    replay_exports_in_flight: Mutex<usize>,
     clock_metadata: Option<CaptureClockMetadata>,
     #[cfg(windows)]
     worker: Option<WindowCaptureWorker>,
@@ -2108,6 +2112,7 @@ impl WindowCaptureState {
             recording: false,
             queue: Arc::new(Mutex::new(FrameQueue::new(capacity)?)),
             last_start_failure: Arc::new(Mutex::new(None)),
+            replay_exports_in_flight: Mutex::new(0),
             clock_metadata: None,
             #[cfg(windows)]
             worker: None,
@@ -2185,6 +2190,41 @@ impl WindowCaptureState {
                     == Some(HardwareEncoderFailure::CaptureResizedUnsupported)
             })
             .unwrap_or(false)
+    }
+
+    /// 导出在途记账 +1：handle_export 在把导出排入 mux worker 前调用，
+    /// 与 stop/重建互斥的证据保护窗由此开始。
+    pub fn replay_export_begin(&self) {
+        if let Ok(mut count) = self.replay_exports_in_flight.lock() {
+            *count = count.saturating_add(1);
+        }
+    }
+
+    /// 导出在途记账 -1：导出收尾（成功/失败/提前返回）由 RAII guard 保证。
+    pub fn replay_export_end(&self) {
+        if let Ok(mut count) = self.replay_exports_in_flight.lock() {
+            *count = count.saturating_sub(1);
+        }
+    }
+
+    /// 是否有在途 replay 导出。槽位 poison 按保守方向（视为在途）处理：
+    /// 重建安全门宁可长期推迟，也不在证据可能存在的时刻停采集。
+    pub fn replay_export_in_flight(&self) -> bool {
+        self.replay_exports_in_flight
+            .lock()
+            .map(|count| *count > 0)
+            .unwrap_or(true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_resize_rebuild_probe_for_test(
+        &self,
+        failure: Option<HardwareEncoderFailure>,
+        last_packet_pts_100ns: Option<i64>,
+    ) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.last_encoder_failure = failure;
+        queue.last_packet_pts_100ns = last_packet_pts_100ns;
     }
 
     #[allow(dead_code)] // Task 3 native boundary; Run finalization wiring is out of scope.
@@ -5927,6 +5967,23 @@ mod tests {
             serde_json::to_string(&HardwareEncoderFailure::CaptureResizedUnsupported).unwrap(),
             "\"captureResizedUnsupported\""
         );
+    }
+
+    #[test]
+    fn replay_export_in_flight_counter_tracks_begin_end_pairs() {
+        // 重建安全门 (b) 的计数契约：begin/end 成对记账，多余的 end 不得把
+        // 计数打穿；poison 槽位按保守方向（视为在途）阻塞重建。
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        assert!(!state.replay_export_in_flight());
+        state.replay_export_begin();
+        state.replay_export_begin();
+        assert!(state.replay_export_in_flight());
+        state.replay_export_end();
+        assert!(state.replay_export_in_flight());
+        state.replay_export_end();
+        assert!(!state.replay_export_in_flight());
+        state.replay_export_end();
+        assert!(!state.replay_export_in_flight());
     }
 
     #[test]

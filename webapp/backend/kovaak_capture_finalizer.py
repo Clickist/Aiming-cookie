@@ -30,8 +30,9 @@ _TERMINAL_VIDEO_ERRORS = {
     "capture_window_invalid": "video_window_invalid",
     "control_window_invalid": "video_window_invalid",
     "capture_video_invalid": "video_hardware_invalid",
+    # control_auth_failed 是鉴权层终态失败；control_message_invalid 自
+    # 0930 提案 D 起归入客户端可重试码（传输层腐蚀症状），不再映射终态。
     "control_auth_failed": "video_capture_protocol_invalid",
-    "control_message_invalid": "video_capture_protocol_invalid",
     "managed_path_invalid": "video_capture_protocol_invalid",
 }
 log = logging.getLogger(__name__)
