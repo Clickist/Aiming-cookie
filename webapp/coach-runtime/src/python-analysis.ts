@@ -27,19 +27,21 @@ type AnyDict = Record<string, any>;
 
 const DESKTOP_USER_ID = "desktop-local";
 // Poll interval is env-overridable so tests can exercise the running→done
-// transition without waiting two seconds.
-const ANALYZE_POLL_INTERVAL_MS = (() => {
+// transition without waiting two seconds. 读取时求值而非模块加载时固化：
+// node --test 全进程共享 env，先跑的测试文件设置 env 后，固化的常量会让
+// 后跑文件的用例拿到错误预算（1004 全量污染实锤）。
+const analyzePollIntervalMs = () => {
   const value = Number(process.env.AIMING_COOKIE_ANALYSIS_POLL_INTERVAL_MS);
   return Number.isFinite(value) && value > 0 ? value : 2_000;
-})();
+};
 // [fix 2026-10-04] 2 分钟即停等：Python 侧有任务级总预算与阶段僵尸清扫，
 // 分析不会无声卡死；等待超时改为返回 pending（分析仍在后台继续），由教练
 // 如实转告用户，桥本身不再长时间占住对话。Env 覆盖仅供测试注入短预算，
 // 与 ANALYZE_POLL_INTERVAL_MS 同一模式。
-const ANALYZE_TIMEOUT_MS = (() => {
+const analyzeTimeoutMs = () => {
   const value = Number(process.env.AIMING_COOKIE_ANALYSIS_TIMEOUT_MS);
   return Number.isFinite(value) && value > 0 ? value : 120_000;
-})();
+};
 const REQUEST_TIMEOUT_MS = 15_000;
 // The Python worker marks the session done before writing analyses/{id}/overview.json;
 // wait a bounded time for the file so the returned analysis_ref is immediately readable.
@@ -227,7 +229,7 @@ async function pollAnalysisStatus(
   locale: "zh-CN" | "en-US",
   signal?: AbortSignal,
 ): Promise<AnalysisOutcome> {
-  const deadline = Date.now() + ANALYZE_TIMEOUT_MS;
+  const deadline = Date.now() + analyzeTimeoutMs();
   for (;;) {
     if (signal?.aborted) {
       throw new PythonAnalysisError("aborted", "analysis wait was aborted");
@@ -259,7 +261,7 @@ async function pollAnalysisStatus(
       const startedMs = startedAt ? Date.parse(startedAt) : NaN;
       const elapsedSeconds = Number.isFinite(startedMs)
         ? Math.max(0, Math.round((Date.now() - startedMs) / 1000))
-        : Math.round(ANALYZE_TIMEOUT_MS / 1000);
+        : Math.round(analyzeTimeoutMs() / 1000);
       return {
         status: "pending",
         task_phase: typeof body.task_phase === "string" ? body.task_phase : null,
@@ -268,7 +270,7 @@ async function pollAnalysisStatus(
         elapsed_seconds: elapsedSeconds,
       };
     }
-    await new Promise((resolve) => setTimeout(resolve, ANALYZE_POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, analyzePollIntervalMs()));
   }
 }
 

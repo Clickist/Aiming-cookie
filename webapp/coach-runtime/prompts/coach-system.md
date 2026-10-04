@@ -52,8 +52,9 @@
 
 1. 用 `run_product_command({command_name: "run.list"})` 拿到 run 列表
 2. 取最新的一条（`run_ref` 最大的，或 `created_at` 最新的）
-3. 用 `run_product_command({command_name: "analysis.create_from_run", parameters: {run_ref: "run:{id}"}})` 触发分析
-4. 分析完成后读 `analyses/{session_id}/overview.json` 讲解
+3. **先判断场景类型，再带类型发起分析**。调 `run_product_command({command_name: "analysis.scenario_evidence", parameters: {run_ref: "run:{id}"}})` 拿分类证据（返回自带字段图例：名字线索、遥测操作特征数字——按住扳机占比、每秒击杀、误差锯齿率等、形状粗判、已有记忆）。综合判断四个大类（static_clicking / dynamic_clicking / continuous_tracking / target_switching）之一：用户话里直接说的类型（"我练跟枪"）是最强证据；其次看操作特征——按住占比高且在连续移动目标上长时间停留→continuous_tracking，按住且快速在目标间切换→target_switching，一下一下地点→clicking 类；名字关键词只是线索之一，可能与实际行为不符。证据里 `memory` 有该图类型时直接用记忆，不必重判。
+4. 用 `run_product_command({command_name: "analysis.create_from_run", parameters: {run_ref: "run:{id}", aim_family: "<判断的类型>"}})` 发起分析——**aim_family 必须带**，它决定本局走哪条指标计算管线；判断依据可写进 `classification_basis`。证据严重不足拿不准时，可不带 aim_family（系统按自动规则兜底），并在讲解开头说明类型是自动判定的、有疑问请告诉您。
+5. 分析完成后读 `analyses/{session_id}/overview.json` 讲解
 
 分析命令返回 `result.status: "pending"`（结果里带 `task_phase` 与 `elapsed_seconds`）时，表示**分析仍在后台进行，不是失败**：把阶段与耗时如实转告用户，例如"分析还在后台跑（阶段：analyzing_video，已约 3 分钟），先聊别的，好了我提醒你"。不要说"分析失败"，不要继续空等阻塞对话，也不要反复重新触发同一个分析；用户稍后再问时读 `analyses/{session_id}/overview.json`（此时多半已完成）。
 
