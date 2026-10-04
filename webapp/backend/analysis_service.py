@@ -505,6 +505,54 @@ def _load_scenario_overrides() -> dict[str, dict[str, Any]]:
     return overrides
 
 
+def _persist_scenario_override(
+    scenario_hash: str,
+    aim_family: str,
+    note: str | None,
+) -> None:
+    """Upsert one scenario family memory into config/scenario-overrides.json.
+
+    Coach 显式判型（aim_family 随分析创建传入）的落盘点：判一次记住。
+    原子写（临时文件+替换）；IO/格式失败只记日志——持久化从不影响已创建
+    的分析。条目上限与 _load_scenario_overrides 的校验口径一致。
+    """
+    import logging
+    import tempfile
+    import uuid
+    from datetime import datetime, timezone
+    from . import config
+
+    log = logging.getLogger(__name__)
+    path = config.DATA_ROOT / "config" / "scenario-overrides.json"
+    try:
+        raw = path.read_bytes()
+        doc = json.loads(raw)
+        entries = doc.get("overrides") if isinstance(doc, Mapping) else None
+        if not isinstance(doc, Mapping) or not isinstance(entries, Mapping):
+            doc, entries = {"schema_version": SCENARIO_OVERRIDES_SCHEMA_VERSION}, {}
+    except (OSError, json.JSONDecodeError):
+        doc, entries = {"schema_version": SCENARIO_OVERRIDES_SCHEMA_VERSION}, {}
+    entries[scenario_hash] = {
+        "aim_family": aim_family,
+        "confirmed_by": "coach",
+        "note": note[:200] if isinstance(note, str) and note else None,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    doc["overrides"] = entries
+    doc["schema_version"] = SCENARIO_OVERRIDES_SCHEMA_VERSION
+    try:
+        payload = json.dumps(doc, ensure_ascii=False, indent=1)
+        if len(payload.encode("utf-8")) > SCENARIO_OVERRIDES_MAX_BYTES:
+            log.warning("scenario override persist skipped: exceeds %d bytes", SCENARIO_OVERRIDES_MAX_BYTES)
+            return
+        handle, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        log.warning("scenario override persist failed: %s", exc)
+
+
 def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Apply the scenario family memory above the heuristic chain.
 
@@ -1111,6 +1159,31 @@ async def create_analysis_from_run(
             kind="unavailable",
             result_ref=f"analysis:{active['id']}" if active is not None else None,
         ) from exc
+    # [fix 2026-10-05] Coach 显式判型的持久化：分析创建成功即把该图的家族判断
+    # 写入 scenario-overrides（confirmed_by=coach），兑现「判一次记住」。此前
+    # 只有用户确认路径（Coach sidecar scenario_memory.set）会落盘，Coach 自己
+    # 证据判型的结论从不持久化 → 同图下一次落入观测特征兜底（实机 1005：TF180
+    # 中性问法被判 target_switching）。失败只记日志，绝不影响已创建的分析。
+    if aim_family is not None:
+        resolution = snapshot.get("scenario_resolution")
+        scenario_hash = (
+            resolution.get("scenario_hash") if isinstance(resolution, Mapping) else None
+        )
+        display_name = (
+            resolution.get("display_name") if isinstance(resolution, Mapping) else None
+        )
+        if isinstance(scenario_hash, str) and _SCENARIO_OVERRIDE_HASH_RE.fullmatch(scenario_hash):
+            note = (
+                f"{display_name} Coach 判定为{aim_family}"
+                if isinstance(display_name, str) and display_name
+                else None
+            )
+            await asyncio.to_thread(
+                _persist_scenario_override,
+                scenario_hash,
+                aim_family,
+                note,
+            )
     try:
         managed_video = ""
         managed_csv = ""
