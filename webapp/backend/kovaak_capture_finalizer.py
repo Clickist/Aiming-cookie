@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 
 from . import kovaak_run_store
@@ -183,6 +184,40 @@ class KovaaKCaptureFinalizer:
         )
 
     async def finalize(self, discovery: KovaaKFileDiscovery) -> dict:
+        """Run _finalize with pipeline timing instrumentation (log-only).
+
+        native export_replay 响应协议不含 native 端耗时（elapsed_ms 只进
+        native.log 与诊断包）；以下分段均为 Python 侧墙钟差值，export 段
+        含客户端内部最多 3 次瞬态重试。异常收尾路径记 finalization_state=raised。
+        """
+        finalize_started = time.monotonic()
+        timings: dict[str, float] = {}
+        try:
+            stem = _source_key(discovery)
+        except ValueError:
+            stem = "<unknown>"
+        run: dict | None = None
+        try:
+            run = await self._finalize(discovery, timings)
+            return run
+        finally:
+            segments = " ".join(
+                f"{phase}_ms={value:.0f}" for phase, value in sorted(timings.items())
+            )
+            log.info(
+                "KovaaK finalize timing stem=%s elapsed_ms=%.0f "
+                "finalization_state=%s %s",
+                stem,
+                (time.monotonic() - finalize_started) * 1000.0,
+                run.get("finalization_state") if isinstance(run, dict) else "raised",
+                segments,
+            )
+
+    async def _finalize(
+        self,
+        discovery: KovaaKFileDiscovery,
+        timings: dict[str, float],
+    ) -> dict:
         source_key = _source_key(discovery)
         if kovaak_run_store.is_kovaak_run_source_deleted(self._user_id, source_key):
             # 用户已删除该 run：源 CSV 仍在游戏目录，不再重新导入。
@@ -193,6 +228,7 @@ class KovaaKCaptureFinalizer:
             raise NonRetryableIngestionError(
                 "source deleted by user", code="source_deleted_by_user",
             )
+        ingest_started = time.monotonic()
         merged = await self._merge_discovery(discovery)
         trace_pending: RetryableIngestionError | None = None
         try:
@@ -212,6 +248,7 @@ class KovaaKCaptureFinalizer:
             )
             if run is None:
                 raise
+        timings["ingest"] = (time.monotonic() - ingest_started) * 1000.0
 
         if not run.get("stats_path") or not run.get("performance_path"):
             if (
@@ -339,6 +376,7 @@ class KovaaKCaptureFinalizer:
             ) or run
 
         if trace_needs_snapshot:
+            trace_started = time.monotonic()
             snapshot: dict[str, object] | None = None
             # 收尾局也要取覆盖回执：游戏退出后 phase 进入 finalizing（raw 后端在
             # release 前仍保留），若只认 capturing/degraded，收尾局的 trace 会一直
@@ -362,6 +400,7 @@ class KovaaKCaptureFinalizer:
             run, trace_pending = await self._attach_trace_snapshot(
                 run, snapshot,
             )
+            timings["trace"] = (time.monotonic() - trace_started) * 1000.0
 
         if video_session_mismatch:
             return await self._finish_or_retry_trace(
@@ -415,6 +454,7 @@ class KovaaKCaptureFinalizer:
                 "video_pending_conflict", code="video_pending_conflict",
             )
 
+        export_started = time.monotonic()
         try:
             response = await asyncio.to_thread(
                 self._native_client.export_replay,
@@ -456,7 +496,10 @@ class KovaaKCaptureFinalizer:
                 expected_request_digest=request_digest,
             ) or run
             return await self._finish_or_retry_trace(run, trace_pending, video_error)
+        finally:
+            timings["export"] = (time.monotonic() - export_started) * 1000.0
 
+        attach_started = time.monotonic()
         run = await kovaak_run_store.attach_run_video(
             run["id"],
             self._user_id,
@@ -465,6 +508,7 @@ class KovaaKCaptureFinalizer:
             expected_request_digest=request_digest,
             data_root=self._data_root,
         ) or run
+        timings["attach"] = (time.monotonic() - attach_started) * 1000.0
         return await self._finish_or_retry_trace(run, trace_pending, None)
 
     async def _merge_discovery(

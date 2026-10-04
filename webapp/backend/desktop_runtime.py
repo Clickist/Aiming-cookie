@@ -359,16 +359,44 @@ def create_kovaak_ingestion_service(
 ) -> kovaak_ingest.KovaaKIngestionService:
     """Create the Desktop-only watcher bridge without changing Web runtime behavior."""
     finalizer_lock = asyncio.Lock()
+    # 整理管线耗时埋点（纯日志，零行为变化）：pending_finalizations 计已进入
+    # finalize_one、尚未收尾完的协程数；拿锁瞬间减去自身即当时排队等待的局数
+    # （不含已入队但尚未被事件循环调度到的 discovery）。
+    pending_finalizations = 0
+
+    def _discovery_log_stem(discovery: kovaak_ingest.KovaaKFileDiscovery) -> str:
+        if discovery.stem:
+            return discovery.stem
+        if discovery.paths:
+            return kovaak_ingest.normalize_kovaak_stem(discovery.paths[0])
+        return "<unknown>"
 
     async def finalize_one(
         discovery: kovaak_ingest.KovaaKFileDiscovery,
+        *,
+        enqueued_monotonic: float,
     ) -> dict:
-        async with finalizer_lock:
-            return await finalizer.finalize(discovery)
+        nonlocal pending_finalizations
+        pending_finalizations += 1
+        try:
+            async with finalizer_lock:
+                # 不带 KovaaK 前缀：test_ingestion_service_treats_waiting_for_
+                # sources_as_expected 按 "KovaaK" 子串计数收尾结果行（==1），
+                # 本行是埋点诊断行，不应计入。
+                log.info(
+                    "finalizer lock acquired stem=%s queue_wait_ms=%.0f "
+                    "queue_depth=%s",
+                    _discovery_log_stem(discovery),
+                    (time.monotonic() - enqueued_monotonic) * 1000.0,
+                    pending_finalizations - 1,
+                )
+                return await finalizer.finalize(discovery)
+        finally:
+            pending_finalizations -= 1
 
     def on_discovery(discovery: kovaak_ingest.KovaaKFileDiscovery) -> Future[dict]:
         future = asyncio.run_coroutine_threadsafe(
-            finalize_one(discovery),
+            finalize_one(discovery, enqueued_monotonic=time.monotonic()),
             loop,
         )
         if finalizer_futures is not None:

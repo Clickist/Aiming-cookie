@@ -48,7 +48,14 @@ async def _wait_for_in_flight_telemetry_cut(run_id: int, owner_id: str) -> None:
     if not telemetry_capture_service.run_cut_pending(run_id):
         return
     log.info("waiting for in-flight telemetry run cut run=%s", run_id)
-    await asyncio.to_thread(
+    wait_started = time.monotonic()
+
+    def _wait_elapsed_ms() -> float:
+        return (time.monotonic() - wait_started) * 1000.0
+
+    # wait_run_cut 返回 False=切窗已完成/不存在，True=超时仍在途（仅埋点，
+    # 等待流程与返回前一致：都继续进入就绪轮询）。
+    cut_settled = await asyncio.to_thread(
         telemetry_capture_service.wait_run_cut, run_id, _TELEMETRY_CUT_WAIT_SECONDS,
     )
     deadline = time.monotonic() + _TELEMETRY_CUT_WAIT_SECONDS
@@ -59,10 +66,25 @@ async def _wait_for_in_flight_telemetry_cut(run_id: int, owner_id: str) -> None:
             )
         except Exception:
             log.exception("telemetry readiness poll failed run=%s", run_id)
+            log.info(
+                "telemetry cut wait done run=%s outcome=poll_error "
+                "cut_settled=%s wait_ms=%.0f",
+                run_id, cut_settled, _wait_elapsed_ms(),
+            )
             return
         if ready:
+            log.info(
+                "telemetry cut wait done run=%s outcome=ready "
+                "cut_settled=%s wait_ms=%.0f",
+                run_id, cut_settled, _wait_elapsed_ms(),
+            )
             return
         await asyncio.sleep(_TELEMETRY_CUT_POLL_SECONDS)
+    log.info(
+        "telemetry cut wait done run=%s outcome=timeout_released "
+        "cut_settled=%s wait_ms=%.0f",
+        run_id, cut_settled, _wait_elapsed_ms(),
+    )
 
 
 class ProductCommandError(Exception):
@@ -687,6 +709,10 @@ async def create_analysis_from_run(
             raise ProductCommandError("forbidden", "无权访问此 Run")
         raise ProductCommandError("not_found", "KovaaK run 不存在", kind="unavailable")
     # 快照冻结前给在途的按局遥测切窗一个有界落地窗口（无在途零开销）。
+    # 事实核对（仅注释）：分析创建没有 finalization 门——全程不检查
+    # run.finalization_state；遥测档（telemetry_multimodal）只要
+    # external_telemetry+stats+performance+canonical_window 就绪即可选档，
+    # 不要求视频，与 mp4 导出收尾链路解耦。
     await _wait_for_in_flight_telemetry_cut(run_id, owner_id)
     try:
         snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, owner_id)
