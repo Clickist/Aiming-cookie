@@ -37,6 +37,14 @@ function writeOverview(sessionId: number): void {
   writeFileSync(join(dir, "overview.json"), JSON.stringify({ status: "done" }), "utf-8");
 }
 
+// Backend session records (sessions/{id}.json) hold kovaak_run_id/status/result —
+// the [fix 2026-10-04] D rerun-entry gate reads them locally.
+function writeSession(sessionId: number, data: Record<string, unknown>): void {
+  const dir = join(process.env.DATA_ROOT!, "sessions");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sessionId}.json`), JSON.stringify(data), "utf-8");
+}
+
 type MockRoute = {
   match: (method: string, url: string) => boolean;
   handler: (req: http.IncomingMessage, res: http.ServerResponse) => void;
@@ -230,6 +238,132 @@ test("analysis.create_from_run forwards force to the Python backend", async () =
   }
 });
 
+// [fix 2026-10-04] D：done 但有残缺（deterministic.limitations 非空）的 run，
+// 复用既有 done 分析时结果里暴露 force 重跑入口（rerun_available + 指引文案）。
+test("analysis.create_from_run surfaces a force rerun entry when reusing a degraded done analysis", async () => {
+  writeSession(61, {
+    id: 61,
+    status: "done",
+    kovaak_run_id: 9,
+    result: { deterministic: { limitations: ["telemetry_alignment_missing"] } },
+  });
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/9/analyze",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: 61 }));   // 复用既有 done
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/61",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "done" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  writeOverview(61);
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run", { run_ref: "run:9" }, "owner-a", "idem-key-rerun",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.result?.status, "done");
+    assert.equal(result.result?.rerun_available, true);
+    assert.deepEqual(result.result?.limitations, ["telemetry_alignment_missing"]);
+    assert.match(result.result?.guidance ?? "", /force: true/);
+    assert.match(result.result?.guidance ?? "", /新 session/);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// [fix 2026-10-04] D：done 分析残缺为空 ⇒ 不提供 force 入口，维持现状文案。
+test("analysis.create_from_run keeps the plain done result when the reused analysis has no limitations", async () => {
+  writeSession(62, {
+    id: 62,
+    status: "done",
+    kovaak_run_id: 9,
+    result: { deterministic: { limitations: [] } },
+  });
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/9/analyze",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: 62 }));
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/62",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "done" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  writeOverview(62);
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run", { run_ref: "run:9" }, "owner-a", "idem-key-plain",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.deepEqual(result.result, {
+      session_id: 62,
+      analysis_ref: "analysis:62",
+      status: "done",
+    });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// [fix 2026-10-04] D：新建 session（非复用）时不出现重跑入口——即便该 run
+// 另有带残缺的旧 done 分析。
+test("analysis.create_from_run omits the rerun entry when a new session is created", async () => {
+  writeSession(63, {
+    id: 63,
+    status: "done",
+    kovaak_run_id: 9,
+    result: { deterministic: { limitations: ["visual_artifact_commit_failed"] } },
+  });
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/9/analyze",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: 64 }));   // 全新 session
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/64",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "done" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  writeOverview(64);
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run", { run_ref: "run:9" }, "owner-a", "idem-key-new",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.result?.rerun_available, undefined);
+    assert.deepEqual(result.result, {
+      session_id: 64,
+      analysis_ref: "analysis:64",
+      status: "done",
+    });
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test("analysis.create_from_run surfaces a rejected trigger", async () => {
   const server = await startMockServer([
     {
@@ -315,4 +449,119 @@ test("tool dispatches analysis.create_from_run natively when no bridge exists", 
   const parsed = JSON.parse(text) as { status: string; warning_or_error?: { code: string } };
   assert.equal(parsed.status, "failed");
   assert.equal(parsed.warning_or_error?.code, "python_backend_unavailable");
+});
+
+// ── [2026-10-04] Coach 判断制 ──────────────────────────────────────────────
+
+const {
+  executeNativeScenarioEvidence,
+  isNativeScenarioEvidenceCommand,
+} = await import("../src/python-analysis.ts");
+
+// 第二段：显式家族判断与依据原样转发到 Python 创建接口。
+test("analysis.create_from_run forwards aim_family and classification_basis", async () => {
+  const bodies: unknown[] = [];
+  const server = await startMockServer([
+    {
+      match: (method, url) => method === "POST" && url === "/api/kovaak-runs/7/analyze",
+      handler: (req, res) => {
+        let raw = "";
+        req.on("data", (chunk: Buffer) => (raw += chunk.toString("utf8")));
+        req.on("end", () => {
+          bodies.push(raw ? JSON.parse(raw) : {});
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ session_id: 71 }));
+        });
+      },
+    },
+    {
+      match: (method, url) => method === "GET" && url === "/api/sessions/71",
+      handler: (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "done" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  writeOverview(71);
+  try {
+    const result = await executeNativePythonAnalysis(
+      "analysis.create_from_run",
+      {
+        run_ref: "run:7",
+        aim_family: "continuous_tracking",
+        classification_basis: "hold_frac 0.98 且官方杀率 1.41/s",
+      },
+      "owner-a", "idem-key-aim",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.deepEqual(bodies, [{
+      aim_family: "continuous_tracking",
+      classification_basis: "hold_frac 0.98 且官方杀率 1.41/s",
+    }]);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// 第一段：只读证据包命令（GET，不入队不开跑）。
+test("analysis.scenario_evidence fetches the read-only evidence bundle", async () => {
+  let evidenceRequested = false;
+  const server = await startMockServer([
+    {
+      match: (method, url) =>
+        method === "GET" && url === "/api/kovaak-runs/7/scenario-evidence",
+      handler: (_req, res) => {
+        evidenceRequested = true;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          schema_version: "scenario_evidence.v1",
+          run_ref: "run:7",
+          name_evidence: { matched_keywords: ["track"], candidate_family: "continuous_tracking" },
+          telemetry_evidence: null,
+          shape_evidence: null,
+          memory: null,
+          current_resolution: { classification_source: "name_heuristic" },
+          field_legend: { how_to_judge: "..." },
+        }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  try {
+    assert.equal(isNativeScenarioEvidenceCommand("analysis.scenario_evidence"), true);
+    assert.equal(isNativeScenarioEvidenceCommand("analysis.create_from_run"), false);
+    const result = await executeNativeScenarioEvidence(
+      "analysis.scenario_evidence", { run_ref: "run:7" }, "owner-a",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.result_ref, "run:7");
+    assert.equal(result.result?.schema_version, "scenario_evidence.v1");
+    assert.ok(evidenceRequested);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("analysis.scenario_evidence surfaces backend failures", async () => {
+  const server = await startMockServer([
+    {
+      match: (method, url) => url === "/api/kovaak-runs/7/scenario-evidence",
+      handler: (_req, res) => {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ detail: "source_unavailable: stats identity missing" }));
+      },
+    },
+  ]);
+  writeConfig(serverBaseUrl(server));
+  try {
+    const result = await executeNativeScenarioEvidence(
+      "analysis.scenario_evidence", { run_ref: "run:7" }, "owner-a",
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.warning_or_error?.code, "scenario_evidence_failed");
+    assert.match(result.warning_or_error?.message ?? "", /source_unavailable/);
+  } finally {
+    await closeServer(server);
+  }
 });

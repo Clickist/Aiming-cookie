@@ -1228,6 +1228,8 @@ async def analyze_kovaak_run(
         allow_parallel=request.allow_parallel,
         force=request.force,
         locale=_request_locale(http_request),
+        aim_family=request.aim_family,
+        classification_basis=request.classification_basis,
     )
     _raise_product_command_error(
         result,
@@ -1235,6 +1237,8 @@ async def analyze_kovaak_run(
             "active_analysis": 429,
             "input_setup_failed": 500,
             "not_found": 409,
+            "invalid_aim_family": 422,
+            "invalid_classification_basis": 422,
         },
     )
     created = result.get("result") or {}
@@ -1242,6 +1246,28 @@ async def analyze_kovaak_run(
     if not isinstance(session_id, int):
         raise HTTPException(500, "Analysis creation returned an invalid result")
     return AnalyzeResponse(session_id=session_id)
+
+
+@router.get("/kovaak-runs/{run_id}/scenario-evidence")
+async def get_kovaak_run_scenario_evidence(
+    run_id: int = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    """[2026-10-04] Coach 判断制第一段：分类证据包（只读，不入队不开跑）。
+
+    返回场景名字线索、冻结旁车遥测操作特征、Stats/Raw 挑战形状粗分类与
+    字段图例（自描述数据）。run 不存在 404；源文件不可用 409。
+    """
+    try:
+        return await analysis_service.build_scenario_evidence(
+            run_id,
+            config.DESKTOP_LOCAL_PROFILE,
+        )
+    except analysis_service.ProductCommandError as exc:
+        raise HTTPException(
+            404 if exc.code == "not_found" else 403 if exc.code == "forbidden" else 409,
+            _error_detail(f"scenario_evidence.{exc.code}", message=exc.message),
+        ) from exc
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)

@@ -2047,19 +2047,22 @@ def test_analysis_service_refines_name_candidates_with_challenge_shape():
     assert public["scenario_challenge_shape"] == refined["scenario_challenge_shape"]
 
 
-def test_analysis_service_keeps_exact_and_local_definitions_over_challenge_shape():
+def test_analysis_service_keeps_local_definitions_over_challenge_shape():
     from webapp.backend import analysis_service
     from kovaak_tracker import scenario_profiles
 
+    # [2026-10-04] reviewed 精选档案层退役：registry hash 不再让 shape 层
+    # 让位（reviewed hash 的 name 层结论与普通 name 层同权，可被 shape 替换）；
+    # 本地 .sce 结构（confirmed）仍保持优先。
     exact = scenario_profiles.resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
         display_name="WHJ SmoothStrafeSphere Easy",
     )
-    unchanged = analysis_service._apply_challenge_shape_resolution(
+    assert exact["classification_source"] == "name_heuristic"
+    refined = analysis_service._apply_challenge_shape_resolution(
         _shape_refine_run(), _shape_refine_snapshot(exact),
     )
-    assert unchanged["scenario_resolution"] == exact
-    assert "scenario_challenge_shape" not in unchanged
+    assert refined["scenario_resolution"]["classification_source"] == "challenge_shape"
 
     local_definition = dict(exact, classification_source="local_scenario_definition")
     kept = analysis_service._apply_challenge_shape_resolution(
@@ -2238,14 +2241,16 @@ def test_analysis_service_telemetry_observation_respects_layer_precedence():
         external_run_id=external_run_id("synthetic|1|observed-precedence"),
     )
 
-    # reviewed profile 与本地 .sce 在顶层，观测层不覆盖。
+    # 本地 .sce 在顶层，观测层不覆盖；registry hash 的 name 层与普通 name
+    # 层同权（[2026-10-04] reviewed 精选档案层退役），可被观测层替换。
     exact = scenario_profiles.resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
         display_name="WHJ SmoothStrafeSphere Easy",
     )
-    assert analysis_service._apply_telemetry_observed_resolution(
+    observed_exact = analysis_service._apply_telemetry_observed_resolution(
         _observed_refine_snapshot(exact, source),
-    )["scenario_resolution"] == exact
+    )
+    assert observed_exact["scenario_resolution"]["classification_source"] == "telemetry_observed"
     local_definition = dict(exact, classification_source="local_scenario_definition")
     assert analysis_service._apply_telemetry_observed_resolution(
         _observed_refine_snapshot(local_definition, source),
@@ -2320,14 +2325,17 @@ def test_scenario_override_beats_name_and_shape_layers():
     assert snapshot["scenario_resolution"]["classification_source"] == "name_heuristic"
 
 
-def test_exact_reviewed_hash_beats_scenario_override():
+def test_scenario_override_applies_to_registry_hashes():
     from webapp.backend import analysis_service
     from kovaak_tracker import scenario_profiles
 
+    # [2026-10-04] reviewed 精选档案层退役：用户确认记忆是分类链顶层，
+    # registry hash 不再享有「override 让位」的特权。
     exact = scenario_profiles.resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
         display_name="WHJ SmoothStrafeSphere Easy",
     )
+    assert exact["classification_source"] == "name_heuristic"
     _write_scenario_overrides({
         "b2ae4a24b710e36afc6e57c61f590ab4": {
             "aim_family": "static_clicking",
@@ -2337,11 +2345,13 @@ def test_exact_reviewed_hash_beats_scenario_override():
         },
     })
 
-    unchanged = analysis_service._apply_scenario_override_resolution(
+    overridden = analysis_service._apply_scenario_override_resolution(
         _shape_refine_snapshot(exact),
     )
 
-    assert unchanged["scenario_resolution"] == exact
+    resolution = overridden["scenario_resolution"]
+    assert resolution["classification_source"] == "scenario_override"
+    assert resolution["aim_family"] == "static_clicking"
 
 
 def test_scenario_override_miss_or_bad_entry_falls_back_to_the_original_chain():
@@ -2616,6 +2626,152 @@ async def test_force_rerun_skips_same_family_override_reuse(monkeypatch, tmp_pat
     )
     assert forced["session_id"] != first["session_id"]
     assert "reused" not in forced
+
+
+# ── [2026-10-04] Coach 判断制：两段式分析 + coach 记忆层序 ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_coach_specified_aim_family_freezes_resolution(monkeypatch, tmp_path: Path):
+    """第二段带 aim_family：快照 resolution 固化 coach_specified/confirmed，
+    basis 记录 Coach 依据，worker 分发按该家族走。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-coach-specified"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    created = await analysis_service.create_analysis_from_run(
+        owner,
+        run["id"],
+        managed_video_source=video,
+        aim_family="continuous_tracking",
+        classification_basis="hold_frac 0.98 且官方杀率 1.41/s",
+    )
+
+    session = await queue.get_session(created["session_id"])
+    resolution = session["input_snapshot"]["scenario_resolution"]
+    assert resolution["classification_source"] == "coach_specified"
+    assert resolution["classification_confidence"] == "confirmed"
+    assert resolution["classification_basis"] == "hold_frac 0.98 且官方杀率 1.41/s"
+    assert resolution["aim_family"] == "continuous_tracking"
+    # 名称层本会判 static_clicking；Coach 显式判断改写入队类型。
+    assert session["analysis_type"] == "continuous_tracking"
+
+
+@pytest.mark.asyncio
+async def test_coach_specified_aim_family_rejects_unknown_family(monkeypatch, tmp_path: Path):
+    """aim_family 白名单校验：发明第五类被拒绝且不入队。"""
+    from webapp.backend import analysis_service, config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-coach-invalid"
+    run = await _override_ready_run(tmp_path, owner=owner)
+
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
+            owner, run["id"], aim_family="movement_aiming",
+        )
+    assert exc_info.value.code == "invalid_aim_family"
+
+
+@pytest.mark.asyncio
+async def test_coach_memory_judged_layer_and_user_priority(monkeypatch, tmp_path: Path):
+    """读侧层序：用户确认（scenario_override）> Coach 判定（coach_judged）。
+
+    confirmed_by=coach 的记忆以 coach_judged 固化；同 hash 换成 user 记忆后
+    顶层回到 scenario_override。
+    """
+    from webapp.backend import analysis_service, config, queue
+    from webapp.backend.contracts import validate_scenario_resolution_v1
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {
+            "aim_family": "target_switching",
+            "confirmed_by": "coach",
+            "note": "hold_frac 0.98 且官方杀率 1.41/s",
+            "updated_at": "2026-10-04T00:00:00Z",
+        },
+    })
+    owner = "owner-coach-judged"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    created = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    session = await queue.get_session(created["session_id"])
+    resolution = session["input_snapshot"]["scenario_resolution"]
+    assert resolution["classification_source"] == "coach_judged"
+    assert resolution["aim_family"] == "target_switching"
+    assert resolution["classification_basis"] == "hold_frac 0.98 且官方杀率 1.41/s"
+    validate_scenario_resolution_v1(resolution)
+    assert session["analysis_type"] == "target_switching"
+    _mark_session_done(created["session_id"])
+
+    # 用户确认记忆写入同一 hash → 顶层回到 scenario_override。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "static_clicking", "confirmed_by": "user"},
+    })
+    again = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    again_session = await queue.get_session(again["session_id"])
+    assert again_session["input_snapshot"]["scenario_resolution"][
+        "classification_source"
+    ] == "scenario_override"
+    assert again_session["analysis_type"] == "static_clicking"
+
+
+@pytest.mark.asyncio
+async def test_scenario_evidence_first_stage_does_not_enqueue(monkeypatch, tmp_path: Path):
+    """第一段只读证据包：组装名字/形状/记忆/图例与当前 resolution，不入队。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-coach-evidence"
+    run = await _override_ready_run(tmp_path, owner=owner)
+
+    evidence = await analysis_service.build_scenario_evidence(run["id"], owner)
+
+    assert evidence["schema_version"] == "scenario_evidence.v1"
+    assert evidence["run_ref"] == f"run:{run['id']}"
+    assert evidence["scenario"] == "Complete test scenario"
+    assert evidence["scenario_hash"] == _OVERRIDE_HASH
+    # 无线索名：matched_keywords 空、candidate_family None（不构成投票）。
+    assert evidence["name_evidence"]["matched_keywords"] == []
+    assert evidence["name_evidence"]["candidate_family"] is None
+    # 无旁车遥测、无 Raw trace 且 Stats 无击杀数：两层如实缺席（null）。
+    assert evidence["telemetry_evidence"] is None
+    assert evidence["shape_evidence"] is None
+    # 字段图例随包传输（知识跟数据走，不进系统提示词）。
+    assert "hold_frac" in evidence["field_legend"]["telemetry_evidence"]
+    assert "coach_judged" in evidence["field_legend"]["current_resolution"]
+    assert "confirmed_by=\"coach\"" in evidence["field_legend"]["how_to_judge"]
+    # 当前 resolution + 记忆状态可见。
+    assert evidence["current_resolution"]["classification_source"] == "name_heuristic"
+    assert evidence["memory"] is None
+    # 不入队不开跑。
+    assert await queue.get_run_analysis_states(owner, run["id"]) == []
+
+    # 写入 Coach 记忆后：同图判过即记住——记忆层 + current_resolution 直接
+    # 返回固化结论，Coach 不重复判断。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {
+            "aim_family": "continuous_tracking",
+            "confirmed_by": "coach",
+            "note": None,
+            "updated_at": "2026-10-04T00:00:00Z",
+        },
+    })
+    remembered = await analysis_service.build_scenario_evidence(run["id"], owner)
+    assert remembered["memory"]["confirmed_by"] == "coach"
+    assert remembered["memory"]["aim_family"] == "continuous_tracking"
+    assert remembered["current_resolution"]["classification_source"] == "coach_judged"
 
 
 @pytest.mark.asyncio

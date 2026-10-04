@@ -54,6 +54,11 @@ class KovaaKAnalysisRequest(BaseModel):
     fov: Optional[float] = None
     profile_default: Optional[CalibrationValues] = None
     manual_override: Optional[CalibrationValues] = None
+    # [2026-10-04] Coach 判断制第二段：Coach 对本局的显式场景家族判断
+    #（四家族白名单，后端校验）；classification_basis 是 Coach 给出的
+    # 人读依据（可选，随 resolution 固化）。
+    aim_family: Optional[str] = None
+    classification_basis: Optional[str] = None
 
 
 class StorageSessionItem(BaseModel):

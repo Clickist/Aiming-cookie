@@ -2785,6 +2785,8 @@ def test_clicking_baseline_result_attaches_managed_video_replay_reference():
 def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    # [2026-10-04] reviewed 精选档案层退役：registry hash 不再有专属快速
+    # 通道，普通 name 层 static_clicking 同样分发 native 分析。
     snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
         "7378a811f430b6072d052a75896afb98",
         display_name="1wall 6targets small",
@@ -2795,6 +2797,9 @@ def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
         "input_native",
     ) == "native_flicking.v1"
 
+    # 门禁删除后不再存在「metric 受限但合法」的 static native 形状：
+    # 刻意削掉 outcome 的不一致快照被 frozen contract 拒绝（fail fast），
+    # 不再静默降级 outcome_only。
     metric_restricted = {
         **snapshot,
         "scenario_resolution": {
@@ -2802,10 +2807,11 @@ def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
             "allowed_metric_families": ["input_kinematics"],
         },
     }
-    assert worker._scenario_dispatch(
-        {"analysis_type": "flicking", "input_snapshot": metric_restricted},
-        "input_native",
-    ) == "outcome_only"
+    with pytest.raises(ValueError):
+        worker._scenario_dispatch(
+            {"analysis_type": "flicking", "input_snapshot": metric_restricted},
+            "input_native",
+        )
 
 
 def test_local_dynamic_baseline_dispatches_native_facts_without_exact_visual_profile():
@@ -2885,10 +2891,13 @@ Category=SemiAuto
         behavior_descriptor=descriptor,
     )
 
+    # [2026-10-04] reviewed 精选档案层退役：native static 分析对全部
+    # static_clicking 场景开放——本地 .sce 结构识别的陌生静态场景直接进
+    # native（与精选场景同权），不再落 baseline。
     assert worker._scenario_dispatch(
         {"analysis_type": "flicking", "input_snapshot": snapshot},
         "input_native",
-    ) == "static_clicking.baseline.v1"
+    ) == "native_flicking.v1"
 
 
 def test_exact_packaged_tracking_without_video_degrades_to_input_native_baseline():
@@ -3367,131 +3376,32 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
         ]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("quality_enabled", "expected_version"),
-    [(True, "target_switching.v1"), (False, "scenario_outcome_only.v1")],
-)
-async def test_process_one_switching_requires_quality_and_formal_chain(
-    tmp_path: Path,
-    quality_enabled: bool,
-    expected_version: str,
-):
-    source_video = tmp_path / "source.mp4"
-    managed_video = tmp_path / "managed.mp4"
-    source_video.write_bytes(b"stable-video")
-    managed_video.write_bytes(source_video.read_bytes())
+def test_switching_reviewed_dispatch_path_is_retired():
+    """[2026-10-04] reviewed 精选档案层退役：switching 不再有「quality gate →
+    校准视觉管线」的分发路径。旧 reviewed 形状（family_specific、无 baseline
+    analyzer）在分发层落 outcome_only；普通 switching 场景一律 baseline
+    （input-kinematics），与 test_name_heuristic_switching_without_video_
+    dispatches_baseline_kinematics 的 multimodal 断言互为表里。"""
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["scenario_resolution"] = _scenario_resolution(
+    reviewed_shape = _scenario_resolution(
         manifest_status="active",
         dispatch="allowed",
         aim_family="target_switching",
         allowed_analyzers=["target_switching.v1"],
     )
-    snapshot["scenario_resolution"].update({
+    reviewed_shape.update({
         "target_motion": {"model": "mixed", "target_count_model": "concurrent"},
         "allowed_metric_families": ["target_switching"],
     })
-    video_source = _video_source(source_video)
-    video_source.update({
-        "ownership": "run",
-        "artifact_ref": "run:42:video:fixture",
-    })
-    snapshot["sources"]["video"] = video_source
-    job = {
-        "id": 124,
-        "user_id": "u1",
-        "analysis_type": "target_switching",
-        "input_mode": "multimodal",
-        "kovaak_run_id": 42,
-        "input_snapshot": snapshot,
-        "video_path": str(managed_video),
-        "csv_path": "",
-        "cm_per_360": None,
-        "fov": None,
-        "created_at": "2026-07-13 12:00:00",
-    }
-    completed: list[dict] = []
-    committed: list[dict] = []
+    snapshot["scenario_resolution"] = reviewed_shape
 
-    async def mark_done(_sid, result, _cost, *, worker_id):
-        completed.append(result)
-        return True
-
-    def commit(_job, result, **kwargs):
-        committed.append(kwargs)
-        return result
-
-    visual_result = _switching_visual_summary(enabled=quality_enabled)
-    episode_result = {
-        "schema_version": "visual_target_episode_artifact.v1",
-        "status": "available",
-    }
-    pipeline_mock = AsyncMock(return_value=(visual_result, episode_result))
-    switching_mock = MagicMock(return_value=_switching_analysis_summary())
-    frozen_stats = object()
-    native_mock = MagicMock()
-    baseline_mock = AsyncMock(return_value={
-        "comparable": True,
-        "reason": None,
-        "baseline_analysis_ref": "analysis:120",
-        "baseline_metrics": {"target_switching.transition_time_ms": 90.0},
-        "metric_comparisons": {},
-    })
-    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
-        "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
-    ), patch(
-        "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
-    ), patch(
-        "webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done),
-    ), patch(
-        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=frozen_stats,
-    ), patch(
-        "webapp.backend.worker.run_target_switching_pipeline_isolated",
-        new=pipeline_mock,
-    ), patch(
-        "webapp.backend.worker._target_switching_production_gate", return_value=True,
-    ), patch(
-        "webapp.backend.worker.run_target_switching_analysis", switching_mock,
-    ), patch(
-        "webapp.backend.worker.run_native_analysis", native_mock,
-    ), patch(
-        "webapp.backend.history_trends.matched_target_switching_baseline_for_user",
-        new=baseline_mock,
-    ), patch(
-        "webapp.backend.worker._maybe_commit_analysis_evidence",
-        side_effect=commit,
-    ):
-        assert await worker.process_one() is True
-
-    result = completed[0]
-    assert len(committed) == 1
-    pipeline_mock.assert_awaited_once_with(job)
-    assert committed[0]["visual_result"] == visual_result
-    assert result["analysis_version"] == expected_version
-    assert result["analysis_type"] == "target_switching"
-    native_mock.assert_not_called()
-    if quality_enabled:
-        switching_mock.assert_called_once_with(
-            job, visual_result, episode_result, frozen_stats,
-        )
-        assert result["deterministic"]["metrics"][
-            "target_switching.transition_time_ms"
-        ]["value"] == 120.0
-        assert result["scenario"]["analyzer_refs"] == ["target_switching.v1"]
-        assert committed[0]["switching_result"]["analysis_version"] == (
-            "target_switching.v1"
-        )
-        assert "processed_rows" not in json.dumps(result)
-    else:
-        switching_mock.assert_not_called()
-        baseline_mock.assert_not_called()
-        assert result["deterministic"]["metrics"] == {}
-        assert result["deterministic"]["limitations"] == [
-            "target_switching_visual_quality_unavailable"
-        ]
-        assert committed[0]["switching_result"] is None
+    # 旧 reviewed 形状快照（升级前冻结）重析时不再触发视觉管线：分发层
+    # 的 gate 路径已随精选档案层删除。
+    assert worker._scenario_dispatch(
+        {"analysis_type": "target_switching", "input_snapshot": snapshot},
+        "multimodal",
+    ) == "outcome_only"
 
 
 @pytest.mark.asyncio

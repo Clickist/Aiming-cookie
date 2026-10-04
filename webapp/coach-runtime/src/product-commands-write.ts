@@ -8,7 +8,9 @@
  * complex session management (coach.session.*, coach.context.detach) are NOT
  * native — they delegate to the Python backend bridge or the REST API.
  * analysis.create_from_run is native via the Python REST API (see
- * python-analysis.ts); teaching_session.update is native below.
+ * python-analysis.ts; [fix 2026-10-04] D：done 但有残缺的 run 在复用结果里
+ * 暴露 force 重跑入口，也由 python-analysis.ts 承载); teaching_session.update
+ * is native below.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
@@ -977,14 +979,18 @@ const teachingSessionUpdate: WriteHandler = (params, _ownerId) => {
 //
 // Scenario family memory is one owner-scoped JSON file,
 // config/scenario-overrides.json. scenario_memory.set is the Coach's single
-// write entry point after the user confirms a scenario's aim family once;
-// the Python read side applies it above the heuristic identification chain
-// (exact reviewed hashes keep priority).
+// write entry point; the Python read side applies it above the heuristic
+// identification chain with the layer order user confirmation
+// (confirmed_by="user", scenario_override) > Coach judgement
+// (confirmed_by="coach", coach_judged) > automatic waterfall.
+// [2026-10-04] confirmed_by 扩展："coach" 记录 Coach 自身的家族判定
+// （同图判过即记住）；用户确认仍写 "user"，且不被 Coach 判定覆盖。
 
 const SCENARIO_OVERRIDES_SCHEMA = "scenario_overrides.v1";
 const SCENARIO_OVERRIDE_FAMILIES = new Set([
   "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
 ]);
+const SCENARIO_OVERRIDE_CONFIRMED_BY = new Set(["user", "coach"]);
 const SCENARIO_HASH_RE = /^[0-9a-f]{32}$/;
 const SCENARIO_OVERRIDE_MAX_ENTRIES = 5000;
 
@@ -997,6 +1003,9 @@ const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
   const scenarioHash = params.scenario_hash;
   const aimFamily = params.aim_family;
   const note = params.note;
+  const confirmedBy = params.confirmed_by === undefined || params.confirmed_by === null
+    ? "user"
+    : params.confirmed_by;
   if (typeof scenarioHash !== "string" || !SCENARIO_HASH_RE.test(scenarioHash)) {
     return fail("invalid_scenario_memory", "scenario_hash must be 32 lowercase hex characters");
   }
@@ -1004,6 +1013,14 @@ const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
     return fail(
       "invalid_scenario_memory",
       `aim_family must be one of ${[...SCENARIO_OVERRIDE_FAMILIES].sort().join(", ")}`,
+    );
+  }
+  if (
+    typeof confirmedBy !== "string" || !SCENARIO_OVERRIDE_CONFIRMED_BY.has(confirmedBy)
+  ) {
+    return fail(
+      "invalid_scenario_memory",
+      'confirmed_by must be "user" (用户确认) or "coach" (Coach 判定)',
     );
   }
   if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 200)) {
@@ -1014,11 +1031,24 @@ const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
     && existing.overrides && typeof existing.overrides === "object" && !Array.isArray(existing.overrides)
     ? existing.overrides as AnyDict
     : {};
+  const prior = existingOverrides[scenarioHash];
+  if (
+    confirmedBy === "coach"
+    && prior && typeof prior === "object" && !Array.isArray(prior)
+    && (prior as AnyDict).confirmed_by === "user"
+  ) {
+    // 读侧层序（用户确认 > Coach 判定）在写入侧兑现：用户亲自确认过的
+    // 家族记忆不接受 Coach 判定降级覆盖。
+    return fail(
+      "invalid_scenario_memory",
+      "该场景已由用户亲自确认家族（confirmed_by=user），Coach 判定不能覆盖；如家族有误请引导用户用 confirmed_by=\"user\" 更正",
+    );
+  }
   const overrides: AnyDict = { ...existingOverrides };
   const trimmedNote = typeof note === "string" ? note.trim() : "";
   overrides[scenarioHash] = {
     aim_family: aimFamily,
-    confirmed_by: "user",
+    confirmed_by: confirmedBy,
     note: trimmedNote || null,
     updated_at: nowIso(),
   };
@@ -1033,7 +1063,7 @@ const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
     schema_version: SCENARIO_OVERRIDES_SCHEMA,
     scenario_hash: scenarioHash,
     aim_family: aimFamily,
-    confirmed_by: "user",
+    confirmed_by: confirmedBy,
     note: overrides[scenarioHash].note,
     updated_at: overrides[scenarioHash].updated_at,
   }, `scenario_override:${scenarioHash}`);

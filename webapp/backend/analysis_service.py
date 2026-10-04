@@ -233,6 +233,217 @@ def _challenge_shape_for_run(
     return shape
 
 
+# ── Coach 判断制第一段：分类证据包（只读，不入队不开跑）────────────────
+#
+# [2026-10-04] 拍板：Coach 是全产品唯一分析入口，分类改为 Coach 判断制。
+# 第一段把场景名字线索、冻结旁车遥测操作特征、Stats/Raw 挑战形状粗分类与
+# 字段图例组装成自描述证据包返回给 Coach；知识跟数据走（字段图例随包传输，
+# 不进系统提示词）。Coach 看完证据在第二段用 analysis.create_from_run 的
+# aim_family 显式发起分析，并用 scenario_memory.set 记住该图。
+
+SCENARIO_EVIDENCE_SCHEMA_VERSION = "scenario_evidence.v1"
+
+SCENARIO_EVIDENCE_FIELD_LEGEND = {
+    "name_evidence": (
+        "场景名关键词线索：matched_keywords 是命中的家族关键词"
+        "（strafe/track→continuous_tracking，switch→target_switching，"
+        "pasu→dynamic_clicking）；candidate_family=null 表示名字无任何家族线索"
+        "（与「默认落 static_clicking」严格区分，null 不构成投票）；"
+        "unique_reviewed_name_match=true 表示官方注册表存在唯一同名场景，"
+        "此时 candidate_family 来自该场景的登记家族，可信度最高。"
+    ),
+    "telemetry_evidence": (
+        "冻结旁车遥测的操作特征（null=本局无可用旁车遥测，忽略该层）。"
+        "features 数字：hold_frac=开火键按住时间占比（接近 1=持续按住连发，"
+        "指向 continuous_tracking；很低=点射，指向点击类）；clicks_per_min="
+        "每分钟点击数（高=点击类）；clicks_per_kill=每杀点击数；mean_hold_ms="
+        "平均单次按住毫秒；err_p10/err_at_click_p50=准星误差分位数（小=准星"
+        "长时间贴住目标，跟踪特征）；err_spike_rate_per_s=误差尖峰频率"
+        "（高=频繁大幅修正）；dir_flips_per_s=方向翻转频率（高=往返跟踪）；"
+        "omega_p99/omega_frac_20_200=角速度分布（大幅甩动/跟踪占比）；"
+        "alive_mean=平均同时存活目标数（>1=并发目标）；"
+        "bearing_delta_at_kill_med=击杀时目标方位角（大=多目标间转火）；"
+        "ang_radius_med/dist_med=目标角半径/距离中位；moving_time_share="
+        "目标运动时间占比；target_speed_p50=目标速度中位（高=移动目标）。"
+        "tree_candidate/tree_basis=规则判别树的家族候选与依据（统计性参考）。"
+        "official_kills/official_kill_rate_per_s=官方窗击杀数与每秒杀率"
+        "（高杀率+低按住=点击；极低杀率+高按住=纯跟踪）。"
+    ),
+    "shape_evidence": (
+        "Stats/Raw 挑战形状粗分类（null=无法计算）：button_samples_held=挑战窗"
+        "内开火键按住的毫秒采样数；button_samples_per_kill=每次击杀的按住采样数"
+        "（>100=持续按住，指向 tracking；<50=点射，指向 clicking；50-100 为判别"
+        "带，shape_class=null 不构成投票）；shape_class=tracking_candidate/"
+        "clicking_candidate；basis=判定依据（fire_mode_hold/fire_mode_tap/"
+        "zero_kill_sustained_fire/kill_density_fallback）。"
+    ),
+    "memory": (
+        "既往记忆（null=该图从未判过）：confirmed_by=user 表示用户亲自确认过"
+        "家族（最高优先，不要覆盖或改判）；confirmed_by=coach 表示 Coach 此前"
+        "判定并记住过——同图再次分析直接沿用 current_resolution 的家族，"
+        "不重复判断。"
+    ),
+    "current_resolution": (
+        "当前记忆+瀑布应用后的场景解析：classification_source 说明结论来自"
+        "哪层（scenario_override=用户确认 > coach_judged=Coach 历史判定 > "
+        "local_scenario_definition > telemetry_observed/challenge_shape/"
+        "name_heuristic/family_default=自动兜底）。memory 存在时 aim_family "
+        "已按记忆固化，直接采用即可。"
+    ),
+    "how_to_judge": (
+        "判断指引：各层证据独立投票，冲突时按证据强度排序（遥测特征与形状 "
+        "> 名字关键词；互斥时择强）。判断后：1) 用 analysis.create_from_run "
+        "传 aim_family（四家族之一）与 classification_basis（一句话依据）发起"
+        "分析；2) 用 scenario_memory.set 传 scenario_hash 与 aim_family、"
+        "confirmed_by=\"coach\" 记住该图，下次同图不再重复判断。四家族："
+        "static_clicking=静态目标点击；dynamic_clicking=移动目标点击（pasu 等）；"
+        "continuous_tracking=持续跟踪（tracking/strafe 类）；target_switching="
+        "多目标间快速切换。"
+    ),
+}
+
+
+def _scenario_evidence_name_layer(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    from kovaak_tracker.scenario_profiles import name_evidence_for_display_name
+
+    scenario = snapshot.get("scenario")
+    if not isinstance(scenario, str):
+        return None
+    from kovaak_tracker.scenario_profiles import load_registry
+
+    entries = load_registry()["entries"]
+    return name_evidence_for_display_name(entries, scenario)
+
+
+def _scenario_evidence_telemetry_layer(
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """冻结旁车遥测证据：features 全量数字 + 判别树原始结论；无源返回 None。"""
+    try:
+        profile = _observed_profile_for_snapshot(snapshot)
+    except (OSError, ValueError):
+        return None
+    if profile is None:
+        return None
+    verdict = profile.get("verdict") or {}
+    window = profile.get("window") or {}
+    official_kills = profile.get("official_kills")
+    window_kind = window.get("kind")
+    official_span = window.get("official_window_t")
+    official_rate = None
+    if (
+        window_kind == "official_pairing_window"
+        and isinstance(official_span, (list, tuple))
+        and len(official_span) == 2
+        and all(isinstance(item, (int, float)) for item in official_span)
+        and official_span[1] > official_span[0]
+        and isinstance(official_kills, int)
+    ):
+        rate = official_kills / (float(official_span[1]) - float(official_span[0]))
+        official_rate = round(rate, 4)
+    from kovaak_tracker.telemetry_scenario_features import (
+        scenario_scoring_penalizes_fire,
+    )
+
+    return {
+        "window_kind": window_kind,
+        "window_duration_s": window.get("duration_s"),
+        "official_kills": official_kills,
+        "official_kill_rate_per_s": official_rate,
+        "features": dict(profile.get("features") or {}),
+        "tree_candidate": verdict.get("aim_family"),
+        "tree_basis": verdict.get("basis"),
+        "scoring_penalizes_fire": scenario_scoring_penalizes_fire(
+            snapshot.get("scenario") if isinstance(snapshot.get("scenario"), str) else None,
+        ),
+    }
+
+
+def _scenario_evidence_shape_layer(
+    run: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    shape = _challenge_shape_for_run(run, snapshot)
+    if shape is None:
+        return None
+    from kovaak_tracker.scenario_profiles import classify_challenge_shape_v1
+
+    verdict = classify_challenge_shape_v1(
+        shape["kills"],
+        shape["duration_ms"],
+        shape.get("button_samples_held"),
+    )
+    return {
+        "kills": shape["kills"],
+        "duration_ms": shape["duration_ms"],
+        "button_samples_held": shape.get("button_samples_held"),
+        "button_samples_per_kill": (
+            verdict.get("button_samples_per_kill") if verdict else None
+        ),
+        "shape_class": verdict.get("shape_class") if verdict else None,
+        "basis": verdict.get("basis") if verdict else None,
+    }
+
+
+def _scenario_evidence_memory_layer(scenario_hash: object) -> dict[str, Any] | None:
+    if not isinstance(scenario_hash, str):
+        return None
+    override = _load_scenario_overrides().get(scenario_hash)
+    if override is None:
+        return None
+    return {
+        "aim_family": override.get("aim_family"),
+        "confirmed_by": override.get("confirmed_by", "user"),
+        "note": override.get("note"),
+        "updated_at": override.get("updated_at"),
+    }
+
+
+def _build_scenario_evidence_payload(
+    run: Mapping[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """组装只读证据包：各层证据互相独立，允许同时冲突（Coach 仲裁）。"""
+    resolution = snapshot.get("scenario_resolution")
+    return {
+        "schema_version": SCENARIO_EVIDENCE_SCHEMA_VERSION,
+        "run_ref": f"run:{run['id']}",
+        "scenario": snapshot.get("scenario"),
+        "scenario_hash": (
+            resolution.get("scenario_hash")
+            if isinstance(resolution, Mapping) else None
+        ),
+        "name_evidence": _scenario_evidence_name_layer(snapshot),
+        "telemetry_evidence": _scenario_evidence_telemetry_layer(snapshot),
+        "shape_evidence": _scenario_evidence_shape_layer(run, snapshot),
+        "memory": _scenario_evidence_memory_layer(
+            resolution.get("scenario_hash") if isinstance(resolution, Mapping) else None,
+        ),
+        "current_resolution": resolution if isinstance(resolution, Mapping) else None,
+        "field_legend": dict(SCENARIO_EVIDENCE_FIELD_LEGEND),
+    }
+
+
+async def build_scenario_evidence(run_id: int, owner_id: str) -> dict[str, Any]:
+    """第一段只读端点：对指定 run 组装分类证据包，不入队不开跑。"""
+    run = await kovaak_run_store.get_kovaak_run(run_id, owner_id)
+    if run is None:
+        any_owner = await kovaak_run_store.get_kovaak_run_any_owner(run_id)
+        if any_owner is not None:
+            raise ProductCommandError("forbidden", "无权访问此 Run")
+        raise ProductCommandError("not_found", "KovaaK run 不存在", kind="unavailable")
+    try:
+        snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, owner_id)
+    except (LookupError, ValueError) as exc:
+        raise ProductCommandError("input_unavailable", str(exc), kind="unavailable") from exc
+    # 与 create_analysis_from_run 相同的层序：记忆 > 旁车观测 > 形状。
+    # Coach 在证据包里看到的 current_resolution 与随后分析固化的结论一致。
+    snapshot = _apply_scenario_override_resolution(snapshot)
+    snapshot = await asyncio.to_thread(_apply_telemetry_observed_resolution, snapshot)
+    snapshot = _apply_challenge_shape_resolution(run, snapshot)
+    return _build_scenario_evidence_payload(run, snapshot)
+
+
 SCENARIO_OVERRIDES_SCHEMA_VERSION = "scenario_overrides.v1"
 SCENARIO_OVERRIDES_MAX_ENTRIES = 5000
 SCENARIO_OVERRIDES_MAX_BYTES = 1024 * 1024
@@ -295,16 +506,15 @@ def _load_scenario_overrides() -> dict[str, dict[str, Any]]:
 
 
 def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Apply the user-confirmed family memory above the heuristic chain.
+    """Apply the scenario family memory above the heuristic chain.
 
-    Exact reviewed hashes keep priority (a resolution with a profile ref is
-    never replaced); the override beats the `.sce`, challenge-shape and name
-    layers. It routes the confirmed family baseline pipeline — confidence
-    confirmed, descriptive claims only — and never establishes scenario
-    identity or visual claims.
+    [2026-10-04] 读侧层序：用户确认（confirmed_by="user"，scenario_override）
+    > Coach 判定（confirmed_by="coach"，coach_judged）> 自动瀑布。一个 hash
+    只有一条记忆，写入侧已保证用户确认不被 Coach 覆盖。记忆路由该家族的
+    baseline 管线且永不建立场景身份或视觉声明。
     """
     resolution = snapshot.get("scenario_resolution")
-    if not isinstance(resolution, Mapping) or resolution.get("scenario_profile_ref"):
+    if not isinstance(resolution, Mapping):
         return snapshot
     scenario_hash = resolution.get("scenario_hash")
     if not isinstance(scenario_hash, str):
@@ -312,6 +522,7 @@ def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, A
     override = _load_scenario_overrides().get(scenario_hash)
     if override is None:
         return snapshot
+    coach_confirmed = override.get("confirmed_by") == "coach"
     from kovaak_tracker.scenario_profiles import (
         _FAMILY_BASELINE_LIMITATIONS,
         _family_baseline_resolution,
@@ -323,11 +534,18 @@ def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, A
         registry_version=resolution["registry_version"],
         manifest_version=resolution["manifest_version"],
         aim_family=override["aim_family"],
-        classification_source="scenario_override",
+        classification_source="coach_judged" if coach_confirmed else "scenario_override",
         classification_confidence="confirmed",
+        classification_basis=(
+            override.get("note") if coach_confirmed and isinstance(override.get("note"), str) else None
+        ),
         target_motion={"model": "unknown", "target_count_model": "unknown"},
         limitations=[
-            "scenario_override_is_a_user_confirmed_family_not_an_identity",
+            (
+                "coach_judged_is_a_coach_confirmed_family_not_an_identity"
+                if coach_confirmed
+                else "scenario_override_is_a_user_confirmed_family_not_an_identity"
+            ),
             *_FAMILY_BASELINE_LIMITATIONS,
         ],
     )
@@ -342,9 +560,9 @@ def _apply_challenge_shape_resolution(
 ) -> dict[str, Any]:
     """Let the Stats-derived challenge shape refine name/default identifications.
 
-    Exact hashes and `.sce` structure keep priority: the shape layer only
-    replaces name-keyword or unresolved-default resolutions, and only when it
-    reaches a verdict (the middle kill-density band stays undecided).
+    `.sce` structure keeps priority: the shape layer only replaces
+    name-keyword or unresolved-default resolutions, and only when it reaches
+    a verdict (the middle kill-density band stays undecided).
     """
     resolution = snapshot.get("scenario_resolution")
     if (
@@ -457,8 +675,8 @@ def _observed_profile_for_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any
 def _apply_telemetry_observed_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Let the frozen-sidecar feature tree refine name/default identifications.
 
-    层序：reviewed hash 与用户 override 在顶层（override 已先行替换），本地
-    .sce 保持优先；本层只替换 name_heuristic/family_default，且在 challenge
+    层序：用户确认/Coach 判定记忆在顶层（override 已先行替换），本地 .sce
+    保持优先；本层只替换 name_heuristic/family_default，且在 challenge
     shape 之前应用（观测特征是 button_samples 的严格超集）。任何旁车/特征
     异常都静默让位——分类层绝不阻断分析。返回新快照，不就地修改。
     """
@@ -652,6 +870,8 @@ async def create_analysis_from_run(
     managed_video_source: Path | None = None,
     managed_video_fingerprint: Mapping[str, object] | None = None,
     locale: str = "zh-CN",
+    aim_family: str | None = None,
+    classification_basis: str | None = None,
 ) -> dict[str, Any]:
     """Freeze a Run and enqueue its highest valid automatic evidence tier.
 
@@ -662,14 +882,36 @@ async def create_analysis_from_run(
     [fix 2026-10-04] ``force`` 跳过 done 复用门（场景类型修正后的重跑必须
     产出新分析，不能返回缓存旧结果）；run_active 复用门保留——已有在途
     分析时不叠加第二个。
+
+    [2026-10-04] Coach 判断制第二段：``aim_family`` 是 Coach 对本局的显式
+    家族判断（四家族白名单）。指定时输入快照的 scenario_resolution 按该
+    家族固化（classification_source="coach_specified"、confidence=
+    "confirmed"，basis 记录 Coach 给出的依据可选）；用户确认记忆
+    （scenario_override）保持最高优先，Coach 指定不覆盖它。未指定时保持
+    现状瀑布（名字/遥测线索的既有自动逻辑）作为兜底。
     """
+    if aim_family is not None and aim_family not in _SCENARIO_OVERRIDE_FAMILIES:
+        raise ProductCommandError(
+            "invalid_aim_family",
+            "aim_family must be one of " + ", ".join(sorted(_SCENARIO_OVERRIDE_FAMILIES)),
+        )
+    if classification_basis is not None and (
+        not isinstance(classification_basis, str)
+        or not classification_basis.strip()
+        or len(classification_basis) > 200
+        or any(ord(char) < 32 for char in classification_basis)
+    ):
+        raise ProductCommandError(
+            "invalid_classification_basis",
+            "classification_basis must be a string of at most 200 characters",
+        )
     existing = await queue.get_run_analysis_states(owner_id, run_id)
     # A done analysis is the reusable answer for this Run unless the
-    # user-confirmed scenario memory may have reclassified it since. Stale
-    # algorithm versions are never the answer: a code upgrade changed what
-    # the analysis should say (e.g. tracking.generic_visual.v1's inflated
-    # in-target metrics), so those rebuild instead of pinning pre-upgrade
-    # results.
+    # user-confirmed scenario memory (or an explicit Coach family judgement)
+    # may have reclassified it since. Stale algorithm versions are never the
+    # answer: a code upgrade changed what the analysis should say (e.g.
+    # tracking.generic_visual.v1's inflated in-target metrics), so those
+    # rebuild instead of pinning pre-upgrade results.
     completed = next(
         (
             item for item in existing
@@ -679,7 +921,8 @@ async def create_analysis_from_run(
         None,
     )
     reclassified = (
-        completed is not None and await _run_may_be_reclassified(owner_id, run_id)
+        completed is not None
+        and (aim_family is not None or await _run_may_be_reclassified(owner_id, run_id))
     )
     # [fix 2026-10-04] 复用判定 = done 且 force 未设且（非 reclassifiable 或
     # 解析后快照的类型与 completed.analysis_type 相同）。force=True 是用户
@@ -733,6 +976,46 @@ async def create_analysis_from_run(
     # 旁车观测层：旁车 JSONL 读取较重，放线程避免阻塞事件循环。
     snapshot = await asyncio.to_thread(_apply_telemetry_observed_resolution, snapshot)
     snapshot = _apply_challenge_shape_resolution(run, snapshot)
+    if aim_family is not None:
+        # Coach 判断制第二段：显式家族判断压轴固化（用户确认记忆最高优先，
+        # scenario_override 已在记忆层应用时不被覆盖）。
+        resolution = snapshot.get("scenario_resolution")
+        if not isinstance(resolution, Mapping) or (
+            resolution.get("classification_source") != "scenario_override"
+        ):
+            from kovaak_tracker.scenario_profiles import (
+                _FAMILY_BASELINE_LIMITATIONS,
+                _family_baseline_resolution,
+            )
+
+            snapshot = dict(snapshot)
+            snapshot["scenario_resolution"] = _family_baseline_resolution(
+                scenario_hash=(
+                    resolution.get("scenario_hash")
+                    if isinstance(resolution, Mapping) else None
+                ),
+                display_name=(
+                    resolution.get("display_name")
+                    if isinstance(resolution, Mapping) else None
+                ),
+                registry_version=(
+                    resolution["registry_version"]
+                    if isinstance(resolution, Mapping) else ""
+                ),
+                manifest_version=(
+                    resolution["manifest_version"]
+                    if isinstance(resolution, Mapping) else ""
+                ),
+                aim_family=aim_family,
+                classification_source="coach_specified",
+                classification_confidence="confirmed",
+                classification_basis=classification_basis,
+                target_motion={"model": "unknown", "target_count_model": "unknown"},
+                limitations=[
+                    "coach_specified_is_a_coach_judged_family_not_an_identity",
+                    *_FAMILY_BASELINE_LIMITATIONS,
+                ],
+            )
     if reclassified and not force:
         # [fix 2026-10-04] 补 not force：显式重跑即使类型一致也不复用。
         # The override leaves the done analysis stale only when it changes the
@@ -1020,6 +1303,8 @@ async def execute_trusted_analysis_create(
     allow_parallel: bool = False,
     force: bool = False,
     locale: str = "zh-CN",
+    aim_family: str | None = None,
+    classification_basis: str | None = None,
 ) -> dict[str, Any]:
     """Execute the validated desktop Analysis write and return the canonical result."""
     command_id = "analysis.create_from_run"
@@ -1048,6 +1333,8 @@ async def execute_trusted_analysis_create(
             allow_parallel=allow_parallel,
             force=force,
             locale=locale,
+            aim_family=aim_family,
+            classification_basis=classification_basis,
         )
     except ProductCommandError as exc:
         return _failure_result(

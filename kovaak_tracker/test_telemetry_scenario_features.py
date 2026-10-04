@@ -777,13 +777,15 @@ def test_resolution_watermark_precedence(tmp_path):
     )
     assert validate_scenario_observed_profile(profile) is not None
 
-    # reviewed profile 与本地 .sce 优先于 observed 层（此处用 reviewed hash）。
+    # [2026-10-04] reviewed 精选档案层退役：registry hash 不再有专属快速
+    # 通道，任何 hash 都走同一条泛化瀑布——observed 层照常生效。
     exact = resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
         display_name="WHJ SmoothStrafeSphere Easy",
         observed_profile=profile,
     )
-    assert exact["classification_source"] == "reviewed_registry"
+    assert exact["classification_source"] == "telemetry_observed"
+    assert exact["scenario_profile_ref"] is None
 
     # observed 层高于 challenge_shape 与 name/default：shape 只在 observed
     # 让位（verdict None）时才被咨询。

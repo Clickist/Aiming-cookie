@@ -289,12 +289,17 @@ const TARGET_SWITCHING_COMPARISON_METRICS = new Set([
 const SCENARIO_RESOLUTION_FIELDS = new Set([
   "schema_version", "scenario_hash", "display_name", "registry_version",
   "manifest_version", "scenario_profile_ref", "classification_source",
-  "classification_confidence", "profile_status", "reviewed_at",
-  "source_refs", "supersedes", "manifest_status", "fixture_ref",
+  "classification_confidence", "classification_basis", "profile_status",
+  "reviewed_at", "source_refs", "supersedes", "manifest_status", "fixture_ref",
   "review_source_ref", "manifest_reviewed_at", "family_gate_refs",
   "aim_family", "subdomains", "target_motion", "allowed_analyzers",
   "allowed_metric_families", "claim_ceiling", "family_analyzer_dispatch",
   "limitations",
+]);
+// [2026-10-04] Coach 判断制：classification_basis 是可选新字段。旧快照没有
+// 它——V1 集合仍被接受（读兼容），新分析携带 V2 形状。
+const SCENARIO_RESOLUTION_FIELDS_V1 = new Set([
+  ...[...SCENARIO_RESOLUTION_FIELDS].filter((field) => field !== "classification_basis"),
 ]);
 
 function safeIdentity(value: unknown): string | null {
@@ -361,11 +366,14 @@ function validateScenarioResolutionV1(value: unknown): void {
   if (!value || typeof value !== "object") throw new Error("scenario_resolution must be a dict");
   const obj = value as AnyDict;
   const keys = new Set(Object.keys(obj));
-  for (const f of SCENARIO_RESOLUTION_FIELDS) {
+  const validFields = keys.has("classification_basis")
+    ? SCENARIO_RESOLUTION_FIELDS
+    : SCENARIO_RESOLUTION_FIELDS_V1;
+  for (const f of validFields) {
     if (!keys.has(f)) throw new Error("scenario_resolution fields are invalid");
   }
   for (const k of keys) {
-    if (!SCENARIO_RESOLUTION_FIELDS.has(k)) throw new Error("scenario_resolution fields are invalid");
+    if (!validFields.has(k)) throw new Error("scenario_resolution fields are invalid");
   }
   if (obj.schema_version !== "scenario_resolution.v1") throw new Error("unsupported contract version");
   const scenarioHash = obj.scenario_hash;

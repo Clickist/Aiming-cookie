@@ -1633,3 +1633,30 @@ async def test_storage_and_run_evidence_removal_are_desktop_only_and_path_free(
     }
     assert "/api/kovaak-runs/{run_id}/evidence" not in route_paths
     assert "/api/kovaak-runs/evidence/clear" not in route_paths
+
+
+@pytest.mark.asyncio
+async def test_scenario_evidence_readonly_endpoint_returns_bundle_without_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """[2026-10-04] Coach 判断制第一段：GET scenario-evidence 只读返回证据包。"""
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "evidence-token")
+    run, _video = await _seed_route_video_run(tmp_path, "evidence-run")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Aiming-Cookie-Desktop-Token": "evidence-token"},
+    ) as client:
+        bundle = await client.get(f"/api/kovaak-runs/{run['id']}/scenario-evidence")
+        missing = await client.get("/api/kovaak-runs/999999/scenario-evidence")
+
+    assert bundle.status_code == 200, bundle.text
+    payload = bundle.json()
+    assert payload["schema_version"] == "scenario_evidence.v1"
+    assert payload["run_ref"] == f"run:{run['id']}"
+    assert payload["current_resolution"]["classification_source"] == "name_heuristic"
+    assert "hold_frac" in payload["field_legend"]["telemetry_evidence"]
+    assert missing.status_code == 404
+    assert str(tmp_path) not in bundle.text

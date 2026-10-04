@@ -9,13 +9,17 @@
  * GET /api/sessions/{session_id} is polled until status is done/failed. The
  * Python base_url and desktop token come from the desktop runtime config file
  * (see python-backend.ts). This replaces the removed tool_bridge round trip.
+ *
+ * [fix 2026-10-04] D：done 但有残缺（limitations/error 非空）的 run，复用结果
+ * 里带 rerun_available 指引教练可用 force: true 显式重跑（force 会跳过 Python
+ * 侧 done 复用门产出新 session，旧 done 保留为历史）。
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPythonBackendConfig } from "./python-backend.ts";
-import { getAnalysesDir } from "./app-data.ts";
+import { getAnalysesDir, getSessionsDir } from "./app-data.ts";
 import { reportAnalysisRead } from "./fs-tools.ts";
 import type { NativeWriteResult } from "./product-commands-write.ts";
 
@@ -51,6 +55,10 @@ const FORWARDED_BODY_FIELDS = [
   "fov",
   "profile_default",
   "manual_override",
+  // [2026-10-04] Coach 判断制第二段：显式场景家族判断（四家族白名单由
+  // Python 侧校验）与人读依据，随创建请求原样转发。
+  "aim_family",
+  "classification_basis",
 ] as const;
 
 class PythonAnalysisError extends Error {
@@ -60,6 +68,63 @@ class PythonAnalysisError extends Error {
   ) {
     super(message);
   }
+}
+
+// ── done 但有残缺 ⇒ force 重跑入口（[fix 2026-10-04] FNamePool 案 D）──────
+//
+// 后端 create_from_run 的 force 已端到端打通（commit 0c271c3：跳过 done 复用
+// 门、产出新 session、旧 done 保留为历史；run_active 在途互斥不放松）。这里
+// 补 Coach 面的暴露：仅当该 run 已有 done 分析且其 deterministic.limitations /
+// error 非空（“done 但有残缺”，典型如遥测旁车晚到导致动作层缺失）时，复用
+// 结果里带 rerun_available 指引——教练征得用户同意后可发起带 force 的显式
+// 重跑（A 修复后旁车晚到可被 ingest 补冻，重跑即可吃到新数据）。不满足时
+// 维持现状文案。force 参数本身仍照传（场景类型修正的既有语义不受影响）。
+
+interface RunDoneAnalysis {
+  sessionId: number;
+  /** limitations/error 非空 ⇒ 该 done 分析“有残缺”，可提供 force 重跑入口。 */
+  qualifies: boolean;
+  limitations: string[];
+}
+
+function readRunDoneAnalyses(runId: number): RunDoneAnalysis[] {
+  const sessionsDir = getSessionsDir();
+  let entries: string[];
+  try {
+    entries = readdirSync(sessionsDir);
+  } catch {
+    return [];
+  }
+  const out: RunDoneAnalysis[] = [];
+  for (const name of entries) {
+    const match = name.match(/^(\d+)\.json$/);
+    if (!match) continue;
+    let session: AnyDict | null = null;
+    try {
+      session = JSON.parse(readFileSync(join(sessionsDir, name), "utf-8")) as AnyDict;
+    } catch {
+      continue;
+    }
+    if (!session || session.status !== "done" || session.kovaak_run_id !== runId) continue;
+    const result = session.result && typeof session.result === "object"
+      ? session.result as AnyDict
+      : null;
+    const deterministic = result?.deterministic && typeof result.deterministic === "object"
+      ? result.deterministic as AnyDict
+      : null;
+    const limitations = Array.isArray(deterministic?.limitations)
+      ? (deterministic.limitations as unknown[]).filter(
+          (item): item is string => typeof item === "string" && item.length > 0,
+        )
+      : [];
+    const error = session.error && typeof session.error === "object" ? session.error : null;
+    out.push({
+      sessionId: Number(match[1]),
+      qualifies: limitations.length > 0 || error !== null,
+      limitations,
+    });
+  }
+  return out;
 }
 
 function newCommandId(): string {
@@ -211,6 +276,76 @@ export function isNativePythonAnalysisCommand(commandName: string): boolean {
   return commandName === "analysis.create_from_run";
 }
 
+// ── [2026-10-04] Coach 判断制第一段：分类证据包（只读，不入队不开跑）────
+//
+// analysis.scenario_evidence — GET /api/kovaak-runs/{run_id}/scenario-evidence。
+// 返回场景名字线索、冻结旁车遥测操作特征、Stats/Raw 挑战形状粗分类与字段
+// 图例（自描述数据，知识跟数据走）。Coach 看完证据再决定是否带 aim_family
+// 发起 analysis.create_from_run（第二段），并用 scenario_memory.set 记住该图。
+
+export function isNativeScenarioEvidenceCommand(commandName: string): boolean {
+  return commandName === "analysis.scenario_evidence";
+}
+
+export async function executeNativeScenarioEvidence(
+  commandName: string,
+  params: AnyDict,
+  _ownerId: string,
+  signal?: AbortSignal,
+): Promise<NativeWriteResult> {
+  const commandId = newCommandId();
+  const auditRef = newAuditRef();
+  try {
+    if (commandName !== "analysis.scenario_evidence") {
+      throw new PythonAnalysisError(
+        "unknown_command",
+        `${commandName} is not a native Python analysis command`,
+      );
+    }
+    const runId = parseRunRef(params.run_ref);
+    const config = getPythonBackendConfig();
+    if (!config) {
+      throw new PythonAnalysisError("python_backend_unavailable", "Python 分析后端未就绪，请稍后重试");
+    }
+    const response = await fetch(
+      `${config.baseUrl}/api/kovaak-runs/${runId}/scenario-evidence`,
+      {
+        headers: { "X-Aiming-Cookie-Desktop-Token": config.token },
+        signal: requestSignal(signal),
+      },
+    );
+    if (!response.ok) {
+      throw new PythonAnalysisError(
+        "scenario_evidence_failed",
+        await extractErrorDetail(response),
+      );
+    }
+    const evidence = (await response.json()) as AnyDict;
+    return {
+      status: "succeeded",
+      command_id: commandId,
+      audit_ref: auditRef,
+      result_ref: `run:${runId}`,
+      result: evidence,
+    };
+  } catch (error) {
+    if (error instanceof PythonAnalysisError) {
+      return {
+        status: "failed",
+        command_id: commandId,
+        audit_ref: auditRef,
+        warning_or_error: { code: error.code, message: error.message },
+      };
+    }
+    return {
+      status: "failed",
+      command_id: commandId,
+      audit_ref: auditRef,
+      warning_or_error: { code: "internal_error", message: "scenario evidence could not be collected" },
+    };
+  }
+}
+
 export async function executeNativePythonAnalysis(
   commandName: string,
   params: AnyDict,
@@ -236,6 +371,9 @@ export async function executeNativePythonAnalysis(
     if (!config) {
       throw new PythonAnalysisError("python_backend_unavailable", "Python 分析后端未就绪，请稍后重试");
     }
+    // [fix 2026-10-04] D：触发前记录该 run 既有 done 分析（复用识别 + force
+    // 重跑资格判定）。读不到本地会话记录按无处理，不阻塞创建。
+    const priorDone = readRunDoneAnalyses(runId);
     const sessionId = await triggerAnalysis(runId, config, params, idempotencyKey, locale, signal);
     const outcome = await pollAnalysisStatus(sessionId, config, locale, signal);
     if (outcome.status === "done") {
@@ -282,16 +420,30 @@ export async function executeNativePythonAnalysis(
     // 本讨论创建的分析即讨论主题：挂进「本次讨论」，并让讲课时文中的
     // @time 链接能解析到这份分析的视频。
     reportAnalysisRead(sessionId, true);
+    const doneResult: AnyDict = {
+      session_id: sessionId,
+      analysis_ref: `analysis:${sessionId}`,
+      status: "done",
+    };
+    // [fix 2026-10-04] D：返回的 session 是既有 done 分析的复用、且其
+    // limitations/error 非空（“done 但有残缺”）时，暴露 force 重跑入口；
+    // 新建 session 或残缺为空时维持现状文案。
+    const reused = priorDone.find((item) => item.sessionId === sessionId);
+    if (reused?.qualifies) {
+      doneResult.rerun_available = true;
+      doneResult.limitations = reused.limitations;
+      doneResult.guidance =
+        "该 Run 已有完成的分析但带残缺（limitations 非空，详见本分析的 " +
+        "scenario_info.limitations）。若用户想把新到齐的数据（如晚到的遥测旁车）" +
+        "补进分析，先征得用户同意，再用 analysis.create_from_run 传 " +
+        "force: true 显式重跑：会产出新 session，旧结果保留为历史。";
+    }
     return {
       status: "succeeded",
       command_id: commandId,
       audit_ref: auditRef,
       result_ref: `analysis:${sessionId}`,
-      result: {
-        session_id: sessionId,
-        analysis_ref: `analysis:${sessionId}`,
-        status: "done",
-      },
+      result: doneResult,
     };
   } catch (error) {
     if (error instanceof PythonAnalysisError) {

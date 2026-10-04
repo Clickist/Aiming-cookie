@@ -106,6 +106,11 @@ _SCENARIO_RESOLUTION_FIELDS = frozenset(
         "limitations",
     }
 )
+# [2026-10-04] Coach 判断制：resolution 可携带可选的分类依据文本（Coach 指定
+# 家族时给出的人读依据）。旧快照没有该字段——validator 对两种形状都容忍。
+_SCENARIO_RESOLUTION_FIELDS_V2 = frozenset(
+    _SCENARIO_RESOLUTION_FIELDS | {"classification_basis"}
+)
 _SCENARIO_HASH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _SCENARIO_PROFILE_REF_RE = re.compile(
     r"^scenario:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$"
@@ -630,10 +635,19 @@ def _validate_string_list(field: str, value: object, *, allow_empty: bool = True
 def validate_scenario_resolution_v1(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("input_snapshot.scenario_resolution must be a dict")
-    if set(value) != _SCENARIO_RESOLUTION_FIELDS:
+    fields = set(value)
+    if fields not in (_SCENARIO_RESOLUTION_FIELDS, _SCENARIO_RESOLUTION_FIELDS_V2):
         raise ValueError("input_snapshot.scenario_resolution fields are invalid")
     if value.get("schema_version") != "scenario_resolution.v1":
         raise UnsupportedContractVersion(value.get("schema_version"))
+    classification_basis = value.get("classification_basis")
+    if classification_basis is not None and (
+        not isinstance(classification_basis, str)
+        or not classification_basis.strip()
+        or len(classification_basis) > 200
+        or any(ord(char) < 32 for char in classification_basis)
+    ):
+        raise ValueError("scenario_resolution.classification_basis is invalid")
 
     scenario_hash = value.get("scenario_hash")
     if scenario_hash is not None:
@@ -669,10 +683,14 @@ def validate_scenario_resolution_v1(value: object) -> dict:
             raise ValueError("scenario_resolution.scenario_profile_ref is invalid")
 
     classification_source = value.get("classification_source")
+    # [2026-10-04] coach_specified / coach_judged 为 Coach 判断制新来源；
+    # reviewed_registry / official_metadata 不再由分类链产出，保留仅为旧快照
+    # 重析时的读兼容（validator 必须容忍升级前冻结的数据）。
     if classification_source not in {
         "reviewed_registry", "official_metadata", "unknown", "name_heuristic",
         "user_declaration", "local_scenario_definition", "family_default",
         "challenge_shape", "scenario_override", "telemetry_observed",
+        "coach_specified", "coach_judged",
     }:
         raise ValueError("scenario_resolution.classification_source is invalid")
     confidence = value.get("classification_confidence")
@@ -861,6 +879,7 @@ def validate_scenario_resolution_v1(value: object) -> dict:
         if profile_ref is None and classification_source not in {
             "local_scenario_definition", "name_heuristic", "family_default",
             "challenge_shape", "scenario_override", "telemetry_observed",
+            "coach_specified", "coach_judged",
         }:
             raise ValueError("scenario_resolution baseline dispatch is inconsistent")
     elif dispatch != "none":

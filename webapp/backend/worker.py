@@ -1413,54 +1413,6 @@ def _native_artifact_manifest_v2(
     )
 
 
-def _target_switching_production_gate(
-    resolution: Mapping[str, object],
-) -> bool:
-    """Require only the exact reviewed visual episode producer."""
-    from kovaak_tracker.visual_signals import (
-        VISUAL_TARGET_EPISODE_PRODUCER_ID,
-        VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
-        visual_detector_config_ref_v1,
-    )
-
-    profile_ref = resolution.get("scenario_profile_ref")
-    if not isinstance(profile_ref, str):
-        return False
-    producer = _REVIEWED_VISUAL_PRODUCERS.get(profile_ref)
-    if not isinstance(producer, Mapping):
-        return False
-    quality = producer.get("visual_quality_profile")
-    if not isinstance(quality, Mapping):
-        return False
-    detector_config = producer.get("detector_config")
-    calibration_context = quality.get("calibration_context")
-    expected_profile_ref = (
-        f"visual-quality:{VISUAL_TARGET_EPISODE_PRODUCER_ID}@"
-        f"{VISUAL_TARGET_EPISODE_PRODUCER_VERSION}"
-    )
-    if not (
-        quality.get("status") == "accepted"
-        and quality.get("producer_id") == VISUAL_TARGET_EPISODE_PRODUCER_ID
-        and quality.get("producer_version")
-        == VISUAL_TARGET_EPISODE_PRODUCER_VERSION
-        and quality.get("profile_ref") == expected_profile_ref
-        and "switching" in (quality.get("validated_metric_families") or [])
-        and (
-            quality.get("quality_status_by_metric_family") or {}
-        ).get("switching") == "accepted"
-        and producer.get("detector_config_ref")
-        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
-        and isinstance(detector_config, Mapping)
-        and visual_detector_config_ref_v1(detector_config)
-        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
-        and isinstance(calibration_context, Mapping)
-        and calibration_context.get("detector_config_ref")
-        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
-    ):
-        return False
-    return True
-
-
 def _execution_input_mode(mode: object, *, default: str) -> str:
     """telemetry_multimodal 的执行语义与 multimodal 完全等价（同一条 family
     分发）；producer 选择只看快照的 external_telemetry 源是否可用，与档位名
@@ -1690,13 +1642,14 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
     if not isinstance(resolution, dict):
         raise ValueError("scenario resolution is invalid")
     resolution = validate_scenario_resolution_v1(resolution)
+    # [2026-10-04] reviewed 精选档案层退役：static native 分析对所有
+    # static_clicking 场景开放（泛化优先），不再检查 manifest_status 与
+    # allowed_analyzers/allowed_metric_families 门禁（那些字段来自精选档案，
+    # 非精选场景没有它们——保留门禁会让全部 static_clicking 局进不了 native）。
     if (
-        resolution.get("manifest_status") == "active"
-        and resolution.get("family_analyzer_dispatch") == "allowed"
+        resolution.get("family_analyzer_dispatch") == "allowed"
         and resolution.get("aim_family") == "static_clicking"
         and input_mode in {"input_native", "multimodal"}
-        and NATIVE_ANALYSIS_VERSION in (resolution.get("allowed_analyzers") or [])
-        and "static_clicking" in (resolution.get("allowed_metric_families") or [])
     ):
         return NATIVE_ANALYSIS_VERSION
     # 1002 拍板：场景支持名单退役——family 分发只看家族归类 + 数据档位，
@@ -1720,32 +1673,10 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         in (resolution.get("allowed_metric_families") or [])
     ):
         return CONTINUOUS_TRACKING_ANALYSIS_VERSION
-    if (
-        resolution.get("manifest_status") == "active"
-        and resolution.get("family_analyzer_dispatch") == "allowed"
-        and resolution.get("aim_family") == "target_switching"
-        and input_mode == "multimodal"
-        and TARGET_SWITCHING_ANALYSIS_VERSION
-        in (resolution.get("allowed_analyzers") or [])
-        and "target_switching"
-        in (resolution.get("allowed_metric_families") or [])
-        and _target_switching_production_gate(resolution)
-    ):
-        return TARGET_SWITCHING_ANALYSIS_VERSION
-    if (
-        resolution.get("manifest_status") == "active"
-        and resolution.get("family_analyzer_dispatch") == "allowed"
-        and resolution.get("claim_ceiling") == "family_specific"
-        and input_mode == "input_native"
-        and resolution.get("aim_family") in {
-            "dynamic_clicking", "continuous_tracking", "target_switching",
-        }
-        and resolution.get("aim_family")
-        in (resolution.get("allowed_metric_families") or [])
-    ):
-        # No video: degrade the exact-reviewed visual pipeline to the family's
-        # input-kinematics baseline instead of an outcome-only result.
-        return f"{resolution['aim_family']}.baseline.v1"
+    # target_switching 的完整管线依赖逐场景标定的视觉 episode producer
+    #（worker_visual_producers 的 fail-closed 数据件，非精选场景没有）；
+    # reviewed 档案层退役后无 resolution 能满足该门，switching 一律落
+    # input-kinematics baseline。
     baseline_analyzer = f"{resolution.get('aim_family')}.baseline.v1"
     if (
         resolution.get("family_analyzer_dispatch") == "allowed"
@@ -2244,13 +2175,13 @@ def _build_native_result_v2(
         native_result, input_mode=input_mode, locale=_job_locale(job),
     )
     resolution = snapshot.get("scenario_resolution")
+    # [2026-10-04] reviewed 档案层退役：native static 支持状态映射对所有
+    # static_clicking native 分析生效，不再要求 manifest active + 精选
+    # allowed lists（门禁已从分发删除，这里保持同一口径）。
     active_static = (
         isinstance(resolution, Mapping)
-        and resolution.get("manifest_status") == "active"
         and resolution.get("family_analyzer_dispatch") == "allowed"
         and resolution.get("aim_family") == "static_clicking"
-        and NATIVE_ANALYSIS_VERSION in (resolution.get("allowed_analyzers") or [])
-        and "static_clicking" in (resolution.get("allowed_metric_families") or [])
     )
     if active_static:
         deterministic["support_status"] = {

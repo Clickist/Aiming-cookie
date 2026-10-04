@@ -9,7 +9,7 @@ import { isNativeKovaakScoreCommand, executeNativeKovaakScore, normalizeSteamPro
 import { isNativeKovaakLeaderboardCommand, executeNativeKovaakLeaderboard } from "./kovaak-leaderboard-native.ts";
 import { isNativeAffiliateCommand, executeNativeAffiliate } from "./affiliate-native.ts";
 import { isNativeScenarioCommand, executeNativeScenario } from "./scenario-native.ts";
-import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
+import { isNativePythonAnalysisCommand, executeNativePythonAnalysis, isNativeScenarioEvidenceCommand, executeNativeScenarioEvidence } from "./python-analysis.ts";
 import { executeIntroNative, isIntroNativeCommand, userProfileUpdateError } from "./intro-context-native.ts";
 
 type TypeBuilder = {
@@ -25,6 +25,7 @@ const { Type } = (await loadPiAi()) as { Type: TypeBuilder };
 export const PRODUCT_COMMAND_NAMES = [
   "run.list", "run.get", "history.list", "history.trend", "analysis.get",
   "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry", "analysis.delete",
+  "analysis.scenario_evidence",
   "training_plan.generate_draft", "training_plan.save", "training_plan.activate",
   "training_plan.pause", "training_plan.adjust", "training_plan.review", "training_plan.item.add",
   "training_plan.execution.record", "training_plan.retest.record", "teaching_session.update",
@@ -481,6 +482,15 @@ export function createProductCommandTool(
         }
         const nativeResult = await executeNativePythonAnalysis(
           params.command_name, params.parameters, ownerId, idempotencyKey, signal,
+        );
+        return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
+      // [2026-10-04] Coach 判断制第一段：分类证据包只读命令（HTTP GET 到
+      // Python 后端，不入队不开跑）。无副作用，不需要 idempotency key。
+      if (isNativeScenarioEvidenceCommand(params.command_name)) {
+        const nativeResult = await executeNativeScenarioEvidence(
+          params.command_name, params.parameters, ownerId, signal,
         );
         return writeResultToToolResult(params.command_name, nativeResult);
       }
