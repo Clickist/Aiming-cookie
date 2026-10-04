@@ -5,6 +5,9 @@
  *
  * 刷新时机（任务书 ⑥：余量轮询 60s，读 `/api/me`）：启动、窗口聚焦、60s 轮询、
  * deep-link 回归事件；401 一律静默降级未登录态（契约 §7.1-8），绝不弹错误。
+ * 账号服务不可达（网络/上游失败）是「未知」不是「未登录」：保留上次值与缓存
+ * （1003 用户反馈：更新重启后首探失败被渲染成掉登录，实为大陆直连 Cloudflare
+ * 抖动——与「更新要挂梯子才顺畅」同一条链路）。
  *
  * BYOK 用户全程不受影响：本 hook 只读会员态，不改任何 Provider 配置。
  */
@@ -12,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchMemberStatus } from "@/lib/api";
-import type { MemberMe } from "@/lib/types";
+import type { MemberMe, MemberStatusResponse } from "@/lib/types";
 
 /** 余量轮询周期（任务书 ⑥；契约要求展示源只有 /api/me）。 */
 export const MEMBER_POLL_INTERVAL_MS = 60_000;
@@ -84,6 +87,23 @@ function writeMemberCache(me: MemberMe | null): void {
 
 let memberMeCache: MemberMe | null = typeof window === "undefined" ? null : readMemberCache();
 
+/** 三态裁决（纯函数，供单测）：登录成功换新、账号服务不可达保留原值、
+ * 服务端确定「未登录」才清场。unavailable 保留缓存是本文件的铁律——
+ * 「未知」渲染成「未登录」就是 1003 用户反馈的掉登录。 */
+export type MemberStatusAction =
+  | { kind: "signed-in"; me: MemberMe }
+  | { kind: "unavailable"; keep: MemberMe | null }
+  | { kind: "signed-out" };
+
+export function reduceMemberStatus(
+  prev: MemberMe | null,
+  status: MemberStatusResponse,
+): MemberStatusAction {
+  if (status.ok && status.logged_in) return { kind: "signed-in", me: status.me };
+  if (!status.ok && status.logged_in) return { kind: "unavailable", keep: prev };
+  return { kind: "signed-out" };
+}
+
 export function useMemberState(enabled = true): MemberState {
   const [me, setMe] = useState<MemberMe | null>(memberMeCache);
   // 服务端是否已给出确定答案（登录与否）：false 期间 UI 应显示加载态而非「未登录」。
@@ -95,20 +115,25 @@ export function useMemberState(enabled = true): MemberState {
     try {
       const status = await fetchMemberStatus();
       if (!mountedRef.current) return null;
+      const action = reduceMemberStatus(memberMeCache, status);
       setResolved(true);
-      if (status.ok && status.logged_in) {
-        memberMeCache = status.me;
-        writeMemberCache(status.me);
-        setMe(status.me);
+      if (action.kind === "signed-in") {
+        memberMeCache = action.me;
+        writeMemberCache(action.me);
+        setMe(action.me);
         setUnavailable(false);
-        return status.me;
+        return action.me;
       }
-      // 未登录（ok:false + unauthorized）与不可用（unavailable）都收敛为 null；
-      // 两者的差别只在诊断字段，UI 一律降级未登录态。
+      if (action.kind === "unavailable") {
+        // 「未知」≠「未登录」：保留上次值与缓存，unavailable 供 UI 降级提示。
+        setUnavailable(true);
+        return memberMeCache;
+      }
+      // 服务端确定答案「未登录」（unauthorized）：清缓存清状态。
       memberMeCache = null;
       writeMemberCache(null);
       setMe(null);
-      setUnavailable(!status.ok && status.logged_in);
+      setUnavailable(false);
       return null;
     } catch {
       // 桌面运行时/sidecar 未就绪：保持上一次的值，不把已登录状态闪成未登录。

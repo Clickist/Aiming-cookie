@@ -1,27 +1,28 @@
 /**
- * 客户端直推余量（usage-reporter）：会员 sidecar 主动把 sub 池余量推给 accounts。
+ * 会员心跳推余量（usage-reporter）：sidecar 把 accounts 自己的快照真值回推，
+ * 维持 usage_snapshots.updated_at 新鲜（退款闸 usage_stale 依赖，refund.ts 5 分钟窗）。
  *
- * 背景（2026-09-27 拍板）：/api/me 的余量此前只由 ECS poller 推（/internal/usage）；
- * 展示数据改由客户端主动推送，poller 降频为退款对账兜底。推送时机两个：
- * a) Coach turn 成功结束后（有真实消耗），b) 60s 定时循环（与前端 /api/me 轮询同节奏）。
+ * 历史（2026-09-27 拍板）：/api/me 的余量改由客户端直推，poller（/internal/usage）
+ * 保留为退款对账兜底。推送时机两个：a) Coach turn 成功结束后（有真实消耗），
+ * b) 60s 定时循环（与前端 /api/me 轮询同节奏）。
  *
- * - 余量来源：中转站 new-api 的 OpenAI 兼容计费端点
- *   `GET {base}/v1/dashboard/billing/subscription`（只读）。经会员网关透传
- *   （契约 §5.2-6：网关只透传 `/v1/...` 并按池注入令牌），凭据用会员 JWT——
- *   sk- 全程不出 ECS，客户端不直连中转站。响应 `hard_limit_usd` 按
- *   500,000 quota/单位换算回 quota（§0 换算常量）。
+ * 2026-10-04 修正（R3）：原实现调中转站 `GET /v1/dashboard/billing/subscription`
+ * 自算 remaining——该端点对 unlimited 令牌恒返 hard_limit_usd=1e8，且语义本是
+ * "总额=remain+used" 而非剩余，推上去的 5e13 被 clamp+MIN 吞掉，直推实际只刷
+ * 时间戳。现改为**真值回声**：GET /api/me 取服务端展示的 pools.sub.remaining
+ * （ECS pusher 写入 usage_snapshots 的权威值；快照缺失时是服务端自己的满额
+ * fallback），原样 POST 回 /api/me/usage-report。客户端不再自造任何数值；
+ * MIN/clamp 兜底下回声对数据是无操作，净效果=心跳。
+ *
  * - 推送目标：`POST /api/me/usage-report`（jwt 鉴权，INTERFACE.md §7.1-17）。
  *   grant 不由客户端决定：服务端以 quota_grants 为权威并把超发余量夹回。
- * - best-effort：任何失败静默（只落一行脱敏日志，不打 JWT/sk-），绝不影响
+ * - best-effort：任何失败静默（只落一行脱敏日志，不打 JWT），绝不影响
  *   对话路径；30s 最小间隔 + in-flight 去重，turn 结束与定时循环重叠时只推一次。
  * - 仅会员档启用：无 relay JWT（BYOK/未登录/fixture 走查态）直接跳过，零网络。
  */
 
 import { ACCOUNTS_BASE_URL, memberFixtureActive, storedMemberJwt } from "./member-auth.ts";
-import { MEMBER_GATEWAY_BASE_URL } from "./provider-models.ts";
 
-/** 中转站计费换算刻度（契约 §0：500,000 quota = 1 单位）。 */
-export const QUOTA_PER_UNIT = 500_000;
 /** 两次推送链的最小间隔：低于 60s 循环节奏，turn 结束与循环重叠时只推一次。 */
 export const MIN_PUSH_INTERVAL_MS = 30_000;
 /** 定时循环节奏（与前端 member-state 的 /api/me 轮询一致）。 */
@@ -33,18 +34,23 @@ export type UsagePushResult =
   | {
       ok: false;
       skipped: true;
-      reason: "no_member_profile" | "throttled" | "billing_unavailable" | "push_failed";
+      reason: "no_member_profile" | "throttled" | "snapshot_unavailable" | "push_failed";
     };
 
 /**
- * 解析计费端点响应 → 剩余 quota。响应不合预期（缺字段/负数/非有限数）返回
- * null，由调用方静默放弃本轮；余量口径最终以服务端夹取为准，这里只管尽力取值。
+ * 解析 GET /api/me 响应 → sub 池余量回声值。缺 sub 池（试用/无快照无发放）或
+ * 值不是非负有限数返回 null，由调用方静默放弃本轮。客户端不改写数值：推的
+ * 就是服务端展示的真值（或其满额 fallback），余量口径始终以服务端夹取为准。
  */
-export function parseBillingRemaining(body: unknown): number | null {
+export function parseMeSubRemaining(body: unknown): number | null {
   if (typeof body !== "object" || body === null) return null;
-  const hardLimit = (body as { hard_limit_usd?: unknown }).hard_limit_usd;
-  if (typeof hardLimit !== "number" || !Number.isFinite(hardLimit) || hardLimit < 0) return null;
-  return Math.max(0, Math.round(hardLimit * QUOTA_PER_UNIT));
+  const pools = (body as { pools?: unknown }).pools;
+  if (typeof pools !== "object" || pools === null) return null;
+  const sub = (pools as { sub?: unknown }).sub;
+  if (typeof sub !== "object" || sub === null) return null;
+  const remaining = (sub as { remaining?: unknown }).remaining;
+  if (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0) return null;
+  return remaining;
 }
 
 /** 节流判定：距上次调度不足 minIntervalMs 时跳过（首次恒放行）。 */
@@ -57,21 +63,18 @@ function log(message: string): void {
   console.log(`[usage-report] ${message}`);
 }
 
-async function fetchBillingRemaining(jwt: string): Promise<number | null> {
+async function fetchSubRemainingEcho(jwt: string): Promise<number | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   timeout.unref?.();
   try {
-    // 计费查询走会员网关（member-gateway.example.invalid:8443/member/v1），JWT 是网关签发的：
-    // relayBaseUrl() 被构建期 --define 内联为中转站直连地址，JWT 查它必 401（0928 实测）。
-    const billingBase = (process.env.AC_MEMBER_GATEWAY_BASE_URL ?? MEMBER_GATEWAY_BASE_URL).replace(/\/+$/, "");
-    const response = await fetch(`${billingBase}/dashboard/billing/subscription`, {
+    const response = await fetch(`${ACCOUNTS_BASE_URL}/api/me`, {
       headers: { Authorization: `Bearer ${jwt}` },
       signal: controller.signal,
     });
     if (response.status !== 200) return null;
     const body: unknown = await response.json().catch(() => null);
-    return parseBillingRemaining(body);
+    return parseMeSubRemaining(body);
   } catch {
     return null;
   } finally {
@@ -106,10 +109,10 @@ async function dispatch(): Promise<UsagePushResult> {
   const jwt = storedMemberJwt();
   if (!jwt) return { ok: false, skipped: true, reason: "no_member_profile" };
 
-  const remaining = await fetchBillingRemaining(jwt);
+  const remaining = await fetchSubRemainingEcho(jwt);
   if (remaining === null) {
-    log("billing unavailable, skipped");
-    return { ok: false, skipped: true, reason: "billing_unavailable" };
+    log("sub snapshot unavailable, skipped");
+    return { ok: false, skipped: true, reason: "snapshot_unavailable" };
   }
   try {
     const response = await fetch(`${ACCOUNTS_BASE_URL}/api/me/usage-report`, {
@@ -121,7 +124,7 @@ async function dispatch(): Promise<UsagePushResult> {
       log(`push rejected (HTTP ${response.status})`);
       return { ok: false, skipped: true, reason: "push_failed" };
     }
-    log(`pushed remaining=${remaining}`);
+    log(`echoed remaining=${remaining}`);
     return { ok: true, remaining };
   } catch {
     log("push failed (network)");

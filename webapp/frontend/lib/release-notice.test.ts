@@ -87,9 +87,9 @@ test("共享 changelog 内容：当前打包版本（package.json 版本）的�
   const entry = findReleaseEntryIn(changelogData, pkg.version);
   assert.ok(entry, `changelog.json 缺少 v${pkg.version} 块`);
   assert.ok(entry.date, "版本块缺 date");
-  assert.ok(entry.items.length >= 3);
-  // 纯修复版允许没有 new 条目（修复版是合法发版形态，如 1.3.4 热修）；
+  // 条目数不设下限（1003 点点拍板：修一个大 bug 也值得发一版，1 条热修是合法形态）；
   // 只锁条目类型枚举合法，防 changelog 写错 type 导致卡片徽标渲染异常。
+  assert.ok(entry.items.length >= 1);
   for (const releaseItem of entry.items) {
     assert.ok(
       releaseItem.type === "new" || releaseItem.type === "imp" || releaseItem.type === "fix",

@@ -271,6 +271,7 @@ const RUN_META_FIELDS: &[&str] = &[
     "trace_state",
     "trace_error",
     "trace_receipt_echo",
+    "trace_pending_echo",
     "finalization_state",
     "finalization_error",
 ];
@@ -770,7 +771,7 @@ fn build_capture_diagnostics_bundle(
     window_status.gpu_driver_suspect =
         window_capture::gpu_driver_suspect(&gpu_names, last_start_failure.as_ref());
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v8",
+        schema_version: "capture_diagnostics.v9",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -1156,6 +1157,13 @@ mod tests {
                         "window_start_epoch_ms": 1_000i64,
                         "window_end_epoch_ms": 2_000i64,
                     },
+                    "trace_pending_echo": {
+                        "snapshotFirstPointMs": 1_100i64,
+                        "snapshotLastPointMs": 2_100i64,
+                        "snapshotPointCount": 2i64,
+                        "window_start_epoch_ms": 1_000i64,
+                        "window_end_epoch_ms": 2_000i64,
+                    },
                 })
                 .to_string(),
             )
@@ -1185,6 +1193,16 @@ mod tests {
             assert_eq!(
                 run["trace_receipt_echo"]["captureSessionStartEpochMs"],
                 serde_json::json!(1_001i64)
+            );
+            // v9：切窗 0 点现场（快照点数/首尾/窗口）进包，供支持侧区分
+            // 「快照未覆盖窗口尾」与「窗口内从未有过输入事件」。
+            assert_eq!(
+                run["trace_pending_echo"]["snapshotPointCount"],
+                serde_json::json!(2i64)
+            );
+            assert_eq!(
+                run["trace_pending_echo"]["snapshotLastPointMs"],
+                serde_json::json!(2_100i64)
             );
         }
         let _ = fs::remove_dir_all(&root);

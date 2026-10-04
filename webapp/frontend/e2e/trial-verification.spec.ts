@@ -22,22 +22,22 @@ test.describe("AC 试用态（验证闸）", () => {
     });
     await installApiFixtures(page, scenario);
 
-    // 1. 用户中心显示试用卡：剩余 1 次分析 / 2 次提问（数字来自 /me）。
+    // 1. 用户中心显示试用卡：口径为「试用额度已到账/试用进行中」，不再展示剩余次数。
     await page.goto("/account");
-    await expect(page.getByText("免费验证", { exact: true })).toBeVisible();
-    await expect(page.getByText("剩余 1 次分析 / 2 次提问")).toBeVisible();
-    await expect(page.getByText("已验证 ✓ 可订阅")).toHaveCount(0);
+    await expect(page.getByText("免费试用", { exact: true })).toBeVisible();
+    await expect(page.getByText("免费试用进行中——完成一局分析即可完成验证")).toBeVisible();
+    await expect(page.getByText("试用完成 ✓ 可订阅")).toHaveCount(0);
 
     // 2. 模拟分析终态 done：AppShell 监听既有分析完成事件上报 analysis_done
     //    （fixture 镜像服务端扣减 analyses_remaining→0、置 verified），上报成功
-    //    会广播会员态刷新，用户中心的「已验证 ✓ 可订阅」随即出现。
+    //    会广播会员态刷新，用户中心的「试用完成 ✓ 可订阅」随即出现。
     await page.evaluate(() => {
       window.dispatchEvent(new CustomEvent("aiming-cookie:analysis-auto-teach", {
         detail: { analysis_ref: "analysis:42" },
       }));
     });
     await expect.poll(() => scenario.trialEvents.map((event) => event.type)).toContain("analysis_done");
-    await expect(page.getByText("已验证 ✓ 可订阅")).toBeVisible();
+    await expect(page.getByText("试用完成 ✓ 可订阅")).toBeVisible();
 
     // 3. 模拟两轮教练回复成功落地（CoachPanel run succeeded 时派发的内部事件，
     //    run_ref 作去重键）——两问烧完。
@@ -57,7 +57,7 @@ test.describe("AC 试用态（验证闸）", () => {
     // 4. 两项余量皆 0 且无订阅、没配 BYOK：Coach 输入区呈现付费墙，正向收尾，
     //    两出口按钮=订阅（外链）/ BYOK（Button href → 链接角色，进设置）。
     await page.goto("/");
-    await expect(page.getByText("验证完成——AC 已在你的电脑上正常运行")).toBeVisible();
+    await expect(page.getByText("试用完成——AC 已在你的电脑上正常运行")).toBeVisible();
     await expect(page.getByRole("button", { name: "订阅 AC 会员" })).toBeVisible();
     await expect(page.getByRole("link", { name: "使用自己的 API Key（BYOK）" })).toBeVisible();
   });
@@ -70,7 +70,7 @@ test.describe("AC 试用态（验证闸）", () => {
     });
     await installApiFixtures(page, scenario);
     await page.goto("/");
-    await expect(page.getByText("验证完成——AC 已在你的电脑上正常运行")).toHaveCount(0);
+    await expect(page.getByText("试用完成——AC 已在你的电脑上正常运行")).toHaveCount(0);
     await page.evaluate(() => {
       for (let i = 0; i < 3; i += 1) {
         window.dispatchEvent(new CustomEvent("aiming-cookie:analysis-auto-teach", {
@@ -99,12 +99,12 @@ test.describe("AC 试用态（验证闸）", () => {
     await installApiFixtures(page, scenario);
 
     await page.goto("/account");
-    await expect(page.getByText("免费验证", { exact: true })).toBeVisible();
-    await expect(page.getByText("已到账新用户免费验证额度")).toBeVisible();
+    await expect(page.getByText("免费试用", { exact: true })).toBeVisible();
+    await expect(page.getByText("新用户试用额度已到账")).toBeVisible();
 
     await page.reload();
-    await expect(page.getByText("免费验证", { exact: true })).toBeVisible();
-    await expect(page.getByText("已到账新用户免费验证额度")).toHaveCount(0);
+    await expect(page.getByText("免费试用", { exact: true })).toBeVisible();
+    await expect(page.getByText("新用户试用额度已到账")).toHaveCount(0);
   });
 
   // 登录成功且未订阅（点点 0926 验收：登录完不知道去哪看额度）：device exchange
@@ -133,8 +133,8 @@ test.describe("AC 试用态（验证闸）", () => {
       }));
     });
     await expect(page).toHaveURL(/\/settings\?provider=official#llm-provider$/);
-    await expect(page.getByText("免费验证", { exact: true })).toBeVisible();
-    await expect(page.getByText("剩余 1 次分析 / 2 次提问")).toBeVisible();
+    await expect(page.getByText("免费试用", { exact: true })).toBeVisible();
+    await expect(page.getByText("免费试用进行中——完成一局分析即可完成验证")).toBeVisible();
     await expect(page.getByText("去训练历史跑一局分析")).toBeVisible();
 
     // 已订阅登录不抢导航：保持现有落点（仍在 Coach 首页）。
@@ -180,7 +180,7 @@ test.describe("AC 试用态（验证闸）", () => {
     });
     await installApiFixtures(page, scenario);
     await page.goto("/");
-    await expect(page.getByText("验证完成——AC 已在你的电脑上正常运行")).toBeVisible();
+    await expect(page.getByText("试用完成——AC 已在你的电脑上正常运行")).toBeVisible();
     await expect(page.getByRole("button", { name: "订阅 AC 会员" })).toBeVisible();
   });
 
@@ -211,7 +211,7 @@ test.describe("AC 试用态（验证闸）", () => {
     });
     await installApiFixtures(page, scenario);
     await page.goto("/");
-    await expect(page.getByText("验证完成——AC 已在你的电脑上正常运行")).toHaveCount(0);
+    await expect(page.getByText("试用完成——AC 已在你的电脑上正常运行")).toHaveCount(0);
   });
 });
 
