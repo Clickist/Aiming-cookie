@@ -640,3 +640,69 @@ def test_request_run_cut_windowed_real_scripts_e2e(
     diag = service.diagnostics()
     assert diag["last_cut"]["outcome"] == "merge_unavailable"
     assert diag["run_cuts_total"] == 1
+
+
+def test_run_cut_rejection_reasons_are_counted(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """切窗前置守卫拒绝必须计数可见（b1 报障形态：零产出机器静默空转）。"""
+    game_state = {"procs": []}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True) is False
+
+    # 游戏不在场：game_absent。
+    assert service.request_run_cut(1, 0, 1) is False
+    assert service.diagnostics()["run_cut_rejections"] == {"game_absent": 1}
+
+    # 游戏在场但会话目录没有任何 target 产出件：no_session_outputs。
+    game_state["procs"] = ["game"]
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+    assert service.request_run_cut(1, 0, 1) is False
+    rejections = service.diagnostics()["run_cut_rejections"]
+    assert rejections == {"game_absent": 1, "no_session_outputs": 1}
+
+    # 产出件出现后守卫放行（线程路径由集成测试覆盖，这里只验拒绝面）。
+    session_dir = service._session_dir
+    assert session_dir is not None
+    (session_dir / "target_poll_out_0906_120000.jsonl").write_text("", encoding="utf-8")
+    assert service.request_run_cut(2, 0, 1) is True
+    assert service.diagnostics()["run_cut_rejections"] == {
+        "game_absent": 1, "no_session_outputs": 1,
+    }
+
+    service.stop()
+
+
+def test_diagnostics_reports_live_child_log_tails_and_session_outputs(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """活着但零产出的子进程必须可诊断：日志尾 + 三通道产出清单。"""
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+
+    session_dir = service._session_dir
+    assert session_dir is not None
+    # 子进程活着（_FakeChild poll() = None）但在日志里循环打附着失败：
+    # 旧实现此刻 child_log_tail=None，完全不可见。
+    (session_dir / "target.log").write_text(
+        "[wait] 附着失败: offsets not found\n[wait] 15s 后重试...\n",
+        encoding="utf-8",
+    )
+
+    diag = service.diagnostics()
+    assert diag["child_log_tail"] is not None
+    assert "附着失败" in diag["child_log_tail"]["target"]
+    assert diag["session_outputs"] == {
+        "target_files": 0,
+        "camera_files": 0,
+        "input_log": False,
+    }
+
+    # input 产出件出现后清单如实反映。
+    (session_dir / "input_log.jsonl").write_text("", encoding="utf-8")
+    assert service.diagnostics()["session_outputs"]["input_log"] is True
+
+    service.stop()

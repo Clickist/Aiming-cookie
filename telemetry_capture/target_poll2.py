@@ -4,7 +4,7 @@
 原理：每个训练目标 actor 都挂一个 TargetHudComponent（实测本构建 5 目标 → +5 实例）。
 UObject::OwnerPrivate(+0x20) 即目标 actor。逐帧读 actor → RootComponent → ComponentToWorld。
 用法:
-    python target_poll2.py --run [--hz 50] [--wait]
+    python target_poll2.py --run [--hz 200] [--wait]
 
 [fix 2026-08-30b] 全量重扫从采样循环内联执行改为后台线程：原实现每次重扫阻塞采样
 ~3.1s（85k 对象全扫），晚间 0830 会话 96 次/325s（17% 占空）→ 死亡时间戳成块前移 +
@@ -12,7 +12,27 @@ UObject::OwnerPrivate(+0x20) 即目标 actor。逐帧读 actor → RootComponent
 cls_seen 动态重建族集 + Package/Default__ CDO 排除 + 槽位零化摘除），采样帧间隔不再
 受重扫影响。跨线程依据：kernel32 句柄进程级（非线程亲和），ctypes CDLL 调用释放 GIL，
 tp1.Proc.read 无共享可变状态（每次新建缓冲）。
+
+[spd 2026-10-04] 采样提速 实测≈31Hz → 200Hz+（schema/内存链/发现摘除语义零改动）：
+1. 31ms 帧间 dt 的根因是 Windows time.sleep 的 15.625ms 定时器量化（50Hz 名义
+   sleep(20ms) 实际落在 2 个 tick=31.25ms，与 FORMAT §1.3-1 实测 dt 中位 31.0/p95
+   32.0ms 吻合），不是 RPM 本身（5 目标 30 次小读仅 ~0.3ms）。改为 winmm
+   timeBeginPeriod(1)（进程级，run() finally 归还）+ perf_counter 绝对节拍 + 混合
+   等待（粗睡到剩 ~1.5ms 后自旋补齐）。帧时间戳仍取 time.time()-t0（epoch 差，语义不变）。
+2. 0.5s 差分发现从采样循环内联（n%25）移入后台线程：200Hz 帧预算 5ms，全数组 chunk
+   差分偶发 2~5ms 会周期性打穿预算。状态 snap/items 随迁差分线程私有；加目标仍收口
+   st_lock（与 rescan 线程同协议，且差分只增不删——摘除仍由逐帧 serial 检查 + 后台
+   重扫负责，并发面更小）。良性副作用：启动首帧不再被种子扫描阻塞（§1.3-1 的 1.05s
+   首帧停顿消失），种子扫描期间的空窗帧由 calibrate 目标覆盖。
+3. 平移 x,y,z 由 3 次 f32(4B) RPM 合并为一次 12B 批量读（FTransform 平移 12B 连续，
+   同地址同字节，struct "<3f" ≡ 逐个 "<f"；读失败/短读整点跳过 ≡ 原任一分量 None
+   跳过；NaN 通路不变）。每帧每目标 RPM 6→3 次。
+4. 差分/活性探测/flush/scale 旁线由"按帧数取模"改为"按时间门控"——原取模周期绑定
+   50Hz（n%25=0.5s 等），200Hz 下会被放大 4 倍；改为墙钟门控后 0.5s/2s/1s 语义保持。
+5. main() 默认 hz 50→200（--hz 可覆盖）。
+离线自测：test_poll_perf.py（无游戏，mock 内存层跑真实采样循环）。
 """
+import ctypes
 import json
 import os
 import struct
@@ -29,6 +49,43 @@ OUT_PATH = t.OUT_PATH
 # [fix 2026-08-30] 全量重扫周期（秒）：兜底 chunk 差分的机制盲区（见 discovery 注释）
 # [fix 2026-08-30b] 周期语义不变；执行移至后台线程，不再阻塞采样循环
 RESCAN_SECS = 20.0
+
+# [spd 2026-10-04] Windows 默认定时器分辨率 15.625ms：time.sleep(5ms) 会睡成 ~15.6ms、
+# sleep(20ms) 落在 2 个 tick=31.25ms —— 这是旧版"名义 50Hz 实测 31Hz"的根因。采样期间
+# 把本进程定时器分辨率提到 1ms（winmm，进程级；run() finally 归还），配合绝对节拍 +
+# 混合等待，帧间隔抖动 ≪1ms。调用失败（非 Windows 等）静默降级：混合等待仍可用，
+# 只是 sleep 段精度退回系统默认。
+_winmm = None
+
+
+def _timer_res_begin():
+    global _winmm
+    try:
+        _winmm = ctypes.WinDLL("winmm")
+        _winmm.timeBeginPeriod(1)
+    except Exception:
+        _winmm = None
+
+
+def _timer_res_end():
+    if _winmm is not None:
+        try:
+            _winmm.timeEndPeriod(1)
+        except Exception:
+            pass
+
+
+def _wait_scroll(deadline):
+    """混合等待到 perf_counter 绝对期限：剩 >1.5ms 先 time.sleep（让出 CPU），
+    末段 ≤1.5ms 自旋补齐，deadline 前后误差 ≪1ms。自旋是 Python 字节码循环，
+    Ctrl+C 可正常打断；单帧自旋上限 ~1.5ms（200Hz 预算 5ms 的 30%，
+    专用采集进程可接受）。"""
+    while True:
+        rem = deadline - time.perf_counter()
+        if rem <= 0:
+            return
+        if rem > 0.0015:
+            time.sleep(rem - 0.001)
 
 
 def nm_subclasses(p, root, cls_set, max_hops=8):
@@ -192,11 +249,8 @@ def run(p, cal, hz, scale=False, out_dir=None):
     targets = dict(cal["targets"])   # item_index -> owner
     owners = set(targets.values())   # 去重用
     serials = {i: p.u32(item_addr(i) + 0x10) for i in targets}
-    dt = 1.0 / hz
-    # chunk 差分发现的状态（差分专用，主线程私有；后台重扫不使用）
-    cl, per_chunk, stride, nume0 = t.chunk_layout(p)
-    snap = {}      # chunk_idx -> bytes
-    items = {}     # item_index -> (ptr, serial)
+    # [spd 2026-10-04] chunk 差分的状态（snap/items）与布局解析随差分线程私有
+    # （原先在采样主线程），采样循环内不再有任何全数组级工作
     # [fix 2026-08-30b] targets/owners/serials 由采样主线程与后台重扫线程双方读写，
     # 变更一律收进 st_lock；sets 单写者（后台线程），读侧靠 GIL 原子取值
     st_lock = threading.Lock()
@@ -217,19 +271,22 @@ def run(p, cal, hz, scale=False, out_dir=None):
     n = 0
     # [fix 2026-08-31] 进程死亡熔断：RPM 对已退出进程返回 None 而不抛异常，run()
     # 原先会永远写空帧、main() 的重附着循环永远不触发（实测 0831 重启验证发现；
-    # FORMAT §1.3-8 的"confirmed"只覆盖抛异常的死法）。每 25 帧（≈0.5s）读一次
-    # 对象数组头做活性探测，连续 >15s 失败即中断本段交由 main 重附着。
+    # FORMAT §1.3-8 的"confirmed"只覆盖抛异常的死法）。每 0.5s 读一次对象数组头
+    # 做活性探测（[spd 2026-10-04] 起为时间门控，原为每 25 帧搭差分周期），
+    # 连续 >15s 失败即中断本段交由 main 重附着。
     dead_streak = 0
 
     def read_num():
         return (p.i32(p.base + t.RVA_GUOBJECTARRAY + 0x24),
                 p.i32(p.base + t.RVA_GUOBJECTARRAY + 0x10 + 0x1C))
 
-    def discover_diff():
-        """[fix 2026-08-30b] 差分发现（主线程，0.5s 一次）。原 discovery() 的
-        force 路径拆出到后台 rescan_worker；差分路径逻辑与 [fix 2026-08-30] 一致
-        （族匹配 + Package 野 owner 排除 + Default__ CDO 排除）。共享态变更收敛
-        到函数末尾的 st_lock 内。"""
+    def discover_diff(snap, items, cl, per_chunk, stride):
+        """[fix 2026-08-30b] 差分发现。原 discovery() 的 force 路径拆出到后台
+        rescan_worker；差分路径逻辑与 [fix 2026-08-30] 一致（族匹配 + Package 野
+        owner 排除 + Default__ CDO 排除）。共享态变更收敛到函数末尾的 st_lock 内。
+        [spd 2026-10-04] 由采样主线程内联（n%25≈0.5s）改为 diff_worker 后台线程
+        调用；snap/items 由调用方持有（差分线程私有）；本函数只增不删——摘除仍由
+        采样 serial 检查 + 后台重扫负责。"""
         nume, numc = read_num()
         if not nume or not numc:
             return  # 游戏退出/读数失败：本轮跳过
@@ -305,6 +362,35 @@ def run(p, cal, hz, scale=False, out_dir=None):
                 else:
                     print("    +新目标(族) obj=0x%x (idx=%d)" % (o, idx))
 
+    def diff_worker():
+        """[spd 2026-10-04] 差分发现线程：绝对节拍 0.5s（与原 n%25@50Hz 等周期）。
+        200Hz 采样帧预算 5ms，全数组 chunk 差分（~85k 槽 ~3MB 读+比对）偶发 2~5ms
+        在采样循环内会周期性打穿预算，故移入后台。snap/items 本线程私有；加目标
+        收口 st_lock（同 rescan 协议）。异常容忍 3 次连续失败后线程退出——原内联
+        实现遇到异常会炸掉整段采样走重附着；线程化后由重扫兜底发现 + 采样活性熔断
+        （进程真死时 15s 内中断本段）收敛，语义不劣化。"""
+        try:
+            d_cl, d_pc, d_st, _nume0 = t.chunk_layout(p)
+        except Exception as e:
+            print("    [diff] chunk 布局解析失败，差分线程退出: %s" % e)
+            return
+        d_snap = {}    # chunk_idx -> bytes
+        d_items = {}   # item_index -> (ptr, serial)
+        due = 0.0
+        fails = 0
+        while not stop.wait(max(0.0, due - (time.time() - t0))):
+            try:
+                discover_diff(d_snap, d_items, d_cl, d_pc, d_st)
+                fails = 0
+            except Exception as e:
+                fails += 1
+                print("    [diff] 本轮失败(%d/3): %s" % (fails, e))
+                if fails >= 3:
+                    print("    [diff] 连续失败，差分线程退出（重扫兜底仍在）")
+                    return
+            # 绝对节拍：周期保持 0.5s；被超过时不追补连扫
+            due = max(due + 0.5, time.time() - t0)
+
     def rescan_worker():
         """[fix 2026-08-30b] 后台全量重扫线程。原 force 路径内联在采样循环里，
         每次阻塞 ~3.1s（85k 对象全扫 + 族链走查），一晚 96 次 → A2 81.83% FAIL；
@@ -320,6 +406,13 @@ def run(p, cal, hz, scale=False, out_dir=None):
                    把每轮 ~85k 次类指针 RPM 压到仅新增/变化槽位。"""
         w_prev = {}
         w_cls = {}
+        # [spd 2026-10-04] 布局解析移入各线程私有（原先在 run() 作用域共享；
+        # 差分线程化后重扫线程改用本地副本，值只读、语义不变）
+        try:
+            r_cl, r_pc, r_st, _nume0 = t.chunk_layout(p)
+        except Exception as e:
+            print("    [rescan] chunk 布局解析失败，后台重扫线程退出: %s" % e)
+            return
         due = 0.0
         fails = 0
         while not stop.wait(max(0.0, due - (time.time() - t0))):
@@ -332,17 +425,17 @@ def run(p, cal, hz, scale=False, out_dir=None):
                 cls_seen = set()   # 当前类集 → 动态重建族集
                 dead_props = []    # 槽位零化摘除提案（apply 时复核）
                 for c in range(numc):
-                    ca = p.u64(cl + c * 8)
+                    ca = p.u64(r_cl + c * 8)
                     if not ca:
                         continue
-                    take = min(per_chunk, max(0, nume - c * per_chunk))
-                    blob = p.read(ca, take * stride)
+                    take = min(r_pc, max(0, nume - c * r_pc))
+                    blob = p.read(ca, take * r_st)
                     if not blob:
                         continue
-                    m = len(blob) // stride
-                    base_i = c * per_chunk
+                    m = len(blob) // r_st
+                    base_i = c * r_pc
                     for i in range(m):
-                        off = i * stride
+                        off = i * r_st
                         ptr = struct.unpack_from("<Q", blob, off)[0]
                         sn = struct.unpack_from("<I", blob, off + 0x10)[0]
                         idx = base_i + i
@@ -430,28 +523,47 @@ def run(p, cal, hz, scale=False, out_dir=None):
     worker = threading.Thread(target=rescan_worker, name="rescan-worker",
                               daemon=True)
     worker.start()
+    dworker = threading.Thread(target=diff_worker, name="diff-worker",
+                               daemon=True)
+    dworker.start()
 
+    # [spd 2026-10-04] 绝对节拍：deadline 基于 perf_counter（单调高精度），帧时间戳
+    # 仍用 time.time()-t0（epoch 差，schema 语义不变）。单帧落后超过一个周期即重对齐，
+    # 不突发补帧。三个节拍（探测 0.5s / flush 2s / scale 1s）从"帧数取模"改"墙钟门控"，
+    # 语义按原 50Hz 意图保持（原取模在 200Hz 下周期会被放大 4 倍）。
+    _timer_res_begin()
+    period = 1.0 / hz
+    next_dl = time.perf_counter() + period
+    last_probe = -1.0
+    last_flush = 0.0
+    last_scale = 0.0
     try:
         while True:
+            _wait_scroll(next_dl)
+            pc_now = time.perf_counter()
+            if pc_now - next_dl > period:
+                next_dl = pc_now
+            next_dl += period
             now = time.time() - t0
-            if n % 25 == 0:          # 0.5s 一次差分发现
-                discover_diff()
-                if n > 0:            # [fix 2026-08-31] 活性探测（差分周期搭车）
-                    nume, numc = read_num()
-                    if not nume or not numc:
-                        dead_streak += 1
-                        if dead_streak > 30:   # 30 × 0.5s = 15s
-                            print("[run] 对象数组连续 %.0fs 读失败（进程退出？），"
-                                  "中断等待重附着" % (dead_streak * 0.5))
-                            break
-                    else:
-                        dead_streak = 0
+            if now - last_probe >= 0.5:   # [fix 2026-08-31] 活性探测（0.5s 不变）
+                last_probe = now
+                nume, numc = read_num()
+                if not nume or not numc:
+                    dead_streak += 1
+                    if dead_streak > 30:   # 30 × 0.5s = 15s
+                        print("[run] 对象数组连续 %.0fs 读失败（进程退出？），"
+                              "中断等待重附着" % (dead_streak * 0.5))
+                        break
+                else:
+                    dead_streak = 0
             with st_lock:            # 快照后 RPM 读取在锁外（不阻塞后台合并）
                 tg = list(targets.items())
                 ser = dict(serials)
             arr = []
             scale_rows = []       # [v2.1] --scale：每秒每目标一条旁线
-            scale_due = scale and (n % hz == 0)
+            scale_due = scale and (now - last_scale >= 1.0)
+            if scale_due:
+                last_scale = now
             dead = []
             for i, owner in tg:
                 ia = item_addr(i)
@@ -461,9 +573,13 @@ def run(p, cal, hz, scale=False, out_dir=None):
                     continue
                 comp = p.u64(owner + root_off)
                 if comp:
-                    pos = [p.f32(comp + xo + 16 + k * 4) for k in range(3)]
-                    if all(v is not None for v in pos):
-                        arr.append([owner, pos[0], pos[1], pos[2]])
+                    # [spd 2026-10-04] 平移 12B 连续：一次 RPM 替代 3 次 f32。
+                    # 同地址同字节同解法（"<3f" ≡ 逐个 "<f"）；读失败/短读整点跳过
+                    # ≡ 原来任一分量 None 跳过；NaN 通路不变（cleaner 照旧剔除）。
+                    blob = p.read(comp + xo + 16, 12)
+                    if blob is not None and len(blob) >= 12:
+                        px, py, pz = struct.unpack_from("<3f", blob, 0)
+                        arr.append([owner, px, py, pz])
                         if scale_due:
                             s3 = [p.f32(comp + xo + 32 + k * 4) for k in range(3)]
                             if all(v is not None and 0.01 <= abs(v) <= 1000.0 for v in s3):
@@ -482,21 +598,23 @@ def run(p, cal, hz, scale=False, out_dir=None):
             for srow in scale_rows:   # [v2.1] scale 旁线（cleaner 跳过）
                 f.write(json.dumps(srow) + "\n")
             n += 1
-            if n % (hz * 2) == 0:
+            if now - last_flush >= 2.0:
+                last_flush = now
                 f.flush()
                 print("    t=%6.1fs targets=%d" % (now, len(arr)))
-            time.sleep(dt)
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()          # [fix 2026-08-30b] 停掉后台重扫线程再退出
+        stop.set()          # [fix 2026-08-30b] 停掉后台线程再退出（含差分线程）
         worker.join(timeout=8)
+        dworker.join(timeout=2)
+        _timer_res_end()
         f.flush(); f.close()
         print("[run] 结束，共 %d 帧 → %s" % (n, OUT_PATH))
 
 
 def main():
-    hz = 50
+    hz = 200    # [spd 2026-10-04] 默认 200Hz（原 50；--hz 可覆盖）
     wait = False
     scale = False          # [v2.1] --scale：每秒每目标读 Scale3D 旁线
     out_dir = None         # [产品化 2026-09-06] --out-dir：产物落会话目录（默认仍脚本目录）

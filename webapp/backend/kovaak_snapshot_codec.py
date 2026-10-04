@@ -146,6 +146,37 @@ def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
     return decode_mouse_snapshot_bytes(data)
 
 
+def snapshot_bounds(path: str | Path) -> tuple[int, int, int] | None:
+    """读快照文件结构摘要：首/尾点时间戳与点数。
+
+    只读文件头与两端记录（零全量解析），供收尾路径区分「快照尚未覆盖到
+    局窗口尾」与「窗口内从未有过输入事件」。结构异常返回 None，调用方
+    沿用原语义。
+    """
+    source = Path(path)
+    try:
+        size = source.stat().st_size
+        if size <= SNAPSHOT_HEADER_SIZE or size > MAX_SNAPSHOT_BYTES:
+            return None
+        with source.open("rb") as stream:
+            header = stream.read(SNAPSHOT_HEADER_SIZE)
+            if len(header) != SNAPSHOT_HEADER_SIZE or header[:4] != SNAPSHOT_MAGIC:
+                return None
+            count = struct.unpack_from("<I", header, 8)[0]
+            if count == 0 or SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_RECORD_SIZE != size:
+                return None
+            first_bytes = stream.read(SNAPSHOT_RECORD_SIZE)
+            stream.seek(size - SNAPSHOT_RECORD_SIZE)
+            last_bytes = stream.read(SNAPSHOT_RECORD_SIZE)
+    except OSError:
+        return None
+    if len(first_bytes) < 8 or len(last_bytes) < 8:
+        return None
+    first = struct.unpack_from("<q", first_bytes, 0)[0]
+    last = struct.unpack_from("<q", last_bytes, 0)[0]
+    return first, last, count
+
+
 def read_mouse_snapshot_with_version(
     path: str | Path,
 ) -> tuple[int, list[dict[str, int]]]:

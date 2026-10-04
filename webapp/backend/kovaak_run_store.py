@@ -58,6 +58,7 @@ from .kovaak_snapshot_codec import (
     extract_mouse_snapshot_window,
     read_mouse_snapshot,
     read_mouse_snapshot_with_version,
+    snapshot_bounds,
     write_mouse_snapshot,
 )
 from .kovaak_evidence_artifacts import (
@@ -966,9 +967,23 @@ async def attach_mouse_trace_snapshot_window(
             expected_pending_trace_path=target,
         ) or run
     if not count:
+        bounds = snapshot_bounds(raw_input_snapshot_path)
+        if bounds is not None and bounds[1] >= end_ms:
+            # 快照尾点已越过窗口尾仍切不出点：窗口内从未有过输入事件
+            # （输入到达率过低的机器），等满 retention 只会拖时间。
+            return await mark_mouse_trace_unavailable(
+                run["id"], user_id, "trace_no_points_in_window",
+                expected_pending_trace_path=target,
+                pending_echo=_pending_diagnostic_echo(
+                    bounds, start_ms=start_ms, end_ms=end_ms,
+                ),
+            ) or run
         if within_retention:
             await mark_mouse_trace_waiting(
                 run["id"], user_id, expected_pending_trace_path=target,
+                pending_echo=_pending_diagnostic_echo(
+                    bounds, start_ms=start_ms, end_ms=end_ms,
+                ),
             )
             raise RetryableIngestionError(
                 "trace_pending: trace window is not flushed yet", code="trace_pending",
@@ -987,6 +1002,25 @@ async def attach_mouse_trace_snapshot_window(
             run["id"], user_id, "trace_attach_failed",
             expected_pending_trace_path=target,
         ) or run
+
+
+def _pending_diagnostic_echo(
+    bounds: tuple[int, int, int] | None,
+    *,
+    start_ms: int,
+    end_ms: int,
+) -> dict[str, object]:
+    # 切窗 0 点时的诊断回显：快照点数与首/尾时间戳 + 局窗口（不含路径与
+    # 会话密钥），供支持侧区分「快照还没覆盖到窗口尾」与「窗口内无输入」。
+    # bounds 为 None（快照结构异常/读取失败）时原样透传缺失。
+    first_ms, last_ms, point_count = bounds if bounds is not None else (None, None, None)
+    return {
+        "snapshotFirstPointMs": first_ms,
+        "snapshotLastPointMs": last_ms,
+        "snapshotPointCount": point_count,
+        "window_start_epoch_ms": start_ms,
+        "window_end_epoch_ms": end_ms,
+    }
 
 
 def _receipt_diagnostic_echo(
@@ -2640,6 +2674,7 @@ async def mark_mouse_trace_waiting(
     user_id: str,
     *,
     expected_pending_trace_path: str | Path | None = None,
+    pending_echo: dict[str, object] | None = None,
 ) -> Optional[dict]:
     run = _load_run(run_id)
     if run is None or run.get("user_id") != user_id:
@@ -2653,6 +2688,10 @@ async def mark_mouse_trace_waiting(
     run["trace_state"] = "pending"
     run["pending_trace_path"] = None
     run["trace_error"] = "trace_waiting_snapshot"
+    if pending_echo is not None:
+        # 等待期间随重试刷新（finalizer 秒级重试共用同一次落盘，无额外成本）；
+        # attach 后残留无清理，最后一份即诊断快照。
+        run["trace_pending_echo"] = pending_echo
     run["updated_at"] = _utc_now()
     _save_run(run)
     return run
@@ -2665,6 +2704,7 @@ async def mark_mouse_trace_unavailable(
     *,
     expected_pending_trace_path: str | Path | None = None,
     receipt_echo: dict[str, object] | None = None,
+    pending_echo: dict[str, object] | None = None,
 ) -> Optional[dict]:
     run = _load_run(run_id)
     if run is None or run.get("user_id") != user_id:
@@ -2681,6 +2721,8 @@ async def mark_mouse_trace_unavailable(
     if receipt_echo is not None:
         # 仅 receipt 判死路径回填（attach/unavailable 后不再翻转，无残留清理）。
         run["trace_receipt_echo"] = receipt_echo
+    if pending_echo is not None:
+        run["trace_pending_echo"] = pending_echo
     run["updated_at"] = _utc_now()
     _save_run(run)
     return run

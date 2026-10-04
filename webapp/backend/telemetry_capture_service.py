@@ -220,6 +220,9 @@ class TelemetryCaptureService:
         # 按局增量切窗簿记：run_id → outcome（去重 + 诊断可见）。
         self._run_cuts: dict[int, str] = {}
         self._last_cut: dict[str, object] = {}
+        # 切窗请求被前置守卫拒绝的累计计数（原因 → 次数）。守卫静默 return
+        # 会让「三通道零产出」机器在诊断里看起来一切正常，必须可见。
+        self._run_cut_rejections: dict[str, int] = {}
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -279,14 +282,53 @@ class TelemetryCaptureService:
             "children": sorted(self._children),
             "last_error": self._last_error,
             # [fix 2026-09-30] 死亡子进程的合并日志尾部（可选：无死亡/无日志时 None）。
-            "child_log_tail": dict(self._child_log_tails) if self._child_log_tails else None,
+            # [fix 2026-10-03] 活着但零产出的子进程同样不可见——现在活/死都收
+            # 尾部：活着 role 现场读 {role}.log，死亡 role 用终态尾部。
+            "child_log_tail": self._collect_child_log_tails(),
+            # [fix 2026-10-03] 会话目录三通道产出清单：零产出机器（子进程活着
+            # 但从未写数据）的指纹，与 run_cut_rejections 一起定位切窗为何空转。
+            "session_outputs": self._session_output_counts(),
             "last_finalize": self._last_finalize,
             "last_cut": dict(self._last_cut) if self._last_cut else None,
             "run_cuts_total": len(self._run_cuts),
             "run_cuts_in_flight": sum(
                 1 for rid in self._run_cuts if run_cut_pending(rid)
             ),
+            "run_cut_rejections": dict(self._run_cut_rejections),
         }
+
+    def _record_run_cut_rejection(self, reason: str) -> None:
+        self._run_cut_rejections[reason] = (
+            self._run_cut_rejections.get(reason, 0) + 1
+        )
+
+    def _session_output_counts(self) -> dict[str, object]:
+        counts: dict[str, object] = {
+            "target_files": 0,
+            "camera_files": 0,
+            "input_log": False,
+        }
+        if self._session_dir is not None:
+            counts["target_files"] = sum(
+                1 for _ in self._session_dir.glob(_RAW_GLOB)
+            )
+            counts["camera_files"] = sum(
+                1 for _ in self._session_dir.glob(_CAMERA_GLOB)
+            )
+            counts["input_log"] = (self._session_dir / _INPUT_NAME).is_file()
+        return counts
+
+    def _collect_child_log_tails(self) -> dict[str, str] | None:
+        tails: dict[str, str] = {}
+        if self._session_dir is not None:
+            for role in self._children:
+                tail = _read_log_tail(self._session_dir / f"{role}.log")
+                if tail:
+                    tails[role] = tail
+        for role, tail in self._child_log_tails.items():
+            # 死亡子进程的终态尾部兜底（活 role 现场读已覆盖则不重复写）。
+            tails.setdefault(role, tail)
+        return tails if tails else None
 
     # ------------------------------------------------------------------ 内部
 
@@ -370,14 +412,25 @@ class TelemetryCaptureService:
         if not isinstance(run_id, int) or isinstance(run_id, bool):
             return False
         if run_id in self._run_cuts:
+            self._record_run_cut_rejection("duplicate")
             return False
         if (self._session_dir is None or not self._game_present
                 or not any(self._session_dir.glob(_RAW_GLOB))):
+            # 拒绝原因细分：会话缺失 / 游戏不在场 / 会话目录无 target 产出件。
+            # 后者 = 三通道零产出机器的指纹（b1 报障形态），必须可诊断。
+            if self._session_dir is None:
+                reason = "session_missing"
+            elif not self._game_present:
+                reason = "game_absent"
+            else:
+                reason = "no_session_outputs"
+            self._record_run_cut_rejection(reason)
             return False
         try:
             (self._session_dir / "cuts").mkdir(exist_ok=True)
         except OSError as error:
             self._last_error = f"cut_staging_unavailable: {error}"
+            self._record_run_cut_rejection("cut_staging_unavailable")
             return False
         # 请求即登记（pending）：跨线程去重 + 诊断的 in-flight 计数都以此为准。
         self._run_cuts[run_id] = "pending"
@@ -395,6 +448,7 @@ class TelemetryCaptureService:
             # 启动失败必须回收登记，否则该 run 的分析每次都白等满超时。
             self._run_cuts[run_id] = "spawn_failed"
             self._last_error = f"cut_spawn_failed: {error}"
+            self._record_run_cut_rejection("cut_spawn_failed")
             with _RUN_CUT_LOCK:
                 _RUN_CUT_EVENTS.pop(run_id, None)
             event.set()

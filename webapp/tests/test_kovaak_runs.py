@@ -3555,3 +3555,120 @@ async def test_delete_run_rejects_missing_owner_mismatch_and_analyzed(
     assert kovaak_run_store.is_kovaak_run_source_deleted(
         "u1", "removable-u1",
     ) is False
+
+
+def test_snapshot_bounds_reads_first_last_and_count(tmp_path: Path) -> None:
+    snapshot = tmp_path / "buffer.bin"
+    kovaak_run_store.write_mouse_snapshot(snapshot, [
+        {"timestamp_ms": 900, "dx": 1, "dy": 0, "buttons": 0},
+        {"timestamp_ms": 1_500, "dx": 2, "dy": 1, "buttons": 0},
+        {"timestamp_ms": 2_100, "dx": 3, "dy": 2, "buttons": 0},
+    ])
+    assert kovaak_run_store.snapshot_bounds(snapshot) == (900, 2_100, 3)
+
+
+def test_snapshot_bounds_rejects_malformed_files(tmp_path: Path) -> None:
+    assert kovaak_run_store.snapshot_bounds(tmp_path / "missing.bin") is None
+    garbage = tmp_path / "garbage.bin"
+    garbage.write_bytes(b"\x00" * 64)
+    assert kovaak_run_store.snapshot_bounds(garbage) is None
+
+
+def _trace_window_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    now_ms: int,
+    snapshot_points: list[dict[str, int]],
+) -> tuple[Path, KovaaKFileDiscovery]:
+    from webapp.backend import config
+
+    performance = tmp_path / "Scenario Performance.perf"
+    performance.write_bytes(b"performance")
+    raw_snapshot = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw_snapshot, snapshot_points)
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: now_ms)
+    monkeypatch.setattr(
+        kovaak_run_store,
+        "parse_performance_file",
+        lambda _path: PerformanceData(
+            header=PerformanceHeader(
+                scenario_name="Scenario",
+                challenge_start_utc=1_000,
+                challenge_profile=ChallengeProfile(time_limit=1.0),
+            ),
+        ),
+    )
+    return raw_snapshot, KovaaKFileDiscovery(
+        stem="zero-points", performance_path=performance,
+    )
+
+
+@pytest.mark.asyncio
+async def test_trace_zero_points_after_window_tail_marks_no_points_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 窗口 [1000, 2000)，快照点 900/2100 都在窗外且尾点已越过窗口尾：
+    # 窗口内从未有过输入事件，立即终态，不再等满 retention。
+    raw_snapshot, discovery = _trace_window_discovery(
+        tmp_path, monkeypatch,
+        now_ms=2_500,
+        snapshot_points=[
+            {"timestamp_ms": 900, "dx": 1, "dy": 0, "buttons": 0},
+            {"timestamp_ms": 2_100, "dx": 3, "dy": 2, "buttons": 0},
+        ],
+    )
+
+    run = await kovaak_run_store.ingest_discovery(
+        discovery,
+        user_id="u1",
+        raw_input_snapshot_path=raw_snapshot,
+        raw_snapshot_covered_through_epoch_ms=2_100,
+    )
+
+    assert run["trace_state"] == "unavailable"
+    assert run["trace_error"] == "trace_no_points_in_window"
+    assert run["trace_pending_echo"] == {
+        "snapshotFirstPointMs": 900,
+        "snapshotLastPointMs": 2_100,
+        "snapshotPointCount": 2,
+        "window_start_epoch_ms": 1_000,
+        "window_end_epoch_ms": 2_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_trace_zero_points_before_window_tail_keeps_waiting_with_echo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 覆盖水印已过窗口尾但快照尾点尚未越过（落盘滞后）：维持 pending 等待
+    # （原语义不变），并把切窗现场回显进 run meta 供诊断。
+    raw_snapshot, discovery = _trace_window_discovery(
+        tmp_path, monkeypatch,
+        now_ms=2_500,
+        snapshot_points=[
+            {"timestamp_ms": 800, "dx": 1, "dy": 0, "buttons": 0},
+        ],
+    )
+
+    with pytest.raises(kovaak_run_store.RetryableIngestionError, match="trace_pending"):
+        await kovaak_run_store.ingest_discovery(
+            discovery,
+            user_id="u1",
+            raw_input_snapshot_path=raw_snapshot,
+            raw_snapshot_covered_through_epoch_ms=2_000,
+        )
+
+    pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+    assert pending["trace_state"] == "pending"
+    assert pending["trace_error"] == "trace_waiting_snapshot"
+    assert pending["trace_pending_echo"] == {
+        "snapshotFirstPointMs": 800,
+        "snapshotLastPointMs": 800,
+        "snapshotPointCount": 1,
+        "window_start_epoch_ms": 1_000,
+        "window_end_epoch_ms": 2_000,
+    }
