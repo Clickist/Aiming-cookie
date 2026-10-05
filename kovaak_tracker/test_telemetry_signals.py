@@ -689,6 +689,98 @@ def test_frozen_meta_build_is_deterministic(tmp_path):
     assert no_t_start["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(32.0)
 
 
+def test_frozen_meta_origin_t_anchor_corrected_padded_round(tmp_path):
+    """[fix 2026-10-05e] 前垫场景：rounds_index 轮起点（t_start=8.0）比真实
+    局开始（canonical 窗 [10000,16000)ms 的帧域起点 10.0）早 2s。origin_t
+    （worker 用对齐回执锚换算）优先作 canonical 映射原点：窗内 kill = 真实
+    击杀数，局前残留段的自然收尾（9.99s）与局末存活段（16.05s）不混入；
+    origin_t 缺失回退 t_start 旧语义（窗整体偏早：残留自然收尾误判 kill、
+    局末真实击杀丢窗外）。"""
+    round_dir = tmp_path / "ext-padded"
+    round_dir.mkdir(parents=True)
+    # 旁车 t 域 [8.0, 16.1]：A=局前残留（自然收尾 9.99）、B=局内目标两条命
+    # （真实击杀 11.3 / 12.0）、C=局内目标（局末真实击杀 15.9）、D=局末存活段
+    # （16.05 自然收尾）。
+    lives = {
+        0: (8.1, 9.99),        # addr 0：局前残留，无死亡收尾
+        100: (10.5, 12.0),     # addr 100：两条命，真实击杀 11.3 / 12.0
+        200: (12.0, 15.9),     # addr 200：局末真实击杀
+        300: (15.9, 16.05),    # addr 300：局末存活段
+    }
+    grid = [round(8.0 + i * 0.032, 3) for i in range(int(8.1 / 0.032) + 1)]
+    views = b"".join(
+        ('{"t": %.3f, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 0.0], "fov": 103.0}\n'
+         % t).encode("utf-8") for t in grid)
+    frames = b"".join(
+        ('{"ev": "frame", "t": %.3f, "targets": [%s]}\n' % (
+            t,
+            ", ".join('[%d, 4000.0, %d.0, 0.0]' % (a, a // 100)
+                      for a, (lo, hi) in lives.items() if lo <= t <= hi),
+        )).encode("utf-8") for t in grid)
+    (round_dir / "round.jsonl").write_bytes(frames)
+    (round_dir / "views_01.jsonl").write_bytes(views)
+    (round_dir / "inputs_01.jsonl").write_bytes(b"")
+    (round_dir / "bb.json").write_bytes(
+        b'{"challenges": [{"window_t": [8.0, 16.1], '
+        b'"bots": [{"character": {"bb": {"radius": 60.0}}}]}]}\n')
+    (round_dir / "merge_manifest.json").write_text(json.dumps({
+        "schema_version": "merge_manifest.v1",
+        "generated": "2026-10-05T00:00:00",
+        "round_dir": str(round_dir),
+        "alignment": {
+            "method": "index_t0_epoch+xcorr_verify", "accepted": True,
+            "t0_epoch_from_index": 0.0,   # 锚=0 → 帧域即 epoch 秒
+        },
+    }), encoding="utf-8")
+
+    meta_targets = [
+        {"tid": 0, "addr_hex": "0x0", "n_lives": 1,
+         "lives": [{"t_start": 8.1, "t_end": 9.99, "n": 10, "path_cm": 0.0}]},
+        {"tid": 1, "addr_hex": "0x64", "n_lives": 2,
+         "lives": [{"t_start": 10.5, "t_end": 11.3, "n": 20, "path_cm": 0.0},
+                   {"t_start": 11.3, "t_end": 12.0, "n": 20, "path_cm": 0.0}]},
+        {"tid": 2, "addr_hex": "0xc8", "n_lives": 1,
+         "lives": [{"t_start": 12.0, "t_end": 15.9, "n": 60, "path_cm": 0.0}]},
+        {"tid": 3, "addr_hex": "0x12c", "n_lives": 1,
+         "lives": [{"t_start": 15.9, "t_end": 16.05, "n": 3, "path_cm": 0.0}]},
+    ]
+
+    def build(meta):
+        return build_telemetry_visual_result(
+            round_dir, 1,
+            canonical_window=(10000.0, 16000.0),
+            file_names={"round": "round.jsonl", "views": "views_01.jsonl",
+                        "inputs": "inputs_01.jsonl"},
+            frozen_round_meta=meta,
+        )
+
+    corrected = build({
+        "targets": meta_targets,
+        "t_start": 8.0,        # rounds_index 轮起点（带 2s 局前垫）
+        "origin_t": 10.0,      # 锚校正：canonical 10000ms − 锚 0s
+    })
+    # origin_t 被消费（不是 t_start=8.0）
+    assert corrected["video_time_mapping"]["source_pts_origin_ms"] == 10000.0
+    kills = sorted(
+        event["start_ms"] for event in corrected["event_bundle"]["events"]
+        if event["event_kind"] == "kill")
+    # 窗内 kill = 真实击杀：11.3 / 12.0 / 15.9 → 11300/12000/15900ms；
+    # 局前残留自然收尾 9.99（→9990，窗外）与局末存活段 16.05（→16050，窗外）
+    # 不混入。
+    assert kills == [11300, 12000, 15900]
+    assert corrected["safe_summary"]["event_counts"]["kill"] == 3
+
+    # origin_t 缺失（旧 cleaner/worker 产物）→ 回退 t_start=8.0：窗整体偏早
+    # 2s——残留自然收尾 9.99 误判 kill（→11990），局末真实击杀 15.9 丢窗外
+    # （→17900）。
+    legacy = build({"targets": meta_targets, "t_start": 8.0})
+    assert legacy["video_time_mapping"]["source_pts_origin_ms"] == 8000.0
+    kills_legacy = sorted(
+        event["start_ms"] for event in legacy["event_bundle"]["events"]
+        if event["event_kind"] == "kill")
+    assert kills_legacy == [11990, 13300, 14000]
+
+
 def test_index_round_file_fallback_retired_fail_closed(tmp_path):
     """index_round_file 兜底退役：参数不复存在；目录 basename 与索引 sources
     不匹配时，(round, file) 唯一命中也不被采纳——fail-closed 落

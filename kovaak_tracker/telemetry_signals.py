@@ -21,8 +21,10 @@ fov 用该轮 views 流的稳健值（中位；views 有少量 fov 撕裂帧）�
 
 时间域：旁车 t 为源文件相对秒；本切片不查 KovaaKRun，canonical ms 由入参
 canonical_window 直接给定：canonical_ms = window_start + (t - t_origin)*1000。
-t_origin：源目录入口取 rounds_index 该轮 t_start；冻结入口取本局 meta 的
-t_start（frozen_round_meta 透传，不读共享索引）。缺失时回退轮帧首帧 t。
+t_origin：源目录入口取 rounds_index 该轮 t_start；冻结入口优先取本局 meta 的
+origin_t（[fix 2026-10-05e] worker 用对齐回执锚换算的帧域局窗起点，producer
+只消费不推导），缺失回退 t_start（frozen_round_meta 透传，不读共享索引）、
+再回退轮帧首帧 t。
 
 文件名布局：默认消费源目录（round_NN / views_NN / inputs_NN）；Aiming Cookie
 侧的冻结副本（{DATA_ROOT}/external/ext-<id>/）把轮帧固定重命名为 round.jsonl，
@@ -295,12 +297,16 @@ def _load_round_index_entry(
 
 
 def _frozen_round_meta_entry(frozen_round_meta: Mapping) -> dict:
-    """冻结本局 meta（targets/t_start）-> 等价 rounds_index 该轮条目。
+    """冻结本局 meta（targets/t_start/origin_t）-> 等价 rounds_index 该轮条目。
 
     共享 rounds_index 是活文件，后续导入会覆盖它；(round, file) 命中会把
     新局身份误认成旧局，因此冻结路径只认入库时随本局保存的身份：
     addr_hex 按 16 进制解析；条目/生命窗解析失败跳过（与 index 条目同款
     容错）；t_start 缺失时不写入，由调用方回退轮帧首帧 t。
+    [fix 2026-10-05e] origin_t（帧域局窗起点，worker 用对齐回执锚换算）优先
+    于 t_start 作 canonical 映射原点——t_start 是采集窗起点带局前垫，直接
+    当原点会把 canonical 窗整体偏早（run 54095 实测偏早 7.88s：丢局末击杀、
+    混入局前自然收尾段误判 kill）。缺失时回退 t_start 现行为。
     """
     entry: dict = {"targets": []}
     raw_targets = frozen_round_meta.get("targets")
@@ -327,10 +333,12 @@ def _frozen_round_meta_entry(frozen_round_meta: Mapping) -> dict:
                     except (KeyError, TypeError, ValueError):
                         continue
             entry["targets"].append({"tid": tid, "addr": addr, "lives": lives})
-    try:
-        entry["t_start"] = float(frozen_round_meta["t_start"])
-    except (KeyError, TypeError, ValueError):
-        pass
+    for key in ("origin_t", "t_start"):
+        try:
+            entry[key] = float(frozen_round_meta[key])
+            break
+        except (KeyError, TypeError, ValueError):
+            continue
     return entry
 
 
@@ -524,10 +532,15 @@ def build_telemetry_visual_result(
 
     origin_t: float | None = None
     if index_entry is not None:
-        try:
-            origin_t = float(index_entry["t_start"])
-        except (KeyError, TypeError, ValueError):
-            origin_t = None
+        # [fix 2026-10-05e] 冻结路径的锚校正 origin_t（worker 用对齐回执锚
+        # 换算的帧域局窗起点）优先；源目录入口的 rounds_index 条目只有
+        # t_start（无 origin_t），保持现行为。
+        for key in ("origin_t", "t_start"):
+            try:
+                origin_t = float(index_entry[key])
+                break
+            except (KeyError, TypeError, ValueError):
+                continue
     if origin_t is None:
         origin_t = first_frame_t
     if origin_t is None:

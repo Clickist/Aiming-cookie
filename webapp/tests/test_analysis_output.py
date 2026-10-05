@@ -124,3 +124,43 @@ def test_metrics_and_summary_carry_the_generic_knowledge_refs():
     assert overview["metrics_summary"]["tracking.generic.error_median_deg"][
         "knowledge_refs"
     ] == ["metric:tracking_error"]
+
+
+def test_overview_passes_through_data_quality_signals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """[lives 2026-10-05d] data_quality 透传：外部遥测源 known_issues + 结果层/
+    指标层 limitations（事实信号字段原样透传，Coach 据此说"这局数字别当真"）；
+    无遥测源/无 limitations 时退化为空列表，绝不抛错。"""
+    from webapp.backend import config, external_telemetry_store as telemetry_store
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
+    run_id = "ext-0123456789abcdef"
+    telemetry_store.save_meta(run_id, {
+        "schema_version": telemetry_store.SCHEMA_VERSION,
+        "external_run_id": run_id,
+        "quality": {"known_issues": ["cleaner_short_respawn_merge"], "gates": {}},
+    })
+    result = _result_with_timeline([], [], input_snapshot={
+        "scenario": "fixture",
+        "sources": {"external_telemetry": {
+            "availability": "available", "external_run_id": run_id,
+        }},
+    })
+    result["deterministic"]["limitations"] = ["mouse_trajectory_from_external_telemetry"]
+    result["deterministic"]["metrics"] = {
+        "t2k_p50": {"value": 0.5, "unit": "s",
+                    "limitations": ["mouse_trajectory_from_external_telemetry",
+                                    "alignment_partial"]},
+    }
+
+    data_quality = _build_overview(9, result)["data_quality"]
+    assert data_quality["known_issues"] == ["cleaner_short_respawn_merge"]
+    # 去重并保持首次出现顺序
+    assert data_quality["limitations"] == [
+        "mouse_trajectory_from_external_telemetry", "alignment_partial",
+    ]
+
+    # 无外部遥测源、无 limitations → 空列表（确定性形状，不抛错）
+    bare = _build_overview(9, _result_with_timeline([], []))
+    assert bare["data_quality"] == {"known_issues": [], "limitations": []}

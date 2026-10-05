@@ -1514,6 +1514,23 @@ def _build_external_telemetry_visual_result(job: dict) -> dict:
         "targets": meta.get("targets") if isinstance(meta.get("targets"), list) else [],
         "t_start": (meta.get("time") or {}).get("t_start"),
     }
+    # [fix 2026-10-05e] 冻结路径 origin_t 锚校正：帧域局窗起点 = canonical 窗
+    # 起点(epoch ms→s) − epoch 锚。锚优先取对齐回执的精确锚
+    # alignment.t0_epoch_from_index（= index t0_epoch，回执已验收），缺失回落
+    # meta.time.epoch_anchor.epoch_start_est（文件名 est，±1s 精度语义沿用既有
+    # limitation 口径）。producer 只消费本字段、不自行推导；源目录入口（无
+    # frozen_round_meta）行为不变。旧语义直接透传 rounds_index 轮起点
+    # t_start=52.0955 作 origin——那是采集窗起点带局前垫，比真实局开始早
+    # 7.88s：窗整体偏早（截入局前垃圾段、丢局末 ~10 杀、混入 5 条自然收尾
+    # 段误判 kill，run 54095 实测 85→80）。
+    anchor_epoch = alignment.get("t0_epoch_from_index")
+    if not (isinstance(anchor_epoch, (int, float)) and not isinstance(anchor_epoch, bool)
+            and math.isfinite(float(anchor_epoch))):
+        anchor_epoch = ((meta.get("time") or {}).get("epoch_anchor") or {}).get(
+            "epoch_start_est")
+    if isinstance(anchor_epoch, (int, float)) and not isinstance(anchor_epoch, bool) \
+            and math.isfinite(float(anchor_epoch)):
+        frozen_round_meta["origin_t"] = start_ms / 1000.0 - float(anchor_epoch)
     try:
         from kovaak_tracker.telemetry_signals import build_telemetry_visual_result
 

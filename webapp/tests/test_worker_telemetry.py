@@ -1069,3 +1069,66 @@ def test_replay_ignores_overwritten_shared_rounds_index():
     assert json.dumps(visual_clean, sort_keys=True) == json.dumps(
         visual_polluted, sort_keys=True,
     )
+
+
+def test_frozen_origin_t_anchor_corrected():
+    """[fix 2026-10-05e] 前垫场景 origin_t 锚校正：帧域局窗起点 = canonical
+    窗起点 − epoch 锚。锚优先 alignment.t0_epoch_from_index（精确），缺失回落
+    meta.time.epoch_anchor.epoch_start_est（文件名 est ±1s），都缺 → 不写
+    origin_t（producer 回退 t_start 旧语义）。旧语义把 rounds_index 轮起点
+    （带采集前垫）当原点，canonical 窗整体偏早（run 54095 实测偏早 7.88s：
+    截入局前垃圾段、丢局末击杀、混入自然收尾段误判 kill）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    # epoch 级 canonical 窗（真实链路口径）：[1000000, 1001000)ms，旁车帧域
+    # t∈[0, 0.5]、meta t_start=0.0（前垫语义：真实局从帧 0.26 起）。
+    job = _telemetry_job(ext_dir)
+    window = dict(CANONICAL_WINDOW)
+    window["start_ms"] = 1_000_000
+    window["end_ms"] = 1_001_000
+    window["duration_ms"] = 1_000
+    job["input_snapshot"]["canonical_time_window"] = window
+
+    def set_manifest_anchor(anchor):
+        manifest_path = ext_dir / "merge_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if anchor is None:
+            manifest["alignment"].pop("t0_epoch_from_index", None)
+        else:
+            manifest["alignment"]["t0_epoch_from_index"] = anchor
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def set_meta_est(est):
+        meta_path = ext_dir / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if est is None:
+            meta["time"].pop("epoch_anchor", None)
+        else:
+            meta["time"]["epoch_anchor"] = {
+                "method": "filename_wallclock",
+                "epoch_start_est": est,
+                "precision_s": 1.0,
+                "year_assumed": 2026,
+            }
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    # 精确锚：origin_t = 1000s − 999.74s = 0.260s（不是 meta t_start=0.0）
+    set_manifest_anchor(999.74)
+    visual = worker._build_external_telemetry_visual_result(job)
+    assert visual["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(260.0)
+    # 帧域窗 [0.26, 1.26)：真实击杀 t=0.5 → canonical 1000240ms 窗内在。
+    kills = [e["start_ms"] for e in visual["event_bundle"]["events"]
+             if e["event_kind"] == "kill"]
+    assert kills == [1000240]
+
+    # 回落 est 锚：origin_t = 1000 − 999.75 = 0.250s（±1s 精度语义沿用既有口径）
+    set_manifest_anchor(None)
+    set_meta_est(999.75)
+    visual_est = worker._build_external_telemetry_visual_result(job)
+    assert visual_est["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(250.0)
+    assert [e["start_ms"] for e in visual_est["event_bundle"]["events"]
+            if e["event_kind"] == "kill"] == [1000250]
+
+    # 两种锚都缺（旧 manifest/meta）→ 无 origin_t：producer 回退 t_start=0.0
+    set_meta_est(None)
+    visual_legacy = worker._build_external_telemetry_visual_result(job)
+    assert visual_legacy["video_time_mapping"]["source_pts_origin_ms"] == 0.0

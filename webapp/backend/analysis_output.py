@@ -70,6 +70,53 @@ def _write_json(path: Path, data: object) -> None:
     os.replace(tmp_path, path)
 
 
+def _build_data_quality(result: dict) -> dict:
+    """[lives 2026-10-05d] Coach 数据质量事实信号透传（overview.json 消费方）。
+
+    汇集本分析的数据质量事实编码，供 Coach 对用户明说"这局数字别当真"一类
+    判断：外部遥测源的导入 known_issues（如 cleaner_short_respawn_merge）+
+    结果层 deterministic.limitations 与指标层 metric.limitations 的并集。
+    只透传事实信号字段（原样编码，不改写成人读文案、不掺人设）；读取失败
+    退化为空列表，绝不影响 overview 产出。
+    """
+    known_issues: list[str] = []
+    snapshot = result.get("input_snapshot") or {}
+    source = (snapshot.get("sources") or {}).get("external_telemetry")
+    if (
+        isinstance(source, dict)
+        and isinstance(source.get("external_run_id"), str)
+        and source["external_run_id"]
+    ):
+        try:
+            from . import external_telemetry_store as telemetry_store
+
+            meta = telemetry_store.load_meta(source["external_run_id"])
+        except Exception:  # noqa: BLE001 - 旁路读取，失败即缺省
+            meta = None
+        if isinstance(meta, dict):
+            quality = meta.get("quality") if isinstance(meta.get("quality"), dict) else {}
+            known_issues = [
+                str(issue) for issue in (quality.get("known_issues") or [])
+                if isinstance(issue, str) and issue
+            ]
+    deterministic = result.get("deterministic") or {}
+    limitations = [
+        value for value in (deterministic.get("limitations") or [])
+        if isinstance(value, str) and value
+    ]
+    metrics = deterministic.get("metrics") if isinstance(deterministic.get("metrics"), dict) else {}
+    for metric in metrics.values():
+        if isinstance(metric, dict):
+            limitations.extend(
+                value for value in (metric.get("limitations") or [])
+                if isinstance(value, str) and value
+            )
+    return {
+        "known_issues": known_issues,
+        "limitations": list(dict.fromkeys(limitations)),
+    }
+
+
 def _build_overview(session_id: int, result: dict) -> dict:
     deterministic = result.get("deterministic") or {}
     diagnosis = deterministic.get("diagnosis") or {}
@@ -145,6 +192,9 @@ def _build_overview(session_id: int, result: dict) -> dict:
             },
             "coverage": evidence.get("coverage"),
         },
+        # [lives 2026-10-05d] 数据质量事实信号（known_issues + limitations）：
+        # Coach 逐文件直读 overview.json，据此向用户标注"这局数字别当真"。
+        "data_quality": _build_data_quality(result),
         "scenario_info": {
             "support_status": (
                 scenario_block.get("support_status")
