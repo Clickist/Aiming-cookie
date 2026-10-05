@@ -526,7 +526,12 @@ fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String>
             path.is_file()
         };
         if !valid {
-            return Err(format!("{label} is missing: {}", path.display()));
+            // [fix 2026-10-06 修D] 资源缺失（典型=杀软隔离 runtime exe）不得在
+            // setup 主线程返回 Err：setup Err 会经 tauri「Failed to setup app」
+            // panic（exit 101）= 闪退，完全绕过启动闸门的失败卡。降级为落日志
+            // 并照常返回 layout，让后台拉起在此路径上 spawn 失败 → 3 次重启
+            // 预算 → runtime.failed → 失败卡（不闪退、一键导出诊断包）。
+            crate::dlog!("[desktop-runtime] {label} is missing: {} —— 继续启动，由后台拉起失败接管", path.display());
         }
     }
     Ok(RuntimeLayout {
@@ -1033,15 +1038,23 @@ mod tests {
     }
 
     #[test]
-    fn packaged_layout_fails_before_spawn_when_resources_are_missing() {
+    fn packaged_layout_survives_missing_resources_and_lets_spawn_fail_closed() {
         let temp = std::env::temp_dir().join(format!(
             "aiming-cookie-missing-layout-{}",
             create_launch_token()
         ));
         std::fs::create_dir_all(temp.join("runtime")).unwrap();
 
-        let error = packaged_runtime_layout(&temp).unwrap_err();
-        assert!(error.contains("packaged backend runtime is missing"));
+        // [fix 2026-10-06 修D] 资源缺失不得在 setup 主线程 Err——那会经 tauri
+        // 「Failed to setup app」panic 闪退（exit 101，杀软隔离 runtime exe 的
+        // 真实形态）。正确路径 = 照常返回 layout，由后台拉起 spawn 失败 →
+        // 3 次重启预算 → runtime.failed → 前端失败卡（不闪退、可导诊断包）。
+        let layout = packaged_runtime_layout(&temp)
+            .expect("missing resources must not fail layout construction");
+        assert!(layout
+            .backend_program
+            .to_string_lossy()
+            .contains("aiming-cookie-runtime"));
 
         std::fs::remove_dir_all(temp).unwrap();
     }
