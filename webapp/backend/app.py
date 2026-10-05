@@ -88,13 +88,17 @@ def _spawn_science_prewarm_child() -> None:
         argv = [sys.executable, "--telemetry-child", "prewarm_science.py"]
     else:
         argv = [sys.executable, str(script)]
-    subprocess.Popen(
+    from . import config
+
+    child = subprocess.Popen(
         argv,
         cwd=str(Path(__file__).resolve().parent.parent.parent),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    config.SCIENCE_PREWARM_CHILD = child
+    log.info("science prewarm child spawned pid=%s", child.pid)
 
 
 app = FastAPI(title="Aiming Cookie API", lifespan=lifespan)

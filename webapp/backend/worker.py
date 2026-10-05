@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import subprocess
 import os
 import re
 import socket
@@ -18,6 +19,8 @@ from pathlib import Path
 from . import analysis_output, queue
 from .config import (
     ANALYSIS_TOTAL_BUDGET_SECONDS,
+    SCIENCE_PREWARM_CHILD,
+    SCIENCE_PREWARM_MAX_WAIT_SECONDS,
     DATA_ROOT,
     DESKTOP_LOCAL_PROFILE,
     HEARTBEAT_INTERVAL_SECONDS,
@@ -3848,6 +3851,18 @@ async def process_one() -> bool:
     """处理一个 job。True=处理了(无论成败),False=队列空。"""
     # Stale-lease recovery runs from the idle loop (throttled). Doing it here
     # made every job start a full sessions-directory scan on top of claim_next's.
+    # [fix 2026-10-05] 科学栈预热子进程在导入时就近楔死加载器锁（实机死锁两连）：
+    # 领分析前先等预热子进程退出（至多 25 分钟兜底），保证任一时刻全进程只有
+    # 一个 numpy/scipy 导入者。无预热子进程时零开销直通。
+    prewarm_child = SCIENCE_PREWARM_CHILD
+    if prewarm_child is not None:
+        try:
+            await asyncio.to_thread(prewarm_child.wait, SCIENCE_PREWARM_MAX_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            log.warning(
+                "science prewarm child still alive after %ss; proceeding anyway",
+                SCIENCE_PREWARM_MAX_WAIT_SECONDS,
+            )
     job = await queue.claim_next(WORKER_ID)
     if job is None:
         return False

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 from ipaddress import ip_address
 from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
@@ -414,6 +415,12 @@ DEFAULT_MAX_ATTEMPTS = int(os.environ.get("DEFAULT_MAX_ATTEMPTS", "3"))
 # 消费循环（实机走查：卡死 13 分钟无自愈）。总预算由 process_one 的
 # wait_for 强制；阶段预算供 expire_stalled_analyses 旁路清扫（analyzing_video
 # 含 CV 子进程链路，单独放宽）。
+# [fix 2026-10-05] 科学栈预热子进程句柄（app lifespan 启动时置入）。worker
+# 领取分析前等它退出：冻结运行时的 scipy 首导在安全软件首扫下楔 10-20 分钟
+# 且抱死加载器锁——并发导入（预热+worker）实测把整个进程锁成永久死锁。
+# 任一时刻只允许一个导入者。
+SCIENCE_PREWARM_CHILD = None
+SCIENCE_PREWARM_MAX_WAIT_SECONDS = 1500
 ANALYSIS_TOTAL_BUDGET_SECONDS = 1800
 ANALYSIS_PHASE_BUDGET_SECONDS = 600
 ANALYSIS_VIDEO_PHASE_BUDGET_SECONDS = 900
