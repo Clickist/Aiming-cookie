@@ -243,7 +243,31 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.8</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-04</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.0</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-05</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">New</span><span>Motion analysis for target-switching scenarios: switch transition time (from one kill to re-acquiring the next target) and switch path efficiency, measured from ground-truth telemetry rather than estimation</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed analyses getting stuck on &quot;queued&quot; and never finishing: static-clicking scenarios (e.g. 1wall 6targets small) now complete on the first try, and previously stuck analyses recover on retry</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Smoother first-run onboarding: the coach gets straight to training instead of circling</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Three membership-page fixes: plan-card colors in dark/light themes, continuous-billing wording now matches the actual monthly purchase, and the account card no longer renders misaligned</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Motion-analysis time alignment fixed: all motion metrics now align to the real round window — previously the window started about 8 seconds early, cutting off the end of each round and mixing in pre-round data</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Target track segmentation fixed: kill counts now match the game&#39;s official stats line by line — previously targets were over-segmented, inflating kills by nearly half and distorting tracking metrics</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Data-quality transparency: analyses with imperfect data now flag which metrics deserve caution, and the coach says so plainly instead of presenting compromised numbers as reliable readings</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Scenario classification fix: switching-style scenarios (such as Tile Frenzy 180) are now analyzed as switching, with switch cadence and path readings of their own instead of tracking-style yardsticks</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.9</h2><span class="cl-date">2026-10-05</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">New</span><span>Training-record processing is now visible at a glance: rows show what is still being processed and how many runs are queued, and a notification pops up when everything is ready</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Tracking-style motion analysis is dramatically faster and no longer fails intermittently: no more long waits ending in a score-only fallback - crosshair-to-target adherence and error metrics now arrive within seconds, and repeated analysis of the same run gives consistent results</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed some new users getting stuck on sign-in onboarding: the one-time credential from the browser sign-in is no longer lost — it is retried automatically if the app isn&#39;t ready, and reopening the app picks the earlier sign-up back up</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>More resilient startup: page-load failures now retry instead of leaving a rare blank screen, and launching a second copy no longer blanks the first window</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Motion-layer diagnostics fixed: tracking-style scenarios now produce crosshair-versus-target motion analysis instead of being skipped, and one faulty round no longer drags down the rest of a session</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed “larger + slowed” style scenarios failing to process their data: targets carried over from the previous run are no longer mistaken for on-screen debris, so these scenarios process and analyze normally again</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.8</h2><span class="cl-date">2026-10-04</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>New-user funnel fixes: the official Aiming Cookie option now leads the provider list; the client polls automatically after sign-in instead of waiting forever; the trial CTA appears on its own once quota lands — no restart needed</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Device handoff validity extended from 10 to 30 minutes, leaving ample time for email verification</span></li>

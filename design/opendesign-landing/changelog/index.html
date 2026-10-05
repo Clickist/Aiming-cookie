@@ -243,7 +243,31 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.8</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-04</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.0</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-05</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>转火类训练的动作分析上线：转火过渡时长（从上一个目标被击杀到准星重新抓住下一个目标）、转火路径效率这类转火专属指标，数值来自真值遥测，不是估算</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分训练局分析一直停在「排队中」不出结果的问题：静态打靶类场景（如 1wall 6targets small）首次分析即可正常完成，之前卡住过的分析重试即可恢复</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>新用户开场引导更顺：打开应用直接进入训练正题，开场不再绕弯子</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>会员页面三处修复：开通卡片深浅色配色错乱、连续包月说明与按月购买方式不一致、账户卡片错位</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>动作分析时间对齐修复：所有训练的动作层指标现在对齐到真实对局窗口——此前分析窗口整体偏早约 8 秒，每局的结尾会被截掉、开头混入对局前的数据</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>目标轨迹切分修复：击杀数与游戏官方统计逐条一致——此前目标被误切成碎段，击杀数虚增近一半，轨迹贴合类指标随之失真</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>数据质量透明：数据有瑕疵的分析会明确标注哪些指标该谨慎看，教练解读时也会如实说明（&quot;这一段别当真&quot;），不再让有水分的数字冒充可信读数</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>场景分类修正：转火类场景（如 Tile Frenzy 180）现在按转火方式分析，给出转火节奏、路径这类它自己的读数，而不是套用跟踪场景的尺子</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.9</h2><span class="cl-date">2026-10-05</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>训练记录的整理进度一目了然：整理中的记录会显示具体在等什么、还排着几局，整理完成后会主动弹提醒——不用再对着「整理中」干等</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>跟枪类训练的动作分析大幅提速并修复偶发失败：不再出现长时间等待后只给基于分数的简化结果，准星与目标的贴合度、误差等动作指标秒级产出，同一局重复分析的结果保持一致</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分新用户注册后一直停在登录引导、进不了主界面的问题——浏览器完成注册后返回应用时凭证不再丢失（应用未就绪会自动重试），重开应用重新选择会员档也能接回之前完成的注册</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>启动更稳：应用启动时页面加载失败会自动重试，不再偶发白屏；双开应用时不再出现窗口突然变空白的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>动作层训练诊断修复：跟枪类场景（跟踪/横移目标）现在能正常生成准星与目标关系的动作诊断，不再被误判跳过；同一批训练里个别数据异常的局不再拖累其他局的动作分析</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复「目标较大且移动较慢」类训练场景整理不出数据的问题：上一局残留的目标不再被误当作画面残影清理掉，这类场景的数据整理与分析恢复正常</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.3.8</h2><span class="cl-date">2026-10-04</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>新用户开通链路修复：官方「Aiming Cookie」档在 Provider 列表置顶首选；登录后客户端自动轮询推进，不再无限等待浏览器返回；试用额度到账后引导按钮自动出现，不再需要重启</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>设备登录授权有效期从 10 分钟延长到 30 分钟，收验证码更从容</span></li>
