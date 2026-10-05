@@ -553,19 +553,39 @@ def test_v3_rejects_invalid_scenario_prescription_contract(mutation, message):
     "scenario:movement.unreviewed@99",
     "scenario:static.retired@1",
     "scenario:static.1wall_6targets_small@99",
+    "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
 ])
-def test_v3_rejects_scenario_prescriptions_outside_active_scenario_profiles(
+def test_current_registry_rejects_scenario_prescriptions_outside_active_scenario_profiles(
     scenario_profile_ref,
 ):
-    invalid = copy.deepcopy(
-        registry.load_registry(registry_version="2026-07-28.v3")
-    )
+    """[2026-10-05] 活跃性校验只约束当前版本：WHJ 退役后其 ref 在当前
+    v14 上必须被拒；v3-v13 历史版本的冻结语义见下一条测试。"""
+    invalid = copy.deepcopy(registry.load_registry())
     invalid["entries"][0]["scenario_prescription"]["scenario_profile_ref"] = (
         scenario_profile_ref
     )
 
     with pytest.raises(registry.KnowledgeRegistryError, match="active scenario"):
         registry.validate_registry(invalid)
+
+
+def test_historical_registries_keep_frozen_scenario_prescriptions_loadable():
+    """[2026-10-05] 历史版本数据零改动：场景退役不追溯重校验历史注册表，
+    v3-v13 当年有效的 WHJ 指向照常加载，其校验也不因今日退役而炸。"""
+    frozen = copy.deepcopy(registry.load_registry(registry_version="2026-07-28.v3"))
+    frozen["entries"][0]["scenario_prescription"]["scenario_profile_ref"] = (
+        "scenario:movement.unreviewed@99"
+    )
+    registry.validate_registry(frozen)
+
+    loaded = registry.load_registry(registry_version="2026-09-20.v13")
+    tracking = next(
+        entry for entry in loaded["entries"]
+        if entry["entry_id"] == "tracking.predictable-speed-matching"
+    )
+    assert tracking["scenario_prescription"]["scenario_profile_ref"] == (
+        "scenario:tracking.whj_smooth_strafe_sphere_easy@1"
+    )
 
 
 _RAWINPUT_V4_ENTRY_IDS = {
@@ -1355,7 +1375,23 @@ def test_v12_corpus_prescriptions_are_the_default_registry():
     assert loaded["signal_aliases"] == v13["signal_aliases"]
     for old in v13["entries"]:
         new = by_id[old["entry_id"]]
-        if old["entry_id"] in amended:
+        if old["entry_id"] == "tracking.predictable-speed-matching":
+            # [2026-10-05] WHJ 判型锚点退役：处方场景指向按既有三档语义降级——
+            # 移出"本机可开"（结构化 scenario_prescription 与它锚定的
+            # near_transfer_retest 随能力档退役），处方知识主体（cue、dose、
+            # matched_retest、stop_adjust_rule 与全部正文）逐字节保留。
+            for key, value in old.items():
+                if key in {
+                    "supported_uses", "scenario_prescription", "near_transfer_retest",
+                }:
+                    continue
+                assert new[key] == value, (old["entry_id"], key)
+            assert new["supported_uses"] == [
+                "explanation_only", "diagnosis_support", "candidate_experiment",
+            ]
+            assert "scenario_prescription" not in new
+            assert "near_transfer_retest" not in new
+        elif old["entry_id"] in amended:
             for key, value in old.items():
                 if key in ("definition", "scope", "cue"):
                     continue

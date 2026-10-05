@@ -136,6 +136,22 @@ export function activeScenarioProfileRefs(
   }
   return new Set([...registryRefs].filter((ref) => manifestRefs.has(ref)));
 }
+
+/**
+ * [2026-10-05] 处方场景 ref 的"活跃性"校验只跟随最新打包版本：历史版本是
+ * 冻结的当年数据（其场景指向在发布时有效），场景 registry 的后续演进（如
+ * WHJ 退役）不得让 v3-v13 历史注册表无法加载。非官方版本（知识包等自定义
+ * registry_version）保持原行为：照常校验，导入侧另有官方 ref 收窄。
+ * Parity: Python `knowledge_registry._activeness_refs_for`。
+ */
+function activenessScenarioRefsFor(registryVersion: string): Set<string> | null {
+  const official = registryFiles();
+  const versions = [...official.keys()];
+  if (official.has(registryVersion) && registryVersion !== versions[versions.length - 1]) {
+    return null;
+  }
+  return activeScenarioProfileRefs();
+}
 const SOURCE_FIELDS_V2 = new Set([
   "source_ref", "source_level", "title", "author_or_org", "published_at",
   "retrieved_at", "locator", "applicability", "supports_sections",
@@ -464,7 +480,7 @@ function validateScenarioPrescriptionV2(
   entryFamilyScope: Set<string>,
   entrySources: Set<string>,
   sources: Map<string, KnowledgeSourceV2>,
-  activeScenarioRefs: Set<string>,
+  activeScenarioRefs: Set<string> | null,
 ): ScenarioPrescriptionV2 | "not_applicable" {
   if (raw === "not_applicable") return raw;
   const fields = new Set([
@@ -477,7 +493,7 @@ function validateScenarioPrescriptionV2(
   if (!SCENARIO_PROFILE_REF.test(scenarioProfileRef)) {
     throw new KnowledgeRegistryError("scenario_prescription.scenario_profile_ref is invalid");
   }
-  if (!activeScenarioRefs.has(scenarioProfileRef)) {
+  if (activeScenarioRefs !== null && !activeScenarioRefs.has(scenarioProfileRef)) {
     throw new KnowledgeRegistryError("scenario_prescription.scenario_profile_ref is not an active scenario");
   }
   const practiceCondition = text(raw.practice_condition, "scenario_prescription.practice_condition", 500);
@@ -516,7 +532,7 @@ function validateEntryV2(
   index: number,
   sources: Map<string, KnowledgeSourceV2>,
   requiresScenarioPrescription: boolean,
-  activeScenarioRefs: Set<string>,
+  activeScenarioRefs: Set<string> | null,
   supportedUsesAllowed = SUPPORTED_USES,
   allowNonOutcomeNotApplicable = false,
   allowEmptyObservationContext = false,
@@ -620,7 +636,7 @@ function validateEntryV3(
   raw: unknown,
   index: number,
   sources: Map<string, KnowledgeSourceV2>,
-  activeScenarioRefs: Set<string>,
+  activeScenarioRefs: Set<string> | null,
 ): KnowledgeEntryV2 {
   const optionalFields = new Set([
     "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
@@ -703,7 +719,7 @@ function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
   if (sources.size !== sourceList.length) throw new KnowledgeRegistryError("duplicate source_ref");
   if (!Array.isArray(raw.entries) || raw.entries.length < 1 || raw.entries.length > MAX_ENTRIES) throw new KnowledgeRegistryError("entries is invalid");
   const requiresScenarioPrescription = registryVersion === "2026-07-28.v3";
-  const activeScenarioRefs = activeScenarioProfileRefs();
+  const activeScenarioRefs = activenessScenarioRefsFor(registryVersion);
   const entries = raw.entries.map((entry, index) => (
     validateEntryV2(entry, index, sources, requiresScenarioPrescription, activeScenarioRefs)
   ));
@@ -760,7 +776,7 @@ function validateKnowledgeRegistryV3(raw: unknown): KnowledgeRegistry {
   const sources = new Map(sourceList.map((source) => [source.source_ref, source]));
   if (sources.size !== sourceList.length) throw new KnowledgeRegistryError("duplicate source_ref");
   if (!Array.isArray(raw.entries) || raw.entries.length < 1 || raw.entries.length > MAX_ENTRIES) throw new KnowledgeRegistryError("entries is invalid");
-  const activeScenarioRefs = activeScenarioProfileRefs();
+  const activeScenarioRefs = activenessScenarioRefsFor(registryVersion);
   const entries = raw.entries.map((entry, index) => (
     validateEntryV3(entry, index, sources, activeScenarioRefs)
   ));

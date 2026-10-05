@@ -54,6 +54,22 @@ _PACKAGED_REGISTRIES = {
     "2026-09-20.v13": REGISTRY_PATH_V13,
     "2026-10-04.v14": REGISTRY_PATH_V14,
 }
+# [2026-10-05] 处方场景 ref 的"活跃性"校验只跟随最新打包版本：历史版本是被
+# 冻结的当年数据（其场景指向在发布时有效），场景 registry 的后续演进
+#（如 WHJ 退役）只约束当前版本的校验，不得让 v3-v13 历史注册表无法加载。
+# 非官方版本（知识包等自定义 registry_version）保持原行为：照常校验，
+# 打包导入侧另有 scenario_ref_not_official 收窄。
+_CURRENT_OFFICIAL_REGISTRY_VERSION = next(reversed(_PACKAGED_REGISTRIES))
+
+
+def _activeness_refs_for(registry_version: str) -> set[str] | None:
+    """Active scenario refs to enforce, or None for frozen historical versions."""
+    if (
+        registry_version in _PACKAGED_REGISTRIES
+        and registry_version != _CURRENT_OFFICIAL_REGISTRY_VERSION
+    ):
+        return None
+    return active_scenario_profile_refs()
 MAX_RESULTS = 8
 # v12 adds 60 corpus prescription entries; the packaged registry now exceeds
 # the v11-era 512 KiB ceiling, so the loader safeguard tracks the new size.
@@ -430,7 +446,7 @@ def _normalize_scenario_prescription_v2(
     entry_family_scope: set[str],
     entry_source_refs: set[str],
     sources_by_ref: Mapping[str, Mapping[str, Any]],
-    active_scenario_refs: set[str],
+    active_scenario_refs: set[str] | None,
 ) -> dict[str, Any] | str:
     if raw == "not_applicable":
         return raw
@@ -444,7 +460,10 @@ def _normalize_scenario_prescription_v2(
     )
     if not _SCENARIO_PROFILE_REF_RE.fullmatch(scenario_profile_ref):
         raise KnowledgeRegistryError(f"{field}.scenario_profile_ref is invalid")
-    if scenario_profile_ref not in active_scenario_refs:
+    if (
+        active_scenario_refs is not None
+        and scenario_profile_ref not in active_scenario_refs
+    ):
         raise KnowledgeRegistryError(f"{field}.scenario_profile_ref is not an active scenario")
     practice_condition = _required_text(
         raw["practice_condition"], f"{field}.practice_condition", max_length=500
@@ -494,7 +513,7 @@ def _normalize_entry_v2(
     supported_uses_allowed: set[str] = _SUPPORTED_USES,
     allow_non_outcome_not_applicable: bool = False,
     allow_empty_observation_context: bool = False,
-    active_scenario_refs: set[str],
+    active_scenario_refs: set[str] | None,
 ) -> dict[str, Any]:
     expected_fields = set(_ENTRY_FIELDS_V2)
     if isinstance(raw, Mapping) and _SCENARIO_PRESCRIPTION_FIELD in raw:
@@ -630,7 +649,7 @@ def _normalize_entry_v3(
     index: int,
     *,
     sources_by_ref: Mapping[str, Mapping[str, Any]],
-    active_scenario_refs: set[str],
+    active_scenario_refs: set[str] | None,
 ) -> dict[str, Any]:
     field = f"entry[{index}]"
     optional_fields = {
@@ -720,7 +739,7 @@ def _validate_registry_v2(raw: Any) -> dict[str, Any]:
     if not 1 <= len(entries_raw) <= MAX_ENTRIES:
         raise KnowledgeRegistryError("entries has invalid length")
     requires_scenario_prescription = registry_version == "2026-07-28.v3"
-    active_scenario_refs = active_scenario_profile_refs()
+    active_scenario_refs = _activeness_refs_for(registry_version)
     entries = [
         _normalize_entry_v2(
             item,
@@ -803,7 +822,9 @@ def _validate_registry_v3(raw: Any) -> dict[str, Any]:
         raise KnowledgeRegistryError("entries must be a list")
     if not 1 <= len(entries_raw) <= MAX_ENTRIES:
         raise KnowledgeRegistryError("entries has invalid length")
-    active_scenario_refs = active_scenario_profile_refs()
+    # [2026-10-05] 活跃性校验只约束当前打包版本；历史版本按冻结数据处理
+    #（见 _activeness_refs_for）。
+    active_scenario_refs = _activeness_refs_for(registry_version)
     entries = [
         _normalize_entry_v3(
             item,

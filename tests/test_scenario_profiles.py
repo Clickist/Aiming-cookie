@@ -78,7 +78,53 @@ def test_active_scenario_profile_refs_intersect_active_registry_and_manifest():
     ) == {"scenario:static.example@1"}
 
 
-def test_packaged_registry_activates_only_reviewed_launch_hashes():
+def test_retired_whj_leaves_active_refs_and_resolves_via_name_layer():
+    # [2026-10-05] WHJ 判型锚点退役钉住：活跃 ref 集不含 WHJ；其 hash+名字
+    # 解析走名字层（name_heuristic / continuous_tracking / ref=None）；
+    # retired 条目的 launch manifest 校验通过（registry 侧语义）。
+    active_refs = scenario_profiles.active_scenario_profile_refs()
+    assert active_refs == {
+        "scenario:static.1wall_6targets_small@1",
+        "scenario:dynamic.pasu_small_reload@1",
+        "scenario:switching.beants_larger@1",
+    }
+    assert "scenario:tracking.whj_smooth_strafe_sphere_easy@1" not in active_refs
+
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["aim_family"] == "continuous_tracking"
+    assert resolution["scenario_profile_ref"] is None
+
+    manifest = {
+        "schema_version": "launch_scenario_manifest.v1",
+        "manifest_version": "2026-07-28.v1",
+        "entries": [{
+            "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
+            "scenario_profile_ref": (
+                "scenario:tracking.whj_smooth_strafe_sphere_easy@1"
+            ),
+            "fixture_ref": "fixture:whj-smooth-strafe-sphere-easy-single-target.v1",
+            "review_source_ref": (
+                "review:whj-smooth-strafe-sphere-easy-single-target-tracking"
+            ),
+            "reviewed_at": "2026-07-23T00:00:00Z",
+            "family_gate_refs": [
+                "gate:temporal-csrt-single-target-tracking.v1"
+            ],
+            "status": "retired",
+        }],
+    }
+    validated = scenario_profiles.validate_launch_manifest(manifest)
+    assert validated["entries"][0]["status"] == "retired"
+
+
+def test_packaged_scenario_assets_validate_and_route_through_the_name_layer():
+    # [2026-10-04] reviewed 精选档案层退役：exact reviewed hash 不再返回精确
+    # 档案身份；registry/manifest 仍是校验资产与「名字→家族」知识源。
+    # [2026-10-05] WHJ 判型锚点退役：其条目双 retired，解析落名字层。
     registry = scenario_profiles.load_registry()
     manifest = scenario_profiles.load_launch_manifest()
 
@@ -97,42 +143,64 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
         "a37d2ba4f3f33d59ae7018e37445a5e9",
         "3b42bdfd38a6b194737d650f3f53e8c1",
     ]
+    whj_registry_entry = next(
+        entry for entry in registry["entries"]
+        if entry["entry_id"] == "tracking.whj_smooth_strafe_sphere_easy"
+    )
+    assert whj_registry_entry["status"] == "retired"
+    whj_manifest_entry = next(
+        entry for entry in manifest["entries"]
+        if entry["scenario_profile_ref"]
+        == "scenario:tracking.whj_smooth_strafe_sphere_easy@1"
+    )
+    assert whj_manifest_entry["status"] == "retired"
+
     resolution = scenario_profiles.resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
         display_name="WHJ SmoothStrafeSphere Easy",
     )
-    assert resolution["scenario_profile_ref"] == (
-        "scenario:tracking.whj_smooth_strafe_sphere_easy@1"
-    )
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["profile_status"] == "unknown"
+    assert resolution["manifest_status"] == "unlisted"
     assert resolution["aim_family"] == "continuous_tracking"
     assert resolution["target_motion"] == {
-        "model": "predictable", "target_count_model": "single",
+        "model": "unknown", "target_count_model": "unknown",
     }
-    assert resolution["allowed_analyzers"] == ["continuous_tracking.v1"]
-    assert resolution["allowed_metric_families"] == ["continuous_tracking"]
+    assert resolution["allowed_analyzers"] == [
+        "continuous_tracking.baseline.v1", "continuous_tracking.v1",
+    ]
+    assert resolution["allowed_metric_families"] == [
+        "outcome", "input_kinematics", "continuous_tracking",
+    ]
     assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
 
     resolution = scenario_profiles.resolve_scenario_profile(
         "7378a811f430b6072d052a75896afb98",
         display_name="1wall 6targets small",
     )
-    assert resolution["manifest_status"] == "active"
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["manifest_status"] == "unlisted"
     assert resolution["aim_family"] == "static_clicking"
-    assert resolution["target_motion"] == {
-        "model": "static", "target_count_model": "concurrent",
-    }
-    assert resolution["allowed_analyzers"] == ["native_flicking.v1"]
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
     assert resolution["allowed_metric_families"] == [
-        "input_kinematics", "static_clicking",
+        "outcome", "input_kinematics",
     ]
     assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
 
     fixture = json.loads((
         Path(__file__).parent / "fixtures" / "scenarios"
         / "1wall-6targets-small-static.v1.json"
     ).read_text(encoding="utf-8"))
     assert fixture["scenario_hash"] == resolution["scenario_hash"]
-    assert fixture["scenario_profile_ref"] == resolution["scenario_profile_ref"]
+    assert fixture["scenario_profile_ref"] == (
+        "scenario:static.1wall_6targets_small@1"
+    )
     assert fixture["field_review"] == {
         "review_ref": "review:1wall-6targets-small-static-input-native",
         "reviewed_at": "2026-07-27T00:00:00Z",
@@ -149,17 +217,19 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
         "a37d2ba4f3f33d59ae7018e37445a5e9",
         display_name="pasu small reload",
     )
-    assert resolution["manifest_status"] == "active"
-    assert resolution["scenario_profile_ref"] == (
-        "scenario:dynamic.pasu_small_reload@1"
-    )
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["manifest_status"] == "unlisted"
     assert resolution["aim_family"] == "dynamic_clicking"
-    assert resolution["target_motion"] == {
-        "model": "reactive", "target_count_model": "concurrent",
-    }
-    assert resolution["allowed_analyzers"] == ["dynamic_clicking.v1"]
-    assert resolution["allowed_metric_families"] == ["dynamic_clicking"]
+    assert resolution["allowed_analyzers"] == [
+        "dynamic_clicking.baseline.v1", "dynamic_clicking.v1",
+    ]
+    assert resolution["allowed_metric_families"] == [
+        "outcome", "input_kinematics", "dynamic_clicking",
+    ]
     assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
 
     dynamic_fixture = json.loads((
         Path(__file__).parent / "fixtures" / "scenarios"
@@ -167,7 +237,7 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
     ).read_text(encoding="utf-8"))
     assert dynamic_fixture["scenario_hash"] == resolution["scenario_hash"]
     assert dynamic_fixture["scenario_profile_ref"] == (
-        resolution["scenario_profile_ref"]
+        "scenario:dynamic.pasu_small_reload@1"
     )
     assert dynamic_fixture["visual_gate"]["status"] == "accepted"
     assert dynamic_fixture["visual_gate"]["calibration"]["run_ref"] == (
@@ -224,7 +294,9 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
     assert resolution["claim_ceiling"] == "descriptive_only"
 
 
-def test_beants_larger_switching_activates_only_after_accepted_local_episode_gate():
+def test_beants_larger_resolves_through_the_name_layer_after_review_layer_retirement():
+    # [2026-10-04] reviewed 精选档案层退役后，switching 既有 hash 也走名字层；
+    # [2026-10-05] target_switching 获完整分析器（遥测真值动作层）。
     resolution = scenario_profiles.resolve_scenario_profile(
         "3b42bdfd38a6b194737d650f3f53e8c1",
         display_name="beanTS Larger",
@@ -234,26 +306,33 @@ def test_beants_larger_switching_activates_only_after_accepted_local_episode_gat
         / "beants-larger-switching.v1.json"
     ).read_text(encoding="utf-8"))
 
-    assert resolution["scenario_profile_ref"] == "scenario:switching.beants_larger@1"
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["scenario_profile_ref"] is None
     assert resolution["aim_family"] == "target_switching"
-    assert resolution["manifest_status"] == "active"
+    assert resolution["manifest_status"] == "unlisted"
     assert resolution["family_analyzer_dispatch"] == "allowed"
-    assert resolution["claim_ceiling"] == "family_specific"
-    assert resolution["allowed_analyzers"] == ["target_switching.v1"]
-    assert resolution["allowed_metric_families"] == ["target_switching"]
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert resolution["allowed_analyzers"] == [
+        "target_switching.baseline.v1", "target_switching.v1",
+    ]
+    assert resolution["allowed_metric_families"] == [
+        "outcome", "input_kinematics", "target_switching",
+    ]
     manifest_entry = next(
         entry for entry in scenario_profiles.load_launch_manifest()["entries"]
         if entry["scenario_hash"] == resolution["scenario_hash"]
     )
     assert manifest_entry == {
         "scenario_hash": resolution["scenario_hash"],
-        "scenario_profile_ref": resolution["scenario_profile_ref"],
+        "scenario_profile_ref": "scenario:switching.beants_larger@1",
         "fixture_ref": "fixture:beants-larger-switching.v1",
         "review_source_ref": "review:beants-larger-switching-calibration-holdout",
         "reviewed_at": "2026-07-28T00:00:00Z",
         "family_gate_refs": ["gate:beants-larger-event-local-episodes.v1"],
         "status": "active",
     }
+    assert fixture["scenario_profile_ref"] == manifest_entry["scenario_profile_ref"]
     gate = fixture["episode_gate"]
     assert gate["status"] == "accepted"
     assert gate["producer"] == {
@@ -321,7 +400,14 @@ def test_beants_larger_name_only_routes_a_switching_family_candidate():
     assert resolution["classification_source"] == "name_heuristic"
     assert resolution["classification_confidence"] == "candidate"
     assert resolution["aim_family"] == "target_switching"
-    assert resolution["allowed_analyzers"] == ["target_switching.baseline.v1"]
+    # [2026-10-05] switching 授予完整分析器（遥测真值动作层）；分发层仍要求
+    # 作业声明可用遥测源（worker._scenario_dispatch），无源局保持 baseline。
+    assert resolution["allowed_analyzers"] == [
+        "target_switching.baseline.v1", "target_switching.v1",
+    ]
+    assert resolution["allowed_metric_families"] == [
+        "outcome", "input_kinematics", "target_switching",
+    ]
     assert resolution["family_analyzer_dispatch"] == "allowed"
     assert resolution["claim_ceiling"] == "descriptive_only"
 
@@ -333,7 +419,9 @@ def test_beants_larger_name_only_routes_a_switching_family_candidate():
     assert same_name_unknown_hash["family_analyzer_dispatch"] == "allowed"
 
 
-def test_exact_active_hash_returns_reviewed_profile_and_allows_dispatch():
+def test_exact_reviewed_hash_no_longer_shortcuts_the_general_waterfall():
+    # [2026-10-04] reviewed 精选档案层退役：即使 hash 命中注册表里的精确档案，
+    # 也不再返回 reviewed 身份；支持 registry/manifest 只作版本与名字层来源。
     profile = _profile()
     resolution = scenario_profiles.resolve_scenario_profile(
         profile["scenario_hash"],
@@ -348,26 +436,33 @@ def test_exact_active_hash_returns_reviewed_profile_and_allows_dispatch():
         "display_name": "renamed display value",
         "registry_version": "2026-07-20.v1",
         "manifest_version": "2026-07-20.v1",
-        "scenario_profile_ref": "scenario:static.example@1",
-        "classification_source": "reviewed_registry",
-        "classification_confidence": "confirmed",
-        "profile_status": "active",
-        "reviewed_at": "2026-07-20T00:00:00Z",
-        "source_refs": ["review:scenario-static-example"],
+        "scenario_profile_ref": None,
+        "classification_source": "name_heuristic",
+        "classification_confidence": "candidate",
+        "classification_basis": None,
+        "profile_status": "unknown",
+        "reviewed_at": None,
+        "source_refs": [],
         "supersedes": [],
-        "manifest_status": "active",
-        "fixture_ref": "fixture:scenario-static-example",
-        "review_source_ref": "review:scenario-static-example",
-        "manifest_reviewed_at": "2026-07-20T00:00:00Z",
-        "family_gate_refs": ["gate:static-clicking"],
+        "manifest_status": "unlisted",
+        "fixture_ref": None,
+        "review_source_ref": None,
+        "manifest_reviewed_at": None,
+        "family_gate_refs": [],
         "aim_family": "static_clicking",
-        "subdomains": ["precision"],
-        "target_motion": {"model": "static", "target_count_model": "single"},
-        "allowed_analyzers": ["native_flicking.v1"],
-        "allowed_metric_families": ["input_kinematics", "static_clicking"],
-        "claim_ceiling": "family_specific",
+        "subdomains": [],
+        "target_motion": {"model": "unknown", "target_count_model": "unknown"},
+        "allowed_analyzers": ["static_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
         "family_analyzer_dispatch": "allowed",
-        "limitations": ["Only the reviewed scenario hash is classified."],
+        "limitations": [
+            "scenario_name_is_a_candidate_not_an_identity",
+            "exact_visual_profile_unavailable",
+            "target_relative_facts_unavailable",
+            "outcome_association_unavailable",
+            "scenario_prescription_unavailable",
+        ],
     }
 
 
@@ -548,9 +643,12 @@ def test_name_keywords_route_unreviewed_scenarios_to_family_candidates(display_n
     assert resolution["classification_confidence"] == "candidate"
     assert resolution["aim_family"] == aim_family
     # 1002 拍板：支持名单退役——tracking/dynamic 未复核身份也授予完整家族
-    # 分析器；switching/static 的完整管线依赖数据件或与 baseline 同层，不授予。
+    # 分析器；[2026-10-05] switching 加入（遥测真值动作层，分发层另要求
+    # 可用遥测源）；static 的 native 档与 baseline 同层，不授予。
     expected_analyzers = [f"{aim_family}.baseline.v1"]
-    if aim_family in {"continuous_tracking", "dynamic_clicking"}:
+    if aim_family in {
+        "continuous_tracking", "dynamic_clicking", "target_switching",
+    }:
         expected_analyzers.append(f"{aim_family}.v1")
     assert resolution["allowed_analyzers"] == expected_analyzers
     assert resolution["family_analyzer_dispatch"] == "allowed"
@@ -775,7 +873,9 @@ def test_challenge_shape_stays_below_the_local_scenario_definition_layer():
     assert resolution["aim_family"] == "static_clicking"
 
 
-def test_same_display_name_with_different_hashes_keeps_distinct_identities():
+def test_same_display_name_with_different_hashes_resolves_identically_by_name_layer():
+    # [2026-10-04] 身份不再由 hash 分辨：精选层退役后同名场景共享名字层结果，
+    # 两个 hash 得到同一候选家族与同一（无）档案引用。
     first = _profile()
     second = _profile(
         entry_id="static.other",
@@ -783,54 +883,71 @@ def test_same_display_name_with_different_hashes_keeps_distinct_identities():
     )
     second["display_name"] = first["display_name"]
     registry = _registry(first, second)
-    first_manifest = _manifest(first)["entries"][0]
-    second_manifest = _manifest(second)["entries"][0]
     manifest = {
         "schema_version": "launch_scenario_manifest.v1",
         "manifest_version": "2026-07-20.v1",
-        "entries": [first_manifest, second_manifest],
+        "entries": [
+            _manifest(first)["entries"][0],
+            _manifest(second)["entries"][0],
+        ],
     }
 
     first_resolution = scenario_profiles.resolve_scenario_profile(
-        first["scenario_hash"], registry=registry, manifest=manifest,
+        first["scenario_hash"], display_name=first["display_name"],
+        registry=registry, manifest=manifest,
     )
     second_resolution = scenario_profiles.resolve_scenario_profile(
-        second["scenario_hash"], registry=registry, manifest=manifest,
+        second["scenario_hash"], display_name=second["display_name"],
+        registry=registry, manifest=manifest,
     )
 
-    assert first_resolution["scenario_profile_ref"] == "scenario:static.example@1"
-    assert second_resolution["scenario_profile_ref"] == "scenario:static.other@1"
+    for resolution in (first_resolution, second_resolution):
+        assert resolution["scenario_profile_ref"] is None
+        assert resolution["classification_source"] == "name_heuristic"
+        assert resolution["classification_confidence"] == "candidate"
+        assert resolution["aim_family"] == "static_clicking"
+        assert resolution["family_analyzer_dispatch"] == "allowed"
 
 
 @pytest.mark.parametrize("status", ["pending_gate", "retired"])
-def test_non_active_manifest_entries_keep_family_baseline_dispatch(status):
+def test_non_active_manifest_status_entries_validate_and_resolve_via_name_layer(status):
+    # [2026-10-05] manifest 状态只约束资产合法性（retired 条目可与 retired
+    # 档案并存——WHJ 退役同款）；解析不再读取 manifest 状态做身份判断。
     profile = _profile(status="retired" if status == "retired" else "active")
+    manifest = _manifest(profile, status=status)
+    scenario_profiles.validate_launch_manifest(
+        manifest, registry=_registry(profile),
+    )
     resolution = scenario_profiles.resolve_scenario_profile(
-        profile["scenario_hash"], registry=_registry(profile), manifest=_manifest(profile, status=status)
+        profile["scenario_hash"], display_name=profile["display_name"],
+        registry=_registry(profile), manifest=manifest,
     )
 
-    assert resolution["classification_confidence"] == "confirmed"
-    assert resolution["manifest_status"] == status
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["manifest_status"] == "unlisted"
+    assert resolution["scenario_profile_ref"] is None
     assert resolution["aim_family"] == "static_clicking"
     assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
     assert resolution["allowed_metric_families"] == ["outcome", "input_kinematics"]
     assert resolution["family_analyzer_dispatch"] == "allowed"
     assert resolution["claim_ceiling"] == "descriptive_only"
-    assert "exact_manifest_gate_inactive_visual_claims_unavailable" in resolution["limitations"]
 
 
-def test_unlisted_manifest_keeps_family_baseline_for_an_exact_reviewed_hash():
+def test_unlisted_manifest_resolves_a_reviewed_hash_via_name_layer():
     profile = _profile()
     resolution = scenario_profiles.resolve_scenario_profile(
-        profile["scenario_hash"], registry=_registry(profile), manifest={
+        profile["scenario_hash"], display_name=profile["display_name"],
+        registry=_registry(profile), manifest={
             "schema_version": "launch_scenario_manifest.v1",
             "manifest_version": "2026-07-20.v1",
             "entries": [],
         }
     )
 
-    assert resolution["scenario_profile_ref"] == "scenario:static.example@1"
+    assert resolution["scenario_profile_ref"] is None
     assert resolution["manifest_status"] == "unlisted"
+    assert resolution["classification_source"] == "name_heuristic"
     assert resolution["aim_family"] == "static_clicking"
     assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
     assert resolution["family_analyzer_dispatch"] == "allowed"
@@ -848,17 +965,20 @@ def test_registry_rejects_cross_entry_hash_and_multiple_active_versions():
         scenario_profiles.validate_registry(_registry(profile, newer))
 
 
-def test_historical_versions_replay_the_same_identity_and_resolve_the_active_version():
+def test_supersession_chain_rules_still_validate_while_resolution_stays_name_layer():
+    # [2026-10-04] 解析层不再回放历史身份；supersedes 链的合法性与 registry
+    # 校验规则保持不变（旧版本引用必须指向同 hash 的更早版本）。
     previous = _profile(status="superseded")
     current = _profile(entry_version=2)
     current["supersedes"] = ["scenario:static.example@1"]
     resolution = scenario_profiles.resolve_scenario_profile(
-        current["scenario_hash"],
+        current["scenario_hash"], display_name=current["display_name"],
         registry=_registry(current, previous),
         manifest=_manifest(current),
     )
 
-    assert resolution["scenario_profile_ref"] == "scenario:static.example@2"
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["classification_source"] == "name_heuristic"
     assert resolution["family_analyzer_dispatch"] == "allowed"
 
     current["supersedes"] = ["scenario:other.profile@1"]
@@ -866,7 +986,9 @@ def test_historical_versions_replay_the_same_identity_and_resolve_the_active_ver
         scenario_profiles.validate_registry(_registry(previous, current))
 
 
-def test_frozen_resolution_keeps_review_and_supersession_provenance_after_update():
+def test_resolution_is_provenance_free_and_supersession_updates_do_not_rewrite_it():
+    # [2026-10-04] 精选层退役：resolution 不再携带 reviewed_at/source_refs 等
+    # 审核溯源字段；更换场景档案也不会改写既有解析结果（无身份可言）。
     previous = _profile()
     frozen = scenario_profiles.resolve_scenario_profile(
         previous["scenario_hash"],
@@ -886,13 +1008,13 @@ def test_frozen_resolution_keeps_review_and_supersession_provenance_after_update
     )
 
     replayed = json.loads(json.dumps(frozen))
-    assert replayed["scenario_profile_ref"] == "scenario:static.example@1"
-    assert replayed["reviewed_at"] == "2026-07-20T00:00:00Z"
-    assert replayed["source_refs"] == ["review:scenario-static-example"]
-    assert replayed["supersedes"] == []
-    assert replayed["review_source_ref"] == "review:scenario-static-example"
-    assert updated["scenario_profile_ref"] == "scenario:static.example@2"
-    assert updated["supersedes"] == ["scenario:static.example@1"]
+    for resolution in (replayed, updated):
+        assert resolution["scenario_profile_ref"] is None
+        assert resolution["reviewed_at"] is None
+        assert resolution["source_refs"] == []
+        assert resolution["supersedes"] == []
+        assert resolution["review_source_ref"] is None
+    scenario_profiles.validate_registry(_registry(archived_previous, current))
 
 
 @pytest.mark.parametrize(

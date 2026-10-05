@@ -138,13 +138,16 @@ test("scenario prescriptions resolve only to canonical active scenario profiles"
     loadRawScenarioRegistry(), pendingManifest,
   ).has(pendingManifest.entries[0].scenario_profile_ref));
 
+  // [2026-10-05] 活跃性校验只约束当前版本：WHJ 退役后其 ref 在当前注册表上
+  // 被拒（历史版本的冻结语义见下一条测试）。
   for (const scenarioProfileRef of [
     "scenario:movement.unreviewed@99",
     "scenario:static.retired@1",
     "scenario:static.1wall_6targets_small@99",
+    "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
   ]) {
-    const registry = structuredClone(loadKnowledgeRegistry("2026-07-28.v3"));
-    if (registry.schema_version !== "coach_knowledge_registry.v2") throw new Error("missing v3 registry");
+    const registry = structuredClone(loadKnowledgeRegistry());
+    if (registry.schema_version !== "coach_knowledge_registry.v3") throw new Error("missing v3 registry");
     const prescribed = registry.entries.find((entry) => entry.entry_id === "static.flicking-terminal-control");
     if (!prescribed || !("scenario_prescription" in prescribed) || prescribed.scenario_prescription === "not_applicable") {
       throw new Error("missing prescribed entry");
@@ -152,6 +155,29 @@ test("scenario prescriptions resolve only to canonical active scenario profiles"
     prescribed.scenario_prescription.scenario_profile_ref = scenarioProfileRef;
     assert.throws(() => validateKnowledgeRegistry(registry), /active scenario/);
   }
+});
+
+test("historical registries keep frozen scenario prescriptions loadable", () => {
+  // [2026-10-05] 历史版本数据零改动：场景退役不追溯重校验历史注册表，
+  // v3-v13 当年有效的 WHJ 指向照常加载，其校验也不因今日退役而炸。
+  const frozen = structuredClone(loadKnowledgeRegistry("2026-07-28.v3"));
+  if (frozen.schema_version !== "coach_knowledge_registry.v2") throw new Error("missing v3 registry");
+  const frozenPrescribed = frozen.entries.find((entry) => entry.entry_id === "static.flicking-terminal-control");
+  if (!frozenPrescribed || !("scenario_prescription" in frozenPrescribed) || frozenPrescribed.scenario_prescription === "not_applicable") {
+    throw new Error("missing prescribed entry");
+  }
+  frozenPrescribed.scenario_prescription.scenario_profile_ref = "scenario:movement.unreviewed@99";
+  validateKnowledgeRegistry(frozen);
+
+  const v13 = loadKnowledgeRegistry("2026-09-20.v13");
+  const tracking = v13.entries.find((entry) => entry.entry_id === "tracking.predictable-speed-matching");
+  if (!tracking || !("scenario_prescription" in tracking) || tracking.scenario_prescription === "not_applicable") {
+    throw new Error("missing v13 tracking prescription");
+  }
+  assert.equal(
+    tracking.scenario_prescription.scenario_profile_ref,
+    "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+  );
 });
 
 test("v4 loads article-granular community entries with capability boundaries", () => {
@@ -584,6 +610,21 @@ test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () 
     const oldEntry = v13.entries[i];
     const newEntry = registry.entries[i];
     assert.equal(newEntry.entry_id, oldEntry.entry_id);
+    if (oldEntry.entry_id === "tracking.predictable-speed-matching") {
+      // [2026-10-05] WHJ 判型锚点退役：处方场景指向按既有三档语义降级——
+      // 移出"本机可开"（结构化 scenario_prescription 与它锚定的
+      // near_transfer_retest 随能力档退役），处方知识主体逐字节保留。
+      for (const key of Object.keys(oldEntry)) {
+        if (key === "supported_uses" || key === "scenario_prescription" || key === "near_transfer_retest") continue;
+        assert.deepEqual(newEntry[key as keyof typeof newEntry], oldEntry[key as keyof typeof oldEntry], `${oldEntry.entry_id}.${key}`);
+      }
+      assert.deepEqual(newEntry.supported_uses, [
+        "explanation_only", "diagnosis_support", "candidate_experiment",
+      ]);
+      assert.ok(!("scenario_prescription" in newEntry));
+      assert.ok(!("near_transfer_retest" in newEntry));
+      continue;
+    }
     if (amended.has(oldEntry.entry_id)) continue;
     assert.deepEqual(newEntry, oldEntry, oldEntry.entry_id);
   }

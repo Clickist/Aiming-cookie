@@ -3419,14 +3419,6 @@
     ],
     "text": "Retest later with the same script, settings, visual profile, and metric version."
    },
-   "near_transfer_retest": {
-    "section_ref": "tracking.predictable-speed-matching.near-retest",
-    "claim_level": "research_supported",
-    "source_refs": [
-     "research.retention-transfer"
-    ],
-    "text": "Retest later with one phase or speed variation."
-   },
    "stop_adjust_rule": [
     {
      "section_ref": "tracking.predictable-speed-matching.stop",
@@ -3452,20 +3444,8 @@
    "supported_uses": [
     "explanation_only",
     "diagnosis_support",
-    "candidate_experiment",
-    "scenario_prescription"
-   ],
-   "scenario_prescription": {
-    "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
-    "practice_condition": "Exact predictable condition; test steady speed matching.",
-    "review_after": "next comparable practice session",
-    "source_refs": [
-     "product.complete-coach-spec",
-     "product.scenario-registry",
-     "research.scenario-prescription"
-    ],
-    "claim_level": "experimental"
-   }
+    "candidate_experiment"
+   ]
   },
   {
    "entry_id": "tracking.reactive-change-response",

@@ -11,7 +11,7 @@
       "family_gate_refs": [
         "gate:temporal-csrt-single-target-tracking.v1"
       ],
-      "status": "active"
+      "status": "retired"
     },
     {
       "scenario_hash": "7378a811f430b6072d052a75896afb98",
