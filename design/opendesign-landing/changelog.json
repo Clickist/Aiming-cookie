@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.4.1",
+      "date": "2026-10-06",
+      "items": [
+        {
+          "type": "new",
+          "zh": "动作数据整理支持「结果延续」：同一局训练再次整理时，直接沿用之前已成功的结果，不再从头重算反复折腾",
+          "en": "Session motion-data processing now carries forward: re-processing a session keeps its previously successful result instead of reworking it from scratch"
+        },
+        {
+          "type": "fix",
+          "zh": "修复部分对局「整理刚成功、再次整理又失败」的反复问题",
+          "en": "Fixed sessions flipping from \"processed\" back to \"failed\" when processed again"
+        },
+        {
+          "type": "imp",
+          "zh": "少数处于边界的对局不再被一刀切拒绝，现在能正常出结果",
+          "en": "A few borderline sessions that were previously rejected outright now process successfully"
+        }
+      ]
+    },
+    {
       "version": "1.4.0",
       "date": "2026-10-05",
       "items": [
