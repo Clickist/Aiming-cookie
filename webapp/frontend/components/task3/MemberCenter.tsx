@@ -19,7 +19,7 @@ import { openExternalUrl } from "@/lib/desktop";
 import { useLocale, useT } from "@/lib/i18n";
 import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { notifyMemberStateChanged } from "@/lib/member-state";
-import { MEMBER_COPY, formatMemberDate, planLabel } from "@/lib/member";
+import { MEMBER_COPY, formatMemberDate, isRecurring, planLabel } from "@/lib/member";
 import { cacheHitRate, formatTokenCount, formatUsageTime, usageNumbers } from "@/lib/member-usage";
 import { parseTrialState } from "@/lib/trial";
 import type { MemberMe } from "@/lib/types";
@@ -173,6 +173,9 @@ export function MemberCenter({
   }, [onLogout, router, t]);
 
   const plan = planLabel(me?.plan ?? null);
+  // 订阅形态：Stripe 连续包月（recurring）或按月一次性购买（0929 起的实际售卖形态）。
+  // 缺字段的旧 Worker 响应按连续包月兜底（isRecurring）。
+  const recurring = isRecurring(me);
   // 三种订阅形态（线框 ②c 的两态 + ⑨ 的失效态）：生效中 / 已取消未到期 / 已结束。
   const ended = me !== null && (me.status === "expired" || me.status === "refunded");
   const canceled = me?.cancel_at_period_end === true || me?.status === "canceled";
@@ -237,7 +240,11 @@ export function MemberCenter({
                 <span>
                   {ended
                     ? MEMBER_COPY.endedAt(endDate)
-                    : canceled ? MEMBER_COPY.usableUntil(endDate) : MEMBER_COPY.autoRenew(endDate)}
+                    : canceled
+                      ? MEMBER_COPY.usableUntil(endDate)
+                      : recurring
+                        ? MEMBER_COPY.autoRenew(endDate)
+                        : MEMBER_COPY.expiresOn(endDate)}
                 </span>
               </div>
               <div className="task3-member-hero-bar">
@@ -248,7 +255,11 @@ export function MemberCenter({
                 <span>
                   {ended
                     ? MEMBER_COPY.cycleEnded
-                    : canceled ? MEMBER_COPY.cycleStillUsable(endDate) : MEMBER_COPY.quotaPerCycle}
+                    : canceled
+                      ? MEMBER_COPY.cycleStillUsable(endDate)
+                      : recurring
+                        ? MEMBER_COPY.quotaPerCycle
+                        : MEMBER_COPY.quotaPerCycleOnce}
                 </span>
               </div>
               {boostRemaining > 0 ? (
@@ -268,7 +279,11 @@ export function MemberCenter({
               <Button onClick={() => (ended ? void openExternalUrl(PAY_URL) : goBilling())} variant="primary">
                 {ended
                   ? MEMBER_COPY.resubscribe
-                  : canceled ? MEMBER_COPY.resumeSubscription : MEMBER_COPY.manageSubscription}
+                  : canceled
+                    ? MEMBER_COPY.resumeSubscription
+                    : recurring
+                      ? MEMBER_COPY.manageSubscription
+                      : MEMBER_COPY.renewOrRepurchase}
               </Button>
               <Button onClick={goBilling} variant="secondary">{MEMBER_COPY.requestRefund}</Button>
             </div>
@@ -304,11 +319,16 @@ export function MemberCenter({
                   <span>
                     {ended
                       ? MEMBER_COPY.planEnded(plan)
-                      : canceled ? MEMBER_COPY.planEndingHere(plan) : MEMBER_COPY.planOngoing(plan)}
+                      : canceled
+                        ? MEMBER_COPY.planEndingHere(plan)
+                        : recurring
+                          ? MEMBER_COPY.planOngoing(plan)
+                          : MEMBER_COPY.planOneTime(plan)}
                   </span>
                 </div>
               </div>
-              {/* 退出登录：右侧次级按钮（描边、error 文字），说明在按钮下方小字。
+              {/* 退出登录：右侧次级按钮（描边、error 文字），说明小字在卡片下方通栏一行，
+                  窄面板下不与左列信息挤压错位。
                   不打回 Onboarding——有 BYOK 自动切、没有则 Coach 置灰指路（④b）。 */}
               <div className="task3-member-logout-block">
                 <Button
@@ -320,8 +340,8 @@ export function MemberCenter({
                 >
                   {MEMBER_COPY.logoutButton}
                 </Button>
-                <p className="task3-member-logout-note">{MEMBER_COPY.logoutNote}</p>
               </div>
+              <p className="task3-member-logout-note">{MEMBER_COPY.logoutNote}</p>
             </div>
           </>
         ) : resolved ? (

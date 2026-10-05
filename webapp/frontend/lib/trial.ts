@@ -185,7 +185,17 @@ function scheduleTrialRetry(type: TrialEventType, key: string, attempt: number):
 export async function reportTrialEvent(type: TrialEventType, key: string): Promise<"sent" | "queued" | "duplicate" | "gate"> {
   if (typeof window === "undefined") return "gate";
   const plan = planTrialEvent(type, key, activeTrialSnapshot, readReportedTrialKeys(window.localStorage));
-  if (plan !== "send") return plan;
+  if (plan !== "send") {
+    // 1005 兜底：快照 undefined（/me 尚未返回）≠ 确认无试用——注册即用的用户首次
+    // /me 可能早于试用钱包落库，闸当时是关的；先入 pending 并本地标记，等试用态
+    // 到位后由会话重试/下次启动的 flushPendingTrialEvents 补报，使用事件不丢。
+    if (activeTrialSnapshot === undefined) {
+      markTrialReported(window.localStorage, key);
+      enqueuePendingTrialEvent(window.localStorage, { type, key });
+      return "queued";
+    }
+    return plan;
+  }
   const storage = window.localStorage;
   markTrialReported(storage, key);
   enqueuePendingTrialEvent(storage, { type, key });

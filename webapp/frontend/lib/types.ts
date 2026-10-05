@@ -1008,6 +1008,8 @@ export interface MemberMe {
   plan: "standard" | "plus" | null;
   status: "active" | "canceled" | "expired" | "refunded" | "none";
   cancel_at_period_end: boolean;
+  /** Stripe 连续订阅=非空 sub id；按月一次性购买为 false。缺字段（老 Worker）按 true 兜底，见 lib/member isRecurring。 */
+  recurring?: boolean;
   period_start: string | null;
   period_end: string | null;
   dunning: boolean;

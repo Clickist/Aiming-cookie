@@ -124,6 +124,14 @@ export function subscriptionEnded(me: MemberMe | null): boolean {
   return me.status === "expired" || me.status === "refunded" || (!me.member && me.status !== "none");
 }
 
+/**
+ * 是否为 Stripe 连续订阅（recurring）。按月一次性购买（mode=payment）为 false。
+ * 老 Worker 响应缺 `recurring` 字段时按 true 处理：维持既有「连续包月」文案不炸（向后兼容）。
+ */
+export function isRecurring(me: MemberMe | null): boolean {
+  return me?.recurring ?? true;
+}
+
 // ── 展示文案（照抄线框，不自行发明）────────────────────────────────────────
 //
 // 用词红线：全表禁用「云教练」（教练跑在用户本地，订阅卖的是模型额度）；
@@ -183,12 +191,18 @@ export const MEMBER_COPY = {
   memberActive: (plan: string) => t("member.center.memberActive", { plan }),
   memberCanceled: (plan: string) => t("member.center.memberCanceled", { plan }),
   autoRenew: (date: string) => t("member.center.autoRenew", { date }),
+  /** 非 recurring（按月一次性购买）的到期行。 */
+  expiresOn: (date: string) => t("member.center.expiresOn", { date }),
   usableUntil: (date: string) => t("member.center.usableUntil", { date }),
   get quotaPerCycle() { return t("member.center.quotaPerCycle"); },
+  /** 非 recurring（按月一次性购买）的周期额度行。 */
+  get quotaPerCycleOnce() { return t("member.center.quotaPerCycleOnce"); },
   cycleStillUsable: (date: string) => t("member.center.cycleStillUsable", { date }),
   get boosterRow() { return t("member.center.boosterRow"); },
   boosterRemain: (pct: number) => t("member.center.boosterRemain", { pct }),
   get manageSubscription() { return t("member.center.manageSubscription"); },
+  /** 非 recurring（按月一次性购买）的主按钮（点击行为不变，仍开账单页）。 */
+  get renewOrRepurchase() { return t("member.center.renewOrRepurchase"); },
   get resumeSubscription() { return t("member.center.resumeSubscription"); },
   get requestRefund() { return t("member.center.requestRefund"); },
   get boosterBuy() { return t("member.center.boosterBuy"); },
@@ -198,6 +212,8 @@ export const MEMBER_COPY = {
   get accountEmail() { return t("member.center.accountEmail"); },
   get accountPlan() { return t("member.center.accountPlan"); },
   planOngoing: (plan: string) => t("member.center.planOngoing", { plan }),
+  /** 非 recurring（按月一次性购买）的账户卡套餐行。 */
+  planOneTime: (plan: string) => t("member.center.planOneTime", { plan }),
   planEndingHere: (plan: string) => t("member.center.planEndingHere", { plan }),
   /** ④b 退出登录：按钮 + 下方说明小字（订阅额度停用，BYOK 自动接管）。 */
   get logoutButton() { return t("member.logout.button"); },

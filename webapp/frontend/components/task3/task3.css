@@ -1494,12 +1494,13 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   margin-inline: auto;
 }
 
-/* 黑色余量大条：订阅池单条百分比 + 加油包小行＝两池全貌（只此一处）。 */
+/* 余量大条（标准卡面，深浅主题同一套 token）：订阅池单条百分比 + 加油包小行＝两池全貌（只此一处）。 */
 .task3-member-hero {
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   padding: var(--space-4) var(--space-5);
-  background: var(--inverse-surface);
-  color: var(--inverse-on-surface);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
 }
 
 .task3-member-hero-head {
@@ -1524,7 +1525,7 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   height: 10px;
   margin: var(--space-3) 0 var(--space-2);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--inverse-on-surface) 20%, transparent);
+  background: var(--surface-container-high);
 }
 
 .task3-member-hero-bar > i {
@@ -1556,7 +1557,7 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   justify-content: space-between;
   gap: var(--space-3);
   margin-top: var(--space-3);
-  border-top: 1px solid color-mix(in srgb, var(--inverse-on-surface) 18%, transparent);
+  border-top: 1px solid var(--outline-variant);
   padding-top: var(--space-3);
   font-size: var(--text-caption);
   opacity: 0.9;
@@ -1574,7 +1575,7 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   width: 90px;
   height: 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--inverse-on-surface) 20%, transparent);
+  background: var(--surface-container-high);
 }
 
 .task3-member-hero-mini > i {
@@ -1638,9 +1639,10 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
 
 .task3-member-account-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-5);
+  gap: var(--space-3) var(--space-5);
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-lg);
   padding: var(--space-4);
@@ -1654,13 +1656,11 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   gap: var(--space-1);
 }
 
-/* 退出登录：右侧次级按钮 + 下方说明小字（不铺红底）。 */
+/* 退出登录：右侧次级按钮；说明小字是卡片的下一行（flex-wrap 通栏），不再挤右列。 */
 .task3-member-logout-block {
   display: grid;
   flex: none;
-  gap: var(--space-1);
   justify-items: end;
-  max-width: 220px;
 }
 
 .task3-member-logout-button {
@@ -1669,11 +1669,12 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
 }
 
 .task3-member-logout-note {
+  flex-basis: 100%;
   margin: 0;
   color: var(--on-surface-variant);
   font-size: var(--text-micro);
   line-height: 1.5;
-  text-align: end;
+  text-align: start;
 }
 
 .task3-member-account-card > strong {
