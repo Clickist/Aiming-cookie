@@ -1357,6 +1357,38 @@ def aggregate_continuous_tracking_multi_target_v1(
     }
 
 
+def build_fused_alignment_metric_v1(
+    *,
+    analysis_ref: str,
+    latencies: Sequence[float | None],
+    limitations: Sequence[str],
+) -> dict[str, Any]:
+    """双输入源融合 alignment 序列 -> ``continuous_tracking.alignment_latency_ms`` 记录。
+
+    实施补充（合同 ``.zcode/fusion-spec-1005.md`` §二.2）：库内该指标文本
+    （metric_definitions / registry）是采集对齐描述子口径，没有"目标事件 →
+    瞄准运动发起"的锚事件定义——库不足处按规格补充：锚事件 = 权威击杀 →
+    下一受害目标出生（孰晚），值 = 锚后 trace 角速度流（阈值 + 方向朝
+    目标）首个发起桶与锚之差（``kovaak_tracker.input_fusion``）。来源与
+    阈值常量经 ``limitations`` 标注（provenance），不静默替换描述子语义。
+    """
+    analysis_ref = _ref(analysis_ref, "analysis_ref")
+    record = _metric(
+        "continuous_tracking.alignment_latency_ms",
+        list(latencies),
+        unit="ms",
+        event_refs=[],
+        analysis_ref=analysis_ref,
+        segment_refs=[],
+        condition_refs=(),
+        limitations=list(limitations),
+        confidence=1.0,
+    )
+    from .analysis_evidence import validate_metric_record_v1
+
+    return validate_metric_record_v1(record)
+
+
 def extend_analysis_evidence_with_continuous_tracking_v1(
     artifact: Mapping[str, Any], analysis_result: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1415,5 +1447,6 @@ __all__ = [
     "TrackingAnalysisError",
     "aggregate_continuous_tracking_multi_target_v1",
     "analyze_continuous_tracking_v1",
+    "build_fused_alignment_metric_v1",
     "extend_analysis_evidence_with_continuous_tracking_v1",
 ]

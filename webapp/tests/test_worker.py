@@ -2096,7 +2096,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-09-20.v13"
+    assert issue["knowledge_registry_version"] == "2026-10-04.v14"
     # 09-10 撤销冻结期前缀过滤后恢复匹配器 top-3（与 test_diagnosis 同口径）。
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@3",
@@ -2941,6 +2941,55 @@ def test_name_heuristic_switching_without_video_dispatches_baseline_kinematics()
     ) == "outcome_only"
 
 
+def test_telemetry_switching_dispatches_full_analyzer_only_with_telemetry_source():
+    """[2026-10-05] target_switching 遥测真值动作层：完整分析器镜像
+    continuous_tracking 的门（dispatch=allowed + allowed_analyzers/
+    metric_families + multimodal），但额外要求作业声明可用外部遥测源——
+    无源局保持 baseline 回退（与上一测试互为表里）。"""
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Bounceshot Switch",
+    )
+    job = {"analysis_type": "target_switching", "input_snapshot": snapshot}
+    assert (
+        snapshot["scenario_resolution"]["allowed_analyzers"][-1]
+        == "target_switching.v1"
+    )
+    # 无遥测源：multimodal 也落 baseline。
+    assert worker._scenario_dispatch(job, "multimodal") == "target_switching.baseline.v1"
+
+    snapshot["sources"] = {
+        **snapshot.get("sources", {}),
+        "external_telemetry": {
+            "availability": "available",
+            "external_run_id": "ext-fixture",
+            "frames_path": "E:/ACData/external/ext-fixture/round.jsonl",
+        },
+    }
+    # 有遥测源：multimodal 放开完整分析器；低档位仍走 baseline/outcome_only。
+    assert worker._scenario_dispatch(job, "multimodal") == "target_switching.v1"
+    assert (
+        worker._scenario_dispatch(job, "input_native")
+        == "target_switching.baseline.v1"
+    )
+    assert worker._scenario_dispatch(job, "video_fallback") == "outcome_only"
+
+    # 遥测源不可用（availability != available）等同无源。
+    unavailable = {
+        **snapshot,
+        "sources": {
+            **snapshot["sources"],
+            "external_telemetry": {"availability": "missing"},
+        },
+    }
+    assert worker._scenario_dispatch(
+        {"analysis_type": "target_switching", "input_snapshot": unavailable},
+        "multimodal",
+    ) == "target_switching.baseline.v1"
+
+
 def test_challenge_shape_tracking_dispatches_full_visual_pipeline_with_multimodal():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
@@ -3362,7 +3411,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-09-20.v13"
+        assert issue["knowledge_registry_version"] == "2026-10-04.v14"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@3"
         ]

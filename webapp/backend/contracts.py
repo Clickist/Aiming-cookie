@@ -840,12 +840,15 @@ def validate_scenario_resolution_v1(value: object) -> dict:
     elif dispatch == "allowed":
         # 1002 拍板（点点）：场景支持名单退役。baseline dispatch 的能力授予
         # 升级为家族完整分析器（tracking/dynamic，能力跟家族与数据走，不跟
-        # review 状态走）；static/switching 保持纯基线（switching 完整管线
-        # 依赖逐场景标定数据件，static native 与 baseline 同为输入运动学）。
+        # review 状态走）；static 保持纯基线（static native 与 baseline 同为
+        # 输入运动学）。[2026-10-05] switching 加入完整分析器：遥测真值动作层
+        # 分析器不依赖逐场景标定数据件（分发层另要求可用遥测源）。
         # 旧快照（升级前冻结、重析时重验）的纯基线形状继续接受。
         full_analyzer = (
             f"{aim_family}.v1"
-            if aim_family in {"dynamic_clicking", "continuous_tracking"}
+            if aim_family in {
+                "dynamic_clicking", "continuous_tracking", "target_switching",
+            }
             else None
         )
         valid_analyzers = (

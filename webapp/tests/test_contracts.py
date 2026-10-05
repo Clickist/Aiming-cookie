@@ -584,6 +584,30 @@ def test_contract_allows_family_default_static_baseline_dispatch():
     assert validate_scenario_resolution_v1(resolution) == resolution
 
 
+def test_contract_allows_switching_full_analyzer_baseline_dispatch():
+    """[2026-10-05] switching 完整分析器（遥测真值动作层）与 baseline 并列
+    授予的 dispatch 形状；纯基线旧快照形状继续接受（下一测试）。"""
+    resolution = _unknown_scenario_resolution()
+    resolution.update({
+        "classification_source": "scenario_override",
+        "classification_confidence": "confirmed",
+        "aim_family": "target_switching",
+        "allowed_analyzers": [
+            "target_switching.baseline.v1", "target_switching.v1",
+        ],
+        "allowed_metric_families": [
+            "outcome", "input_kinematics", "target_switching",
+        ],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "scenario_override_is_a_user_confirmed_family_not_an_identity",
+        ],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
+
+
 def test_contract_allows_inactive_manifest_profile_baseline_dispatch():
     resolution = _unknown_scenario_resolution()
     resolution.update({

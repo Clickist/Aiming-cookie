@@ -610,11 +610,15 @@ def active_scenario_profile_refs(
 
 # 1002 拍板（点点）：场景支持名单退役——能力跟家族与数据走，不跟 review
 # 状态走。未复核身份只保留来源 limitation（candidate/unknown），不再扣减
-# 分析器能力。switching 的完整管线依赖逐场景标定的视觉 episode producer
-#（数据件，非名单），static 的 native 档与 baseline 同为输入运动学，均不在此授予。
+# 分析器能力。static 的 native 档与 baseline 同为输入运动学，不在此授予。
+# [2026-10-05] target_switching 加入完整分析器授予：遥测真值动作层分析器
+# （switching_analysis，registry switching.transition-and-arrival 合同）不再
+# 依赖已退役的逐场景标定视觉 episode producer；分发层仍要求作业声明可用
+# 外部遥测源（worker._scenario_dispatch），无遥测源的局保持 baseline 回退。
 _FAMILY_FULL_ANALYZER_BY_FAMILY = {
     "dynamic_clicking": "dynamic_clicking.v1",
     "continuous_tracking": "continuous_tracking.v1",
+    "target_switching": "target_switching.v1",
 }
 
 

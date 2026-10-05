@@ -978,6 +978,7 @@ from .worker_family_analysis import (  # noqa: F401 (re-export for backward comp
     run_dynamic_clicking_analysis,
     run_continuous_tracking_analysis,
     run_target_switching_analysis,
+    run_target_switching_telemetry_analysis,
 )
 
 
@@ -1703,6 +1704,22 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         in (resolution.get("allowed_metric_families") or [])
     ):
         return CONTINUOUS_TRACKING_ANALYSIS_VERSION
+    # [2026-10-05] target_switching 遥测真值动作层分析器：能力授予镜像
+    # continuous_tracking（family_analyzer_dispatch=allowed + allowed_analyzers/
+    # metric_families + multimodal），但额外要求作业声明可用的外部遥测源——
+    # 权威击杀与准星-目标几何都来自遥测真值，无遥测源的局保持既有回退
+    # （input-kinematics baseline / outcome_only），CV episode producer 路径
+    # 继续退役不可达。
+    if (
+        resolution.get("family_analyzer_dispatch") == "allowed"
+        and resolution.get("aim_family") == "target_switching"
+        and input_mode == "multimodal"
+        and TARGET_SWITCHING_ANALYSIS_VERSION
+        in (resolution.get("allowed_analyzers") or [])
+        and "target_switching" in (resolution.get("allowed_metric_families") or [])
+        and _external_telemetry_source(job) is not None
+    ):
+        return TARGET_SWITCHING_ANALYSIS_VERSION
     # target_switching 的完整管线依赖逐场景标定的视觉 episode producer
     #（worker_visual_producers 的 fail-closed 数据件，非精选场景没有）；
     # reviewed 档案层退役后无 resolution 能满足该门，switching 一律落
@@ -3417,11 +3434,234 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result, episode_result = (
-                    await run_target_switching_pipeline_isolated(job)
+                # [2026-10-05] 遥测优先：分发层已确认作业声明可用遥测源；
+                # producer 真值投影 + 本进程遥测分析器（纯数值，无 CV 子进程）。
+                # producer 失败回退 CV episode 管线（保持原行为），无 video 落
+                # TelemetryPipelineError → outcome_only + 来源降级标记。
+                visual_result, telemetry_unavailable_code = (
+                    await _external_telemetry_visual_or_none(job)
                 )
+                if visual_result is not None:
+                    telemetry_visual_used = True
+                    visual_validation = dict(visual_result.get("safe_summary") or {})
+                    quality = visual_result.get("quality")
+                    # 遥测 producer 的 family 词汇是 "switching"（ALL_METRIC_
+                    # FAMILIES 合同），与分支既有 "target_switching" 门等价。
+                    quality_enabled = (
+                        isinstance(quality, Mapping)
+                        and quality.get("status") in {"accepted", "limited"}
+                        and "switching" in (quality.get("enabled_metric_families") or [])
+                    )
+                    if not quality_enabled:
+                        result = _build_outcome_only_result_v2(
+                            job,
+                            created_at=created_at_iso,
+                            completed_at=completed_at_iso,
+                            limitations_override=[
+                                "target_switching_visual_quality_unavailable",
+                            ],
+                            visual_validation=visual_validation,
+                            extra_warnings=[
+                                {"code": "target_switching_analyzer_unavailable"},
+                            ],
+                            analysis_type_override="target_switching",
+                        )
+                    else:
+                        try:
+                            # 本进程 adapter 有界（挂死则 heartbeat 续租、作业
+                            # 永不完成），超时对齐 CV 子进程量级。
+                            adapter_started = time.monotonic()
+                            switching_result = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    run_target_switching_telemetry_analysis,
+                                    job,
+                                    visual_result,
+                                ),
+                                timeout=VISUAL_WORKER_TIMEOUT_SECONDS,
+                            )
+                            log.info(
+                                "target switching telemetry adapter session=%s "
+                                "took=%.1fs",
+                                sid,
+                                time.monotonic() - adapter_started,
+                            )
+                        except SourceSnapshotChangedError:
+                            raise
+                        except Exception as error:
+                            log.warning(
+                                "target switching telemetry analysis unavailable "
+                                "session=%s error=%s",
+                                sid,
+                                type(error).__name__,
+                            )
+                            result = _build_outcome_only_result_v2(
+                                job,
+                                created_at=created_at_iso,
+                                completed_at=completed_at_iso,
+                                limitations_override=[
+                                    "target_switching_analysis_unavailable",
+                                ],
+                                visual_validation=visual_validation,
+                                extra_warnings=[
+                                    {"code": "target_switching_analyzer_unavailable"},
+                                ],
+                                analysis_type_override="target_switching",
+                            )
+                        else:
+                            result = _build_target_switching_result_v2(
+                                job,
+                                switching_result,
+                                visual_result,
+                                created_at=created_at_iso,
+                                completed_at=completed_at_iso,
+                            )
+                            try:
+                                from .history_trends import (
+                                    matched_target_switching_baseline_for_user,
+                                )
+
+                                comparison = (
+                                    await matched_target_switching_baseline_for_user(
+                                        str(job["user_id"]),
+                                        result,
+                                        list(switching_result.get("metrics") or {}),
+                                    )
+                                )
+                            except Exception as error:
+                                log.warning(
+                                    "target switching baseline unavailable "
+                                    "session=%s error=%s",
+                                    sid,
+                                    type(error).__name__,
+                                )
+                            else:
+                                if comparison.get("comparable") is True:
+                                    switching_result = copy.deepcopy(switching_result)
+                                    switching_result["comparison"] = comparison
+                                    result = _build_target_switching_result_v2(
+                                        job,
+                                        switching_result,
+                                        visual_result,
+                                        created_at=created_at_iso,
+                                        completed_at=completed_at_iso,
+                                    )
+                else:
+                    if telemetry_unavailable_code is not None:
+                        # 与 dynamic/tracking 分支同一回退策略：无 video 不空转
+                        # CV 子进程。
+                        if not job.get("video_path"):
+                            raise TelemetryPipelineError(telemetry_unavailable_code)
+                        log.warning(
+                            "external telemetry producer unavailable session=%s "
+                            "code=%s; falling back to CV visual pipeline",
+                            sid,
+                            telemetry_unavailable_code,
+                        )
+                    visual_result, episode_result = (
+                        await run_target_switching_pipeline_isolated(job)
+                    )
+                    visual_validation = dict(visual_result.get("safe_summary") or {})
+                    quality = visual_result.get("quality")
+                    enabled_families = (
+                        set(quality.get("enabled_metric_families") or [])
+                        if isinstance(quality, Mapping)
+                        else set()
+                    )
+                    quality_enabled = (
+                        isinstance(quality, Mapping)
+                        and quality.get("status") in {"accepted", "limited"}
+                        and "target_switching" in enabled_families
+                    )
+                    if not quality_enabled:
+                        result = _build_outcome_only_result_v2(
+                            job,
+                            created_at=created_at_iso,
+                            completed_at=completed_at_iso,
+                            limitations_override=["target_switching_visual_quality_unavailable"],
+                            visual_validation=visual_validation,
+                            extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
+                            analysis_type_override="target_switching",
+                        )
+                    else:
+                        try:
+                            switching_result = await asyncio.to_thread(
+                                run_target_switching_analysis,
+                                job,
+                                visual_result,
+                                episode_result,
+                                frozen_stats,
+                            )
+                        except SourceSnapshotChangedError:
+                            raise
+                        except Exception as error:
+                            log.warning(
+                                "target switching analysis unavailable session=%s error=%s",
+                                sid,
+                                type(error).__name__,
+                            )
+                            result = _build_outcome_only_result_v2(
+                                job,
+                                created_at=created_at_iso,
+                                completed_at=completed_at_iso,
+                                limitations_override=["target_switching_analysis_unavailable"],
+                                visual_validation=visual_validation,
+                                extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
+                                analysis_type_override="target_switching",
+                            )
+                        else:
+                            result = _build_target_switching_result_v2(
+                                job,
+                                switching_result,
+                                visual_result,
+                                created_at=created_at_iso,
+                                completed_at=completed_at_iso,
+                            )
+                            try:
+                                from .history_trends import (
+                                    matched_target_switching_baseline_for_user,
+                                )
+
+                                comparison = await matched_target_switching_baseline_for_user(
+                                    str(job["user_id"]),
+                                    result,
+                                    list(switching_result.get("metrics") or {}),
+                                )
+                            except Exception as error:
+                                log.warning(
+                                    "target switching baseline unavailable session=%s error=%s",
+                                    sid,
+                                    type(error).__name__,
+                                )
+                            else:
+                                if comparison.get("comparable") is True:
+                                    switching_result = copy.deepcopy(switching_result)
+                                    switching_result["comparison"] = comparison
+                                    result = _build_target_switching_result_v2(
+                                        job,
+                                        switching_result,
+                                        visual_result,
+                                        created_at=created_at_iso,
+                                        completed_at=completed_at_iso,
+                                    )
             except SourceSnapshotChangedError:
                 raise
+            except TelemetryPipelineError as error:
+                telemetry_unavailable_code = error.code
+                limitation = f"external_telemetry_unavailable:{error.code}"
+                log.warning(
+                    "external telemetry pipeline unavailable session=%s code=%s",
+                    sid,
+                    error.code,
+                )
+                result = _build_outcome_only_result_v2(
+                    job,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                    limitations_override=[limitation],
+                    visual_validation=_unavailable_visual_summary(limitation),
+                    extra_warnings=[{"code": limitation}],
+                    analysis_type_override="target_switching",
+                )
             except Exception as error:
                 from kovaak_tracker.visual_signals import (
                     VisualPreprocessingUnavailable,
@@ -3431,6 +3671,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     _assert_managed_video_matches_snapshot,
                     job,
                     raw_input_mode,
+                )
+                telemetry_unavailable_code = getattr(
+                    error, "telemetry_unavailable_code", telemetry_unavailable_code,
                 )
                 limitation = (
                     error.code
@@ -3446,90 +3689,6 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     extra_warnings=[{"code": "video_cv_unavailable"}],
                     analysis_type_override="target_switching",
                 )
-            else:
-                visual_validation = dict(visual_result.get("safe_summary") or {})
-                quality = visual_result.get("quality")
-                enabled_families = (
-                    set(quality.get("enabled_metric_families") or [])
-                    if isinstance(quality, Mapping)
-                    else set()
-                )
-                quality_enabled = (
-                    isinstance(quality, Mapping)
-                    and quality.get("status") in {"accepted", "limited"}
-                    and "target_switching" in enabled_families
-                )
-                if not quality_enabled:
-                    result = _build_outcome_only_result_v2(
-                        job,
-                        created_at=created_at_iso,
-                        completed_at=completed_at_iso,
-                        limitations_override=["target_switching_visual_quality_unavailable"],
-                        visual_validation=visual_validation,
-                        extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
-                        analysis_type_override="target_switching",
-                    )
-                else:
-                    try:
-                        switching_result = await asyncio.to_thread(
-                            run_target_switching_analysis,
-                            job,
-                            visual_result,
-                            episode_result,
-                            frozen_stats,
-                        )
-                    except SourceSnapshotChangedError:
-                        raise
-                    except Exception as error:
-                        log.warning(
-                            "target switching analysis unavailable session=%s error=%s",
-                            sid,
-                            type(error).__name__,
-                        )
-                        result = _build_outcome_only_result_v2(
-                            job,
-                            created_at=created_at_iso,
-                            completed_at=completed_at_iso,
-                            limitations_override=["target_switching_analysis_unavailable"],
-                            visual_validation=visual_validation,
-                            extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
-                            analysis_type_override="target_switching",
-                        )
-                    else:
-                        result = _build_target_switching_result_v2(
-                            job,
-                            switching_result,
-                            visual_result,
-                            created_at=created_at_iso,
-                            completed_at=completed_at_iso,
-                        )
-                        try:
-                            from .history_trends import (
-                                matched_target_switching_baseline_for_user,
-                            )
-
-                            comparison = await matched_target_switching_baseline_for_user(
-                                str(job["user_id"]),
-                                result,
-                                list(switching_result.get("metrics") or {}),
-                            )
-                        except Exception as error:
-                            log.warning(
-                                "target switching baseline unavailable session=%s error=%s",
-                                sid,
-                                type(error).__name__,
-                            )
-                        else:
-                            if comparison.get("comparable") is True:
-                                switching_result = copy.deepcopy(switching_result)
-                                switching_result["comparison"] = comparison
-                                result = _build_target_switching_result_v2(
-                                    job,
-                                    switching_result,
-                                    visual_result,
-                                    created_at=created_at_iso,
-                                    completed_at=completed_at_iso,
-                                )
             cost = 0.0
         elif input_mode in {"input_native", "multimodal"}:
             await queue.set_task_phase(sid, "computing_kinematics", worker_id=WORKER_ID)
