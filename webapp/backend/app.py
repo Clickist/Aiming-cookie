@@ -58,11 +58,43 @@ async def lifespan(app: FastAPI):
         stale_uploads["cleaned"],
         stale_uploads["failed"],
     )
-    # [reverted 2026-10-05] 科学栈开机预热（后台线程 import numpy/scipy）在冻结
-    # 运行时上实机五连杀（进程无痕消失，死点均在 scipy 导入；无预热则只是首局
-    # 分析楔 ~10 分钟后自愈）。冻结环境的安全首导方案未定（子进程预热待研），
-    # 先回退，代价=每次启动后第一局分析慢（已知限制，Coach 阶段话术如实）。
+    # [reverted→refixed 2026-10-05] 分析科学栈预热：numpy/scipy 懒加载的冻结
+    # 首次导入在 LdrLoadDll 里楔 10-20 分钟且**全程持有 GIL**——事件循环/心跳/
+    # 统计全部冻死（实机实测）。两条不可行路线都试过：后台线程预热=进程无痕
+    # 死亡（五连杀）；不做预热=首局分析楔 10 分钟。可行解=**独立子进程**预热
+    # （--telemetry-child 机制跑 prewarm_science.py）：楔在子进程里无感，OS
+    # 缓存与安全软件扫描留热，父进程随后的真实导入秒级。不等待不看结果，
+    # 子进程楔死/崩溃对服务零影响。
+    try:
+        _spawn_science_prewarm_child()
+    except Exception as exc:  # noqa: BLE001 - 预热失败静默，首分析自付
+        log.warning("science prewarm child spawn failed: %s", exc)
     yield
+
+
+def _spawn_science_prewarm_child() -> None:
+    """冻结环境用 --telemetry-child 自镜像子进程预热；开发环境直跑脚本。"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from .telemetry_capture_service import resolve_scripts_dir
+
+    scripts_dir = resolve_scripts_dir()
+    if scripts_dir is None:
+        return
+    script = scripts_dir / "prewarm_science.py"
+    if getattr(sys, "frozen", False):
+        argv = [sys.executable, "--telemetry-child", "prewarm_science.py"]
+    else:
+        argv = [sys.executable, str(script)]
+    subprocess.Popen(
+        argv,
+        cwd=str(Path(__file__).resolve().parent.parent.parent),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
 
 app = FastAPI(title="Aiming Cookie API", lifespan=lifespan)
