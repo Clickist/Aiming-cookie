@@ -1,6 +1,37 @@
 {
   "versions": [
     {
+      "version": "1.4.0",
+      "date": "2026-10-05",
+      "items": [
+        {
+          "type": "new",
+          "zh": "转火类训练的动作分析上线：转火过渡时长（从上一个目标被击杀到准星重新抓住下一个目标）、转火路径效率这类转火专属指标，数值来自真值遥测，不是估算",
+          "en": "Motion analysis for target-switching scenarios: switch transition time (from one kill to re-acquiring the next target) and switch path efficiency, measured from ground-truth telemetry rather than estimation"
+        },
+        {
+          "type": "fix",
+          "zh": "动作分析时间对齐修复：所有训练的动作层指标现在对齐到真实对局窗口——此前分析窗口整体偏早约 8 秒，每局的结尾会被截掉、开头混入对局前的数据",
+          "en": "Motion-analysis time alignment fixed: all motion metrics now align to the real round window — previously the window started about 8 seconds early, cutting off the end of each round and mixing in pre-round data"
+        },
+        {
+          "type": "fix",
+          "zh": "目标轨迹切分修复：击杀数与游戏官方统计逐条一致——此前目标被误切成碎段，击杀数虚增近一半，轨迹贴合类指标随之失真",
+          "en": "Target track segmentation fixed: kill counts now match the game's official stats line by line — previously targets were over-segmented, inflating kills by nearly half and distorting tracking metrics"
+        },
+        {
+          "type": "imp",
+          "zh": "数据质量透明：数据有瑕疵的分析会明确标注哪些指标该谨慎看，教练解读时也会如实说明（\"这一段别当真\"），不再让有水分的数字冒充可信读数",
+          "en": "Data-quality transparency: analyses with imperfect data now flag which metrics deserve caution, and the coach says so plainly instead of presenting compromised numbers as reliable readings"
+        },
+        {
+          "type": "imp",
+          "zh": "场景分类修正：转火类场景（如 Tile Frenzy 180）现在按转火方式分析，给出转火节奏、路径这类它自己的读数，而不是套用跟踪场景的尺子",
+          "en": "Scenario classification fix: switching-style scenarios (such as Tile Frenzy 180) are now analyzed as switching, with switch cadence and path readings of their own instead of tracking-style yardsticks"
+        }
+      ]
+    },
+    {
       "version": "1.3.9",
       "date": "2026-10-05",
       "items": [
