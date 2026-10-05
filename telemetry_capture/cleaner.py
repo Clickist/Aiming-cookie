@@ -31,6 +31,13 @@
      起止 dc 差分（观测源=帧条目 dc 列 + ev=="flag" 补采行，对采样空洞免疫），
      clean-prefix 信任规则（换绑/跨身份累计步截断，前缀仍可信）；death 行只
      负责 life 边界与时刻，不参与总数。
+  8. [lives 2026-10-05d] 死亡账本主导生命窗重组（flag 数据根治虚切）：有 death
+     行时，split_track 的坐标切段按权威死亡时刻分组重织——相邻两个死亡之间的
+     所有坐标段 = 一条生命（坐标跳变/坏点降级为段内数据缺口），每条生命 t_end
+     = 死亡时刻，局末无死亡收尾 = 存活。death 行先过账本甄别：无 dc +1 步证的
+     伪迹行（重绑瞬态/复读边沿）与开局残留身份的 carryover 行（切窗模式下身份
+     段账目在出生波前关账，同 dc_slot_deaths carryover 基值哲学）不作边界、只入
+     审计。无 death 行（旧文件）回退坐标推导现行为，逐字节不变。
 
 用法:
     PYTHONIOENCODING=utf-8 ~/AppData/Local/Programs/Python/Python39/python cleaner.py <input.jsonl> [more.jsonl ...]
@@ -96,6 +103,8 @@ RESYNC_MIN_RUN = 3       # [flags 2026-10-05c] 异常重同步前瞻：坏步（
                           # 全语料（smoke1/2/3 共 14 局）标定：唯一需回溯的真实跳变
                           # （mini#2 e020 断层 +10）跳后 +1 游程=33；全部幻影跳变
                           # （158/572/126/59 冻结类）跳后游程=0——区分度充分。
+DEATH_ROW_TOL = 0.1      # [lives 2026-10-05d] death 行与账本 +1 步的时刻匹配容差 s：
+                          # 两者同源同 tick（实测逐条同刻），0.1 只兜采样慢步。
 COORD_DP = 3            # 输出坐标小数位（float32 在 4096 量级分辨率 ≈0.0005）
 
 
@@ -356,47 +365,22 @@ def split_track(pts, cfg):
     return kept, stats
 
 
-def bind_deaths(segs, death_ts, pair_after=DEATH_PAIR_AFTER):
-    """[flags 2026-10-05] 用 death 行做 life 权威边界（原位修改 segs，点为
-    (t,x,y,z) 元组列表、按时间升序）。每个 death 配对到覆盖它的段：
-    seg.t_start ≤ t ≤ seg.t_end + pair_after（后垫吸收死亡帧坐标已坏导致
-    坐标段提前 1~2 帧结束的情形；窗值来源见 DEATH_PAIR_AFTER 注释）。
-    配对成功的段：丢弃 t > death 的点（死亡后复读帧），末点时间戳改写为
-    death t —— t_end 从此权威，不再靠坐标消失猜。段内 path/n 不变（只动
-    末点时刻）。返回未配对的 death 数（审计）。"""
-    remaining = sorted(death_ts)
-    for seg in segs:
-        if not remaining:
-            break
-        t_end = seg[-1][0]
-        mine = [d for d in remaining if seg[0][0] <= d <= t_end + pair_after]
-        if not mine:
-            continue
-        for d in mine:
-            remaining.remove(d)
-        death = max(mine)
-        seg[:] = [p for p in seg if p[0] <= death]
-        if seg:
-            seg[-1] = (death,) + seg[-1][1:]
-    return len(remaining)
+def _dc_walk(series, resync_run=RESYNC_MIN_RUN):
+    """[lives 2026-10-05d] dc 账本共享走查：dc_slot_deaths 的步进/重同步状态机
+    原样抽出（同一走查两个消费方，防口径漂移），并附加死亡步与身份段结构供
+    death 行甄别（_reorganize_addr）消费。
 
-
-def dc_slot_deaths(series, resync_run=RESYNC_MIN_RUN):
-    """[flags 2026-10-05b/c] 单槽减法口径：分段差分求和（对采样空洞免疫）。
-
-    series: [(t, dc)] 升序（同槽，源窗内）。账本按"可信段"累计：
-      步长 ∈ {0, +1} = 干净（观测空洞免疫——dc 单调计数器，段内首末即差分）；
-      坏步（跳变 ≥2 或回退 <0）= 身份更替/类型错位/换绑复位，处理按前瞻：
-        坏步后 +1 游程（0 步不打断）≥ resync_run → 坏步是身份边界，从坏步后
-          新基线续计（新段）——
-          跳变续计 = 同槽读断层累积（mini#2 e020：断层 +10，跳后 33 步全 +1）；
-          回退续计 = 换绑复位后同地址干净爬升（TF180/1wall：carryover 基值
-          掉 0 后整局 +N 全 +1，6 目标 22+18+17+17+18+14=106 严丝合缝）；
-        游程不足 → 截断（trusted=False，前缀段照计）——全部幻影跳变
-          （smoke1 dc=158 冻结、572、smoke2 0→126、mini#2 1→59）跳后游程=0，
-          在全语料上零复活。
-    deaths = Σ 各可信段（段末-段基）；trusted=False 表示存在未通过前瞻的坏步
-    （untrusted_from=截断时刻），前缀段已计入。返回 dict 或 None（series 空）。"""
+    返回 dict：
+      deaths/trusted/untrusted_from/start_dc/end_dc/first_t/last_t/n_obs —— 与
+      dc_slot_deaths 同义（untrusted_from 未取整，格式化在 dc_slot_deaths）；
+      steps: [(t_step, dc_after, ctx_clean_end)] —— 每个计入的死亡步（干净 +1
+        与重同步跳变，跳变按坏步观测时刻记一次、deaths 记跳变差值），
+        ctx_clean_end = 该步所属身份段的干净账目关账时刻；
+      contexts: [{t0, clean_end, trusted_close, tainted, deaths}] —— 身份段：
+        相邻成功重同步坏步之间的观测区间；前瞻失败的坏步同样关账（trusted_close
+        =False，其后冻结区不换身份，直至下一个成功重同步）；末段 clean_end=
+        末次观测。t0 供出生波锚（W）取"最终身份段起点"。
+    series 为空返回 None。"""
     if not series:
         return None
     n = len(series)
@@ -407,12 +391,31 @@ def dc_slot_deaths(series, resync_run=RESYNC_MIN_RUN):
     deaths = 0
     trusted = True
     cut = None
+    steps = []
+    contexts = []
+    ctx = {"t0": t0, "clean_end": t0, "trusted_close": True,
+           "tainted": False, "deaths": 0, "n_step_entries": 0}
+
+    def _count_step(t, dc, weight):
+        # weight: 干净 +1 步=1；重同步跳变=跳变差值（一条步目承载多死）
+        nonlocal deaths
+        deaths += weight
+        steps.append((t, dc, None))       # ctx_clean_end 关账时回填
+        ctx["deaths"] += weight
+        ctx["n_step_entries"] += 1
+
+    def _close(bad_t, trusted_close):
+        ctx["clean_end"] = bad_t
+        ctx["trusted_close"] = trusted_close
+        contexts.append(ctx)
+
     i = 1
     while i < n:
         t, dc = series[i]
         step = dc - last_dc
         if step in (0, 1):
-            deaths += step
+            if step == 1:
+                _count_step(t, dc, 1)
             last_dc, last_t = dc, t
             i += 1
             continue
@@ -430,32 +433,172 @@ def dc_slot_deaths(series, resync_run=RESYNC_MIN_RUN):
                 break
         if run >= resync_run:
             # 身份边界：新段从坏步后观测重新起基（坏步帧本身弃读）。
-            # 跳变重同步：跳变差值=观测断层期累积的真实死亡，回溯计入；
-            # 回退重同步：计数器复位，新基线从 0 起算（差值为负不计入）。
+            # 跳变重同步：跳变差值=观测断层期累积的真实死亡，回溯计入。
             if step >= 2:
-                deaths += step
+                _count_step(t, dc, step)
+            _close(t, True)
+            ctx = {"t0": t, "clean_end": t, "trusted_close": True,
+                   "tainted": False, "deaths": 0, "n_step_entries": 0}
             base = dc
             last_dc, last_t = dc, t
             i += 1
             continue
         # 前瞻失败：本异常判垃圾（池化换绑/类型错位，冻延续无账）——跳过其
         # 冻结延续到下一个坏步重评（典型三连：carryover 基值→垃圾尖峰→掉 0
-        # →整局干净爬升；爬升段由下一个坏步的重同步回收）。
+        # →整局干净爬升；爬升段由下一个坏步的重同步回收）。冻结区不换身份，
+        # 其后若有计入步仍归同一身份段的污染延续（trusted=False 可观测）。
         trusted = False
         if cut is None:
             cut = t
+        _close(t, False)
+        ctx = {"t0": t, "clean_end": t, "trusted_close": False,
+               "tainted": True, "deaths": 0, "n_step_entries": 0}
         if j > i:
             last_dc, last_t = series[j - 1][1], series[j - 1][0]
             i = j
         else:
             i += 1
-    return {"start_dc": d0, "end_dc": series[-1][1],
-            "deaths": deaths,
-            "trusted": trusted,
-            "prefix_only": not trusted,
-            "untrusted_from": round(cut, 4) if cut is not None else None,
-            "first_t": round(t0, 4), "last_t": round(last_t, 4),
-            "n_obs": len(series)}
+    # 末段关账：clean_end=末次观测
+    _close(series[-1][0], True)
+    # ctx_clean_end 回填：步与 ctx 同序生成，按各段步目条数顺序归属
+    pos = 0
+    for c in contexts:
+        for k in range(pos, pos + c["n_step_entries"]):
+            steps[k] = (steps[k][0], steps[k][1], c["clean_end"])
+        pos += c["n_step_entries"]
+    return {"deaths": deaths, "trusted": trusted, "untrusted_from": cut,
+            "start_dc": d0, "end_dc": series[-1][1],
+            "first_t": t0, "last_t": last_t, "n_obs": n,
+            "steps": steps, "contexts": contexts}
+
+
+def dc_slot_deaths(series, resync_run=RESYNC_MIN_RUN):
+    """[flags 2026-10-05b/c] 单槽减法口径：分段差分求和（对采样空洞免疫）。
+
+    series: [(t, dc)] 升序（同槽，源窗内）。账本按"可信段"累计：
+      步长 ∈ {0, +1} = 干净（观测空洞免疫——dc 单调计数器，段内首末即差分）；
+      坏步（跳变 ≥2 或回退 <0）= 身份更替/类型错位/换绑复位，处理按前瞻：
+        坏步后 +1 游程（0 步不打断）≥ resync_run → 坏步是身份边界，从坏步后
+          新基线续计（新段）——
+          跳变续计 = 同槽读断层累积（mini#2 e020：断层 +10，跳后 33 步全 +1）；
+          回退续计 = 换绑复位后同地址干净爬升（TF180/1wall：carryover 基值
+          掉 0 后整局 +N 全 +1，6 目标 22+18+17+17+18+14=106 严丝合缝）；
+        游程不足 → 截断（trusted=False，前缀段照计）——全部幻影跳变
+          （smoke1 dc=158 冻结、572、smoke2 0→126、mini#2 1→59）跳后游程=0，
+          在全语料上零复活。
+    deaths = Σ 各可信段（段末-段基）；trusted=False 表示存在未通过前瞻的坏步
+    （untrusted_from=截断时刻），前缀段已计入。返回 dict 或 None（series 空）。
+    [lives 2026-10-05d] 走查抽至 _dc_walk 共享，本函数只做结果格式化——
+    输出与 2026-10-05b/c 版逐字段等价。"""
+    walk = _dc_walk(series, resync_run)
+    if walk is None:
+        return None
+    return {"start_dc": walk["start_dc"], "end_dc": walk["end_dc"],
+            "deaths": walk["deaths"],
+            "trusted": walk["trusted"],
+            "prefix_only": not walk["trusted"],
+            "untrusted_from": round(walk["untrusted_from"], 4)
+            if walk["untrusted_from"] is not None else None,
+            "first_t": round(walk["first_t"], 4), "last_t": round(walk["last_t"], 4),
+            "n_obs": walk["n_obs"]}
+
+
+def _regroup_lives(segs, boundaries, pair_after=DEATH_PAIR_AFTER):
+    """[lives 2026-10-05d] 按权威死亡边界把 split_track 的坐标段分组重织成生命窗。
+
+    boundaries: 已甄别接受的死亡时刻。配对规则承自旧 bind_deaths：边界 d 由
+    某坐标段 s 支持当且仅当 s.t_start <= d <= s.t_end + pair_after（后垫吸收
+    死亡帧坐标已坏、坐标段提前 1~2 帧结束的情形）；无支持段的边界不充当边界
+    （计入 unpaired——落在采样洞/生命间隙里的死亡行）。分组：相邻两个死亡
+    之间的所有坐标点 = 一条生命（坐标切段并回，跳变/坏点降级为段内数据缺口，
+    views 采样在缺口处由插值层返回 None=目标不可见）；以死亡收尾的生命末点
+    时刻改写为死亡时刻（t_end 权威）；末尾无死亡收尾的坐标内容 = 局末存活
+    生命（t_end=自然坐标末尾，death_event=False）。相邻边界之间无坐标点
+    （死亡-重生同帧间隙）不产空生命，只推进边界。返回 (lives, n_unpaired)。
+    """
+    bounds = sorted(set(boundaries))
+    segs = sorted(segs, key=lambda s: s[0][0])
+    paired = []
+    seg_i = 0
+    for d in bounds:
+        while seg_i < len(segs) and segs[seg_i][-1][0] + pair_after < d:
+            seg_i += 1
+        if seg_i < len(segs) and segs[seg_i][0][0] <= d:
+            paired.append(d)
+    unpaired = len(bounds) - len(paired)
+    lives = []
+    prev_d = None
+    for d in paired:
+        pts = [p for seg in segs for p in seg
+               if (prev_d is None or p[0] > prev_d) and p[0] <= d]
+        if pts:
+            pts[-1] = (d,) + pts[-1][1:]      # t_end 权威 = 死亡时刻
+            lives.append(pts)
+        prev_d = d
+    if paired:
+        tail = [p for seg in segs for p in seg if p[0] > prev_d]
+    else:
+        tail = [p for seg in segs for p in seg]
+    if tail:
+        lives.append(tail)                    # 局末存活（无死亡收尾）
+    return lives, unpaired
+
+
+def _reorganize_addr(lives, rows, series, cfg, wave):
+    """[lives 2026-10-05d] 单 addr 死亡账本主导生命窗重组（flag 路径核心）。
+
+    lives: split_track 输出段；rows: [(t, dc)] 该 addr 的 death 行；series:
+    dc 观测账本（None=无账本）；wave: 切窗模式出生波锚 W（None=全文件模式，
+    不做 carryover 甄别）。返回 (new_lives, boundaries, audit)。
+
+    甄别两级（被甄别掉的行只入审计、不充当边界）：
+      R1 步证：行 (t, dc) 须命中账本计入死亡步 (t_step, dc_after)：
+        dc_after==dc 且 |t-t_step|<=death_row_tol。无步证 = 采集伪迹
+        （重绑瞬态复读/边沿——如 TF180 语料 t=0.102 与 59.974 的 dc=0 行）。
+        无账本时豁免（退化为旧行配对语义：行直接作为候选边界）。
+      R2 carryover（切窗模式）：命中步所属身份段 clean_end < W = 开局残留
+        身份——账目在出生波（换绑复位/场景重载的最终身份段起点最大值）前
+        关账，同 dc_slot_deaths 对 carryover 基值的截断哲学；其死亡属上一局
+        /预览残留，不是本局生命边界。
+    无行无账本 → 回退坐标切分（audit["fallback"]=True，行为同旧文件路径）；
+    无行有账本 → 全部并回单条生命（账本背书"从未死亡"）。
+    audit["ok"]：局内账本死亡数 == 接受行数、无 unpaired、生命数 ∈
+    {边界数, 边界数+1}（局末存活 0/1 条）——供 ingest known_issues 语义与
+    per-addr 审计消费。"""
+    audit = {"death_rows": len(rows), "bound": 0, "unbacked": 0, "carryover": 0,
+             "unpaired": 0}
+    resync_run = int(cfg.get("resync_min_run", RESYNC_MIN_RUN))
+    tol = float(cfg.get("death_row_tol", DEATH_ROW_TOL))
+    walk = _dc_walk(series, resync_run) if series else None
+    steps = walk["steps"] if walk else []
+    accepted = []
+    for t, dc in rows:
+        if walk is not None:
+            hit = next((s for s in steps if s[1] == dc and abs(s[0] - t) <= tol), None)
+            if hit is None:
+                audit["unbacked"] += 1
+                continue
+            if wave is not None and hit[2] < wave:
+                audit["carryover"] += 1
+                continue
+        accepted.append(t)   # 无账本（旧式 flag 文件）：信任行，退化为旧行配对
+    if walk is None and not rows:
+        audit["fallback"] = True              # 无死亡证据 → 坐标切分回退
+        return lives, [], audit
+    new_lives, unpaired = _regroup_lives(
+        lives, accepted,
+        pair_after=float(cfg.get("death_pair_after", DEATH_PAIR_AFTER)))
+    audit["unpaired"] = unpaired
+    audit["bound"] = len(accepted) - unpaired
+    audit["ledger_deaths"] = (sum(1 for s in steps if wave is None or s[2] >= wave)
+                              if walk is not None else None)
+    audit["lives"] = len(new_lives)
+    audit["ok"] = (
+        (audit["ledger_deaths"] is None or audit["ledger_deaths"] == len(accepted))
+        and unpaired == 0
+        and len(new_lives) in (audit["bound"], audit["bound"] + 1)
+    )
+    return new_lives, accepted, audit
 
 
 def seg_stats(seg):
@@ -596,12 +739,26 @@ def clean_file(path, outdir, cfg):
     frames, bad_recs, t0_map, deaths, dc_obs = load_frames(
         path, epoch_window=cfg.get("epoch_window"))
     # [flags 2026-10-05] death 行 → per-addr 权威死亡时刻。有 death 行才启用标志
-    # 路径（t_end 权威 + death_event 标记）；无 death 行（旧文件）零影响。
+    # 路径（死亡账本主导重组）；无 death 行（旧文件）零影响。
     deaths_by_addr = {}
     for d in deaths:
-        deaths_by_addr.setdefault(d["addr"], []).append(d["t"])
+        deaths_by_addr.setdefault(d["addr"], []).append((d["t"], d["dc"]))
     flag_path = bool(deaths)
     tracks = build_tracks(frames)
+    # [lives 2026-10-05d] 切窗模式出生波锚 W：全体 addr 最终身份段起点的最大值
+    # = 本源（单局切窗）目标出生波时刻。开局残留身份的账目在 W 前关账，其
+    # death 行按 carryover 甄别（全文件模式无 W，不做该级甄别——多局归档里
+    # 每个真实死亡都是合法边界）。
+    wave = None
+    if flag_path and dc_obs and cfg.get("epoch_window") is not None:
+        resync_run = int(cfg.get("resync_min_run", RESYNC_MIN_RUN))
+        starts = []
+        for series in dc_obs.values():
+            w = _dc_walk(series, resync_run)
+            if w is not None and w["contexts"]:
+                starts.append(w["contexts"][-1]["t0"])
+        if starts:
+            wave = max(starts)
 
     discarded = {
         "malformed_records": bad_recs,
@@ -617,21 +774,43 @@ def clean_file(path, outdir, cfg):
     cleaned = {}       # addr -> [life_seg,...]
     per_addr_stats = {}
     n_death_unpaired = 0
+    boundaries_by_addr = {}   # [lives] addr -> 甄别后的权威边界（death_event 判据）
+    reorg_totals = {"unbacked": 0, "carryover": 0, "addrs": 0, "violations": []}
     for a, pts in tracks.items():
         lives, st = split_track(pts, cfg)
+        st["split_segments"] = len(lives)   # [lives] 重组前段数（门3"段数多"口径）
         per_addr_stats[a] = st
         discarded["garbage_points"] += st["nan_or_bound_points"] + st["origin_points"]
         discarded["noise_segments"] += st["noise_segments"]
         discarded["short_segments"] += st["short_segments"]
-        if flag_path and deaths_by_addr.get(a):
-            # [flags 2026-10-05] 标志路径：权威边界改写（坐标垃圾段由此降级为
-            # 普通坏点——死亡后的复读帧/坏点不再决定 life 形状）
-            un = bind_deaths(lives, deaths_by_addr[a],
-                             pair_after=float(cfg.get("death_pair_after",
-                                                      DEATH_PAIR_AFTER)))
-            n_death_unpaired += un
-            st["death_events_bound"] = len(deaths_by_addr[a]) - un
-            st["death_events_unpaired"] = un
+        if flag_path:
+            # [lives 2026-10-05d] 标志路径：死亡账本主导重组——death 行两级甄别
+            # （步证/carryover）后按权威死亡时刻把坐标段分组重织；坐标垃圾段
+            # 由此降级为段内数据缺口，不再决定 life 形状。无行无账本的 addr
+            # 由 _reorganize_addr 判回退坐标切分（audit.fallback）。
+            rows = deaths_by_addr.get(a) or []
+            series = dc_obs.get(a)
+            new_lives, bounds, aud = _reorganize_addr(lives, rows, series, cfg, wave)
+            lives = new_lives
+            boundaries_by_addr[a] = bounds
+            st["death_rows"] = aud["death_rows"]
+            st["death_events_bound"] = aud["bound"]
+            st["death_events_unpaired"] = aud["unpaired"]
+            st["death_rows_rejected_unbacked"] = aud["unbacked"]
+            st["death_rows_rejected_carryover"] = aud["carryover"]
+            n_death_unpaired += aud["unpaired"]
+            reorg_totals["unbacked"] += aud["unbacked"]
+            reorg_totals["carryover"] += aud["carryover"]
+            if aud.get("fallback"):
+                st["reorg_fallback"] = True
+            else:
+                reorg_totals["addrs"] += 1
+                st["reorg_deaths_ledger"] = aud["ledger_deaths"]
+                st["reorg_deaths_bound"] = aud["bound"]
+                st["reorg_lives"] = aud["lives"]
+                st["reorg_ok"] = aud["ok"]
+                if not aud["ok"]:
+                    reorg_totals["violations"].append(fmt_addr(a))
         if lives:
             cleaned[a] = lives
         elif st["origin_points"] > 0:
@@ -651,14 +830,17 @@ def clean_file(path, outdir, cfg):
     # [flags 2026-10-05] 三道门之三：轨道级 valid-ratio。有效点占比过低且段数多
     # = 池化幽灵复读已释放内存（54078 tid15：valid 2331/13046=18%、84 段）；
     # 真目标即便多死 valid 占比也 >80%。整轨丢弃入审计。
+    # [lives 2026-10-05d] "段数多"取重组前 split_track 段数（st.split_segments）：
+    # 重组会把无死亡 addr 的碎段并回单生命，用重组后段数会让该门在 flag 数据
+    # 上失去判别力；旧路径 split_segments == len(cleaned[a])，行为不变。
     for a in list(cleaned):
         st = per_addr_stats[a]
         total = len(tracks[a])
         valid = total - st["nan_or_bound_points"] - st["origin_points"]
         ratio = (valid / total) if total else 0.0
         if total and ratio < float(cfg.get("track_valid_ratio", TRACK_VALID_RATIO)) \
-                and len(cleaned[a]) >= int(cfg.get("track_min_segments",
-                                                   TRACK_MIN_SEGMENTS)):
+                and st.get("split_segments", len(cleaned[a])) >= int(
+                    cfg.get("track_min_segments", TRACK_MIN_SEGMENTS)):
             discarded["low_valid_tracks"][fmt_addr(a)] = {
                 "valid_ratio": round(ratio, 4), "valid_points": valid,
                 "total_points": total, "n_lives": len(cleaned[a])}
@@ -719,10 +901,11 @@ def clean_file(path, outdir, cfg):
                            "z": [round(min(d[4] for d in xs), 1), round(max(d[5] for d in xs), 1)]},
             }
             if flag_path:
-                # [flags 2026-10-05] 标志路径：逐 life 标记 t_end 是否由 death 行
-                # 权威改写（False = 坐标推导边界：出窗/局末清场/无标志家族）。
-                # 旧文件（无 death 行）不写该键，lives 条目 schema 逐字节不变。
-                dmom = deaths_by_addr.get(a, ())
+                # [flags 2026-10-05]→[lives 2026-10-05d] 标志路径：逐 life 标记
+                # t_end 是否由甄别后的权威死亡边界收尾（False = 坐标推导边界：
+                # 局末存活/出窗/无标志家族）。旧文件（无 death 行）不写该键，
+                # lives 条目 schema 逐字节不变。
+                dmom = boundaries_by_addr.get(a, ())
                 tm["lives"] = [
                     {"t_start": round(s["t_start"], 4), "t_end": round(s["t_end"], 4),
                      "n": s["n"], "path": round(s["path"], 1),
@@ -798,6 +981,20 @@ def clean_file(path, outdir, cfg):
         src_meta["deaths_source"] = "flag" if flag_path else "coords"
         src_meta["n_death_events"] = len(deaths)
         src_meta["n_death_events_unpaired"] = n_death_unpaired
+        if flag_path:
+            # [lives 2026-10-05d] 重组审计（ingest known_issues 语义的判定输入）：
+            # ok = 无 per-addr 违例（局内账本死亡数==接受行数、生命数==死亡数+0/1）
+            # 且无未配对局内死亡。被甄别掉的死亡行（无步证伪迹/carryover 残留）
+            # 不影响 ok——它们本来就不是本局生命边界。
+            src_meta["n_death_rows_rejected_unbacked"] = reorg_totals["unbacked"]
+            src_meta["n_death_rows_rejected_carryover"] = reorg_totals["carryover"]
+            src_meta["reorg_audit"] = {
+                "mode": "window" if wave is not None else "full",
+                "spawn_wave": round(wave, 4) if wave is not None else None,
+                "addrs": reorg_totals["addrs"],
+                "violations": reorg_totals["violations"],
+                "ok": not reorg_totals["violations"] and n_death_unpaired == 0,
+            }
         if isinstance(t0_map.get("flag_reflection"), str):
             src_meta["flag_reflection"] = t0_map["flag_reflection"]
         # [flags 2026-10-05b] deaths_summary（减法口径，源级）：每槽死亡总数 =
@@ -870,6 +1067,8 @@ def main():
            "track_valid_ratio": TRACK_VALID_RATIO,
            "track_min_segments": TRACK_MIN_SEGMENTS,
            "death_pair_after": DEATH_PAIR_AFTER,
+           # [lives 2026-10-05d] 死亡账本主导重组（常量，未开 CLI）
+           "resync_min_run": RESYNC_MIN_RUN, "death_row_tol": DEATH_ROW_TOL,
            "epoch_window": (args.epoch_min, args.epoch_max)
            if args.epoch_min is not None else None}
     index = {

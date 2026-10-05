@@ -597,6 +597,62 @@ def test_orphan_rescan_does_not_duplicate_content_already_imported_via_index(
 
 # ------------------------------------------------------------- D7 quality gates
 
+def _write_reorg_index(index_path: Path, reorg_audit: object) -> None:
+    """带源级 reorg_audit 字段的 index（cleaner [lives 2026-10-05d] 产出）。"""
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    source = {
+        "source": "target_poll_out_0103_040506.jsonl",
+        "outdir": "target_poll_out_0103_040506",
+        "rounds": [_index_entry(round_number=1, file="round_01.jsonl")],
+        "discarded": {"garbage_points": 3},
+        "per_addr_cut_stats": {},
+    }
+    if reorg_audit is not None:
+        source["reorg_audit"] = reorg_audit
+    index_path.write_text(json.dumps({
+        "format_version": 1,
+        "generator": "cleaner.py",
+        "params": {"jump_dist": 2000.0},
+        "sources": [source],
+    }, ensure_ascii=False), encoding="utf-8")
+
+
+def _reorg_tree(tmp_path: Path, reorg_audit: object) -> Path:
+    root = tmp_path / ("cleaned_%s" % id(reorg_audit))
+    source_dir = root / "reorg" / "target_poll_out_0103_040506"
+    source_dir.mkdir(parents=True)
+    (source_dir / "round_01.jsonl").write_bytes(_round_payload())
+    _write_reorg_index(root / "reorg" / "rounds_index.json", reorg_audit)
+    return root
+
+
+def test_short_respawn_merge_issue_follows_reorg_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """[lives 2026-10-05d] known_issues 两态：flag 数据且死亡账本重组成功
+    （reorg_audit.ok：碎段全部并回 + 无未配对局内死亡）→ 不再挂
+    cleaner_short_respawn_merge；审计违例或旧 cleaner index（缺字段）→
+    保留该 issue（fail-closed）。"""
+    key = "target_poll_out_0103_040506.jsonl|1|reorg"
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data_ok")
+    root = _reorg_tree(tmp_path, {"mode": "window", "spawn_wave": 60.2406,
+                                  "addrs": 21, "violations": [], "ok": True})
+    assert _watcher(root).scan_once()["imported"] == 1
+    assert "cleaner_short_respawn_merge" not in _meta_for(key)["quality"]["known_issues"]
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data_bad")
+    root = _reorg_tree(tmp_path, {"mode": "window", "spawn_wave": None,
+                                  "addrs": 5, "violations": ["0x1"], "ok": False})
+    assert _watcher(root).scan_once()["imported"] == 1
+    assert "cleaner_short_respawn_merge" in _meta_for(key)["quality"]["known_issues"]
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data_legacy")
+    root = _reorg_tree(tmp_path, None)   # 旧 cleaner 产的 index：无 reorg_audit
+    assert _watcher(root).scan_once()["imported"] == 1
+    assert "cleaner_short_respawn_merge" in _meta_for(key)["quality"]["known_issues"]
+
+
 def test_unsupported_format_version_is_fail_closed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

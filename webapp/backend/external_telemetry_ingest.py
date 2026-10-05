@@ -596,6 +596,7 @@ class ExternalTelemetryWatcher:
                         index_generator=index_data.get("generator"),
                         source_discarded=source.get("discarded"),
                         source_cut_stats=source.get("per_addr_cut_stats"),
+                        source_reorg_audit=source.get("reorg_audit"),
                     )
                 except RetryableIngestionError as error:
                     self._handle_retryable(dedup_key, error, summary)
@@ -626,6 +627,7 @@ class ExternalTelemetryWatcher:
         index_generator: object,
         source_discarded: object,
         source_cut_stats: object,
+        source_reorg_audit: object,
     ) -> str:
         round_file = str(round_entry.get("file", ""))
         round_path = round_dir / round_file
@@ -669,7 +671,14 @@ class ExternalTelemetryWatcher:
             "target_count": self._target_count_gate(proposal, len(index_targets)),
             "duration_positive": "pass",
         }
-        known_issues = ["cleaner_short_respawn_merge"]
+        known_issues = []
+        # [lives 2026-10-05d] cleaner_short_respawn_merge 两态：flag 数据且死亡
+        # 账本重组成功（reorg_audit.ok：碎段全部并回[无 per-addr 违例] + 无未
+        # 配对局内死亡）时不再挂；坐标推导源（旧 cleaner 数据）、缺 reorg 证据
+        # 的旧 index、或重组仍有违例/unpaired 时保留（fail-closed）。
+        if not (isinstance(source_reorg_audit, dict)
+                and source_reorg_audit.get("ok") is True):
+            known_issues.append("cleaner_short_respawn_merge")
         if not index_targets:
             known_issues.append("missing_rounds_index")
         if frame_stats["unsupported_events"]:

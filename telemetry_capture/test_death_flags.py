@@ -10,6 +10,11 @@
   B. cleaner 侧 death 行消费 + 三道门（合成 JSONL 喂真实 clean_file）：
      life t_end 取 death 行权威边界、death_event 标记、deaths_source、
      单点坏点迟滞、段最短时长门、轨道 valid-ratio 门、旧文件回退路径零影响。
+  C. deaths_summary 减法口径（[flags 2026-10-05b]）。
+  D. [lives 2026-10-05d] 死亡账本主导生命窗重组：多段并一、局末存活、
+     开局残留甄别（切窗 carryover / 全文件不甄别）、无步证伪迹甄别、
+     无死亡 addr 回退坐标切分、有账本无行并回单生命、单段单死亡、
+     旧数据无重组审计键。
 
 风格同 test_poll_perf.py：无 pytest 依赖，python test_death_flags.py 直跑；
 test_* 函数无参，也可被 pytest 收集。
@@ -501,6 +506,230 @@ def test_flag_rows_fill_dc_holes():
     # t∈(2,4) 条目全缺席，flag 行补采：差分照样数完 6 死（空洞免疫）
     assert info["trusted"] and info["deaths"] == 6, info
     assert ds["total"] == 6
+
+
+# ---------------- D. [lives 2026-10-05d] 死亡账本主导生命窗重组 ----------------
+
+def _frames_dc(duration, addrs):
+    """合成 6 列帧流（hp/dc 齐备，供死亡账本）。
+
+    addrs: {addr: (pos_at, dc_at, first_t)}；pos_at(t)→[x,y,z] 或 None（缺席），
+    dc_at(t)→int（账本观测值）；t < first_t 的帧不含该 addr 条目。"""
+    frames = []
+    t = 0.0
+    while t <= duration + 1e-9:
+        ents = []
+        for a, (pos_at, dc_at, first_t) in sorted(addrs.items()):
+            if t < first_t - 1e-9:
+                continue
+            p = pos_at(t)
+            if p is not None:
+                ents.append([a, p[0], p[1], p[2], 54.0, dc_at(t)])
+        frames.append((round(t, 6), ents))
+        t = round(t + DT, 6)
+    return frames
+
+
+def _tm_of(src, addr):
+    for r in src["rounds"]:
+        for tm in r["targets"]:
+            if tm["addr"] == addr:
+                return tm
+    raise AssertionError("target not found: 0x%x" % addr)
+
+
+def test_reorg_segments_merge_into_lives():
+    """多段并一 + 局末存活：相邻死亡之间的坐标碎段（坏点 streak 切碎）并回
+    一条生命，t_end 权威 = 死亡时刻；局末无死亡收尾 = 存活（death_event=False）。"""
+    A = ADDR
+
+    def pos(t):
+        if t <= 2.0:
+            return [100.0 + 300.0 * t, 500.0, 100.0]
+        if 2.6 <= t <= 2.64 or 3.0 <= t <= 3.04:
+            return [0.0, 0.0, 0.0]        # 连续原点 streak → 坐标切碎段
+        if t <= 4.0:
+            return [2100.0 + 300.0 * t, 500.0, 100.0]   # 重生跳（>2000 切）
+        if t <= 5.0:
+            return [4100.0 + 300.0 * t, 500.0, 100.0]   # 第二次重生 → 局末存活段
+        return None
+
+    def dc(t):
+        return 0 if t < 2.0 else (1 if t < 4.0 else 2)
+
+    frames = _frames_dc(5.0, {A: (pos, dc, 0.0)})
+    deaths = [(2.0, A, 1), (4.0, A, 2)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_rg_"), frames, deaths)
+    assert src["deaths_source"] == "flag"
+    assert src["n_death_events_unpaired"] == 0
+    assert src["reorg_audit"]["mode"] == "full"
+    assert src["reorg_audit"]["ok"] is True
+    tm = _tm_of(src, A)
+    # 坐标切分视角是 5 段（0~2 / 2.02~2.58 / 2.66~2.98 / 3.06~4.0 / 4.02~5.0）；
+    # 重组后 3 条生命：两死夹的三个碎段并回一条 + 局末存活。
+    assert tm["n_lives"] == 3, tm["lives"]
+    lv0, lv1, lv2 = tm["lives"]
+    assert lv0["t_end"] == 2.0 and lv0["death_event"] is True
+    assert lv1["t_start"] == 2.02 and lv1["t_end"] == 4.0
+    assert lv1["death_event"] is True
+    assert lv2["t_start"] == 4.02 and lv2["t_end"] == 5.0   # 自然坐标末尾
+    assert lv2["death_event"] is False
+    st = src["per_addr_cut_stats"]["0x%x" % A]
+    assert st["death_rows"] == 2 and st["reorg_deaths_bound"] == 2
+    assert st["reorg_lives"] == 3 and st["reorg_ok"] is True
+    assert st["split_segments"] == 5                       # 门3 口径：重组前段数
+
+
+def test_reorg_carryover_rejected_in_window_mode():
+    """开局残留甄别（切窗模式）：出生波前的 carryover 死亡（残留身份、账目在
+    波前关账）不作边界；全文件模式同一行照常是边界。"""
+    A, B = 0x7FF600000001, 0x7FF600000002
+
+    def pos_a(t):
+        return [100.0 + 300.0 * t, 500.0, 100.0]
+
+    def dc_a(t):
+        if t < 1.0:
+            return 0
+        if t < 3.0:
+            return 1     # 残留身份死亡 @1.0
+        if t < 4.0:
+            return 0     # 换绑复位 @3.0（跳后 +1 游程 3 → 重同步成新身份段）
+        if t < 4.5:
+            return 1
+        if t < 5.0:
+            return 2
+        return 3
+
+    def pos_b(t):
+        return [3000.0 + 300.0 * (t - 3.5), 900.0, 100.0]
+
+    def dc_b(t):
+        return 0 if t < 4.6 else 1
+
+    frames = _frames_dc(6.0, {A: (pos_a, dc_a, 0.0), B: (pos_b, dc_b, 3.5)})
+    deaths = [(1.0, A, 1), (4.0, A, 1), (4.5, A, 2), (5.0, A, 3), (4.6, B, 1)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_cow_"), frames, deaths,
+                    epoch_window=(T0 + 0.0, T0 + 7.0))
+    assert src["deaths_source"] == "flag"
+    # 出生波 W = max(A 最终身份段起点 3.0, B 最终身份段起点 3.5) = 3.5
+    assert src["reorg_audit"]["spawn_wave"] == 3.5
+    assert src["reorg_audit"]["mode"] == "window"
+    assert src["n_death_rows_rejected_carryover"] == 1
+    assert src["reorg_audit"]["ok"] is True
+    tmA, tmB = _tm_of(src, A), _tm_of(src, B)
+    # A：carryover@1.0 甄别掉 → 3 边界 → 4 生命（含局末存活），头部坐标并回
+    assert tmA["n_lives"] == 4, tmA["lives"]
+    assert sum(1 for l in tmA["lives"] if l["death_event"]) == 3
+    assert tmA["lives"][0]["t_start"] == 0.0 and tmA["lives"][0]["t_end"] == 4.0
+    assert tmB["n_lives"] == 2
+    assert sum(1 for l in tmB["lives"] if l["death_event"]) == 1
+
+    # 全文件模式（无 epoch 窗）：无 W、不做 carryover 甄别，@1.0 照常是边界
+    src2 = clean_tmp(tempfile.mkdtemp(prefix="df_cof_"), frames, deaths)
+    assert src2["reorg_audit"]["mode"] == "full"
+    assert src2["reorg_audit"]["spawn_wave"] is None
+    assert src2["n_death_rows_rejected_carryover"] == 0
+    tmA2 = _tm_of(src2, A)
+    assert tmA2["n_lives"] == 5
+    assert tmA2["lives"][0]["t_end"] == 1.0 and tmA2["lives"][0]["death_event"] is True
+
+
+def test_reorg_unbacked_row_rejected():
+    """无步证伪迹甄别：dc 从未步进的行（如重绑瞬态 dc=0 复读）不作边界、入审计；
+    账本背书"从未死亡" → 全部坐标段并回单条生命。"""
+    A = ADDR
+    frames = _frames_dc(4.0, {A: (lambda t: [100.0 + 300.0 * t, 500.0, 100.0],
+                                        lambda t: 0, 0.0)})
+    deaths = [(1.0, A, 0)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_ub_"), frames, deaths)
+    assert src["n_death_rows_rejected_unbacked"] == 1
+    assert src["n_death_events_unpaired"] == 0
+    tm = _tm_of(src, A)
+    assert tm["n_lives"] == 1
+    assert all(l["death_event"] is False for l in tm["lives"])
+    st = src["per_addr_cut_stats"]["0x%x" % A]
+    assert st["death_rows_rejected_unbacked"] == 1
+    assert st["reorg_deaths_ledger"] == 0 and st["reorg_ok"] is True
+
+
+def test_reorg_no_evidence_addr_falls_back_to_coordinate_cuts():
+    """无死亡 addr 回退坐标切分：无行、无 dc 账本（旧式 4 列条目）的 addr
+    保持 split_track 段形（不并回）；有账本的邻 addr 照常重组（驱动 flag_path）。"""
+    A, X = 0x7FF600000001, 0x7FF600000002
+    frames = []
+    t = 0.0
+    while t <= 4.0 + 1e-9:
+        ents = [[A, 100.0 + 300.0 * t, 500.0, 100.0, 54.0, 1 if t >= 2.0 else 0]]
+        if 2.0 <= t <= 2.04:
+            x = [0.0, 0.0, 0.0]                    # 连续原点 → 坐标切段
+        else:
+            x = [5000.0 + 50.0 * t, 800.0, 100.0]  # 50 u/s 滑行（避开幽灵判据）
+        ents.append([X, x[0], x[1], x[2]])         # 4 列：无 dc 观测
+        frames.append((round(t, 6), ents))
+        t = round(t + DT, 6)
+    deaths = [(2.0, A, 1)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_fb_"), frames, deaths)
+    stX = src["per_addr_cut_stats"]["0x%x" % X]
+    assert stX.get("reorg_fallback") is True
+    assert "reorg_ok" not in stX
+    tmX = _tm_of(src, X)
+    assert tmX["n_lives"] == 2, tmX["lives"]        # 坐标切分原样保留
+    tmA = _tm_of(src, A)
+    assert tmA["n_lives"] == 2                      # A：1 死 + 局末存活
+
+
+def test_reorg_never_died_addr_merges_to_single_life():
+    """有账本、无死亡行的 addr（账本背书从未死亡）：全部坐标碎段并回单条生命。"""
+    A, X = 0x7FF600000001, 0x7FF600000002
+
+    def pos(t):
+        if 2.0 <= t <= 2.04:
+            return [0.0, 0.0, 0.0]
+        return [100.0 + 300.0 * t, 500.0, 100.0]
+
+    frames = _frames_dc(4.0, {A: (pos, lambda t: 0, 0.0)})
+    # X：驱动 flag_path（有行有账本）；A：无行、账本恒 0 → 并回单生命
+    frames2 = []
+    for t, ents in frames:
+        ents2 = list(ents)
+        ents2.append([X, 3000.0 + 300.0 * t, 700.0, 100.0, 54.0,
+                      1 if t >= 3.0 else 0])
+        frames2.append((t, ents2))
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_nd_"), frames2,
+                    deaths=[(3.0, X, 1)])
+    tmA = _tm_of(src, A)
+    assert tmA["n_lives"] == 1, tmA["lives"]
+    assert tmA["lives"][0]["death_event"] is False
+    stA = src["per_addr_cut_stats"]["0x%x" % A]
+    assert stA["death_rows"] == 0 and stA["reorg_lives"] == 1
+    assert stA["reorg_deaths_ledger"] == 0 and stA["reorg_ok"] is True
+
+
+def test_reorg_single_segment_single_death():
+    """单段单死亡：一条生命、t_end 权威 = 死亡时刻、death_event=True、无局末段。"""
+    A = ADDR
+    frames = _frames_dc(2.0, {A: (lambda t: [100.0 + 300.0 * t, 500.0, 100.0],
+                                        lambda t: 0 if t < 2.0 else 1, 0.0)})
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_ss_"), frames,
+                    deaths=[(2.0, A, 1)])
+    tm = _tm_of(src, A)
+    assert tm["n_lives"] == 1, tm["lives"]
+    assert tm["lives"][0]["t_end"] == 2.0
+    assert tm["lives"][0]["death_event"] is True
+    assert tm["lives"][0]["n"] == 101               # 0~2.0s 全部有效点
+
+
+def test_legacy_file_has_no_reorg_audit():
+    """旧数据（无 death 行）零漂移：不写重组审计键（schema 逐字节保持）。"""
+    frames = run_frames(3.0, _moving)
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_lga_"), frames, deaths=())
+    assert "reorg_audit" not in src
+    assert "n_death_rows_rejected_unbacked" not in src
+    assert "n_death_rows_rejected_carryover" not in src
+    for st in src["per_addr_cut_stats"].values():
+        assert "reorg_ok" not in st and "reorg_fallback" not in st
+        assert "split_segments" in st               # additive：门3 口径字段
 
 
 def main():
