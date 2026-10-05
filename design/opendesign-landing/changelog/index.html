@@ -243,7 +243,15 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.0</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-05</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.1</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-06</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>动作数据整理支持「结果延续」：同一局训练再次整理时，直接沿用之前已成功的结果，不再从头重算反复折腾</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分对局「整理刚成功、再次整理又失败」的反复问题</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>少数处于边界的对局不再被一刀切拒绝，现在能正常出结果</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.0</h2><span class="cl-date">2026-10-05</span></div>
           <ul>
             <li class="cl-new"><span class="cl-tag">新增</span><span>转火类训练的动作分析上线：转火过渡时长（从上一个目标被击杀到准星重新抓住下一个目标）、转火路径效率这类转火专属指标，数值来自真值遥测，不是估算</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分训练局分析一直停在「排队中」不出结果的问题：静态打靶类场景（如 1wall 6targets small）首次分析即可正常完成，之前卡住过的分析重试即可恢复</span></li>
