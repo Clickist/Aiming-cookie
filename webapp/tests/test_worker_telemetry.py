@@ -182,6 +182,15 @@ def _write_frozen_external_run(
             "import_parser_version": "external_run_import.v1",
         },
         "time": {"t_start": 0.0, "t_end": 0.5, "duration": 0.5},
+        # 本局身份（真实 ingest 的 build_targets 产物子集）：冻结路径只认它，
+        # 不再回读共享 rounds_index。
+        "targets": [{
+            "tid": 0,
+            "addr_hex": "0x0",
+            "motion": "static",
+            "n_lives": 1,
+            "lives": [{"t_start": 0.0, "t_end": 0.5, "n": 32, "path_cm": 0.0}],
+        }],
         "scenario_proposal": {"source": "pending"},
         "pairing": {
             "matched_run_ids": [42],
@@ -1003,3 +1012,60 @@ async def test_dynamic_dispatch_with_telemetry_uses_producer():
         warning for warning in result["warnings"]
         if str(warning.get("code", "")).startswith("external_telemetry_unavailable")
     ]
+
+
+def test_replay_ignores_overwritten_shared_rounds_index():
+    """跨局污染产品级回归：重放冻结 run 时，merge_manifest 指向的共享
+    rounds_index 已被后续导入覆盖（同 round 号、同 file 名、不同 t_start 与
+    targets）。producer 身份必须只来自本局 meta——与共享索引文件不存在时的
+    输出规范化 JSON 逐位一致。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    # 把 manifest 的 rounds_index 改指 ext 目录之外的"共享活索引"（模拟
+    # E:/ACData/external-capture/cleaned/rounds_index.json 被新局覆盖）。
+    shared_index = _data_root() / "external" / "shared-rounds-index.json"
+    shared_index.write_text(json.dumps({
+        "format_version": 1,
+        "generator": "later-import",
+        "params": {},
+        "sources": [{
+            "source": "later_session/round_01.jsonl",
+            "outdir": "E:/ACData/later_session",
+            "rounds": [{
+                "round": 1,
+                "file": "round_01.jsonl",
+                "t_start": 55.5,
+                "t_end": 56.0,
+                "n_targets": 1,
+                "targets": [{
+                    "tid": 7,
+                    "addr": 4294967295,
+                    "addr_hex": "0xffffffff",
+                    "n_lives": 1,
+                    "lives": [{"t_start": 55.5, "t_end": 56.0, "n": 32}],
+                }],
+            }],
+        }],
+    }), encoding="utf-8")
+    manifest_path = ext_dir / "merge_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["rounds_index"] = str(shared_index)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    job = _telemetry_job(ext_dir)
+    visual_polluted = worker._build_external_telemetry_visual_result(job)
+
+    # 身份来自本局 meta：1 条轨道 tid 0、origin 0.0
+    # （污染索引是 t_start 55.5 / tid 7 / addr 0xFFFFFFFF）。
+    assert set(visual_polluted["local_samples"]) == {
+        "crosshair.position", "target.0.position",
+    }
+    assert visual_polluted["video_time_mapping"]["source_pts_origin_ms"] == 0.0
+    assert visual_polluted["safe_summary"]["track_count"] == 1
+    assert visual_polluted["safe_summary"]["event_counts"]["kill"] == 1
+
+    # 同一 run、共享索引文件已不存在（上游目录演化/清理）：输出逐位一致。
+    shared_index.unlink()
+    visual_clean = worker._build_external_telemetry_visual_result(job)
+    assert json.dumps(visual_clean, sort_keys=True) == json.dumps(
+        visual_polluted, sort_keys=True,
+    )

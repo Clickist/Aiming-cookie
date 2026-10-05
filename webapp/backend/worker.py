@@ -6,11 +6,11 @@ import hashlib
 import json
 import logging
 import math
-import subprocess
 import os
 import re
 import socket
 import sys
+import time
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -19,8 +19,6 @@ from pathlib import Path
 from . import analysis_output, queue
 from .config import (
     ANALYSIS_TOTAL_BUDGET_SECONDS,
-    SCIENCE_PREWARM_CHILD,
-    SCIENCE_PREWARM_MAX_WAIT_SECONDS,
     DATA_ROOT,
     DESKTOP_LOCAL_PROFILE,
     HEARTBEAT_INTERVAL_SECONDS,
@@ -1510,6 +1508,12 @@ def _build_external_telemetry_visual_result(job: dict) -> dict:
             or f"inputs_{round_number:02d}.jsonl"
         ),
     }
+    # 本局身份透传：入库 meta 已冻结该局的 targets/t_start。共享 rounds_index
+    # 是活文件（后续导入会覆盖它），重放旧局绝不回读——只认本局 meta。
+    frozen_round_meta = {
+        "targets": meta.get("targets") if isinstance(meta.get("targets"), list) else [],
+        "t_start": (meta.get("time") or {}).get("t_start"),
+    }
     try:
         from kovaak_tracker.telemetry_signals import build_telemetry_visual_result
 
@@ -1519,8 +1523,7 @@ def _build_external_telemetry_visual_result(job: dict) -> dict:
             canonical_window=(start_ms, end_ms),
             analysis_ref=f"analysis:{job['id']}",
             file_names=file_names,
-            # 冻结目录名不等于上游会话目录名：rounds_index 按 (round, file) 兜底。
-            index_round_file=round_file,
+            frozen_round_meta=frozen_round_meta,
         )
     except TelemetryPipelineError:
         raise
@@ -1538,10 +1541,17 @@ async def _external_telemetry_visual_or_none(
     """遥测源可用时跑 producer；任何失败返回 (None, code) 供回退观测。"""
     if _external_telemetry_source(job) is None:
         return None, None
+    started = time.monotonic()
     try:
         return await asyncio.to_thread(_build_external_telemetry_visual_result, job), None
     except TelemetryPipelineError as error:
         return None, error.code
+    finally:
+        log.info(
+            "external telemetry visual producer job=%s took=%.1fs",
+            job.get("id"),
+            time.monotonic() - started,
+        )
 
 
 async def _visual_result_with_telemetry_preference(
@@ -3206,6 +3216,7 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                         # 作业永不完成。超时对齐 CV 子进程路径的量级；wait_for
                         # 取消的是 await（线程体无法中断），超时后作业沿
                         # ContinuousTrackingAnalysisProcessError 走 outcome_only。
+                        adapter_started = time.monotonic()
                         tracking_result = await asyncio.wait_for(
                             asyncio.to_thread(
                                 run_continuous_tracking_analysis,
@@ -3213,6 +3224,11 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                                 visual_result,
                             ),
                             timeout=VISUAL_WORKER_TIMEOUT_SECONDS,
+                        )
+                        log.info(
+                            "continuous tracking adapter session=%s took=%.1fs",
+                            sid,
+                            time.monotonic() - adapter_started,
                         )
                     except SourceSnapshotChangedError:
                         raise
@@ -3248,10 +3264,16 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 )
                 visual_result = error.visual_result
                 visual_validation = dict(visual_result.get("safe_summary") or {})
+                # 底层异常（__cause__）必须可查：600s 超时与分析器真错误在
+                # 报障包里要可分辨；只记类型+摘要，不把整个 visual_result 带出。
+                cause = error.__cause__
                 log.warning(
-                    "continuous tracking analysis unavailable session=%s error=%s",
+                    "continuous tracking analysis unavailable session=%s "
+                    "error=%s cause=%s: %s",
                     sid,
                     error.code,
+                    type(cause).__name__ if cause is not None else "<none>",
+                    str(cause)[:200] if cause is not None else "",
                 )
                 result = _build_outcome_only_result_v2(
                     job,
@@ -3851,18 +3873,6 @@ async def process_one() -> bool:
     """处理一个 job。True=处理了(无论成败),False=队列空。"""
     # Stale-lease recovery runs from the idle loop (throttled). Doing it here
     # made every job start a full sessions-directory scan on top of claim_next's.
-    # [fix 2026-10-05] 科学栈预热子进程在导入时就近楔死加载器锁（实机死锁两连）：
-    # 领分析前先等预热子进程退出（至多 25 分钟兜底），保证任一时刻全进程只有
-    # 一个 numpy/scipy 导入者。无预热子进程时零开销直通。
-    prewarm_child = SCIENCE_PREWARM_CHILD
-    if prewarm_child is not None:
-        try:
-            await asyncio.to_thread(prewarm_child.wait, SCIENCE_PREWARM_MAX_WAIT_SECONDS)
-        except subprocess.TimeoutExpired:
-            log.warning(
-                "science prewarm child still alive after %ss; proceeding anyway",
-                SCIENCE_PREWARM_MAX_WAIT_SECONDS,
-            )
     job = await queue.claim_next(WORKER_ID)
     if job is None:
         return False

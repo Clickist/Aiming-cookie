@@ -20,8 +20,9 @@ fov 用该轮 views 流的稳健值（中位；views 有少量 fov 撕裂帧）�
 量化取整后编入 visual quality profile ref（不同 fov 的 px/rad 尺度不可比）。
 
 时间域：旁车 t 为源文件相对秒；本切片不查 KovaaKRun，canonical ms 由入参
-canonical_window 直接给定：canonical_ms = window_start + (t - t_origin)*1000，
-t_origin 取 rounds_index 该轮 t_start（缺失时回退轮帧首帧 t）。
+canonical_window 直接给定：canonical_ms = window_start + (t - t_origin)*1000。
+t_origin：源目录入口取 rounds_index 该轮 t_start；冻结入口取本局 meta 的
+t_start（frozen_round_meta 透传，不读共享索引）。缺失时回退轮帧首帧 t。
 
 文件名布局：默认消费源目录（round_NN / views_NN / inputs_NN）；Aiming Cookie
 侧的冻结副本（{DATA_ROOT}/external/ext-<id>/）把轮帧固定重命名为 round.jsonl，
@@ -247,14 +248,15 @@ def _load_round_index_entry(
     round_dir: Path,
     manifest: dict | None,
     round_number: int,
-    round_file_name: str | None = None,
 ) -> tuple[dict | None, list[str]]:
     """定位 rounds_index.json 并取该轮条目；找不到返回 (None, limitations)。
 
     final_0831 的 rounds_index 在旁车目录上一级；verify0831 在会话目录。
     merge_manifest 的 rounds_index/round_dir 字段是绝对路径，按 basename 匹配。
-    冻结副本适配：目录被重命名为 ext-<id>，basename 必然不匹配——再按
-    (round, file) 兜底定位，要求全 index 唯一命中（歧义即 fail-closed）。
+    basename 不匹配即 fail-closed 返回 None：共享索引是活文件（后续导入会
+    覆盖），按 (round, file) 兜底"唯一命中"会把新局身份误认成旧局——该兜底
+    已退役，冻结路径的身份由 frozen_round_meta 透传（见 build_telemetry_
+    visual_result）。
     """
     limitations: list[str] = []
     candidates: list[Path] = []
@@ -288,25 +290,48 @@ def _load_round_index_entry(
         for entry in source.get("rounds") or []:
             if isinstance(entry, Mapping) and entry.get("round") == round_number:
                 return entry, limitations
-    if round_file_name:
-        hits: list[dict] = []
-        for source in index.get("sources") or []:
-            if not isinstance(source, Mapping):
-                continue
-            for entry in source.get("rounds") or []:
-                if (
-                    isinstance(entry, Mapping)
-                    and entry.get("round") == round_number
-                    and entry.get("file") == round_file_name
-                ):
-                    hits.append(entry)
-        if len(hits) == 1:
-            return hits[0], limitations
-        if len(hits) > 1:
-            limitations.append("rounds_index_ambiguous_addr_dedup_identity")
-            return None, limitations
     limitations.append("rounds_index_missing_addr_dedup_identity")
     return None, limitations
+
+
+def _frozen_round_meta_entry(frozen_round_meta: Mapping) -> dict:
+    """冻结本局 meta（targets/t_start）-> 等价 rounds_index 该轮条目。
+
+    共享 rounds_index 是活文件，后续导入会覆盖它；(round, file) 命中会把
+    新局身份误认成旧局，因此冻结路径只认入库时随本局保存的身份：
+    addr_hex 按 16 进制解析；条目/生命窗解析失败跳过（与 index 条目同款
+    容错）；t_start 缺失时不写入，由调用方回退轮帧首帧 t。
+    """
+    entry: dict = {"targets": []}
+    raw_targets = frozen_round_meta.get("targets")
+    if isinstance(raw_targets, list):
+        for item in raw_targets:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                tid = int(item["tid"])
+                addr = int(str(item["addr_hex"]), 16)
+            except (KeyError, TypeError, ValueError):
+                continue
+            lives: list[dict] = []
+            raw_lives = item.get("lives")
+            if isinstance(raw_lives, list):
+                for life in raw_lives:
+                    if not isinstance(life, Mapping):
+                        continue
+                    try:
+                        lives.append({
+                            "t_start": float(life["t_start"]),
+                            "t_end": float(life["t_end"]),
+                        })
+                    except (KeyError, TypeError, ValueError):
+                        continue
+            entry["targets"].append({"tid": tid, "addr": addr, "lives": lives})
+    try:
+        entry["t_start"] = float(frozen_round_meta["t_start"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    return entry
 
 
 def _build_radius_lookup(
@@ -373,17 +398,16 @@ def _interpolate_in_life(
     """在一条生命窗内的轮帧之间线性插值目标位置；窗外（死亡间隙）返回 None。"""
     lo = bisect.bisect_left(points, (life_start - _LIFE_FRAME_EPSILON_S,))
     hi = bisect.bisect_right(points, (life_end + _LIFE_FRAME_EPSILON_S, math.inf))
-    segment = points[lo:hi]
-    if not segment:
+    if lo >= hi:
         return None
-    index = bisect.bisect_right(segment, (t, math.inf, math.inf, math.inf)) - 1
-    if index < 0:
-        first = segment[0]
+    index = bisect.bisect_right(points, (t, math.inf, math.inf, math.inf), lo, hi) - 1
+    if index < lo:
+        first = points[lo]
         return first[1], first[2], first[3]
-    if index >= len(segment) - 1:
-        last = segment[index]
+    if index >= hi - 1:
+        last = points[index]
         return last[1], last[2], last[3]
-    left, right = segment[index], segment[index + 1]
+    left, right = points[index], points[index + 1]
     span = right[0] - left[0]
     weight = (t - left[0]) / span if span > 0 else 0.0
     return (
@@ -401,16 +425,17 @@ def build_telemetry_visual_result(
     fov_fallback: float = 103.0,
     analysis_ref: str | None = None,
     file_names: Mapping[str, str] | None = None,
-    index_round_file: str | None = None,
+    frozen_round_meta: Mapping | None = None,
 ) -> dict:
     """真值旁车目录 -> 与 CV 路径同形的 visual_result（px 域，虚拟 1920x1080）。
 
     analysis_ref / file_names：Aiming Cookie worker 侧冻结副本入口——
     analysis_ref 绑定到 analysis:{job_id}（family adapter 与证据提交按它校验），
     file_names 显式映射冻结文件名（round.jsonl / views_NN.jsonl / inputs_NN.jsonl）。
-    index_round_file：冻结目录名不等于上游会话目录名时，rounds_index 按
-    (round, file) 兜底定位该轮条目。缺省值保持源目录布局与派生 ref，
-    纯源目录消费方不受影响。
+    frozen_round_meta：冻结路径的本局身份（入库 meta 的 targets/t_start 透传）。
+    传入时不读任何 rounds_index——共享索引是活文件（后续导入会覆盖），(round,
+    file) 命中会把新局身份误认成旧局；targets 缺失走整轮兜底，绝不回读共享
+    索引。缺省值保持源目录布局与派生 ref，纯源目录消费方不受影响。
     """
     round_dir = Path(round_dir)
     window_start = int(canonical_window[0])
@@ -437,10 +462,15 @@ def build_telemetry_visual_result(
             limitations.append(code)
 
     manifest = _read_json(round_dir / "merge_manifest.json")
-    index_entry, index_limitations = _load_round_index_entry(
-        round_dir, manifest, round_number, index_round_file,
-    )
-    limitations.extend(index_limitations)
+    if frozen_round_meta is not None:
+        # 冻结路径：身份只来自本局 meta，不调用 _load_round_index_entry，也不
+        # 读 manifest 声明的共享 rounds_index 绝对路径（活文件，会被新局覆盖）。
+        index_entry = _frozen_round_meta_entry(frozen_round_meta)
+    else:
+        index_entry, index_limitations = _load_round_index_entry(
+            round_dir, manifest, round_number,
+        )
+        limitations.extend(index_limitations)
     radius_windows, fallback_radius, bb_limitations = _build_radius_lookup(round_dir)
     limitations.extend(bb_limitations)
 
@@ -454,8 +484,9 @@ def build_telemetry_visual_result(
     if not positions:
         raise ValueError("telemetry sidecar round frames are unavailable")
 
-    # tid -> (addr, lives)。tid 优先取 rounds_index 的 targets[].tid/addr 映射；
-    # 无 index 时按地址首次出现顺序去重编号，整轮视作一条生命。
+    # tid -> (addr, lives)。tid 优先取 index_entry（源目录入口=共享索引条目，
+    # 冻结入口=本局 meta）的 targets[].tid/addr 映射；无身份时按地址首次
+    # 出现顺序去重编号，整轮视作一条生命。
     if index_entry is not None:
         targets: dict[int, dict] = {}
         for target in index_entry.get("targets") or []:
@@ -473,7 +504,7 @@ def build_telemetry_visual_result(
                 except (KeyError, TypeError, ValueError):
                     continue
             targets[tid] = {"addr": addr, "lives": lives}
-        if not targets:
+        if not targets and frozen_round_meta is None:
             add_limitation("rounds_index_targets_unreadable_addr_dedup_identity")
     else:
         targets = {}

@@ -334,3 +334,388 @@ def test_geometry_self_check_kill_click_median_below_one_degree(built_results):
             f"share<1deg={sum(1 for e in errors if e < 1.0) / len(errors):.3f}"
         )
     assert sum(len(errors) for errors in session_errors.values()) >= 100
+
+
+# ---------- _interpolate_in_life：切片 oracle 等价 + 性能防回归（纯本地，永远运行） ----------
+
+
+def test_interpolate_in_life_matches_slicing_oracle():
+    """新实现（有界二分）与旧切片实现在 2000+ 组样本上逐位等价。
+
+    覆盖：随机点序列（含重复时间戳、乱序后排序）、t 恰好等于首/尾点时间、
+    t 在窗外、空窗（life_start > life_end）、单点序列及窗内相邻点插值。
+    """
+    import random
+
+    from kovaak_tracker.telemetry_signals import (
+        _LIFE_FRAME_EPSILON_S,
+        _interpolate_in_life,
+    )
+
+    def oracle(points, life_start, life_end, t):
+        """旧实现（切片版）原样复制，仅作为等价性 oracle。"""
+        lo = bisect.bisect_left(points, (life_start - _LIFE_FRAME_EPSILON_S,))
+        hi = bisect.bisect_right(points, (life_end + _LIFE_FRAME_EPSILON_S, math.inf))
+        segment = points[lo:hi]
+        if not segment:
+            return None
+        index = bisect.bisect_right(segment, (t, math.inf, math.inf, math.inf)) - 1
+        if index < 0:
+            first = segment[0]
+            return first[1], first[2], first[3]
+        if index >= len(segment) - 1:
+            last = segment[index]
+            return last[1], last[2], last[3]
+        left, right = segment[index], segment[index + 1]
+        span = right[0] - left[0]
+        weight = (t - left[0]) / span if span > 0 else 0.0
+        return (
+            left[1] + (right[1] - left[1]) * weight,
+            left[2] + (right[2] - left[2]) * weight,
+            left[3] + (right[3] - left[3]) * weight,
+        )
+
+    def assert_same(points, life_start, life_end, t):
+        expected = oracle(points, life_start, life_end, t)
+        actual = _interpolate_in_life(points, life_start, life_end, t)
+        if expected is None or actual is None:
+            assert actual is None and expected is None, (life_start, life_end, t)
+            return
+        assert actual[0] == expected[0], (life_start, life_end, t)
+        assert actual[1] == expected[1], (life_start, life_end, t)
+        assert actual[2] == expected[2], (life_start, life_end, t)
+
+    # 确定性边界样本：单点序列（t 在窗前/点上/窗后）。
+    singleton = [(1.0, 10.0, 20.0, 30.0)]
+    for t in (0.0, 1.0, 2.0):
+        assert_same(singleton, 0.0, 2.0, t)
+    # 单点序列 + 空窗（窗完全在点之后）。
+    assert_same(singleton, 5.0, 9.0, 6.0)
+    # 重复时间戳（同刻多点，t 恰好落在该刻）。
+    duplicated = [(1.0, 5.0, 0.0, 0.0), (1.0, 7.0, 0.0, 0.0), (2.0, 9.0, 0.0, 0.0)]
+    for t in (1.0, 1.5, 2.0, 3.0):
+        assert_same(duplicated, 0.0, 3.0, t)
+    # 空窗 life_start > life_end。
+    assert_same(duplicated, 2.5, 0.5, 1.0)
+
+    rng = random.Random(0x5EED2026)
+    groups = 0
+    comparisons = 0
+    for case_index in range(2500):
+        n = 1 if case_index % 50 == 0 else rng.randint(2, 30)
+        times = sorted(rng.uniform(0.0, 60.0) for _ in range(n))
+        for i in range(1, n):
+            if rng.random() < 0.25:
+                times[i] = times[i - 1]  # 重复时间戳
+        points_c = [
+            (
+                times[i],
+                rng.uniform(-2000.0, 2000.0),
+                rng.uniform(-2000.0, 2000.0),
+                rng.uniform(-200.0, 200.0),
+            )
+            for i in range(n)
+        ]
+        rng.shuffle(points_c)
+        points_c.sort()  # 乱序后排序，满足 bisect 输入合同
+
+        if case_index % 50 == 1:
+            life_start, life_end = 30.0, 10.0  # 空窗：life_start > life_end
+        else:
+            life_start = rng.uniform(0.0, 60.0)
+            life_end = life_start + rng.uniform(0.0, 60.0)
+
+        query_ts = [
+            life_start - 1.0,  # t 在窗外（窗下侧）
+            life_end + 1.0,  # t 在窗外（窗上侧）
+            life_start,
+            life_end,
+            points_c[0][0],  # t 恰好等于序列首点时间
+            points_c[-1][0],  # t 恰好等于序列尾点时间
+            rng.uniform(life_start, life_end),
+        ]
+        lo = bisect.bisect_left(points_c, (life_start - _LIFE_FRAME_EPSILON_S,))
+        hi = bisect.bisect_right(points_c, (life_end + _LIFE_FRAME_EPSILON_S, math.inf))
+        if lo < hi:
+            query_ts.append(points_c[lo][0])  # t 恰好等于窗内首点时间
+            query_ts.append(points_c[hi - 1][0])  # t 恰好等于窗内尾点时间
+            if hi - lo >= 2:
+                inside = rng.randrange(lo, hi - 1)
+                if points_c[inside + 1][0] > points_c[inside][0]:
+                    query_ts.append(
+                        (points_c[inside][0] + points_c[inside + 1][0]) / 2.0
+                    )  # 段内插值路径
+        for t in query_ts:
+            assert_same(points_c, life_start, life_end, t)
+            comparisons += 1
+        groups += 1
+
+    assert groups >= 2000
+    assert comparisons >= 2000
+
+
+def test_interpolate_in_life_large_series_performance():
+    """30 万点序列查询 200 次 < 1s（旧切片实现需复制整段，防回归）。"""
+    import time
+
+    from kovaak_tracker.telemetry_signals import _interpolate_in_life
+
+    points = [
+        (i * 0.002, float(i % 1920), float(i % 1080), 0.0)
+        for i in range(300_000)
+    ]
+    life_start, life_end = 10.0, 590.0
+    queries = [
+        life_start + (life_end - life_start) * k / 200.0 for k in range(200)
+    ]
+    start = time.perf_counter()
+    for t in queries:
+        assert _interpolate_in_life(points, life_start, life_end, t) is not None
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, f"200 queries over 300000 points took {elapsed:.3f}s"
+    print(f"interpolate perf: 200 queries over 300000 points in {elapsed * 1000:.1f}ms")
+
+
+# ---------- 冻结路径身份透传（纯本地 fixture，永远运行） ----------
+#
+# 跨局污染事故根因：冻结副本的 merge_manifest 指向所有局共享的、活的
+# rounds_index.json（新局导入会覆盖它），旧局重放按 (round, file) 兜底"唯一
+# 命中"把新局索引误认成旧局身份 -> 轨道错认 + 时间起点错位。冻结路径只认
+# 本局 meta（frozen_round_meta 透传），绝不读任何共享索引。
+
+
+def _polluted_shared_index() -> dict:
+    """被"别的局"覆盖过的共享活索引：同 round 号、同 file 名，但 t_start 与
+    targets 与本局完全不同（tid 7 / addr 0xFFFFFFFF / 生命窗 55.5s 起）。"""
+    return {
+        "format_version": 1,
+        "generator": "polluted",
+        "params": {},
+        "sources": [{
+            "source": "other_session/round_01.jsonl",
+            "outdir": "E:/ACData/other_session",
+            "rounds": [{
+                "round": 1,
+                "file": "round_01.jsonl",
+                "t_start": 55.5,
+                "t_end": 56.0,
+                "n_frames": 32,
+                "n_targets": 1,
+                "targets": [{
+                    "tid": 7,
+                    "addr": 4294967295,
+                    "addr_hex": "0xffffffff",
+                    "n_lives": 1,
+                    "lives": [{"t_start": 55.5, "t_end": 56.0, "n": 32}],
+                }],
+            }],
+        }],
+    }
+
+
+def _write_local_sidecars(
+    round_dir: Path,
+    *,
+    frames_name: str,
+    views_name: str,
+    inputs_name: str,
+    shared_index: Path,
+) -> None:
+    """最小 2 目标旁车（addr 0 与 addr 100 全程在帧），0.48s @~60Hz，
+    首帧 t=0.032（与 meta t_start=0.0 错开，让 origin 回退语义可观测）。
+
+    merge_manifest 的 rounds_index 指向 shared_index（ext 目录之外的共享
+    活索引），内容为 _polluted_shared_index。
+    """
+    round_dir.mkdir(parents=True)
+    views = b"".join(
+        (
+            '{"t": %.3f, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 0.0], "fov": 103.0}\n'
+            % (t / 1000.0)
+        ).encode("utf-8")
+        for t in range(32, 532, 16)
+    )
+    frames = b"".join(
+        (
+            '{"ev": "frame", "t": %.3f, "targets": '
+            '[[0, 4000.0, 10.0, 0.0], [100, 4200.0, -10.0, 0.0]]}\n'
+            % (t / 1000.0)
+        ).encode("utf-8")
+        for t in range(32, 532, 16)
+    )
+    (round_dir / frames_name).write_bytes(frames)
+    (round_dir / views_name).write_bytes(views)
+    (round_dir / inputs_name).write_bytes(b'{"t": 0.200, "btn": ["L_down"]}\n')
+    (round_dir / "bb.json").write_bytes(
+        b'{"challenges": [{"window_t": [0.0, 1.0], '
+        b'"bots": [{"character": {"bb": {"radius": 60.0}}}]}]}\n'
+    )
+    shared_index.parent.mkdir(parents=True, exist_ok=True)
+    shared_index.write_text(
+        json.dumps(_polluted_shared_index(), ensure_ascii=False), encoding="utf-8",
+    )
+    (round_dir / "merge_manifest.json").write_text(json.dumps({
+        "schema_version": "merge_manifest.v1",
+        "generated": "2026-10-05T00:00:00",
+        "round_dir": str(round_dir),
+        "rounds_index": str(shared_index),
+        "alignment": {"method": "fixture", "accepted": True},
+    }), encoding="utf-8")
+
+
+def _frozen_meta() -> dict:
+    """本局正确身份（ingest meta 的 targets/time 子集，同 build_targets 形状）：
+    addr 0 全程存活；addr 100 生命窗 [0.25, 0.5]。"""
+    return {
+        "targets": [
+            {
+                "tid": 0,
+                "addr_hex": "0x0",
+                "motion": "static",
+                "n_lives": 1,
+                "lives": [{"t_start": 0.0, "t_end": 0.5, "n": 30, "path_cm": 0.0}],
+            },
+            {
+                "tid": 1,
+                "addr_hex": "0x64",
+                "motion": "static",
+                "n_lives": 1,
+                "lives": [{"t_start": 0.25, "t_end": 0.5, "n": 16, "path_cm": 0.0}],
+            },
+        ],
+        "t_start": 0.0,
+    }
+
+
+def _frozen_build(round_dir: Path, meta: dict) -> dict:
+    return build_telemetry_visual_result(
+        round_dir,
+        1,
+        canonical_window=(1000.0, 2000.0),
+        file_names={"round": "round.jsonl", "views": "views_01.jsonl", "inputs": "inputs_01.jsonl"},
+        frozen_round_meta=meta,
+    )
+
+
+def _track_keys(result: dict) -> set[str]:
+    return {
+        key for key in result["local_samples"] if key.startswith("target.")
+    }
+
+
+def test_frozen_meta_ignores_overwritten_shared_rounds_index(tmp_path):
+    """跨局污染回归：manifest 指向的共享活索引已被别的局覆盖（同 round 号、
+    同 file 名、不同 t_start 与 targets）——身份只来自本局 meta，且输出与
+    共享索引文件不存在时逐位一致。"""
+    shared = tmp_path / "shared" / "rounds_index.json"
+    round_dir = tmp_path / "ext-fixture01"
+    _write_local_sidecars(
+        round_dir,
+        frames_name="round.jsonl",
+        views_name="views_01.jsonl",
+        inputs_name="inputs_01.jsonl",
+        shared_index=shared,
+    )
+    assert shared.is_file()
+
+    polluted = _frozen_build(round_dir, _frozen_meta())
+
+    # 身份来自 meta：2 条轨道（tid 0/1），不是污染索引的 tid 7 / addr 0xFFFFFFFF。
+    assert _track_keys(polluted) == {"target.0.position", "target.1.position"}
+    # origin 取 meta t_start（0.0），不是污染索引的 55.5。
+    assert polluted["video_time_mapping"]["source_pts_origin_ms"] == 0.0
+    # 生命窗语义保持：tid0 全窗 30 样本；tid1 只在 [0.25, 0.5] 内 16 样本
+    #（首样本 0.256s -> canonical 1256ms）。
+    tid0 = polluted["local_samples"]["target.0.position"]
+    tid1 = polluted["local_samples"]["target.1.position"]
+    assert len(tid0) == 30 and len(tid1) == 16
+    assert min(sample["canonical_time_ms"] for sample in tid1) == 1256
+    # 事件：两条生命的出生 + 死亡 + 1 发 shot。
+    kinds = polluted["safe_summary"]["event_counts"]
+    assert kinds["kill"] == 2
+    assert kinds["target_change_point"] == 2
+    assert kinds["shot"] == 1
+
+    # 共享索引文件不存在（重放时上游 cleaned 目录已演化/被清理）：输出逐位一致。
+    shared.unlink()
+    clean = _frozen_build(round_dir, _frozen_meta())
+    assert json.dumps(clean, sort_keys=True) == json.dumps(polluted, sort_keys=True)
+
+
+def test_frozen_meta_empty_targets_walks_whole_round_fallback(tmp_path):
+    """meta.targets 空/缺失：lives_unavailable_whole_round_window + 整轮兜底，
+    不抛错、不回读共享索引（污染索引里的 tid 7 / addr 0xFFFFFFFF 不得出现）。"""
+    shared = tmp_path / "shared" / "rounds_index.json"
+    round_dir = tmp_path / "ext-fixture02"
+    _write_local_sidecars(
+        round_dir,
+        frames_name="round.jsonl",
+        views_name="views_01.jsonl",
+        inputs_name="inputs_01.jsonl",
+        shared_index=shared,
+    )
+
+    result = _frozen_build(round_dir, {"targets": [], "t_start": 0.0})
+
+    assert "lives_unavailable_whole_round_window" in result["limitations"]
+    assert not [
+        code for code in result["limitations"] if code.startswith("rounds_index_")
+    ]
+    # 整轮兜底：按地址首次出现顺序编号（addr 0/100 -> tid 0/1），各一条整轮生命。
+    assert _track_keys(result) == {"target.0.position", "target.1.position"}
+    for key in _track_keys(result):
+        samples = result["local_samples"][key]
+        assert len(samples) == 32, key
+
+
+def test_frozen_meta_build_is_deterministic(tmp_path):
+    """确定性：同输入连续两次 build，规范化 JSON 完全一致；t_start 缺失时
+    origin 回落轮帧首帧 t（保持既有语义）。"""
+    shared = tmp_path / "shared" / "rounds_index.json"
+    round_dir = tmp_path / "ext-fixture03"
+    _write_local_sidecars(
+        round_dir,
+        frames_name="round.jsonl",
+        views_name="views_01.jsonl",
+        inputs_name="inputs_01.jsonl",
+        shared_index=shared,
+    )
+
+    first = _frozen_build(round_dir, _frozen_meta())
+    second = _frozen_build(round_dir, _frozen_meta())
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+
+    no_t_start = _frozen_build(round_dir, {"targets": _frozen_meta()["targets"]})
+    assert no_t_start["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(32.0)
+
+
+def test_index_round_file_fallback_retired_fail_closed(tmp_path):
+    """index_round_file 兜底退役：参数不复存在；目录 basename 与索引 sources
+    不匹配时，(round, file) 唯一命中也不被采纳——fail-closed 落
+    rounds_index_missing + 整轮兜底，绝不把共享索引条目误认成本局身份。"""
+    import inspect
+
+    parameters = inspect.signature(build_telemetry_visual_result).parameters
+    assert "index_round_file" not in parameters
+    assert "frozen_round_meta" in parameters
+
+    shared = tmp_path / "shared" / "rounds_index.json"
+    round_dir = tmp_path / "renamed-frozen-copy"  # basename 必然不匹配索引 sources
+    _write_local_sidecars(
+        round_dir,
+        frames_name="round_01.jsonl",
+        views_name="views_01.jsonl",
+        inputs_name="inputs_01.jsonl",
+        shared_index=shared,
+    )
+
+    result = build_telemetry_visual_result(
+        round_dir, 1, canonical_window=(1000.0, 2000.0),
+    )
+    limitations = result["limitations"]
+    assert "rounds_index_missing_addr_dedup_identity" in limitations
+    assert "lives_unavailable_whole_round_window" in limitations
+    # 身份来自整轮兜底（addr 0/100 -> tid 0/1），不是索引条目的 tid 7；
+    # origin 回落轮帧首帧 t（0.032s），不是索引条目的 55.5s。
+    assert _track_keys(result) == {"target.0.position", "target.1.position"}
+    assert result["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(32.0)
