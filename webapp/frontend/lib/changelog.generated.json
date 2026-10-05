@@ -11,6 +11,21 @@
         },
         {
           "type": "fix",
+          "zh": "修复部分训练局分析一直停在「排队中」不出结果的问题：静态打靶类场景（如 1wall 6targets small）首次分析即可正常完成，之前卡住过的分析重试即可恢复",
+          "en": "Fixed analyses getting stuck on \"queued\" and never finishing: static-clicking scenarios (e.g. 1wall 6targets small) now complete on the first try, and previously stuck analyses recover on retry"
+        },
+        {
+          "type": "imp",
+          "zh": "新用户开场引导更顺：打开应用直接进入训练正题，开场不再绕弯子",
+          "en": "Smoother first-run onboarding: the coach gets straight to training instead of circling"
+        },
+        {
+          "type": "fix",
+          "zh": "会员页面三处修复：开通卡片深浅色配色错乱、连续包月说明与按月购买方式不一致、账户卡片错位",
+          "en": "Three membership-page fixes: plan-card colors in dark/light themes, continuous-billing wording now matches the actual monthly purchase, and the account card no longer renders misaligned"
+        },
+        {
+          "type": "fix",
           "zh": "动作分析时间对齐修复：所有训练的动作层指标现在对齐到真实对局窗口——此前分析窗口整体偏早约 8 秒，每局的结尾会被截掉、开头混入对局前的数据",
           "en": "Motion-analysis time alignment fixed: all motion metrics now align to the real round window — previously the window started about 8 seconds early, cutting off the end of each round and mixing in pre-round data"
         },

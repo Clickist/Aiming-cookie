@@ -445,6 +445,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/kovaak-runs/{run_id}/scenario-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Kovaak Run Scenario Evidence
+         * @description [2026-10-04] Coach 判断制第一段：分类证据包（只读，不入队不开跑）。
+         *
+         *     返回场景名字线索、冻结旁车遥测操作特征、Stats/Raw 挑战形状粗分类与
+         *     字段图例（自描述数据）。run 不存在 404；源文件不可用 409。
+         */
+        get: operations["get_kovaak_run_scenario_evidence_api_kovaak_runs__run_id__scenario_evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/kovaak-scenarios": {
         parameters: {
             query?: never;
@@ -1634,13 +1657,22 @@ export interface components {
          * @description Create an Analysis from a persisted local Run.
          */
         KovaaKAnalysisRequest: {
+            /** Aim Family */
+            aim_family?: string | null;
             /**
              * Allow Parallel
              * @default false
              */
             allow_parallel: boolean;
+            /** Classification Basis */
+            classification_basis?: string | null;
             /** Cm Per 360 */
             cm_per_360?: number | null;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
             /** Fov */
             fov?: number | null;
             manual_override?: components["schemas"]["CalibrationValues"] | null;
@@ -3278,6 +3310,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunEvidenceRemovalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_kovaak_run_scenario_evidence_api_kovaak_runs__run_id__scenario_evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
