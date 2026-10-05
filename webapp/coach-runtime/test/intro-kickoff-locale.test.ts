@@ -33,11 +33,12 @@ test.after(() => {
   rmSync(dataRoot, { recursive: true, force: true });
 });
 
-/** 原中文 kickoff 逐字锁定：双语化改造不得改动 zh 分支一个字节。 */
+/** 中文 kickoff 逐字锁定（1005 主线化改版）：与 src/intro-kickoff.ts 保持逐字节一致。 */
 const ZH_PROMPT =
-  `${INTRO_KICKOFF_SENTINEL} 现在开始本次「开场分析」。按 intro-session skill 发首条消息：` +
-  "一句自我介绍，然后问第一问「平时都玩什么游戏？」；发这条的同时并行调用 intro_context.get 和 user_profile.get 拿背景数据。" +
-  "不要用任何引导用的假用户消息。";
+  `${INTRO_KICKOFF_SENTINEL} 现在开始本次「开场分析」。按 intro-session skill 的「开场即主线」发首条消息：` +
+  "一句自我介绍，然后直接给主线任务（AC 需要一局真实数据才能开始帮你；现在就去打一局，还没装 KovaaK 的先装；打完回来喊我分析——这一局同时确认 AC 在你电脑上一切运作正常），末行带主线卡。" +
+  "发这条的同时并行调用 intro_context.get 和 user_profile.get 拿背景数据；本地已有记录则按 skill 规则开场直接分析最近一局。" +
+  "不要问任何了解用户的问题（四问在首次分析完成后才出场），也不要用任何引导用的假用户消息。";
 
 test("zh kickoff stays byte-identical and remains the default", () => {
   assert.equal(introKickoffPrompt("zh-CN"), ZH_PROMPT);
@@ -50,7 +51,8 @@ test("en kickoff carries the same instructions in English", () => {
   assert.ok(en.startsWith(INTRO_KICKOFF_SENTINEL));
   assert.ok(isIntroKickoffMessage(en), "en kickoff must be filtered from UI reads too");
   assert.notEqual(en, ZH_PROMPT);
-  assert.ok(en.includes("What games do you usually play?"), "first question must match the zh 第一问");
+  assert.ok(en.includes("main quest"), "en kickoff must carry the main-quest instruction");
+  assert.ok(!ZH_PROMPT.includes("平时都玩什么游戏"), "kickoff must NOT ask the old first question (四问后移)");
   assert.ok(en.includes("intro_context.get"));
   assert.ok(en.includes("user_profile.get"));
   assert.doesNotMatch(en.slice(INTRO_KICKOFF_SENTINEL.length), /[\u4e00-\u9fff]/, "body must be English");

@@ -22,13 +22,15 @@ export const INTRO_KICKOFF_SENTINEL = "[开场分析自动启动]";
 
 export const INTRO_KICKOFF_PROMPTS = {
   "zh-CN":
-    `${INTRO_KICKOFF_SENTINEL} 现在开始本次「开场分析」。按 intro-session skill 发首条消息：` +
-    "一句自我介绍，然后问第一问「平时都玩什么游戏？」；发这条的同时并行调用 intro_context.get 和 user_profile.get 拿背景数据。" +
-    "不要用任何引导用的假用户消息。",
+    `${INTRO_KICKOFF_SENTINEL} 现在开始本次「开场分析」。按 intro-session skill 的「开场即主线」发首条消息：` +
+    "一句自我介绍，然后直接给主线任务（AC 需要一局真实数据才能开始帮你；现在就去打一局，还没装 KovaaK 的先装；打完回来喊我分析——这一局同时确认 AC 在你电脑上一切运作正常），末行带主线卡。" +
+    "发这条的同时并行调用 intro_context.get 和 user_profile.get 拿背景数据；本地已有记录则按 skill 规则开场直接分析最近一局。" +
+    "不要问任何了解用户的问题（四问在首次分析完成后才出场），也不要用任何引导用的假用户消息。",
   "en-US":
-    `${INTRO_KICKOFF_SENTINEL} Start this Intro Session now. Follow the intro-session skill to send the first message: ` +
-    "a one-sentence self-introduction, then ask the first question \"What games do you usually play?\"; while sending it, call intro_context.get and user_profile.get in parallel to pull background data. " +
-    "Do not use any guiding fake user message.",
+    `${INTRO_KICKOFF_SENTINEL} Start this Intro Session now. Follow the intro-session skill's "main quest from the first message" rule to send the first message: ` +
+    "a one-sentence self-introduction, then straight to the main quest (AC needs one real run of data before it can help you; go play one round now — install KovaaK's first if you haven't; come back and call me to analyze it — that round also confirms everything works on your PC), with the main-quest card as the last line. " +
+    "While sending it, call intro_context.get and user_profile.get in parallel; if local runs already exist, follow the skill rule and analyze the most recent run right away. " +
+    "Do not ask any getting-to-know-you questions (the four questions come only after the first analysis). Do not use any guiding fake user message.",
 } as const;
 
 export type IntroKickoffLocale = keyof typeof INTRO_KICKOFF_PROMPTS;

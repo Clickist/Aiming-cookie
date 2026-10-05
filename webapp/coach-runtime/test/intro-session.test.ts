@@ -81,9 +81,10 @@ test("intro-session SKILL.md carries the hard constraints", () => {
     "steam_profile_url",
     "处方卡等第一份正经分析后解锁",
     "没有也行",
-    "关门引导",
+    "每轮回复的最后一行固定带主线卡",
     "navigation.open",
-    "开场流程即告结束",
+    "确保一切运作正常",
+    "开场即主线",
   ]) {
     assert.ok(raw.includes(fragment), `SKILL.md must contain ${fragment}`);
   }
