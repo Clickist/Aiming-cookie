@@ -27,6 +27,7 @@ Aiming-cookie 导入器按 round_*.jsonl glob 轮文件，旁车不得匹配该�
 """
 import argparse
 import bisect
+import glob
 import json
 import os
 import random
@@ -58,6 +59,17 @@ CLICK_CHECK_MIN_N = 5       # click_geom 级：click 几何回执最少配对数
 AIM_CHECK_MIN_N = 5         # tracking_aim 级：aim-at-death 回执最少 life 数
 AIM_MEDIAN_MAX_DEG = 5.0    # tracking_aim 级：窗最小夹角中位上限
 AIM_SHARE10_MIN = 0.5       # tracking_aim 级：窗最小夹角 <10° 占比下限
+# [fix 2026-10-06] tracking_aim 缓冲带 (5°, 7°]：median 落带内且 share 达标 ⇒
+# 降级 grade=tracking_aim_degraded 放行（非静默：grade 值 + aim_check 数字全部
+# 入 manifest）。标定依据：健康锚 0.7~2.5°（0901 验证局 0.233°、2156 正确锚
+# 1.75°、1005 REPORT 真死亚群 0.769°）；rounds_index 重洗样本集漂移实测
+# 5.95~6.58°（1.3.9 cut-run51 三跑两样）；错锚负对照 34°+、垃圾死亡流 37°+。
+# 带上界 7° 覆盖实测漂移上界（+0.42° 裕量），与坏 regime 仍差 ~5 倍；>7° 维持
+# fail-closed（虚拟显示器病例 7.5~14.7° 照拒）。
+AIM_MEDIAN_DEGRADED_MAX_DEG = 7.0
+# [fix 2026-10-06] 同源 verdict 复用：输入 delta 匹配容差 s。切窗冻结件与全量件
+# 的 clock_map 子集差异 + 钟漂为 ms 级；不同数据（重启/换局）差秒级。
+INPUT_DELTA_TOL_S = 0.25
 # [fix 2026-10-04] click_geom 场景守卫：死亡-点击配对率低于此 ⇒ 跟枪/hold-fire
 # 语义，kill-click 几何回执无判别力（实测 tracking 局中位 43° 为语义噪音，同局
 # tracking_aim 1.23° 真值健康），不得据此拒旁车，只作诊断。
@@ -257,6 +269,129 @@ def _per_round_aim_verdicts(aim_result):
     return verdicts
 
 
+def _aim_session_grade(aim_result):
+    """[fix 2026-10-06] tracking_aim 会话级分级：全过 / 缓冲带降级 / 不过（None）。
+
+    降级带与全过共享 n/share 门，仅 median 上限放宽到 AIM_MEDIAN_DEGRADED_MAX_DEG
+    （标定见常量注）；降级以独立 grade 值 tracking_aim_degraded 入 manifest，
+    非静默放行。逐轮判据不放宽（_per_round_aim_verdicts 保持全门槛）。"""
+    if (aim_result["n"] < AIM_CHECK_MIN_N
+            or aim_result["median_deg"] is None
+            or aim_result["share_lt_10deg"] < AIM_SHARE10_MIN):
+        return None
+    if aim_result["median_deg"] <= AIM_MEDIAN_MAX_DEG:
+        return "tracking_aim"
+    if aim_result["median_deg"] <= AIM_MEDIAN_DEGRADED_MAX_DEG:
+        return "tracking_aim_degraded"
+    return None
+
+
+def _game_fingerprint(entry, cam, inp):
+    """[fix 2026-10-06] 同源数据指纹：重洗（cleaner 重跑）不变、换局必变。
+
+    分级验收的语义是「锚正确性」——两级回执都在 index t0_epoch 锚上评估——
+    锚身份即录制件身份：源件名 + t0_epoch（target 通道 clock_map）+ 相机锚
+    （camera 通道 clock_map；增量 finalize 的切窗冻结件无条件保留锚行，故与
+    全量件同值）+ 输入 delta（同次开机内近似恒定，仅区分重启，弱守卫）。
+    rounds/轮文件/死亡账目是切分段派生物，刻意不入指纹——入指纹则重洗本身
+    会使复用失效（正是要修的缺陷）。"""
+    return {
+        "source": entry.get("source"),
+        "t0_epoch": entry.get("t0_epoch"),
+        "camera_epoch_anchor": round(cam["epoch"], 4),
+        "input_delta_epoch_perf": round(inp["delta"], 3),
+    }
+
+
+def _fingerprint_match(prev, cur):
+    if not isinstance(prev, dict):
+        return False
+    if (prev.get("source") != cur.get("source")
+            or prev.get("t0_epoch") != cur.get("t0_epoch")
+            or prev.get("camera_epoch_anchor") != cur.get("camera_epoch_anchor")):
+        return False
+    try:
+        d_prev = float(prev.get("input_delta_epoch_perf"))
+        d_cur = float(cur.get("input_delta_epoch_perf"))
+    except (TypeError, ValueError):
+        return False
+    return abs(d_prev - d_cur) <= INPUT_DELTA_TOL_S
+
+
+def _load_manifest_if_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        return manifest if isinstance(manifest, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _prior_verdict_of(manifest, fp):
+    """manifest 可复用条件：已 accepted、带 grade、指纹匹配。返回复用记录或 None。
+
+    旧版 manifest（本次修复前）没有 game_fingerprint 键——四元身份字段在
+    schema v1 里本就存在（source / alignment.t0_epoch_from_index /
+    camera.epoch_anchor / input.delta_epoch_perf），据此合成，存量前科同样
+    可复用，否则修复只对新写的 manifest 生效。"""
+    aln = (manifest.get("alignment")
+           if isinstance(manifest.get("alignment"), dict) else None)
+    if aln is None or aln.get("accepted") is not True:
+        return None
+    grade = aln.get("accept_grade")
+    if not isinstance(grade, str) or not grade:
+        return None
+    prev_fp = manifest.get("game_fingerprint")
+    if not isinstance(prev_fp, dict):
+        cam_sec = (manifest.get("camera")
+                   if isinstance(manifest.get("camera"), dict) else {})
+        inp_sec = (manifest.get("input")
+                   if isinstance(manifest.get("input"), dict) else {})
+        try:
+            prev_fp = {
+                "source": manifest.get("source"),
+                "t0_epoch": aln.get("t0_epoch_from_index"),
+                "camera_epoch_anchor": round(float(cam_sec.get("epoch_anchor")), 4),
+                "input_delta_epoch_perf": round(float(inp_sec.get("delta_epoch_perf")), 3),
+            }
+        except (TypeError, ValueError):
+            return None
+    if not _fingerprint_match(prev_fp, fp):
+        return None
+    return {
+        "prior_manifest": "",
+        "prior_generated": manifest.get("generated"),
+        "prior_grade": grade,
+        "round_verdicts": (aln.get("round_verdicts")
+                           if isinstance(aln.get("round_verdicts"), dict) else None),
+    }
+
+
+def _find_prior_accepted_manifest(round_dir, fp):
+    """[fix 2026-10-06] 查同源已过验 manifest：本目录（重跑）→ 增量洗 cut-run 目录。
+
+    生产拓扑：增量 finalize 落 cleaned/incr/cut-runNN-TS/<stem>/，退场全量
+    finalize 落 cleaned/<stem>/——同一局从增量路径过验后，全量重洗的重跑须能
+    找到该前科。本目录优先（最近同路径 verdict），cut-run 按 mtime 新→旧。"""
+    name = os.path.basename(os.path.normpath(round_dir))
+    cut_glob = os.path.join(os.path.dirname(round_dir), "incr", "cut-run*",
+                            name, "merge_manifest.json")
+    cands = [os.path.join(round_dir, "merge_manifest.json")]
+    try:
+        cands += sorted(glob.glob(cut_glob), key=os.path.getmtime, reverse=True)
+    except OSError:
+        pass
+    for path in cands:
+        manifest = _load_manifest_if_json(path)
+        if manifest is None:
+            continue
+        hit = _prior_verdict_of(manifest, fp)
+        if hit is not None:
+            hit["prior_manifest"] = path
+            return hit
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="相机/输入并入 cleaned 轮次（旁车）")
     ap.add_argument("--round-dir", required=True)
@@ -338,10 +473,13 @@ def main():
     aim_result = None
     accept_grade = None
     round_verdicts = None   # 逐轮部分验收：round(str) → bool；None=session 级判定，未启用轮级
+    verdict_reuse = None    # [fix 2026-10-06] 同源 verdict 复用回执（alignment.verdict_reuse）
+    game_fp = None          # [fix 2026-10-06] 同源数据指纹（manifest.game_fingerprint）
     if t0_epoch is not None:
         check_result = kill_click_check(round_dir, rounds, cam, cam_ts, s,
                                         click_epochs)
         aim_result = death_aim_check(round_dir, rounds, cam, cam_ts)
+        game_fp = _game_fingerprint(entry, cam, inp)
         xcorr_dev_s = abs(xcr["s"] - s)
         paired_deaths = xcr["click_to_death_latency_ms"]["n"] or 0
         total_deaths = xcr["n_deaths"] or 0
@@ -354,14 +492,11 @@ def main():
                          and check_result["median_deg"] is not None
                          and check_result["median_deg"] <= 1.0
                          and xcorr_dev_s <= XCORR_DEV_MAX_S)
-        aim_ok = (aim_result["n"] >= AIM_CHECK_MIN_N
-                  and aim_result["median_deg"] is not None
-                  and aim_result["median_deg"] <= AIM_MEDIAN_MAX_DEG
-                  and aim_result["share_lt_10deg"] >= AIM_SHARE10_MIN)
+        aim_grade = _aim_session_grade(aim_result)
         if click_geom_ok:
             accept_grade = "click_geom"
-        elif aim_ok:
-            accept_grade = "tracking_aim"
+        elif aim_grade:
+            accept_grade = aim_grade
         accepted = accept_grade is not None
         print("[align] 精确锚分级验收: click_geom(n=%d 中位=%s°, xcorr偏差=%.0fms,"
               " 点击语义=%s)"
@@ -370,8 +505,8 @@ def main():
               % (check_result["n"], check_result["median_deg"],
                  xcorr_dev_s * 1000.0, click_semantics, click_geom_ok,
                  aim_result["n"], aim_result["median_deg"],
-                 100.0 * (aim_result["share_lt_10deg"] or 0.0), aim_ok,
-                 accept_grade, accepted))
+                 100.0 * (aim_result["share_lt_10deg"] or 0.0),
+                 aim_grade is not None, accept_grade, accepted))
         if not accepted:
             verdicts = _per_round_aim_verdicts(aim_result)
             if any(verdicts.values()):
@@ -381,6 +516,22 @@ def main():
                 print("[align] session 级未过 → 逐轮部分验收: %d/%d 轮过验 %s"
                       % (sum(1 for v in verdicts.values() if v), len(verdicts),
                          [k for k, v in verdicts.items() if v]))
+        if not accepted:
+            # [fix 2026-10-06] 同源 verdict 复用：分级验收的语义是「锚正确性」，
+            # 指纹匹配 = 三通道录制件与锚同身份 ⇒ 首跑已证锚正确，重洗导致的
+            # 样本集漂移不得翻案（cut-run51：2.446° 过验后漂到 5.95/6.58° 连续
+            # exit=2）。fail-closed 保留：指纹不匹配（真新数据）走完整验收；
+            # 轮文件缺失/零样本（结构性破坏而非漂移）不复用。
+            prior = _find_prior_accepted_manifest(round_dir, game_fp)
+            if prior is not None and (aim_result["n"] > 0 or check_result["n"] > 0):
+                accept_grade = prior["prior_grade"]
+                round_verdicts = prior["round_verdicts"]  # per_round 前科按轮号继承
+                accepted = True
+                verdict_reuse = prior
+                print("[align] 验收 verdict 复用: 同源数据已过验（grade=%s @ %s，"
+                      "生成于 %s），重洗不翻案"
+                      % (prior["prior_grade"], prior["prior_manifest"],
+                         prior["prior_generated"]))
         if not accepted:
             print("!! 精确锚对齐验收未过（click 几何与 aim-at-death 双回执均不达标）"
                   "—— 拒绝写旁车")
@@ -465,6 +616,17 @@ def main():
                 "(轮级 n>=%d and median_deg<=%.1f and share_lt_10deg>=%.2f)，"
                 "过验轮写旁车，脏轮 alignment_rejected 不写"
                 % (PER_ROUND_MIN_N, AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
+        # [fix 2026-10-06] 缓冲带语义自描述（轮级不放宽）
+        aln["accept_rule"] += (
+            " | 缓冲带: %.1f°<median_deg<=%.1f° 且 share 达标 ⇒ 降级 "
+            "tracking_aim_degraded 放行(非静默)，>%.1f° 仍拒"
+            % (AIM_MEDIAN_MAX_DEG, AIM_MEDIAN_DEGRADED_MAX_DEG,
+               AIM_MEDIAN_DEGRADED_MAX_DEG))
+        if verdict_reuse is not None:   # [fix 2026-10-06] 同源 verdict 复用语义
+            aln["verdict_reuse"] = verdict_reuse
+            aln["accept_rule"] += (
+                " | verdict reuse: 游戏指纹(源件+t0_epoch+相机锚+输入delta)匹配"
+                "的已过验 manifest，重洗重跑不翻案(grade 继承，见 verdict_reuse)")
     manifest = {
         "schema_version": "round_merge.v1",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -491,6 +653,9 @@ def main():
         # 每槽 dc 差分 clean-prefix 合计）。缺键不写（旧 index 语义不变）。
         **({"deaths_summary": src_entry_deaths}
            if (src_entry_deaths := entry.get("deaths_summary")) is not None else {}),
+        # [fix 2026-10-06] 同源数据指纹：verdict 复用的匹配依据（构造见
+        # _game_fingerprint；旧 manifest 无此键 ⇒ 复用不命中，走完整验收）。
+        **({"game_fingerprint": game_fp} if game_fp is not None else {}),
         "t_domain_note": ("sidecar 与轮文件同 t 域（源文件相对秒）；"
                           "epoch = s_epoch_of_t0 + t"),
         "rounds": manifest_rounds,

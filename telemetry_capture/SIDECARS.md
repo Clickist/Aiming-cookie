@@ -98,6 +98,29 @@
     全挂仍退出码 2。消费侧（worker 投影）按 `round_verdicts` 拒被拒轮 →
     `telemetry_alignment_round_rejected`。注意轮级 n=3 的短尾轮（死亡瞬间甩靶）
     median 可达 5°+，被拒是 fail-closed 对小样本的保守行为，非数据损坏。
+  - **[fix 2026-10-06] tracking_aim 缓冲带**：`5° < aim_check.median_deg ≤ 7°` 且
+    share 达标 ⇒ `accept_grade="tracking_aim_degraded"` 放行（grade 值 + aim_check
+    数字全量入 manifest，非静默降级）。标定：健康锚 0.7~2.5°（0901 验证局 0.233°、
+    2156 正确锚 1.75°）、rounds_index 重洗样本集漂移实测 5.95~6.58°（1.3.9
+    cut-run51 同数据三跑两样）、错锚负对照/垃圾死亡流 34°+——7° 上界覆盖实测漂移
+    且与坏 regime 差 ~5 倍；>7° 或 share 不足仍拒（虚拟显示器病例 7.5~14.7°
+    照拒），逐轮判据不放宽。大夹角样本归因（真实局逐样本核查）：>10° 样本中
+    「垂死目标位置停更」占 69~100%、「已转向下一目标」占 14~36%，与窗内峰值甩速
+    无稳定正相关（中位 0~60°/s，48-50Hz 相机采样下相位运气至多贡献 1~2°）——
+    灰区是死亡窗伪影混合态（该指标锚在死亡时戳而非击杀点击；知识库正名指标
+    first_shot_error 系点击/输入锚），不是玩家瞄不准。
+  - **[fix 2026-10-06] 同源 verdict 复用**：分级验收的语义是「锚正确性」（双回执
+    都在 index t0_epoch 锚上评估）。重洗触发的重跑在 session 级与逐轮都不达标时，
+    查游戏指纹匹配的已过验 manifest——`manifest.game_fingerprint`：源件名 +
+    t0_epoch + 相机 clock_map 锚 + 输入 delta（±0.25s 容差；旧版 manifest 无该键
+    时从既有字段 source / t0_epoch_from_index / camera.epoch_anchor /
+    input.delta_epoch_perf 合成，存量前科同样可复用）——命中且新回执仍有样本
+    （n>0，排除轮文件结构性破坏）⇒ 继承 prior grade 放行，`alignment.
+    verdict_reuse` 记录前科来源与生成时间。查找范围：本目录 →
+    `cleaned/incr/cut-run*/<stem>/`（增量洗前科）。fail-closed 保留：指纹不匹配
+    （真新数据/换局）走完整验收，回执零样本不复用。重放实证（152319 同录制
+    4 种历史洗）：7 目标洗 click_geom 0.487° 过验、1+1 目标退化洗样本坍缩 n=3
+    修复前 exit 2 翻案，带入前科后复用放行。
   - 无精确锚的旧判据与 fail-closed 不变。
 - 不达峰且无 t0_epoch ⇒ **拒绝写任何旁车**（退出码 2，fail-closed）。
 - `rounds[]`：每轮 `{n_views, view_gaps_gt_200ms, n_inputs}` 覆盖统计。
@@ -109,7 +132,8 @@
   tracking_aim 级的验收证据；参照 2156 tracking 中位 2.48°/56% <10°（错位对照 34°/10%）。
   消费侧注意：跟枪局碎片轮（场景切换收尾的 life）p75 可达数十度，取中位与占比判读。
 - 过期判定：`rounds_index_mtime_ns` 与现 index mtime 不符 ⇒ 旁车过期，重跑
-  merge_channels（cleaner 重洗后轮窗可能移动）。
+  merge_channels（cleaner 重洗后轮窗可能移动）。重跑的验收稳定性见 §5
+  verdict 复用条目：同源数据不翻案。
 
 ## 6. 录制器/cleaner 配套变更（2026-08-31，本批落地）
 
