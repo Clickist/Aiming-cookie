@@ -739,6 +739,11 @@ def _apply_telemetry_observed_resolution(snapshot: dict[str, Any]) -> dict[str, 
         profile = _observed_profile_for_snapshot(snapshot)
     except (OSError, ValueError):
         return snapshot
+    except Exception:  # noqa: BLE001 - [2026-10-05] 特征计算其余异常同样让位，但
+        # 必须留痕：冻结运行时上此计算曾静默失败（快照无 scenario_observed_
+        # profile），下游分析随之降级且无迹可查。
+        log.exception("scenario observed profile computation failed")
+        return snapshot
     if profile is None:
         return snapshot
     from kovaak_tracker.scenario_profiles import resolve_scenario_profile
