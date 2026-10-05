@@ -1,6 +1,27 @@
 {
   "versions": [
     {
+      "version": "1.4.2",
+      "date": "2026-10-06",
+      "items": [
+        {
+          "type": "new",
+          "zh": "启动过程看得见了：打开应用先看到启动画面（logo+进度条），启动慢时会提示可能原因，失败时给出明确指引",
+          "en": "Startup is now visible: a launch screen with logo and progress appears first, slow starts explain why, and failures come with clear guidance"
+        },
+        {
+          "type": "fix",
+          "zh": "修复启动失败时应用「未响应后闪退」的问题：失败不再退出，可一键导出诊断包",
+          "en": "Fixed the app freezing and crashing on startup failure: it now stays open with a one-click diagnostics export"
+        },
+        {
+          "type": "fix",
+          "zh": "修复部分对局在画面数据缺失时整理直接失败的问题",
+          "en": "Fixed sessions failing outright when camera frames were missing during processing"
+        }
+      ]
+    },
+    {
       "version": "1.4.1",
       "date": "2026-10-06",
       "items": [
