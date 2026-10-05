@@ -2,6 +2,15 @@
 
 > Updated: 2026-10-05. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
 
+## 2026-10-05（晚） — v1.4.0：转火家族 + 双源融合 + WHJ 退役（发版进行中）
+
+- **转火家族遥测动作层**（e389e697）：按知识库 v14 规格实施（transition_time_ms/settle_duration_ms/path_efficiency + switch_chain 事件模型），dispatch 对 target_switching 开放完整分析器（须有可用遥测源，无源保底基线）；TF180 判型按用户拍板改 target_switching。run 54095：85 杀对官方 CSV 逐条 1:1、84 段转火链、Coach 回复终点验收通过（数字/语义/边界三合格）。
+- **双输入源融合**（e389e697）：raw input trace（epoch ms 与 canonical 天然同域，免时钟对齐）×遥测按压沿两源互备+交叉验证（beanClick 133:133 残差 2ms）；first_shot_latency 点射类出值（beanClick 中位 173ms）/按住型显式 unavailable；alignment_latency=运动发起检测（TF180 84/84 段中位 40ms，端到端落盘 available）。
+- **WHJ 判型锚点退役**（9b37c97d）：registry+manifest 双 retired（7-24 开发样板）；v14 处方知识主体保留、场景锚点降级；Python/TS 双端活跃性校验加当前版本门；词汇表重导出。
+- **验收三纪律固化**：真值对账（官方 CSV）/降级必须可观测/验收终点=Coach 回复——已入 AGENTS.md 第 5 节与本会话记忆。
+- **多场景对账**：7 局新采集 5/7 官方全对（pasu 108:108、1w2ts 85:85、beanClick 107:107、计时图 0:0×2）；1wall6 切窗错切成 2 轮、CataIC 差 3 杀——归切窗覆盖课题。P1-B 点击沿实锤为旧版本采集器历史缺陷（1.3.9 新采集 154:154 正常）。
+- 全量回归 1750 passed / 5 skipped；version bump 1.4.0 四文件+changelog（039ff4b9）。发版序列在另一会话的 intro 开场改动落定后执行。
+
 ## 2026-10-05（下午） — 遥测真值管线三根因全修复 + v1.3.9 发版
 
 - **跨局索引污染根治**：worker→producer 边界显式透传本局入库 meta（targets/t_start，`frozen_round_meta`），冻结分析路径不再读活的共享 rounds_index.json；(round, file) 兜底分支退役（本次误认通道），源目录入口保持。插值热点改有界二分（去整段复制，30 万点 200 次查询毫秒级，2000+ 组样本与旧实现逐位等价）。
