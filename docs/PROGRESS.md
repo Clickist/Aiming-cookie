@@ -1,6 +1,21 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-04. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-05. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-05（下午） — 遥测真值管线三根因全修复 + v1.3.9 发版
+
+- **跨局索引污染根治**：worker→producer 边界显式透传本局入库 meta（targets/t_start，`frozen_round_meta`），冻结分析路径不再读活的共享 rounds_index.json；(round, file) 兜底分支退役（本次误认通道），源目录入口保持。插值热点改有界二分（去整段复制，30 万点 200 次查询毫秒级，2000+ 组样本与旧实现逐位等价）。
+- **验证链**：定向 8 文件 97 passed + 1 skipped；dev 真实数据重放 run 54095 两遍结果指纹相同，贴合比 0.06675890695261155 与研究报告 meta 真生命窗基准分毫不差，每遍 4.8 秒；生产安装包构建+覆盖安装后，走安装版完整链路 force 重放 54095（session 78）：14:03:34 创建 → 14:03:36 完成，14 轨（track 0-13）全部进证据，time_in_radius_ratio / target_relative_error_px available，Coach intro-context 可读。修前同数据为 600 秒超时降级 outcome_only（session 76 metrics 空）。
+- 无排除干净环境首启验收仍未做（本机有历史排除项）；死亡总数 85 对账未做；全量用户旅程 e2e 待安排。SciPy 完整出仓（4 函数自写替换）为下一版跟进项。
+- changelog 1.3.9 块补管线修复条目（new 置首），sync-changelog 与 release-notice 11 测试全过。
+
+## 2026-10-05 — 科学栈启动卡点：局部修复完成，未安装/未发布
+
+- Windows 父管道监测由永久阻塞 `stdin.read(1)` 改为 `PeekNamedPipe` 轮询，保留父端关闭触发退出，运行时退出时停止监测线程；移除 lifespan 自动预热子进程和 worker 领取前最长 1500 秒等待门。手动科学栈诊断脚本保留。
+- 跟枪模块的 SciPy 频谱依赖下沉到真实频谱计算分支；基础固定准星几何分析不再加载 SciPy。原有 producer/adapter 耗时与降级 cause 日志保留，没有修改指标公式或杀软配置。
+- 定向回归：`python -B -m pytest webapp/tests/test_desktop_runtime.py webapp/tests/test_app.py tests/test_worker_prewarm_and_degradation_diag.py tests/test_tracking_cold_import.py tests/test_tracking_analysis.py -q` → **64 passed, 1 skipped**（真实采集集成测试未启用）。`git diff --check` 通过。
+- 独立 PyInstaller runtime 构建成功（177.9 秒，未覆盖安装/发布资源）。真实修复代码、同步父管道保持打开下，SciPy 导入与四类算子首次 5.44 秒、第二次 1.14 秒；从进程启动到就绪分别 10.69/2.99 秒；父端关闭后两次均正常退出。新冻结版拒绝 SciPy 导入时，基础跟枪 fixture 仍产出预期几何指标。证据目录：`.zcode/analysis-blockers-1005-research/`；独立产物：`E:/DevCache/temp/ac-startup-fix-xt0mb97b/dist/aiming-cookie-runtime/`。
+- **验收边界**：当前机器存在用户此前设置的排除项，精确范围需要管理员查询；新目录验证不等于无排除、无缓存的用户首启。没有重启/覆盖现有客户端，没有正式安装包、真 Tauri 全旅程、死亡总数 85 对账或无白名单冷启动验收，未提交/推送/发版。旧局共享索引错配与 producer 插值复制热点仅完成研究，未包含在本次科学栈启动修复中，run 54095 全分析仍不能宣布修好。
 
 ## 2026-10-04（凌晨） — v1.3.8 发布：新用户付费转化漏斗五卡点（数据定罪 + 沙箱真机 + 当夜发版）
 

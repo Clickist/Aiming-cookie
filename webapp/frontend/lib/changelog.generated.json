@@ -2,8 +2,18 @@
   "versions": [
     {
       "version": "1.3.9",
-      "date": "2026-10-04",
+      "date": "2026-10-05",
       "items": [
+        {
+          "type": "new",
+          "zh": "训练记录的整理进度一目了然：整理中的记录会显示具体在等什么、还排着几局，整理完成后会主动弹提醒——不用再对着「整理中」干等",
+          "en": "Training-record processing is now visible at a glance: rows show what is still being processed and how many runs are queued, and a notification pops up when everything is ready"
+        },
+        {
+          "type": "fix",
+          "zh": "跟枪类训练的动作分析大幅提速并修复偶发失败：不再出现长时间等待后只给基于分数的简化结果，准星与目标的贴合度、误差等动作指标秒级产出，同一局重复分析的结果保持一致",
+          "en": "Tracking-style motion analysis is dramatically faster and no longer fails intermittently: no more long waits ending in a score-only fallback - crosshair-to-target adherence and error metrics now arrive within seconds, and repeated analysis of the same run gives consistent results"
+        },
         {
           "type": "fix",
           "zh": "修复部分新用户注册后一直停在登录引导、进不了主界面的问题——浏览器完成注册后返回应用时凭证不再丢失（应用未就绪会自动重试），重开应用重新选择会员档也能接回之前完成的注册",
@@ -23,11 +33,6 @@
           "type": "fix",
           "zh": "修复「目标较大且移动较慢」类训练场景整理不出数据的问题：上一局残留的目标不再被误当作画面残影清理掉，这类场景的数据整理与分析恢复正常",
           "en": "Fixed “larger + slowed” style scenarios failing to process their data: targets carried over from the previous run are no longer mistaken for on-screen debris, so these scenarios process and analyze normally again"
-        },
-        {
-          "type": "new",
-          "zh": "训练记录的整理进度一目了然：整理中的记录会显示具体在等什么、还排着几局，整理完成后会主动弹提醒——不用再对着「整理中」干等",
-          "en": "Training-record processing is now visible at a glance: rows show what is still being processed and how many runs are queued, and a notification pops up when everything is ready"
         }
       ]
     },
