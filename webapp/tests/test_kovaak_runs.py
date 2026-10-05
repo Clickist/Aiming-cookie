@@ -2229,7 +2229,11 @@ def test_analysis_service_refines_name_candidates_with_telemetry_observation():
     )
     assert shaped["scenario_resolution"]["classification_source"] == "telemetry_observed"
     # family 驱动 analysis_type。
-    assert analysis_service._analysis_type_for_snapshot(refined) == "static_clicking"
+    # [1.3.10 热修] 请求类型必须等于分发引擎产出：static native 分支无条件
+    # 先行且 native 产出固定 "flicking"，static_clicking 请求类型会让落盘
+    # 校验必炸（1.3.9 冷启动首分析 P0）。家族身份仍在 resolution/
+    # result.scenario.aim_family 携带。
+    assert analysis_service._analysis_type_for_snapshot(refined) == "flicking"
 
 
 def test_analysis_service_telemetry_observation_respects_layer_precedence():
@@ -2319,8 +2323,10 @@ def test_scenario_override_beats_name_and_shape_layers():
     assert shaped["scenario_resolution"]["classification_source"] == "scenario_override"
     assert "scenario_challenge_shape" not in shaped
     # 新来源通过 frozen contracts 校验，并驱动该 family 的 analysis_type。
+    # [1.3.10 热修] 同 test_analysis_service_refines_name_candidates_*：请求
+    # 类型必须等于分发引擎产出（native flicking → "flicking"）。
     validate_scenario_resolution_v1(resolution)
-    assert analysis_service._analysis_type_for_snapshot(overridden) == "static_clicking"
+    assert analysis_service._analysis_type_for_snapshot(overridden) == "flicking"
     # 原快照不被就地修改。
     assert snapshot["scenario_resolution"]["classification_source"] == "name_heuristic"
 
@@ -2497,7 +2503,9 @@ async def test_reclassified_done_analysis_creates_a_new_session(
         owner, run["id"], managed_video_source=video,
     )
     first_session = await queue.get_session(first["session_id"])
-    assert first_session["analysis_type"] == "static_clicking"
+    # [1.3.10 热修] static_clicking 家族的请求类型归正为 "flicking"（分发引擎
+    # 真实产出，见 _analysis_type_for_snapshot 注释）；家族身份在 resolution。
+    assert first_session["analysis_type"] == "flicking"
     _mark_session_done(first["session_id"])
 
     # 用户纠正为 target_switching → set 记忆 → 再 create 应按新类型新建。
@@ -2515,7 +2523,7 @@ async def test_reclassified_done_analysis_creates_a_new_session(
     assert resolution["classification_source"] == "scenario_override"
     assert second_session["analysis_type"] == "target_switching"
     # 旧分析保持不动，成为该 run 的历史版本。
-    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "flicking"
 
 
 @pytest.mark.asyncio
@@ -2534,10 +2542,10 @@ async def test_override_matching_the_done_family_keeps_the_reuse(
     first = await analysis_service.create_analysis_from_run(
         owner, run["id"], managed_video_source=video,
     )
-    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "flicking"
     _mark_session_done(first["session_id"])
 
-    # 用户确认的类型与现有分析一致（static_clicking）→ 复用旧的。
+    # 用户确认的类型与现有分析一致（static_clicking 家族 → "flicking"）→ 复用旧的。
     _write_scenario_overrides({
         _OVERRIDE_HASH: {"aim_family": "static_clicking", "confirmed_by": "user"},
     })
@@ -2607,7 +2615,7 @@ async def test_force_rerun_skips_same_family_override_reuse(monkeypatch, tmp_pat
     first = await analysis_service.create_analysis_from_run(
         owner, run["id"], managed_video_source=video,
     )
-    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "flicking"
     _mark_session_done(first["session_id"])
     _write_scenario_overrides({
         _OVERRIDE_HASH: {"aim_family": "static_clicking", "confirmed_by": "user"},
@@ -2724,7 +2732,8 @@ async def test_coach_memory_judged_layer_and_user_priority(monkeypatch, tmp_path
     assert again_session["input_snapshot"]["scenario_resolution"][
         "classification_source"
     ] == "scenario_override"
-    assert again_session["analysis_type"] == "static_clicking"
+    # [1.3.10 热修] static_clicking 家族请求类型归正为 "flicking"。
+    assert again_session["analysis_type"] == "flicking"
 
 
 @pytest.mark.asyncio

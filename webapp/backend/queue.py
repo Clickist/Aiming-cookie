@@ -591,7 +591,15 @@ async def requeue_for_retry(session_id: int) -> dict:
             "csv_path": source.get("csv_path"),
             "cm_per_360": source.get("cm_per_360"),
             "fov": source.get("fov"),
-            "analysis_type": source.get("analysis_type"),
+            # static_clicking 不是任何分发路径可产出的请求类型（见
+            # analysis_service._analysis_type_for_snapshot）：1.3.9 期间已
+            # 中毒的失败会话会经此处原样继承坏类型，热修后点重试仍必炸。
+            # 归正为分发端真实产出，重试才能自愈。
+            "analysis_type": (
+                "flicking"
+                if source.get("analysis_type") == "static_clicking"
+                else source.get("analysis_type")
+            ),
             "input_mode": source.get("input_mode"),
             "kovaak_run_id": source.get("kovaak_run_id"),
             "input_snapshot": source.get("input_snapshot"),

@@ -792,16 +792,18 @@ def _analysis_type_for_snapshot(snapshot: Mapping[str, Any]) -> str:
     if not isinstance(resolution, Mapping):
         return "flicking"
     family = resolution.get("aim_family")
+    # static_clicking 必须映射为 "flicking"：worker 分发端 static native 分支
+    # 无条件先行（2026-10-04 精选档案层退役），native 分析器产出固定为
+    # "flicking"，而 static_clicking 的 baseline 分支对 static_clicking 不可达
+    # （被 native 分支短路）。若这里发 "static_clicking"，落盘校验
+    # analysis_result.v2 analysis_type 与请求比对必炸 → 分析永不落盘、用户
+    # 侧永远"排队中"（1.3.9 冷启动首分析 P0，20261005-191602 报障包定罪）。
+    # 家族身份由 result.scenario.aim_family / resolution 携带，不靠请求类型。
     return {
         "dynamic_clicking": "dynamic_clicking",
         "continuous_tracking": "continuous_tracking",
         "target_switching": "target_switching",
-        "static_clicking": (
-            "static_clicking"
-            if "static_clicking.baseline.v1"
-            in (resolution.get("allowed_analyzers") or [])
-            else "flicking"
-        ),
+        "static_clicking": "flicking",
     }.get(family, "input_kinematics")
 
 
