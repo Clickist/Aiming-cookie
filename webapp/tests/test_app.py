@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 
 import pytest
 
@@ -109,3 +110,43 @@ async def test_lifespan_cleanup_failure_is_observable_safe_and_does_not_block_re
     assert "workspace_cleanup_failed" in logs
     assert str(workspace) not in logs
     assert "locked private path" not in logs
+
+
+@pytest.mark.asyncio
+async def test_lifespan_reaches_ready_without_spawning_science_prewarm(
+    monkeypatch,
+    caplog,
+):
+    """lifespan 不 spawn 子进程、不运行科学栈即可到达 ready。"""
+    events: list[str] = []
+
+    async def fake_reconcile_analysis_deletions() -> dict[str, int]:
+        events.append("deletions")
+        return {"processed": 0, "cleaned": 0, "failed": 0}
+
+    async def fake_reconcile_stale_uploads() -> dict[str, int]:
+        events.append("uploads")
+        return {"processed": 0, "cleaned": 0, "failed": 0}
+
+    monkeypatch.setattr(
+        queue, "reconcile_analysis_deletions", fake_reconcile_analysis_deletions,
+    )
+    monkeypatch.setattr(
+        queue, "reconcile_stale_uploads", fake_reconcile_stale_uploads,
+    )
+
+    popen_calls: list[tuple] = []
+
+    def forbidden_popen(*args, **kwargs):
+        popen_calls.append(args)
+        raise AssertionError("lifespan 不得 spawn 科学栈预热子进程")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden_popen)
+
+    with caplog.at_level(logging.INFO, logger=app_module.__name__):
+        async with app_module.lifespan(app_module.app):
+            events.append("ready")
+
+    assert events == ["deletions", "uploads", "ready"]
+    assert popen_calls == []
+    assert "science prewarm child spawned" not in caplog.text

@@ -32,6 +32,9 @@ SERVER_START_POLL_SECONDS = 0.01
 CAPTURE_EXIT_STATUS_POLL_SECONDS = 0.5
 CAPTURE_EXIT_HARD_GRACE_SECONDS = 30
 PARENT_STDIN_WATCH_ENV = "AIMING_COOKIE_WATCH_PARENT_STDIN"
+PARENT_STDIN_POLL_SECONDS = 0.05
+# winerror 109 (ERROR_BROKEN_PIPE)：父进程已关闭管道写端 = EOF → 请求关停。
+ERROR_BROKEN_PIPE = 109
 # 运行期复查 KovaaK 统计导出设置的节流间隔（游戏可能在 AC 启动后才被打开）。
 KOVAAK_EXPORT_RECHECK_SECONDS = 45.0
 log = logging.getLogger(__name__)
@@ -294,26 +297,91 @@ async def run_worker(stop_event: asyncio.Event) -> None:
             await worker_task
 
 
-def _watch_parent_stdin(stop_event: asyncio.Event) -> None:
-    """Request shutdown when the Tauri-owned stdin pipe reaches EOF."""
+def _watch_parent_stdin(stop_event: asyncio.Event) -> Callable[[], None]:
+    """Request shutdown at parent EOF and return a watcher cleanup callback.
+
+    Blocking reads on the Windows pipe conflict with native library loading.
+    This watcher must remain the pipe's only consumer.
+    """
+    def stop_watch() -> None:
+        return None
+
     if os.environ.get(PARENT_STDIN_WATCH_ENV) != "1":
-        return
+        return stop_watch
 
+    if sys.platform != "win32":
+        loop = asyncio.get_running_loop()
+
+        def wait_for_eof() -> None:
+            try:
+                sys.stdin.buffer.read(1)
+                loop.call_soon_threadsafe(stop_event.set)
+            except (OSError, RuntimeError):
+                # A signal-driven shutdown may close the loop before this daemon wakes.
+                pass
+
+        threading.Thread(
+            target=wait_for_eof,
+            name="desktop-parent-stdin",
+            daemon=True,
+        ).start()
+        return stop_watch
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek_named_pipe = kernel32.PeekNamedPipe
+    peek_named_pipe.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    peek_named_pipe.restype = wintypes.BOOL
+    try:
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (OSError, ValueError) as error:
+        # No usable stdin pipe: nothing to watch, never a shutdown signal.
+        log.warning("parent stdin watch unavailable: %s", error)
+        return stop_watch
     loop = asyncio.get_running_loop()
+    watcher_done = threading.Event()
 
-    def wait_for_eof() -> None:
-        try:
-            sys.stdin.buffer.read(1)
-            loop.call_soon_threadsafe(stop_event.set)
-        except (OSError, RuntimeError):
-            # A signal-driven shutdown may close the loop before this daemon wakes.
-            pass
+    def poll_for_eof() -> None:
+        while not watcher_done.wait(PARENT_STDIN_POLL_SECONDS):
+            available = wintypes.DWORD()
+            if peek_named_pipe(handle, None, 0, None, ctypes.byref(available), None):
+                continue
+            if ctypes.get_last_error() == ERROR_BROKEN_PIPE:
+                try:
+                    loop.call_soon_threadsafe(stop_event.set)
+                except RuntimeError:
+                    # A signal-driven shutdown may close the loop before this wakes.
+                    pass
+            else:
+                log.warning(
+                    "parent stdin watch stopped: PeekNamedPipe failed "
+                    "winerror=%s",
+                    ctypes.get_last_error(),
+                )
+            return
 
-    threading.Thread(
-        target=wait_for_eof,
+    watcher = threading.Thread(
+        target=poll_for_eof,
         name="desktop-parent-stdin",
         daemon=True,
-    ).start()
+    )
+    watcher.start()
+
+    def stop_windows_watch() -> None:
+        watcher_done.set()
+        watcher.join(timeout=1.0)
+
+    return stop_windows_watch
 
 
 def _install_shutdown_signal_handlers(stop_event: asyncio.Event) -> Callable[[], None]:
@@ -551,7 +619,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     shutdown_requested = stop_event or asyncio.Event()
     app.state.desktop_shutdown_requested = False
     remove_handlers = _install_shutdown_signal_handlers(shutdown_requested)
-    _watch_parent_stdin(shutdown_requested)
+    stop_parent_watch = _watch_parent_stdin(shutdown_requested)
     server = create_server(0)
     worker_stop = asyncio.Event()
     server_task = asyncio.create_task(server.serve())
@@ -646,6 +714,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     finally:
         active_error = sys.exc_info()[0] is not None
         app.state.desktop_shutdown_requested = True
+        stop_parent_watch()
         remove_handlers()
         stop_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

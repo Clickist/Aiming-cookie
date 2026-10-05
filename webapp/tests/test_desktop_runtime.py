@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -73,6 +75,188 @@ async def test_runtime_process_binds_dynamic_port_and_serves_health(tmp_path) ->
         if process.returncode is None:
             process.terminate()
             await asyncio.wait_for(process.wait(), timeout=5)
+
+
+# 子进程只装真实 _watch_parent_stdin + 真实 scipy.signal 首次导入：
+# 不启动后端/采集，父进程（本测试）保持 stdin 管道打开且从不写入。
+# 仓库根通过 cwd 传入（os.getcwd()），脚本不含占位符。
+_SCIPY_COLD_IMPORT_CHILD = """
+import asyncio, json, os, sys, time
+sys.path.insert(0, os.getcwd())
+from webapp.backend.desktop_runtime import _watch_parent_stdin
+
+
+async def main() -> int:
+    stop = asyncio.Event()
+    _watch_parent_stdin(stop)
+    time.sleep(0.2)  # 让 watcher 先真正开始消费管道，复现生产启动时序
+    start = time.perf_counter()
+    from scipy.signal import coherence, find_peaks, periodogram, savgol_filter
+    elapsed = time.perf_counter() - start
+    print(
+        json.dumps({"stage": "scipy_done", "seconds": round(elapsed, 3)}),
+        flush=True,
+    )
+    return 0
+
+
+raise SystemExit(asyncio.run(main()))
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="parent stdin pipe watcher conflict is Windows-specific",
+)
+def test_first_scipy_signal_import_completes_with_parent_stdin_pipe_open() -> None:
+    """父进程保持 stdin 管道打开时，首次 scipy.signal 导入必须正常完成。
+
+    回归：watcher 用阻塞 read(1) 消费同一同步管道时，scipy 首次导入被拖过
+    15s（科学库首分析卡死的机制）；PeekNamedPipe 轮询实测约 1.2s。必须用
+    同步 Popen 管道：asyncio 子进程的 stdin 是 overlapped 句柄，复现不了
+    生产 Tauri 同步管道下的冲突。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    process = subprocess.Popen(
+        [sys.executable, "-c", _SCIPY_COLD_IMPORT_CHILD],
+        cwd=str(repo_root),
+        env={**os.environ, desktop_runtime.PARENT_STDIN_WATCH_ENV: '1'},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # 看门狗：旧阻塞读机制下子进程会卡死，超时杀掉（只杀本测试创建的进程）。
+    watchdog = threading.Timer(25.0, process.kill)
+    watchdog.start()
+    try:
+        assert process.stdout is not None
+        line = process.stdout.readline().decode(errors="replace").strip()
+    finally:
+        watchdog.cancel()
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+    if not line:
+        pytest.fail("child never reported scipy_done within 25s (watcher hang)")
+    payload = json.loads(line)
+    assert payload["stage"] == "scipy_done"
+    # 阈值只用于区分两种机制（阻塞读 >15s，Peek 轮询 ~1.2s）。
+    assert payload["seconds"] < 15
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="PeekNamedPipe watcher is Windows-specific",
+)
+@pytest.mark.asyncio
+async def test_parent_stdin_pipe_close_requests_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read_fd, write_fd = os.pipe()
+    fake_stdin = open(read_fd, "rb", buffering=0)
+    monkeypatch.setattr(sys, "stdin", fake_stdin)
+    monkeypatch.setenv(desktop_runtime.PARENT_STDIN_WATCH_ENV, "1")
+    stop = asyncio.Event()
+    stop_watch = desktop_runtime._watch_parent_stdin(stop)
+    assert callable(stop_watch)
+    try:
+        os.close(write_fd)  # Tauri 父进程退出 → 管道断裂 = EOF
+        await asyncio.wait_for(stop.wait(), timeout=5)
+    finally:
+        stop_watch()
+        fake_stdin.close()
+        try:
+            os.close(write_fd)
+        except OSError:
+            pass
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="PeekNamedPipe watcher is Windows-specific",
+)
+@pytest.mark.asyncio
+async def test_parent_stdin_watcher_stop_ends_thread_without_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read_fd, write_fd = os.pipe()
+    fake_stdin = open(read_fd, "rb", buffering=0)
+    monkeypatch.setattr(sys, "stdin", fake_stdin)
+    monkeypatch.setenv(desktop_runtime.PARENT_STDIN_WATCH_ENV, "1")
+    stop = asyncio.Event()
+    stop_watch = desktop_runtime._watch_parent_stdin(stop)
+    try:
+        assert callable(stop_watch)
+        watchers = [
+            thread for thread in threading.enumerate()
+            if thread.name == "desktop-parent-stdin"
+        ]
+        assert len(watchers) == 1
+        stop_watch()
+        watchers[0].join(timeout=5)
+        # 生命周期停止：轮询线程退出，不残留；取消不等于请求关停。
+        assert not watchers[0].is_alive()
+        assert not stop.is_set()
+    finally:
+        stop_watch()
+        fake_stdin.close()
+        os.close(write_fd)
+
+
+@pytest.mark.asyncio
+async def test_parent_stdin_watch_disabled_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(desktop_runtime.PARENT_STDIN_WATCH_ENV, raising=False)
+    stop = asyncio.Event()
+    stop_watch = desktop_runtime._watch_parent_stdin(stop)
+    assert callable(stop_watch)
+    stop_watch()
+    assert not stop.is_set()
+    assert not [
+        thread for thread in threading.enumerate()
+        if thread.name == "desktop-parent-stdin"
+    ]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="win32 stdin handle lookup path",
+)
+@pytest.mark.asyncio
+async def test_parent_stdin_watch_without_usable_stdin_stays_inert(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class StdinWithoutHandle:
+        def fileno(self) -> int:
+            raise io.UnsupportedOperation("redirected stdin is pseudofile")
+
+    monkeypatch.setattr(sys, "stdin", StdinWithoutHandle())
+    monkeypatch.setenv(desktop_runtime.PARENT_STDIN_WATCH_ENV, "1")
+    stop = asyncio.Event()
+    stop_watch = desktop_runtime._watch_parent_stdin(stop)
+    try:
+        assert callable(stop_watch)
+        await asyncio.sleep(0.2)
+        # 无法取到管道句柄：只记日志，不误报 EOF、不残留线程。
+        assert not stop.is_set()
+        assert not [
+            thread for thread in threading.enumerate()
+            if thread.name == "desktop-parent-stdin"
+        ]
+        assert any(
+            "parent stdin watch" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        stop_watch()
 
 
 @pytest.mark.asyncio

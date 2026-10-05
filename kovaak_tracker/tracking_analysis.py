@@ -13,7 +13,6 @@ from statistics import median
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-from scipy.signal import coherence, periodogram
 
 
 ANALYSIS_VERSION = "continuous_tracking.v1"
@@ -235,6 +234,8 @@ def _frequency_metrics(samples: Sequence[Mapping[str, Any]], model: str) -> dict
     sample_rate_hz = 1000.0 / float(np.median(deltas))
     if len(target_axis) % 4:
         return None
+    from scipy.signal import coherence, periodogram
+
     chunk_peak_bins = []
     for chunk in chunks:
         chunk_frequencies, chunk_power = periodogram(chunk, fs=sample_rate_hz)
