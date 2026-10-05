@@ -628,6 +628,8 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     finalizer_futures = FinalizerFutureTracker()
     capture_exit_releases = CaptureExitReleaseTracker()
     capture_exit_task: asyncio.Task[None] | None = None
+    # capture_service.start() 的后台任务句柄：ready 之后才等它（见下）。
+    capture_start_task: asyncio.Task[None] | None = None
     ingestion_diagnostics_task: asyncio.Task[None] | None = None
     # 采集工具随产品分发（2026-09-06 拍板）：先保证 watch 根自动指向托管
     # cleaned 根（已配置则不动），再创建采集服务——run 收尾的按局增量切窗
@@ -687,8 +689,14 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             external_service.start()
             persist_external_telemetry_diagnostics(external_service)
         if capture_service is not None:
-            # start() 可能带旧会话收尾（cleaner/merge 子进程），放线程避免阻塞事件循环。
-            await asyncio.to_thread(capture_service.start)
+            # start() 可能带旧会话收尾（cleaner/merge 子进程）：收尾放后台，
+            # ready 先行——收尾卡住/缓慢不能把整次启动拖到 Tauri 侧 45s 就绪
+            # 超时（2026-10-06 启动未响应→闪退案的结构性修复之一）。API 在
+            # start 完成前就可能收到采集请求，与改动前「start 在线程里跑、
+            # 事件循环已放行」的并发窗口同构，服务自身按未启动态 fail-soft。
+            capture_start_task = asyncio.create_task(
+                asyncio.to_thread(capture_service.start)
+            )
 
         # This is intentionally the runtime's only stdout protocol write.
         print(
@@ -737,6 +745,11 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         with contextlib.suppress(Exception):
             persist_kovaak_ingestion_diagnostics(ingestion_service)
         app.state.kovaak_ingestion_service = None
+        if capture_start_task is not None:
+            # 启动尚未完成就收到关闭（如秒开秒关）：先等 start 落地再 stop，
+            # 避免对同一服务并发 start/stop。
+            with contextlib.suppress(Exception):
+                await capture_start_task
         if capture_service is not None:
             # 终止采集伴生进程；有未收尾的原始件则留给下次启动扫尾。
             with contextlib.suppress(Exception):

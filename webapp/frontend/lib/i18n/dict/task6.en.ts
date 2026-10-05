@@ -611,6 +611,20 @@ export const task6En = {
   "desktop.kovaak.scenarioDispatched": "KovaaK launch requested. Make sure the target scenario has loaded.",
   "desktop.kovaak.scenarioDispatchFailed": "Couldn't open KovaaK. Make sure Steam is installed, then try again.",
 
+  // ── components/task3/RuntimeGate.tsx —— runtime status gate ────────────
+  // starting/failed codes come from runtime.rs connection(); on failure the
+  // app stays alive: exit = restart the app, plus one-click diagnostics export
+  // (the export path does not depend on the backend).
+  "desktop.runtime.starting": "Starting local services…",
+  "desktop.runtime.slowHint":
+    "This is taking longer than usual — your antivirus may be scanning the app. It normally finishes within a few seconds to a minute. Please wait a little longer.",
+  "desktop.runtime.failedTitle": "Local services failed to start",
+  "desktop.runtime.failedBody":
+    "The Aiming Cookie local services failed to start after several attempts. Please quit the app completely and reopen it. If this happens every time, add Aiming Cookie to your antivirus allowlist, or export the diagnostics bundle and send it to us.",
+  "desktop.runtime.exportDiagnostics": "Export diagnostics",
+  "desktop.runtime.exportDone": "Diagnostics bundle saved. Please send it to us.",
+  "desktop.runtime.exportFailed": "Failed to export the diagnostics bundle. Screenshot this screen and contact support.",
+
   // ── lib/api.ts —— backend error codes (B1) ─────────────────────────────
   // Key = "api.error." + backend detail.code with snake_case segments
   // camelCased (upload.video_too_large → api.error.upload.videoTooLarge;

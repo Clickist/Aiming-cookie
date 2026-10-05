@@ -72,6 +72,23 @@ export async function getDesktopRuntimeConnection(): Promise<DesktopRuntimeConne
   return connectionPromise;
 }
 
+// Tauri 侧 runtime 状态稳定码（src-tauri/src/runtime.rs 的 connection()）：
+// starting = 后台拉起中（首次启动或崩溃重启），failed = 重启预算耗尽。
+export const RUNTIME_STARTING_CODE = "runtime.starting";
+export const RUNTIME_FAILED_CODE = "runtime.failed";
+
+/** 等本地 runtime 就绪：starting 每秒重查，failed 原样抛给调用方呈现终态。 */
+export async function awaitDesktopRuntimeConnection(): Promise<DesktopRuntimeConnection> {
+  for (;;) {
+    try {
+      return await getDesktopRuntimeConnection();
+    } catch (error) {
+      if (error === RUNTIME_FAILED_CODE) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+}
+
 export async function getDesktopCaptureCoordinatorStatus(): Promise<DesktopCaptureCoordinatorStatus> {
   if (!isDesktopRuntime()) {
     throw new Error("Automatic capture is only available in the desktop app");

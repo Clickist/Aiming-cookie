@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 import { Suspense, type ReactNode } from "react";
 
 import { AppShell } from "@/components/task3/AppShell";
+import { RuntimeGate } from "@/components/task3/RuntimeGate";
 // layout 是 Server Component：meta description 只用纯翻译函数，直接引 core——
 // 经 "@/lib/i18n" barrel 会连带把含 hooks 的 react.ts 拉进 server 编译图（build 红）。
 import { t } from "@/lib/i18n/core";
@@ -28,7 +29,9 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       <body>
         <ThemeProvider>
           <Suspense fallback={children}>
-            <AppShell>{children}</AppShell>
+            <RuntimeGate>
+              <AppShell>{children}</AppShell>
+            </RuntimeGate>
           </Suspense>
         </ThemeProvider>
       </body>

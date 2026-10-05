@@ -260,14 +260,17 @@ pub struct RuntimeState {
 }
 
 impl RuntimeState {
-    pub fn new(
-        runtime: RuntimeProcess,
+    /// 启动即返回：runtime 在后台线程拉起（成功装回 supervisor；重试 3 次仍
+    /// 失败则置 terminal error 经 `connection()` 以稳定码透出）。主线程不再
+    /// 被两次 45s 的就绪等待阻塞——那是「未响应一段时间→闪退」案的根结构
+    /// （2026-10-06）：窗口必须秒开且任何启动失败都必须可见，不能静默退出。
+    pub fn launch(
         layout: RuntimeLayout,
         app_data_dir: PathBuf,
         capture_control: CaptureControlConnection,
     ) -> Self {
         let supervisor = Arc::new(RuntimeSupervisor {
-            runtime: Mutex::new(Some(runtime)),
+            runtime: Mutex::new(None),
             launch: RuntimeLaunch {
                 layout,
                 app_data_dir,
@@ -275,20 +278,25 @@ impl RuntimeState {
             },
             shutdown_requested: AtomicBool::new(false),
             restart_attempts: Mutex::new(0),
-            // 首个 RuntimeProcess 已在调用方成功启动，以当前时刻为稳定期起点。
-            last_runtime_started_at: Mutex::new(Some(Instant::now())),
+            last_runtime_started_at: Mutex::new(None),
             terminal_error: Mutex::new(None),
         });
+        {
+            let supervisor = Arc::clone(&supervisor);
+            thread::spawn(move || restart_runtime(&supervisor, "runtime startup".to_string()));
+        }
         start_runtime_supervisor(Arc::clone(&supervisor));
         Self { supervisor }
     }
 
+    /// 就绪前/重启中回 `runtime.starting`，重试预算耗尽回 `runtime.failed`
+    /// （稳定错误码合同：文案单一事实源在前端字典；详细原因只进 native.log）。
     pub fn connection(&self) -> Result<RuntimeConnection, String> {
         let mut runtime = self
             .supervisor
             .runtime
             .lock()
-            .map_err(|_| "local runtime state is unavailable".to_string())?;
+            .map_err(|_| "runtime.failed".to_string())?;
         if let Some(process) = runtime.as_mut() {
             if process.unexpected_exit_reason().is_none() {
                 return Ok(process.connection());
@@ -296,16 +304,16 @@ impl RuntimeState {
         }
         drop(runtime);
 
-        if let Some(error) = self
+        let terminal = self
             .supervisor
             .terminal_error
             .lock()
-            .map_err(|_| "local runtime state is unavailable".to_string())?
-            .clone()
-        {
-            return Err(error);
+            .map_err(|_| "runtime.failed".to_string())?
+            .clone();
+        if terminal.is_some() {
+            return Err("runtime.failed".to_string());
         }
-        Err("local runtime is restarting".to_string())
+        Err("runtime.starting".to_string())
     }
 
     pub fn shutdown(&self) {
@@ -437,6 +445,8 @@ fn restart_budget_reset_due(stable_elapsed: Option<Duration>, attempts: u8) -> b
 }
 
 fn set_terminal_runtime_error(supervisor: &RuntimeSupervisor, cause: String) {
+    // 详细原因只进 native.log（前端只见稳定码）；这是用户机上判死的第一现场。
+    crate::dlog!("[desktop-runtime] terminal: {cause}");
     if let Ok(mut error) = supervisor.terminal_error.lock() {
         *error = Some(format!(
             "local runtime is unavailable after {MAX_RESTART_ATTEMPTS} restart attempts: {cause}"
@@ -864,7 +874,8 @@ mod tests {
         configure_python_io, create_launch_token, development_runtime_layout, file_url,
         packaged_runtime_layout, parse_readiness_line, parse_sidecar_readiness_line,
         redact_secrets, restart_budget_reset_due, restart_is_allowed, write_desktop_runtime_config,
-        RuntimeConnection, RuntimeProcess, MAX_RESTART_ATTEMPTS, RUNTIME_STABLE_PERIOD,
+        RuntimeConnection, RuntimeLayout, RuntimeProcess, RuntimeState, MAX_RESTART_ATTEMPTS,
+        RUNTIME_STABLE_PERIOD,
     };
     use std::path::Path;
 
@@ -1138,6 +1149,48 @@ mod tests {
             Some(RUNTIME_STABLE_PERIOD + Duration::from_secs(30)),
             MAX_RESTART_ATTEMPTS
         ));
+    }
+
+    #[test]
+    fn launch_survives_a_broken_layout_and_reports_terminal_failure() {
+        // 启动改为后台线程后的行为合同：runtime 永远起不来时，launch 不 panic、
+        // connection() 先 starting 后 failed，调用方（前端闸门）能看到终态。
+        let temp = std::env::temp_dir().join(format!(
+            "aiming-cookie-launch-broken-{}",
+            create_launch_token()
+        ));
+        let layout = RuntimeLayout {
+            working_dir: temp.clone(),
+            backend_program: temp.join("missing-backend.exe").into_os_string(),
+            backend_args: Vec::new(),
+            coach_program: temp.join("missing-coach.exe").into_os_string(),
+            coach_args: Vec::new(),
+            coach_loader: None,
+            coach_entry: None,
+            pi_source_dir: None,
+            pi_tsconfig: None,
+            resource_root: None,
+        };
+        let state = RuntimeState::launch(
+            layout,
+            temp.join("data"),
+            crate::capture_coordinator::CaptureControlConnection {
+                address: std::net::SocketAddr::from(([127_u8, 0, 0, 1], 0_u16)),
+                secret: "test-secret".to_string(),
+            },
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut terminal = false;
+        while std::time::Instant::now() < deadline {
+            if matches!(state.connection(), Err(code) if code == "runtime.failed") {
+                terminal = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        state.shutdown();
+        assert!(terminal, "broken layout must reach terminal failure");
+        let _ = std::fs::remove_dir_all(temp);
     }
 
     #[cfg(windows)]

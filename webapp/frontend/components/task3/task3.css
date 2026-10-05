@@ -1849,3 +1849,88 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
 .task3-member-usage-toggle-icon.is-open {
   transform: rotate(180deg);
 }
+
+/* ── RuntimeGate 启动闸门（2026-10-06 启动闪退案）：窗口秒开后的启动屏 ──
+   进度不可知（后端启动是黑盒），用流动条不承诺百分比（点点 1006 拍板 A 型）；
+   颜色全走主题 token，深浅色自适应。 */
+.task3-runtime-gate {
+  align-items: center;
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.task3-runtime-gate__col {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding-bottom: 7vh;
+}
+
+.task3-runtime-gate__mark {
+  filter: invert(1);
+  height: 72px;
+  width: 72px;
+}
+
+/* logo 资产是纯白单色（会话栏深底用的）：浅色米白底上无分离度（点点 1006），
+   反相成黑；深色主题恢复原白。失败卡同用此元素，两主题同规则。 */
+:root[data-theme="dark"] .task3-runtime-gate__mark {
+  filter: none;
+}
+
+.task3-runtime-gate__brand {
+  font-size: var(--text-title);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+.task3-runtime-gate__track {
+  background: var(--surface-variant);
+  border-radius: 999px;
+  height: 4px;
+  overflow: hidden;
+  width: 220px;
+}
+
+.task3-runtime-gate__thumb {
+  animation: task3-runtime-gate-slide 1.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  background: var(--primary);
+  border-radius: 999px;
+  height: 100%;
+  width: 40%;
+}
+
+@keyframes task3-runtime-gate-slide {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(280%);
+  }
+}
+
+.task3-runtime-gate__status {
+  font-size: var(--text-ui);
+  opacity: 0.75;
+}
+
+.task3-runtime-gate__hint {
+  font-size: var(--text-caption);
+  line-height: 1.7;
+  max-width: 360px;
+  opacity: 0.55;
+  text-align: center;
+}
+
+/* 全局 reduced-motion 块会把动画钉在首帧（滑块停在轨道外＝空白条），这里
+   显式降级为静态满宽条：动效退场，但"正在启动"的视觉反馈不消失。 */
+@media (prefers-reduced-motion: reduce) {
+  .task3-runtime-gate__thumb {
+    animation: none;
+    opacity: 0.55;
+    transform: none;
+    width: 100%;
+  }
+}

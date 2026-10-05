@@ -616,6 +616,19 @@ export const task6Zh = {
   "desktop.kovaak.scenarioDispatched": "已请求打开 KovaaK，请确认目标场景已加载。",
   "desktop.kovaak.scenarioDispatchFailed": "未能请求打开 KovaaK，请确认 Steam 已安装后重试。",
 
+  // ── components/task3/RuntimeGate.tsx —— 启动闸门（runtime 稳定码呈现）──
+  // starting/failed 码来自 runtime.rs 的 connection()；failed 时应用仍活着，
+  // 出口=重启应用 + 导出诊断包（导出不依赖 backend，正是案发现场取证）。
+  "desktop.runtime.starting": "正在启动本地服务…",
+  "desktop.runtime.slowHint":
+    "启动比平时慢——可能正被杀毒软件扫描。一般在十几秒到一分钟内完成，请再等等。",
+  "desktop.runtime.failedTitle": "本地服务未能启动",
+  "desktop.runtime.failedBody":
+    "Aiming Cookie 的本地服务多次启动失败，已停止重试。请完全关闭应用后重新打开；若每次都这样，请在杀毒软件中把 Aiming Cookie 加入信任名单，或导出诊断包发给我们定位。",
+  "desktop.runtime.exportDiagnostics": "导出诊断包",
+  "desktop.runtime.exportDone": "诊断包已保存，请把它发给我们。",
+  "desktop.runtime.exportFailed": "诊断包导出失败，请截图此界面报障。",
+
   // ── lib/api.ts —— 后端错误码（B1 错误码化）─────────────────────────────
   // 键 = "api.error." + 后端 detail.code 的 snake_case 段转驼峰（如
   // upload.video_too_large → api.error.upload.videoTooLarge，api.ts 内做同一转换）。
