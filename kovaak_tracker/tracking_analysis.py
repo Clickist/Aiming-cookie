@@ -382,7 +382,8 @@ def _predictability_events(
     return events, sorted(set(accepted))
 
 
-def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _prepared_tracking_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and parse the shared single-target tracking input prelude."""
     if not isinstance(payload, Mapping) or payload.get("schema_version") != INPUT_SCHEMA_VERSION:
         raise TrackingAnalysisError("continuous tracking input schema is unsupported")
     analysis_ref = _ref(payload.get("analysis_ref"), "analysis_ref")
@@ -414,7 +415,6 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
     }:
         raise TrackingAnalysisError("player_motion_status is invalid")
     player_motion_available = player_motion_status == "available_shared_trajectory"
-    player_motion_limitation = "player_aim_motion_unavailable_fixed_viewport_center"
     target_raw = payload.get("target_track")
     if not isinstance(target_raw, Mapping):
         raise TrackingAnalysisError("target_track is required")
@@ -434,15 +434,42 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
         if raw_alignment_latency_ms is None
         else _number(raw_alignment_latency_ms, "alignment_latency_ms")
     )
-    segment_ref = f"{analysis_ref}:segment:tracking:1"
-    predictability_events, predictive_refs = _predictability_events(
-        payload, segment_ref, start_ms,
-    )
-    rows: list[dict[str, Any]] = []
+    return {
+        "analysis_ref": analysis_ref,
+        "window": window,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "model": model,
+        "quality": quality,
+        "quality_enabled": quality_enabled,
+        "player_motion_available": player_motion_available,
+        "target_ref": target_ref,
+        "target": target,
+        "crosshair": crosshair,
+        "target_by_time": target_by_time,
+        "crosshair_by_time": crosshair_by_time,
+        "shared_times": shared_times,
+        "target_index": target_index,
+        "crosshair_index": crosshair_index,
+        "alignment_latency_ms": alignment_latency_ms,
+    }
+
+
+def _tracking_sample_series(
+    *,
+    analysis_ref: str,
+    quality_enabled: bool,
+    player_motion_available: bool,
+    target: Sequence[Mapping[str, Any]],
+    crosshair: Sequence[Mapping[str, Any]],
+    target_by_time: Mapping[int, Mapping[str, Any]],
+    crosshair_by_time: Mapping[int, Mapping[str, Any]],
+    target_index: Mapping[int, int],
+    crosshair_index: Mapping[int, int],
+    shared_times: Sequence[int],
+) -> list[dict[str, Any]]:
+    """Deterministic per-sample tracking measurements for one target track."""
     samples: list[dict[str, Any]] = []
-    limitations = list(quality.get("limitations") or [])
-    if not quality_enabled:
-        limitations.append("continuous_tracking_quality_unavailable")
     for ordinal, time_ms in enumerate(shared_times, 1):
         target_point, crosshair_point = target_by_time[time_ms], crosshair_by_time[time_ms]
         usable = quality_enabled and _available(target_point, crosshair_point)
@@ -481,6 +508,45 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
             "crosshair_position": (float(crosshair_point["x"]), float(crosshair_point["y"])),
             "limitations": sample_limitations,
         })
+    return samples
+
+
+def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
+    inputs = _prepared_tracking_inputs(payload)
+    analysis_ref = inputs["analysis_ref"]
+    window = inputs["window"]
+    start_ms = inputs["start_ms"]
+    end_ms = inputs["end_ms"]
+    model = inputs["model"]
+    quality = inputs["quality"]
+    quality_enabled = inputs["quality_enabled"]
+    player_motion_available = inputs["player_motion_available"]
+    player_motion_limitation = "player_aim_motion_unavailable_fixed_viewport_center"
+    target_ref = inputs["target_ref"]
+    target = inputs["target"]
+    target_index = inputs["target_index"]
+    alignment_latency_ms = inputs["alignment_latency_ms"]
+    shared_times = inputs["shared_times"]
+    segment_ref = f"{analysis_ref}:segment:tracking:1"
+    predictability_events, predictive_refs = _predictability_events(
+        payload, segment_ref, start_ms,
+    )
+    rows: list[dict[str, Any]] = []
+    samples = _tracking_sample_series(
+        analysis_ref=analysis_ref,
+        quality_enabled=quality_enabled,
+        player_motion_available=player_motion_available,
+        target=target,
+        crosshair=inputs["crosshair"],
+        target_by_time=inputs["target_by_time"],
+        crosshair_by_time=inputs["crosshair_by_time"],
+        target_index=target_index,
+        crosshair_index=inputs["crosshair_index"],
+        shared_times=shared_times,
+    )
+    limitations = list(quality.get("limitations") or [])
+    if not quality_enabled:
+        limitations.append("continuous_tracking_quality_unavailable")
 
     usable = [sample for sample in samples if sample["usable"]]
     radii_available = bool(usable) and all(sample["radius"] is not None for sample in usable)
@@ -991,6 +1057,305 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def aggregate_continuous_tracking_multi_target_v1(
+    track_entries: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate independent single-target tracking analyses into one result.
+
+    Each entry binds one reviewed target track to its unchanged single-track
+    run: ``{"track_ref": str, "payload": continuous_tracking_input.v1,
+    "analysis": continuous_tracking_analysis.v1}``.  All entries must share one
+    ``analysis_ref`` and one canonical window.
+
+    Aggregation semantics (v1, deterministic, no mechanism inference):
+
+    - ``continuous_tracking.time_in_radius_ratio`` is the union of target
+      tracks: a canonical sample counts as on-target when ANY analyzed track is
+      determinately on-target there, over the union of samples where at least
+      one track has a determinate answer.  Per-track values stay in
+      ``per_target``.
+    - ``continuous_tracking.target_relative_error_px`` is the duration-weighted
+      mean of the available per-track values; each track's weight is the time
+      span of its error-determinate samples (minimum 1 ms).  ``distribution``
+      still describes the per-track values; ``value`` is the weighted mean.
+    - ``continuous_tracking.alignment_latency_ms`` is capture-level and
+      identical for every track; it is passed through.
+    - Everything else (losses, reacquisitions, spectral, sparc, change
+      response) is target-relative and stays per track.  Kill association does
+      not exist in continuous tracking v1 and is never merged across tracks.
+
+    The result keeps the ``continuous_tracking_analysis.v1`` top-level shape so
+    existing consumers (Coach advice, baseline matching, evidence extension)
+    read the top level unchanged; ``per_target`` lists
+    ``{"track_ref", "support_status", "result"}`` for every analyzed track.
+    """
+    if (
+        isinstance(track_entries, (str, bytes))
+        or not isinstance(track_entries, Sequence)
+        or len(track_entries) < 2
+    ):
+        raise TrackingAnalysisError(
+            "multi-target aggregation requires at least two track entries",
+        )
+    analyses: list[tuple[str, dict[str, Any], Mapping[str, Any], list[dict[str, Any]]]] = []
+    analysis_ref: str | None = None
+    window: Mapping[str, Any] | None = None
+    for index, entry in enumerate(track_entries):
+        if not isinstance(entry, Mapping):
+            raise TrackingAnalysisError(f"track entry [{index}] is invalid")
+        track_ref = _ref(entry.get("track_ref"), f"track entry [{index}].track_ref")
+        analysis = entry.get("analysis")
+        if not isinstance(analysis, Mapping) or analysis.get("schema_version") != SCHEMA_VERSION:
+            raise TrackingAnalysisError(f"track entry [{index}] analysis is invalid")
+        inputs = _prepared_tracking_inputs(entry.get("payload"))
+        if analysis.get("analysis_ref") != inputs["analysis_ref"]:
+            raise TrackingAnalysisError(
+                f"track entry [{index}] analysis is bound to another analysis",
+            )
+        if analysis_ref is None:
+            analysis_ref = inputs["analysis_ref"]
+            window = inputs["window"]
+        elif analysis_ref != inputs["analysis_ref"] or window != inputs["window"]:
+            raise TrackingAnalysisError(
+                "track entries are bound to another analysis or window",
+            )
+        series = _tracking_sample_series(
+            analysis_ref=inputs["analysis_ref"],
+            quality_enabled=inputs["quality_enabled"],
+            player_motion_available=inputs["player_motion_available"],
+            target=inputs["target"],
+            crosshair=inputs["crosshair"],
+            target_by_time=inputs["target_by_time"],
+            crosshair_by_time=inputs["crosshair_by_time"],
+            target_index=inputs["target_index"],
+            crosshair_index=inputs["crosshair_index"],
+            shared_times=inputs["shared_times"],
+        )
+        analyses.append((track_ref, inputs, analysis, series))
+
+    # 聚合语义 v1（确定性，不推断玩家机制）：
+    # - 时间占比类（time_in_radius_ratio）：union 口径——任一被分析轨道在某
+    #   规范时刻确定贴合即算贴合；分母是"至少一条轨道可判定"的时刻并集。
+    #   逐轨道明细保留在 per_target。
+    # - 误差/距离类（target_relative_error_px）：按时间加权平均，权重=各轨道
+    #   可判定误差样本的时间跨度（至少 1ms）。
+    # - 其余指标（loss/reacquisition/spectral/sparc/change response）是
+    #   target-relative 事实，只保留逐轨道明细，不跨轨合并；continuous
+    #   tracking v1 没有击杀关联指标。
+    union_on_target: dict[int, bool] = {}
+    for _track_ref, _inputs, _analysis, series in analyses:
+        for sample in series:
+            if sample["on_target"] is None:
+                continue
+            time_ms = int(sample["time_ms"])
+            union_on_target[time_ms] = (
+                union_on_target.get(time_ms, False) or bool(sample["on_target"])
+            )
+    union_times = sorted(union_on_target)
+    union_values = [1.0 if union_on_target[time_ms] else 0.0 for time_ms in union_times]
+
+    error_values: list[float] = []
+    error_weights: list[float] = []
+    error_confidences: list[float] = []
+    track_confidences: list[float] = []
+    for _track_ref, _inputs, analysis, series in analyses:
+        metric = (analysis.get("metrics") or {}).get(
+            "continuous_tracking.target_relative_error_px",
+        )
+        confidence = 0.0
+        if isinstance(metric, Mapping) and metric.get("confidence") is not None:
+            confidence = float(metric["confidence"])
+        track_confidences.append(confidence)
+        if (
+            isinstance(metric, Mapping)
+            and metric.get("availability") == "available"
+            and metric.get("value") is not None
+        ):
+            determinate = [
+                int(sample["time_ms"])
+                for sample in series
+                if sample["error_px"] is not None
+            ]
+            error_values.append(float(metric["value"]))
+            error_weights.append(
+                float(max(determinate[-1] - determinate[0], 1)) if determinate else 1.0,
+            )
+            error_confidences.append(confidence)
+
+    condition_refs = sorted({
+        row["condition_ref"]
+        for _track_ref, _inputs, analysis, _series in analyses
+        for row in analysis.get("processed_rows") or []
+        if isinstance(row, Mapping) and row.get("row_kind") == "tracking_episode"
+    })
+    support_statuses = [analysis.get("support_status") for _t, _i, analysis, _s in analyses]
+    support_status = (
+        "supported"
+        if all(status == "supported" for status in support_statuses)
+        else "partial"
+        if any(status in {"supported", "partial"} for status in support_statuses)
+        else "outcome_only"
+    )
+    limitations = sorted({
+        "multi_target_union_of_target_tracks",
+        *(
+            limitation
+            for _track_ref, _inputs, analysis, _series in analyses
+            for limitation in analysis.get("limitations") or []
+        ),
+    })
+    segment_id = f"{analysis_ref}:segment:tracking:multi_target:1"
+    min_confidence = min(track_confidences) if track_confidences else 0.0
+
+    ratio_record = _metric(
+        "continuous_tracking.time_in_radius_ratio",
+        union_values,
+        unit="ratio",
+        event_refs=[],
+        analysis_ref=analysis_ref,
+        segment_refs=[segment_id],
+        condition_refs=condition_refs,
+        limitations=[*limitations, "multi_target_union_time_in_radius"],
+        confidence=min_confidence,
+        use_mean=True,
+    )
+    ratio_record["coverage"] = min(
+        float(ratio_record["coverage"]), float(ratio_record["confidence"]),
+    )
+
+    weighted_error = None
+    weighted_confidence = 0.0
+    if error_values:
+        total_weight = sum(error_weights)
+        weighted_error = (
+            sum(value * weight for value, weight in zip(error_values, error_weights))
+            / total_weight
+        )
+        weighted_confidence = (
+            sum(
+                confidence * weight
+                for confidence, weight in zip(error_confidences, error_weights)
+            )
+            / total_weight
+        )
+    error_record = _metric(
+        "continuous_tracking.target_relative_error_px",
+        error_values,
+        unit="px",
+        event_refs=[],
+        analysis_ref=analysis_ref,
+        segment_refs=[segment_id],
+        condition_refs=condition_refs,
+        limitations=[*limitations, "multi_target_time_weighted_average"],
+        confidence=weighted_confidence,
+        use_mean=True,
+    )
+    if weighted_error is not None:
+        error_record["value"] = weighted_error
+    error_record["coverage"] = min(
+        float(error_record["coverage"]), float(error_record["confidence"]),
+    )
+
+    metrics: dict[str, Any] = {
+        "continuous_tracking.time_in_radius_ratio": ratio_record,
+        "continuous_tracking.target_relative_error_px": error_record,
+    }
+    alignment_record = (analyses[0][2].get("metrics") or {}).get(
+        "continuous_tracking.alignment_latency_ms",
+    )
+    if isinstance(alignment_record, Mapping):
+        passthrough = deepcopy(dict(alignment_record))
+        passthrough["evidence_segment_refs"] = [segment_id]
+        metrics["continuous_tracking.alignment_latency_ms"] = passthrough
+
+    from .analysis_evidence import (
+        validate_evidence_segment_v1,
+        validate_event_bundle_v1,
+        validate_metric_record_v1,
+    )
+
+    for metric_record in metrics.values():
+        validate_metric_record_v1(metric_record)
+    first_inputs = analyses[0][1]
+    first_entry = track_entries[0]
+    available_channels = (
+        [
+            channel
+            for channel in first_entry.get("payload").get("available_channel_keys") or []
+            if isinstance(channel, str)
+        ]
+        if first_inputs["quality_enabled"]
+        else []
+    )
+    evidence_segments: list[dict[str, Any]] = []
+    if union_times:
+        segment_start = union_times[0]
+        segment_end = min(int(window["end_ms"]), union_times[-1] + 1)
+        evidence_segments.append(validate_evidence_segment_v1({
+            "schema_version": "evidence_segment.v1",
+            "segment_id": segment_id,
+            "analysis_ref": analysis_ref,
+            "analyzer_ref": ANALYSIS_VERSION,
+            "segment_kind": "typical",
+            "start_ms": segment_start,
+            "end_ms": segment_end,
+            "focus_start_ms": segment_start,
+            "focus_end_ms": min(segment_end, segment_start + 20_000),
+            "title_key": "continuous_tracking.typical",
+            "rank_reason": "typical",
+            "issue_refs": [],
+            "metric_refs": [
+                f"metric:{record['metric_key']}@{record['metric_version']}"
+                for record in metrics.values()
+            ],
+            "event_refs": [],
+            "available_channels": available_channels,
+            "source_coverage": min_confidence,
+            "confidence": min_confidence,
+            "video_playback": {
+                "availability": "unavailable",
+                "artifact_ref": None,
+                "start_ms": None,
+                "end_ms": None,
+            },
+            "limitations": limitations,
+        }, canonical_window=dict(window)))
+    event_bundle = validate_event_bundle_v1({
+        "schema_version": "event_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "events": [],
+        "outcome_associations": [],
+    })
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_ref": analysis_ref,
+        "analysis_type": "continuous_tracking",
+        "support_status": support_status,
+        "scenario_motion_class": analyses[0][1]["model"],
+        "per_target": [
+            {
+                "track_ref": track_ref,
+                "support_status": analysis.get("support_status"),
+                "result": analysis,
+            }
+            for track_ref, _inputs, analysis, _series in analyses
+        ],
+        "processed_rows": [],
+        "processed_event_tables": [],
+        "metrics": metrics,
+        "evidence_segments": evidence_segments,
+        "comparison": None,
+        "limitations": limitations,
+        "evidence_extension": {
+            "event_bundle": event_bundle,
+            "metric_records": list(metrics.values()),
+            "evidence_segments": evidence_segments,
+            "processed_event_tables": [],
+        },
+    }
+
+
 def extend_analysis_evidence_with_continuous_tracking_v1(
     artifact: Mapping[str, Any], analysis_result: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1047,6 +1412,7 @@ def extend_analysis_evidence_with_continuous_tracking_v1(
 __all__ = [
     "ANALYSIS_VERSION",
     "TrackingAnalysisError",
+    "aggregate_continuous_tracking_multi_target_v1",
     "analyze_continuous_tracking_v1",
     "extend_analysis_evidence_with_continuous_tracking_v1",
 ]

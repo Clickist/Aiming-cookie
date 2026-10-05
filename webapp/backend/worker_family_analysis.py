@@ -406,92 +406,63 @@ def run_dynamic_clicking_analysis(
     return analysis
 
 
-def run_continuous_tracking_analysis(
-    job: dict,
-    visual_result: Mapping[str, object],
-) -> dict:
-    """Adapt one reviewed visual target track into the tracking analyzer input."""
-    from kovaak_tracker.analysis_evidence import validate_event_bundle_v1
-    from kovaak_tracker.tracking_analysis import analyze_continuous_tracking_v1
+_MULTI_TARGET_MIN_TRACK_SAMPLES = 200
+# 样本数低于该阈值的轨道是路过/半遮挡噪声片段（如 34/65/128 样本轨），
+# 多目标场景下不进入分析；单轨道输入不受影响（保持 v1 行为）。
 
-    snapshot = job.get("input_snapshot")
-    if not isinstance(snapshot, Mapping):
-        raise ValueError("continuous tracking input snapshot is unavailable")
-    analysis_ref = f"analysis:{job['id']}"
-    window = snapshot.get("canonical_time_window")
-    resolution = snapshot.get("scenario_resolution")
-    if (
-        visual_result.get("analysis_ref") != analysis_ref
-        or visual_result.get("canonical_time_window") != window
-        or not isinstance(window, Mapping)
-        or not isinstance(resolution, Mapping)
-    ):
-        raise ValueError("continuous tracking visual result is bound to another analysis")
-    local_samples = visual_result.get("local_samples")
-    if not isinstance(local_samples, Mapping):
-        raise ValueError("continuous tracking visual samples are unavailable")
-    crosshair_samples = local_samples.get("crosshair.position")
-    target_tracks = [
-        (match.group(1), samples)
-        for sample_key, samples in local_samples.items()
-        if (match := re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key)))
-        and isinstance(samples, list)
-    ]
-    if len(target_tracks) != 1:
-        raise ValueError("continuous tracking requires one unambiguous target track")
-    track_id, target_samples = target_tracks[0]
-    track_ref = f"{analysis_ref}:target-track:{track_id}"
-    summaries = {
-        summary.get("track_ref"): summary
-        for summary in visual_result.get("track_summaries") or []
-        if isinstance(summary, Mapping) and isinstance(summary.get("track_ref"), str)
-    }
-    summary = summaries.get(track_ref)
-    if not isinstance(summary, Mapping):
-        raise ValueError("continuous tracking target track is unvalidated")
-    identity_limitations = {
+
+def _tracking_identity_limitations(
+    visual_result: Mapping[str, object],
+    summary: Mapping[str, object] | None,
+) -> set[str]:
+    """Identity ambiguity markers that disqualify a track from measurement."""
+    return {
         limitation
         for limitation in [
             *(visual_result.get("limitations") or []),
-            *(summary.get("limitations") or []),
+            *((summary or {}).get("limitations") or []),
         ]
         if limitation in {
             "identity_crossing_ambiguous",
             "reentry_identity_unresolved",
         }
     }
-    if identity_limitations:
-        raise ValueError("continuous tracking target identity is ambiguous")
-    event_bundle = validate_event_bundle_v1(visual_result.get("event_bundle"))
-    if event_bundle["analysis_ref"] != analysis_ref:
-        raise ValueError("continuous tracking event bundle is bound to another analysis")
-    target_change_points = [
+
+
+def _tracking_change_points_for_track(
+    event_bundle: Mapping[str, object],
+    track_ref: str,
+) -> list[dict]:
+    return [
         {"event_ref": event["event_id"], "time_ms": event["start_ms"]}
         for event in event_bundle["events"]
         if event["event_kind"] == "target_change_point"
         and event["actor_refs"] == [track_ref]
         and event["end_ms"] == event["start_ms"]
     ]
-    channels = (visual_result.get("signal_bundle") or {}).get("channels")
-    available_channel_keys = [
-        channel["channel_key"]
-        for channel in channels or []
-        if isinstance(channel, Mapping) and isinstance(channel.get("channel_key"), str)
-    ]
-    explicit_alignment = visual_result.get("alignment_latency_ms")
-    alignment_latency_ms = (
-        float(explicit_alignment)
-        if isinstance(explicit_alignment, (int, float))
-        and not isinstance(explicit_alignment, bool)
-        and math.isfinite(float(explicit_alignment))
-        else None
-    )
-    return analyze_continuous_tracking_v1({
+
+
+def _continuous_tracking_track_payload(
+    *,
+    analysis_ref: str,
+    window: Mapping[str, object],
+    resolution: Mapping[str, object],
+    quality: Mapping[str, object],
+    track_ref: str,
+    target_samples: list,
+    summary: Mapping[str, object],
+    target_change_points: list[dict],
+    available_channel_keys: list[str],
+    alignment_latency_ms: float | None,
+    crosshair_samples: list | None,
+) -> dict:
+    """Build the unchanged single-track analyzer input for one target track."""
+    return {
         "schema_version": "continuous_tracking_input.v1",
         "analysis_ref": analysis_ref,
         "canonical_time_window": dict(window),
         "scenario_resolution": dict(resolution),
-        "visual_quality": dict(visual_result.get("quality") or {}),
+        "visual_quality": dict(quality or {}),
         "player_motion_status": "unavailable_fixed_viewport_center",
         "target_track": {
             "track_ref": track_ref,
@@ -522,7 +493,152 @@ def run_continuous_tracking_analysis(
         "predictability_evidence": [],
         "alignment_latency_ms": alignment_latency_ms,
         "comparison": None,
-    })
+    }
+
+
+def run_continuous_tracking_analysis(
+    job: dict,
+    visual_result: Mapping[str, object],
+) -> dict:
+    """Adapt reviewed visual target tracks into the tracking analyzer input.
+
+    Single-track inputs keep the v1 contract exactly: the unchanged single-track
+    analyzer result is returned as-is.  Multi-track inputs first drop noise
+    tracks (fewer than ``_MULTI_TARGET_MIN_TRACK_SAMPLES`` samples: pass-by or
+    half-occluded fragments), then analyze each surviving track independently
+    with the unchanged single-track analyzer and return the multi-target
+    aggregate from ``aggregate_continuous_tracking_multi_target_v1`` (union
+    time-in-radius, duration-weighted error, per-track detail under
+    ``per_target``).  Tracks with a missing summary or ambiguous identity are
+    excluded from the multi-target set; if nothing analyzable remains the
+    single-track "unambiguous target" error is raised, and a single surviving
+    track is returned in the plain v1 shape.
+    """
+    from kovaak_tracker.analysis_evidence import validate_event_bundle_v1
+    from kovaak_tracker.tracking_analysis import (
+        aggregate_continuous_tracking_multi_target_v1,
+        analyze_continuous_tracking_v1,
+    )
+
+    snapshot = job.get("input_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("continuous tracking input snapshot is unavailable")
+    analysis_ref = f"analysis:{job['id']}"
+    window = snapshot.get("canonical_time_window")
+    resolution = snapshot.get("scenario_resolution")
+    if (
+        visual_result.get("analysis_ref") != analysis_ref
+        or visual_result.get("canonical_time_window") != window
+        or not isinstance(window, Mapping)
+        or not isinstance(resolution, Mapping)
+    ):
+        raise ValueError("continuous tracking visual result is bound to another analysis")
+    local_samples = visual_result.get("local_samples")
+    if not isinstance(local_samples, Mapping):
+        raise ValueError("continuous tracking visual samples are unavailable")
+    crosshair_samples = local_samples.get("crosshair.position")
+    target_tracks = [
+        (match.group(1), samples)
+        for sample_key, samples in local_samples.items()
+        if (match := re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key)))
+        and isinstance(samples, list)
+    ]
+    if not target_tracks:
+        raise ValueError("continuous tracking requires one unambiguous target track")
+    summaries = {
+        summary.get("track_ref"): summary
+        for summary in visual_result.get("track_summaries") or []
+        if isinstance(summary, Mapping) and isinstance(summary.get("track_ref"), str)
+    }
+    channels = (visual_result.get("signal_bundle") or {}).get("channels")
+    available_channel_keys = [
+        channel["channel_key"]
+        for channel in channels or []
+        if isinstance(channel, Mapping) and isinstance(channel.get("channel_key"), str)
+    ]
+    explicit_alignment = visual_result.get("alignment_latency_ms")
+    alignment_latency_ms = (
+        float(explicit_alignment)
+        if isinstance(explicit_alignment, (int, float))
+        and not isinstance(explicit_alignment, bool)
+        and math.isfinite(float(explicit_alignment))
+        else None
+    )
+    quality = visual_result.get("quality") or {}
+
+    if len(target_tracks) > 1:
+        # 多目标路径：噪声过滤（样本数阈值见常量注释），逐轨校验后独立分析。
+        # 汇总语义（union 时间占比 / 时长加权误差 / 逐轨事实不合并）见
+        # aggregate_continuous_tracking_multi_target_v1 的 docstring。
+        candidates = [
+            (track_id, samples)
+            for track_id, samples in sorted(target_tracks, key=lambda item: str(item[0]))
+            if len(samples) >= _MULTI_TARGET_MIN_TRACK_SAMPLES
+        ]
+        analyzable = []
+        for track_id, target_samples in candidates:
+            track_ref = f"{analysis_ref}:target-track:{track_id}"
+            summary = summaries.get(track_ref)
+            if not isinstance(summary, Mapping):
+                continue  # 未验证轨道不进入多目标分析
+            if _tracking_identity_limitations(visual_result, summary):
+                continue  # 身份歧义轨道剔除，保留干净轨道
+            analyzable.append((track_ref, target_samples, summary))
+        if not analyzable:
+            raise ValueError("continuous tracking requires one unambiguous target track")
+        event_bundle = validate_event_bundle_v1(visual_result.get("event_bundle"))
+        if event_bundle["analysis_ref"] != analysis_ref:
+            raise ValueError("continuous tracking event bundle is bound to another analysis")
+        entries = []
+        for track_ref, target_samples, summary in analyzable:
+            payload = _continuous_tracking_track_payload(
+                analysis_ref=analysis_ref,
+                window=window,
+                resolution=resolution,
+                quality=quality,
+                track_ref=track_ref,
+                target_samples=target_samples,
+                summary=summary,
+                target_change_points=_tracking_change_points_for_track(
+                    event_bundle, track_ref,
+                ),
+                available_channel_keys=available_channel_keys,
+                alignment_latency_ms=alignment_latency_ms,
+                crosshair_samples=crosshair_samples,
+            )
+            entries.append({
+                "track_ref": track_ref,
+                "payload": payload,
+                "analysis": analyze_continuous_tracking_v1(payload),
+            })
+        if len(entries) == 1:
+            return entries[0]["analysis"]
+        return aggregate_continuous_tracking_multi_target_v1(entries)
+
+    track_id, target_samples = target_tracks[0]
+    track_ref = f"{analysis_ref}:target-track:{track_id}"
+    summary = summaries.get(track_ref)
+    if not isinstance(summary, Mapping):
+        raise ValueError("continuous tracking target track is unvalidated")
+    if _tracking_identity_limitations(visual_result, summary):
+        raise ValueError("continuous tracking target identity is ambiguous")
+    event_bundle = validate_event_bundle_v1(visual_result.get("event_bundle"))
+    if event_bundle["analysis_ref"] != analysis_ref:
+        raise ValueError("continuous tracking event bundle is bound to another analysis")
+    payload = _continuous_tracking_track_payload(
+        analysis_ref=analysis_ref,
+        window=window,
+        resolution=resolution,
+        quality=quality,
+        track_ref=track_ref,
+        target_samples=target_samples,
+        summary=summary,
+        target_change_points=_tracking_change_points_for_track(event_bundle, track_ref),
+        available_channel_keys=available_channel_keys,
+        alignment_latency_ms=alignment_latency_ms,
+        crosshair_samples=crosshair_samples,
+    )
+    return analyze_continuous_tracking_v1(payload)
 
 
 def run_target_switching_analysis(

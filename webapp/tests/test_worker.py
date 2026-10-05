@@ -3058,6 +3058,113 @@ def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_c
     visual["local_samples"]["target.2.position"] = visual["local_samples"]["target.1.position"]
     with pytest.raises(ValueError, match="unambiguous"):
         worker.run_continuous_tracking_analysis(job, visual)
+
+
+def _tracking_multi_target_fixture(analysis_id: int = 441):
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["canonical_time_window"] = {
+        **snapshot["canonical_time_window"],
+        "start_ms": 0,
+        "end_ms": 2200,
+        "duration_ms": 2200,
+    }
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    job = {"id": analysis_id, "input_snapshot": snapshot}
+    crosshair = [
+        {"canonical_time_ms": time_ms, "x": 0.0, "y": 0.0, "confidence": 1.0}
+        for time_ms in range(0, 2200, 10)
+    ]
+
+    def target(x: float) -> list[dict]:
+        return [
+            {
+                "canonical_time_ms": time_ms,
+                "x": x,
+                "y": 0.0,
+                "visible_radius": 10.0,
+                "confidence": 1.0,
+            }
+            for time_ms in range(0, 2200, 10)
+        ]
+
+    visual = {
+        "analysis_ref": f"analysis:{analysis_id}",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "quality": {"status": "accepted", "enabled_metric_families": ["tracking"]},
+        "local_samples": {
+            "crosshair.position": crosshair,
+            "target.1.position": target(0.0),
+            "target.2.position": target(50.0),
+        },
+        "track_summaries": [
+            {"track_ref": f"analysis:{analysis_id}:target-track:1", "limitations": []},
+            {"track_ref": f"analysis:{analysis_id}:target-track:2", "limitations": []},
+        ],
+        "event_bundle": {
+            "schema_version": "event_bundle.v1",
+            "analysis_ref": f"analysis:{analysis_id}",
+            "events": [],
+            "outcome_associations": [],
+        },
+        "signal_bundle": {"channels": [{"channel_key": "crosshair.position_x"}]},
+    }
+    return job, visual
+
+
+def test_tracking_worker_adapter_aggregates_multi_target_tracks():
+    job, visual = _tracking_multi_target_fixture()
+
+    result = worker.run_continuous_tracking_analysis(job, visual)
+
+    assert result["schema_version"] == "continuous_tracking_analysis.v1"
+    assert len(result["per_target"]) == 2
+    assert result["per_target"][0]["track_ref"] == "analysis:441:target-track:1"
+    assert result["per_target"][0]["result"]["processed_rows"][0][
+        "target_track_ref"
+    ] == "analysis:441:target-track:1"
+    ratio = result["metrics"]["continuous_tracking.time_in_radius_ratio"]
+    assert ratio["value"] == pytest.approx(1.0)
+    error = result["metrics"]["continuous_tracking.target_relative_error_px"]
+    assert error["value"] == pytest.approx(25.0)
+    assert "multi_target_union_of_target_tracks" in result["limitations"]
+
+
+def test_tracking_worker_adapter_drops_noise_tracks_and_keeps_plain_v1_result():
+    job, visual = _tracking_multi_target_fixture()
+    visual["local_samples"]["target.2.position"] = (
+        visual["local_samples"]["target.2.position"][:199]
+    )
+    captured = {}
+
+    def analyze(payload):
+        captured.update(payload)
+        return {"analysis_version": "continuous_tracking.v1"}
+
+    with patch("kovaak_tracker.tracking_analysis.analyze_continuous_tracking_v1", analyze):
+        result = worker.run_continuous_tracking_analysis(job, visual)
+
+    assert result == {"analysis_version": "continuous_tracking.v1"}
+    assert captured["target_track"]["track_ref"] == "analysis:441:target-track:1"
+
+
+def test_tracking_worker_adapter_requires_an_analyzable_target_track():
+    job, visual = _tracking_multi_target_fixture()
+    for key in ("target.1.position", "target.2.position"):
+        visual["local_samples"][key] = visual["local_samples"][key][:199]
+
+    with pytest.raises(ValueError, match="unambiguous"):
+        worker.run_continuous_tracking_analysis(job, visual)
+
+
 def test_dynamic_worker_adapter_uses_raw_clicks_and_visual_numeric_signals():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"

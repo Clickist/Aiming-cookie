@@ -12,6 +12,7 @@ from kovaak_tracker.analysis_evidence import (
 )
 from kovaak_tracker.tracking_analysis import (
     TrackingAnalysisError,
+    aggregate_continuous_tracking_multi_target_v1,
     analyze_continuous_tracking_v1,
     extend_analysis_evidence_with_continuous_tracking_v1,
 )
@@ -458,3 +459,104 @@ def test_rejects_predictability_evidence_for_another_segment():
 
     with pytest.raises(TrackingAnalysisError, match="another segment"):
         analyze_continuous_tracking_v1(payload)
+
+
+def _multi_target_payload(track_id: str, target_x: float, *, radius: float | None = 15.0) -> dict:
+    samples = [
+        {"canonical_time_ms": time_ms, "x": float(target_x), "y": 0.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+    if radius is not None:
+        for sample in samples:
+            sample["radius"] = radius
+    payload = _payload()
+    payload["analysis_ref"] = "analysis:multi:1"
+    payload["target_track"] = {
+        "track_ref": f"analysis:multi:1:target-track:{track_id}",
+        "samples": samples,
+    }
+    payload["crosshair_samples"] = [
+        {"canonical_time_ms": time_ms, "x": 0.0, "y": 0.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+    return payload
+
+
+def _multi_target_entries(**kwargs) -> list[dict]:
+    entries = []
+    for track_id, target_x in (("1", 0.0), ("2", 100.0)):
+        payload = _multi_target_payload(track_id, target_x, **kwargs)
+        entries.append({
+            "track_ref": payload["target_track"]["track_ref"],
+            "payload": payload,
+            "analysis": analyze_continuous_tracking_v1(payload),
+        })
+    return entries
+
+
+def test_multi_target_aggregate_uses_union_ratio_and_weighted_error():
+    aggregate = aggregate_continuous_tracking_multi_target_v1(_multi_target_entries())
+
+    assert aggregate["schema_version"] == "continuous_tracking_analysis.v1"
+    assert aggregate["support_status"] == "supported"
+    ratio = aggregate["metrics"]["continuous_tracking.time_in_radius_ratio"]
+    assert ratio["value"] == pytest.approx(1.0)
+    assert ratio["population"]["sample_count"] == 4
+    assert "multi_target_union_time_in_radius" in ratio["limitations"]
+    error = aggregate["metrics"]["continuous_tracking.target_relative_error_px"]
+    assert error["value"] == pytest.approx(50.0)
+    assert "multi_target_time_weighted_average" in error["limitations"]
+    assert len(aggregate["per_target"]) == 2
+    assert aggregate["per_target"][0]["track_ref"] == "analysis:multi:1:target-track:1"
+    assert aggregate["per_target"][0]["support_status"] == "supported"
+    assert aggregate["per_target"][1]["result"]["metrics"][
+        "continuous_tracking.time_in_radius_ratio"
+    ]["value"] == pytest.approx(0.0)
+    assert "multi_target_union_of_target_tracks" in aggregate["limitations"]
+
+
+def test_multi_target_aggregate_union_fails_closed_without_radius():
+    aggregate = aggregate_continuous_tracking_multi_target_v1(
+        _multi_target_entries(radius=None),
+    )
+
+    ratio = aggregate["metrics"]["continuous_tracking.time_in_radius_ratio"]
+    assert ratio["availability"] == "unavailable"
+    assert ratio["value"] is None
+    error = aggregate["metrics"]["continuous_tracking.target_relative_error_px"]
+    assert error["availability"] == "available"
+    assert error["value"] == pytest.approx(50.0)
+
+
+def test_multi_target_aggregate_round_trips_through_evidence_extension():
+    aggregate = aggregate_continuous_tracking_multi_target_v1(_multi_target_entries())
+    artifact = build_analysis_evidence_artifact_v1(
+        analysis_ref="analysis:multi:1",
+        canonical_time_window=_multi_target_payload("1", 0.0)["canonical_time_window"],
+        scenario_profile_ref=None,
+        stats=None,
+        performance=None,
+        stats_source_ref=None,
+        performance_source_ref=None,
+    )
+
+    extended = extend_analysis_evidence_with_continuous_tracking_v1(artifact, aggregate)
+
+    keys = [metric["metric_key"] for metric in extended["metric_records"]]
+    assert keys.count("continuous_tracking.time_in_radius_ratio") == 1
+    assert keys.count("continuous_tracking.target_relative_error_px") == 1
+
+
+def test_multi_target_aggregate_requires_two_bound_entries():
+    with pytest.raises(TrackingAnalysisError, match="at least two"):
+        aggregate_continuous_tracking_multi_target_v1([])
+    entries = _multi_target_entries()
+    other = _multi_target_payload("3", 0.0)
+    other["analysis_ref"] = "analysis:multi:2"
+    entries.append({
+        "track_ref": other["target_track"]["track_ref"],
+        "payload": other,
+        "analysis": analyze_continuous_tracking_v1(other),
+    })
+    with pytest.raises(TrackingAnalysisError, match="another analysis or window"):
+        aggregate_continuous_tracking_multi_target_v1(entries)
