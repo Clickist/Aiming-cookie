@@ -412,6 +412,14 @@ def main():
 
     cam = load_camera(args.camera)
     inp = load_input_maps_clicks(args.input)
+    # [fix 2026-10-06 修C] 增量冻结件相机通道零帧（camera_probe 未产出有效 cam 行）
+    # 时，下游 kill_click_check 的钳制 min(max(c,0), len(cam_ts)-1) 产出 -1 → 空表
+    # 负索引 IndexError crash（00:19 Administrator 案 incr/cut-run3/4 连续 exit=1，
+    # v1.3.9:727 与 HEAD 同病）。fail-closed：拒旁车 + cause 码，不 crash。
+    if not cam["frames"]:
+        print("!! 相机通道零帧（冻结件无有效 cam 记录）—— fail-closed 拒绝写旁车 "
+              "[cause=camera_zero_frames]")
+        return 2
     click_epochs = sorted(t + inp["delta"] for t in inp["clicks_perf"])
 
     # 粗锚：目录名墙钟
