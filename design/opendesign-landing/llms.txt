@@ -16,7 +16,7 @@
 ## Key facts / 关键事实
 
 - Platform: Windows 10/11 64-bit desktop app (Tauri); requires KovaaK's on Steam
-- Download: free direct installer at https://dl.aimingcookie.com/Aiming_Cookie_1.4.2_x64-setup.exe (latest version v1.4.2)
+- Download: free direct installer at https://dl.aimingcookie.com/Aiming_Cookie_1.4.3_x64-setup.exe (latest version v1.4.3)
 - Pricing: BYOK tier free forever (bring your own LLM API key); Standard ¥10/month; Plus ¥30/month — official hosted model included in paid tiers
 - Not a cheat: runs entirely outside the game — no memory reading, no injection, no aim assistance; analysis happens after training sessions
 - Privacy: match data, analyses and coach conversations are stored locally in human-readable JSON; nothing is uploaded unless the user explicitly sends it (coach chat or a diagnostic log upload)
