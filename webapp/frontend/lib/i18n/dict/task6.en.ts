@@ -695,5 +695,5 @@ export const task6En = {
   "settings.performance.encoderSoftware": "Software encoding (high CPU usage, may stutter games)",
   "settings.performance.notRecording": "Not recording",
   "settings.performance.loading": "Reading encoder path",
-  "settings.performance.desktopOnly": "Encoder path status is only available in the desktop app."
+  "settings.performance.desktopOnly": "Encoder path status is only available in the desktop app.",
 } as const;

@@ -697,5 +697,5 @@ export const task6Zh = {
   "settings.performance.encoderSoftware": "软件编码（CPU 占用较高，游戏时可能卡顿）",
   "settings.performance.notRecording": "未在录制",
   "settings.performance.loading": "正在读取编码路径",
-  "settings.performance.desktopOnly": "编码路径状态仅桌面端可用。"
+  "settings.performance.desktopOnly": "编码路径状态仅桌面端可用。",
 } as const;
