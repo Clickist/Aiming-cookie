@@ -49,7 +49,7 @@ export interface CoachToolStep {
   resultPreview?: string | null;
 }
 
-/** 工作流时序段：一段思考或一步工具，按发生顺序交错排列。 */
+/** 工作流时序段：一段思考、一步工具或一行压缩状态，按发生顺序交错排列。 */
 export type CoachWorkSegment =
   | {
     kind: "thinking";
@@ -59,7 +59,8 @@ export type CoachWorkSegment =
     startedAtMs: number | null;
     frozenMs: number | null;
   }
-  | { kind: "tool"; step: CoachToolStep };
+  | { kind: "tool"; step: CoachToolStep }
+  | { kind: "compaction"; key: string; startedAtMs: number | null };
 
 /** 冻结一个思考段：终文落定、流式终止、时长按冻结时刻与段起点差补算。 */
 export function freezeThinkingSegment(
@@ -92,16 +93,22 @@ export function settleTerminalWorkSegments(
   settledAtMs: number | null,
 ): CoachWorkSegment[] {
   let changed = false;
-  const next = segments.map((segment) => {
+  const next = segments.flatMap((segment) => {
+    // 压缩状态行只在压缩进行中有意义：终态（含压缩失败 fail-open 后继续
+    // 对话的路径）就地移除，不留悬挂的“整理中”扫光。
+    if (segment.kind === "compaction") {
+      changed = true;
+      return [];
+    }
     if (segment.kind === "thinking" && segment.streaming) {
       changed = true;
-      return freezeThinkingSegment(segment, null, settledAtMs);
+      return [freezeThinkingSegment(segment, null, settledAtMs)];
     }
     if (segment.kind === "tool" && segment.step.state === "active") {
       changed = true;
-      return { kind: "tool" as const, step: { ...segment.step, state: "fail" as const } };
+      return [{ kind: "tool" as const, step: { ...segment.step, state: "fail" as const } }];
     }
-    return segment;
+    return [segment];
   });
   return changed ? next : segments;
 }
@@ -238,6 +245,20 @@ export function CoachThinkingBlock({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── 压缩状态行 ────────────────────────────────────────────────────────
+   compaction started→completed/failed 期间的单行状态：与思考段同族视觉
+   （星芒 + 扫光），无折叠、无计时——完成/失败即整行移除，不落归档。 */
+function CoachCompactionRow() {
+  return (
+    <div className="task6-tool-step" data-state="active" role="listitem">
+      <IconSpark className="task6-think-glyph" data-live />
+      <span className="task6-tool-body">
+        <span className="task6-tool-label task6-shimmer-text">{t("coach.activity.compacting")}</span>
+      </span>
     </div>
   );
 }
@@ -417,6 +438,7 @@ export function CoachWorkStream({
   const [expanded, setExpanded] = useState(false);
   type Row =
     | { kind: "thinking"; segment: Extract<CoachWorkSegment, { kind: "thinking" }> }
+    | { kind: "compaction"; segment: Extract<CoachWorkSegment, { kind: "compaction" }> }
     | { kind: "group"; label: string; steps: CoachToolStep[] }
     | { kind: "tool"; step: CoachToolStep };
 
@@ -424,6 +446,10 @@ export function CoachWorkStream({
   for (const segment of segments) {
     if (segment.kind === "thinking") {
       rows.push({ kind: "thinking", segment });
+      continue;
+    }
+    if (segment.kind === "compaction") {
+      rows.push({ kind: "compaction", segment });
       continue;
     }
     const { step } = segment;
@@ -475,6 +501,13 @@ export function CoachWorkStream({
         const segEnd = row.segment.frozenMs != null ? row.segment.startedAtMs + row.segment.frozenMs : null;
         if (segEnd != null) endMs = endMs === null ? segEnd : Math.max(endMs, segEnd);
       }
+    } else if (row.kind === "compaction") {
+      // 压缩中＝仍在干活：折叠摘要行给出「整理会话记忆」的活动出口。
+      hasLive = true;
+      activityLabel = activityLabel ?? t("coach.activity.compacting");
+      if (row.segment.startedAtMs != null) {
+        startMs = startMs === null ? row.segment.startedAtMs : Math.min(startMs, row.segment.startedAtMs);
+      }
     } else if (row.kind === "group") {
       row.steps.forEach(noteStep);
     } else {
@@ -520,6 +553,9 @@ export function CoachWorkStream({
                   text={segment.text}
                 />
               );
+            }
+            if (row.kind === "compaction") {
+              return <CoachCompactionRow key={row.segment.key} />;
             }
             if (row.kind === "group") {
               return <WorkGroupLine key={`g${index}`} label={row.label} steps={row.steps} />;

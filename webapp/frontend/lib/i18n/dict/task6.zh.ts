@@ -179,6 +179,7 @@ export const task6Zh = {
   "coach.activity.thinking": "思考中",
   "coach.activity.thinkingDone": "思考过程",
   "coach.activity.thinkingDuration": "思考过程 · 持续了 {n} 秒",
+  "coach.activity.compacting": "正在整理会话记忆…",
   "coach.activity.collapseDetail": "收起{label}明细",
   "coach.activity.expandDetail": "展开{label}明细",
   "coach.activity.streamLabel": "工作过程",

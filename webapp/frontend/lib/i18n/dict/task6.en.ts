@@ -175,6 +175,7 @@ export const task6En = {
   "coach.activity.thinking": "Thinking",
   "coach.activity.thinkingDone": "Thought process",
   "coach.activity.thinkingDuration": "Thought process · took {n}s",
+  "coach.activity.compacting": "Organizing session memory…",
   "coach.activity.collapseDetail": "Collapse {label} details",
   "coach.activity.expandDetail": "Expand {label} details",
   "coach.activity.streamLabel": "Work in progress",

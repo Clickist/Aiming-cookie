@@ -78,7 +78,7 @@ export type CoachPartialRevision = {
 
 export type CoachActivityUpdate = {
   sequence: number;
-  kind: "thinking" | "tool" | "queue";
+  kind: "thinking" | "tool" | "queue" | "compaction";
   state: "started" | "completed" | "failed" | "updated";
   /** thinking started 专用：上一轮思考段终文（full-replace）。恒带——null＝
      该轮无前置思考段；undefined＝旧版 sidecar（无分段协议）。 */
@@ -335,9 +335,19 @@ function estimateMessageTokensCjkAware(message: unknown): number {
 }
 
 /**
- * 长会话压缩判定（审计#18，0908/1002 修复）：用 pi 内建的
- * estimateContextTokens + shouldCompact 按 token 余量判断是否该让
- * harness.compact() 压缩，另做两层加固：
+ * 压缩触发线＝窗口的固定比例（点点 2026-10-07 拍板）。pi 原版公式是固定
+ * reserve 16384（tokens > window−16K 才压缩），对 1M 窗口的
+ * deepseek-v4-flash 触发点在 98.4%——会话涨到 55 万+ tokens 也不压缩
+ * （2026-10-05 生产事故实证）。业界口径：Cline 80%、Claude Code 92-95%
+ * （配 200K 小窗）、Gemini CLI 50%；1M 窗口下 80%＝80 万 tokens 触发，
+ * 既给摘要输出留足余量，也不会久到触发网关 413。
+ */
+const COMPACTION_TRIGGER_RATIO = 0.8;
+
+/**
+ * 长会话压缩判定（审计#18，0908/1002 修复）：折叠视图 + CJK 感知估算
+ * 超过窗口固定比例（COMPACTION_TRIGGER_RATIO）即让 harness.compact()
+ * 压缩，另做两层加固：
  *
  * 1. **折叠视图**：估算对象是 session.buildContext() 的返回（= 实际要发送
  *    的视图，compaction 之后旧历史已被摘要替换）。朴素对 getBranch() 全量
@@ -348,16 +358,16 @@ function estimateMessageTokensCjkAware(message: unknown): number {
  *    回来时 usage 基准严重低估 → 首请求绕过 compaction 直发全量历史。与
  *    CJK 感知的字符全量估算取 max，保证超长历史的首请求也必触发。
  *
+ * 比例语义替代 pi 的「窗口减固定 reserve」：固定 reserve 是小窗时代参数，
+ * 大窗口下触发点被推向 98%+（见 COMPACTION_TRIGGER_RATIO 注释）。
  * contextWindow 未知（≤0）时明确返回 false；模型目录与自定义档都兜底
  * 128K（provider-models），正常不会走到该分支。这是唯一的上下文窗口
  * 管理，没有条数级兜底（见上方缓存注）。
  */
 export async function shouldCompactNow(session: unknown, contextWindow: number): Promise<boolean> {
   if (typeof contextWindow !== "number" || contextWindow <= 0) return false;
-  const { estimateContextTokens, shouldCompact, DEFAULT_COMPACTION_SETTINGS } = (await loadPiAgent()) as {
+  const { estimateContextTokens } = (await loadPiAgent()) as {
     estimateContextTokens: (messages: unknown[]) => { tokens: number };
-    shouldCompact: (tokens: number, contextWindow: number, settings: unknown) => boolean;
-    DEFAULT_COMPACTION_SETTINGS: unknown;
   };
   const target = session as { buildContext(options?: unknown): Promise<{ messages: unknown[] }> };
   const messages = (await target.buildContext()).messages;
@@ -366,7 +376,7 @@ export async function shouldCompactNow(session: unknown, contextWindow: number):
   for (const message of messages) {
     charEstimate += estimateMessageTokensCjkAware(message);
   }
-  return shouldCompact(Math.max(estimate.tokens, charEstimate), contextWindow, DEFAULT_COMPACTION_SETTINGS);
+  return Math.max(estimate.tokens, charEstimate) > contextWindow * COMPACTION_TRIGGER_RATIO;
 }
 
 // ── Request parsing ──────────────────────────────────────────────────────
@@ -495,8 +505,8 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 
 // ── Persistent session wrapper ───────────────────────────────────────────
 
-// 上下文窗口管理只有一种：pi compaction（contextWindow−16K 触发，
-// shouldCompactNow）。任何我们自己发明的「截断/清除」都会移动请求前缀，
+// 上下文窗口管理只有一种：pi compaction（窗口 80% 触发，shouldCompactNow）。
+// 任何我们自己发明的「截断/清除」都会移动请求前缀，
 // 让 DeepSeek 前缀缓存全量作废——谷段缓存命中价 ¥0.007/M 只有未命中
 // ¥0.22/M 的 3%，保历史反而便宜。前车之鉴两条：
 //
@@ -507,7 +517,7 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 //    最近 40 条。教练一轮带工具调用 4-8 条消息，聊 5-10 轮就撞顶，之后每
 //    轮窗口前滑一条 → 第一条消息变化 → system prompt 之后全部缓存作废，
 //    长对话用户命中率极低（「缓存非常低」的根因）。pi 的 Session 本就无
-//    条数上限，token 级 compaction 触发频率低得多（约 128K−16K 才切一次）。
+//    条数上限，token 级 compaction 触发频率低得多（约窗口 80% 才切一次）。
 
 function isMessageEntry(entry: unknown): entry is {
   type: string;
@@ -1330,16 +1340,27 @@ export async function runCoachTurn(
       queue: queueTarget,
     });
 
-    // 长会话压缩（pi 内建 compaction，审计#18）：token 余量不足时先让 pi 把
-    // 旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动
+    // 长会话压缩（pi 内建 compaction，审计#18）：token 超窗口 80% 时先让 pi
+    // 把旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动
     // 用摘要替换被压缩历史，查询侧零改动。这是唯一的窗口管理（40 条滑窗已
-    // 移除，见上方缓存注）。压缩失败绝不拦对话，只落诊断日志。
+    // 移除，见上方缓存注）。压缩是一次独立 LLM 摘要调用（可能几十秒），
+    // started/completed/failed 经 activity 通道让前端显示“正在整理会话记忆”，
+    // 替代无反馈的静默等待。压缩失败绝不拦对话，只落诊断日志（fail-open）。
     try {
       const shouldCompact = await shouldCompactNow(
         session,
         (resolved.model as { contextWindow?: number }).contextWindow ?? 0,
       );
-      if (shouldCompact) await harness.compact();
+      if (shouldCompact) {
+        await publishActivity({ kind: "compaction", state: "started" });
+        try {
+          await harness.compact();
+          await publishActivity({ kind: "compaction", state: "completed" });
+        } catch (compactionError) {
+          await publishActivity({ kind: "compaction", state: "failed" });
+          throw compactionError;
+        }
+      }
     } catch (compactionError) {
       try {
         appendFileSync(

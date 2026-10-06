@@ -276,6 +276,25 @@ function deriveWorkSegments(run: CoachAgentRunV1 | null): CoachWorkSegment[] {
   };
   for (const event of run.events) {
     const payload = event.payload ?? {};
+    if (event.type === "phase" && event.code === "compaction_started") {
+      // 压缩状态行（sidecar 压缩开始）：started 覆盖、completed/failed 移除，
+      // 完成即消失、不落归档（压缩发生在回合开头，同一回合至多一行）。
+      const startedAtMs = Date.parse(event.created_at);
+      const segment: CoachWorkSegment = {
+        kind: "compaction",
+        key: event.event_ref ?? `compaction-${event.sequence}`,
+        startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : null,
+      };
+      const index = segments.findIndex((item) => item.kind === "compaction");
+      if (index >= 0) segments[index] = segment;
+      else segments.push(segment);
+      continue;
+    }
+    if (event.type === "phase" && (event.code === "compaction_completed" || event.code === "compaction_failed")) {
+      const index = segments.findIndex((item) => item.kind === "compaction");
+      if (index >= 0) segments.splice(index, 1);
+      continue;
+    }
     if (event.type === "phase" && event.code === "thinking_started") {
       // 旧协议（字段缺失）：events 无分段终文，不按轮开段（无内容可填）。
       if (payload.thinking_text === undefined) continue;
@@ -723,10 +742,35 @@ export function CoachPanel({
   archivedTurnsRef.current = archivedTurns;
 
   /** SSE activity：thinking started＝新思考段开始（上一段由帧内终文冻结）；
-      tool started/completed＝工具段入列/收尾。 */
+      tool started/completed＝工具段入列/收尾；compaction started/completed/
+      failed＝压缩状态行的出现与移除。 */
   const applyLiveActivity = useCallback((event: CoachAgentRunEventV1) => {
     const payload = event.payload ?? {};
     const createdAtMs = Date.parse(event.created_at);
+    if (event.type === "phase" && event.code === "compaction_started") {
+      const segment: CoachWorkSegment = {
+        kind: "compaction",
+        key: event.event_ref ?? `live-compaction-${event.sequence}`,
+        startedAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Date.now(),
+      };
+      setLiveSegments((current) => {
+        const index = current.findIndex((item) => item.kind === "compaction");
+        if (index >= 0) {
+          const next = [...current];
+          next[index] = segment;
+          return next;
+        }
+        return [...current, segment];
+      });
+      return;
+    }
+    if (event.type === "phase" && (event.code === "compaction_completed" || event.code === "compaction_failed")) {
+      setLiveSegments((current) => {
+        if (!current.some((item) => item.kind === "compaction")) return current;
+        return current.filter((item) => item.kind !== "compaction");
+      });
+      return;
+    }
     if (event.type === "phase" && event.code === "thinking_started") {
       // 旧协议（字段缺失）：不按轮开段，保持单思考块降级模式。
       if (payload.thinking_text === undefined) return;
@@ -1493,7 +1537,9 @@ export function CoachPanel({
             ? freezeThinkingSegment(segment, null, settledAt)
             : segment,
         )
-        .filter((segment) => segment.kind !== "thinking" || segment.text.trim().length > 0);
+        // 压缩状态行是瞬态提示：正常在 completed/failed 已移除，这里兜底保证
+        // 它永不进 localStorage 归档。
+        .filter((segment) => segment.kind !== "compaction" && (segment.kind !== "thinking" || segment.text.trim().length > 0));
       // 写入当前会话键的归档条目（Map + localStorage 持久化，切换/刷新不丢）。
       const nextTurns = new Map(archivedTurnsRef.current);
       nextTurns.set(activeSessionKeyRef.current, { segments: settledSegments });
