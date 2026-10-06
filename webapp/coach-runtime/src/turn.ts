@@ -820,8 +820,23 @@ function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
   return COACH_RUNTIME_TURN_SCHEMA;
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof ProviderProfileError ? error.code : "turn_failed";
+/** 错误文案分层合同（点点 2026-10-06 拍板的分类矩阵）：从原始错误文本提取
+ * 稳定 code 透传前端（api.error.* 字典键），不再把网络/额度/鉴权全部折叠成
+ * turn_failed。判据顺序＝先特定后一般：quota/鉴权在前，防止被网络类宽
+ * pattern 吞掉。retryable 与此同源（service_overloaded 可手动重试）。 */
+function classifyCoachFailureCode(error: unknown): string {
+  if (error instanceof ProviderProfileError) return error.code;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  // 额度类：new-api 网关 403 透传（中转/BYOK 链路）、accounts 网关稳定 type
+  // （quota_prehold_insufficient）与 OpenAI 口径。重试无意义。
+  if (/insufficient_user_quota|insufficient_quota|quota_exhausted|quota_prehold_insufficient|预扣费额度失败|用户额度不足/i.test(message)) return "quota_exhausted";
+  // 鉴权类：上游 401（key 无效/过期）与网关 auth_expired。订阅 jwt 过期在前端网关分流（§5.3）先行。
+  if (/authentication_error|invalid[_ ]?api[_ ]?key|unauthorized|\b401\b|auth_expired/i.test(message)) return "provider_auth_invalid";
+  // 服务过载/限流：瞬态，pi 流式层已重试（streamOptions.maxRetries），耗尽后仍可手动重试。
+  if (/rate.?limit|too many requests|overloaded|service.?unavailable|internal.?error|\b429\b|\b50[0234]\b/i.test(message)) return "service_overloaded";
+  // 网络瞬断（TUN/VPN 切节点、链路抖动）：isTransientProviderError 同判据。
+  if (isTransientProviderError(error)) return "network_transient";
+  return "turn_failed";
 }
 
 // 网络类瞬断（undici 的 "terminated"/"fetch failed"、socket/超时等）允许
@@ -1520,12 +1535,20 @@ export async function runCoachTurn(
     } catch {
       // Best-effort error capture; never mask the original failure.
     }
+    // retryable 与 code 同源：quota/鉴权分类明确的失败重试无意义必须禁止；
+    // 其余（含 provider 错误无详情的透传形态）保持原可重试语义——瞬态失败
+    // 标成不可重试会把一次抖动变成死局。
+    const failureCode = stopped ? "stopped" : classifyCoachFailureCode(error);
+    const deterministicFailure = failureCode === "quota_exhausted" || failureCode === "provider_auth_invalid";
     return failureResponse(
       makeError({
         category: "coach_runtime",
-        code: stopped ? "stopped" : errorCode(error),
+        code: failureCode,
         message: userFacingErrorMessage(error, stopped),
-        retryable: stopped || error instanceof EmptyAssistantReplyError || isTransientProviderError(error),
+        retryable: stopped
+          || failureCode === "service_overloaded"
+          || failureCode === "network_transient"
+          || (error instanceof EmptyAssistantReplyError && !deterministicFailure),
       }),
       [],
       responseSchema,

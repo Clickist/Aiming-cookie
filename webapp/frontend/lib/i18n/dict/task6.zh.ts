@@ -161,6 +161,7 @@ export const task6Zh = {
   "coach.message.stopped": "回答已停止",
   "coach.error.cardTail": "{message} 已生成的部分已保留；本地分析、历史和视频不受影响。",
   "coach.error.relogin": "重新登录",
+  "coach.error.topUp": "去充值",
   "coach.selection.toolbarLabel": "划选操作",
   "coach.selection.quote": "引用",
   "coach.unread.prompt": "↓ {n} 条新内容 · 回到底部",
@@ -681,6 +682,12 @@ export const task6Zh = {
   "api.error.analysisFailed": "分析失败，请重试；若持续失败请联系维护者。",
   "api.error.staleLeaseExhausted": "分析中断且重试次数已用尽，请重新提交或点击重试。",
   "api.error.legacyError": "分析失败，请重试；若持续失败请联系维护者。",
+  // Coach 错误分层（点点 2026-10-06 拍板矩阵）：sidecar classifyCoachFailureCode
+  // 的稳定 code → 用户文案；行为引导按钮随 code 绑在错误卡上（CoachPanel）。
+  "api.error.networkTransient": "网络波动（可能与本机 VPN/代理切换有关），已自动重试仍未成功，可点「重试」再试一次。",
+  "api.error.serviceOverloaded": "服务繁忙（当前使用人数较多），已自动重试仍未成功，请稍后再试。",
+  "api.error.quotaExhausted": "本期额度已用完。可在账号中心购买加油包（永不过期）或续期订阅。",
+  "api.error.providerAuthInvalid": "模型服务认证失败：API key 无效或已过期，请在 设置 → 模型服务 中检查。",
 
   // ── SettingsWorkspace.tsx —— 性能屏（录像编码路径只读展示）─────────────
   "settings.nav.performance": "性能",

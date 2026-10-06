@@ -3243,6 +3243,9 @@ export function CoachPanel({
                 {gatewayCode === "jwt_expired" ? (
                   <Button onClick={() => router.push("/account")} size="compact" variant="secondary">{t("coach.error.relogin")}</Button>
                 ) : null}
+                {gatewayCode === "quota_exhausted" || gatewayCode === "quota_prehold_insufficient" || error.code === "quota_exhausted" ? (
+                  <Button onClick={() => router.push("/account")} size="compact" variant="secondary">{t("coach.error.topUp")}</Button>
+                ) : null}
                 {error.retryable && !gateway ? (
                   <Button onClick={() => void retry(error.runRef)} size="compact" variant="secondary">{t("common.retry")}</Button>
                 ) : null}

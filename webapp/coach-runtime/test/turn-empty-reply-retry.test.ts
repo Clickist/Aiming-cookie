@@ -158,6 +158,8 @@ test("provider error text stays passthrough for gateway classification (A3 chann
   // EmptyAssistantReplyError(fromProviderError=true) 的 userFacing 必须原样透传
   // 底层错误体：前端网关错误码分流（契约 §5.3）要从 run.error.message 里做
   // 子串识别。走真实 turn 链路验证。
+  // 2026-10-06 错误分层矩阵：quota 类分类码确定后 retryable=false（重试无
+  // 意义），前端给充值引导而非重试按钮——原 true 断言随矩阵作废。
   const streamFn: StreamFn = async () =>
     errorAssistant('403: {"error":{"message":"本回合预扣超过剩余额度","type":"quota_prehold_insufficient"}}');
   const created = createAgentRun("empty-reply-owner", "网关错误透传", { sessionId: 73, streamFn });
@@ -165,7 +167,8 @@ test("provider error text stays passthrough for gateway classification (A3 chann
   const run = getAgentRun("empty-reply-owner", created.run_ref);
   assert.ok(run);
   assert.equal(run.status, "failed");
-  assert.equal(run.error?.retryable, true);
+  assert.equal(run.error?.code, "quota_exhausted", `quota body must classify: ${JSON.stringify(run.error)}`);
+  assert.equal(run.error?.retryable, false);
   assert.ok(
     String(run.error?.message ?? "").includes("quota_prehold_insufficient"),
     `gateway body must pass through: ${JSON.stringify(run.error)}`,

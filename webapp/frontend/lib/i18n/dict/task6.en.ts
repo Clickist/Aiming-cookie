@@ -157,6 +157,7 @@ export const task6En = {
   "coach.message.stopped": "Reply stopped",
   "coach.error.cardTail": "{message} The part already generated is kept; local analysis, history, and video are unaffected.",
   "coach.error.relogin": "Sign in again",
+  "coach.error.topUp": "Top up",
   "coach.selection.toolbarLabel": "Selection actions",
   "coach.selection.quote": "Quote",
   "coach.unread.prompt": "↓ {n} new · back to bottom",
@@ -678,6 +679,13 @@ export const task6En = {
   "api.error.analysisFailed": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
   "api.error.staleLeaseExhausted": "The analysis was interrupted and its retry attempts are exhausted. Please submit again or hit retry.",
   "api.error.legacyError": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
+  // Coach error taxonomy (matrix approved by DianDian 2026-10-06): stable codes
+  // from sidecar classifyCoachFailureCode → user copy; action buttons bind by
+  // code on the error card (CoachPanel).
+  "api.error.networkTransient": "Network hiccup (possibly a local VPN/proxy switch). Auto-retry did not recover it — press Retry to try again.",
+  "api.error.serviceOverloaded": "The service is busy right now. Auto-retry did not recover it — please try again shortly.",
+  "api.error.quotaExhausted": "Your quota for this period is used up. Buy a booster pack (never expires) or renew your subscription in the account center.",
+  "api.error.providerAuthInvalid": "Model service authentication failed: the API key is invalid or expired. Check Settings → Model service.",
 
   // ── SettingsWorkspace.tsx —— performance screen (read-only recording encoder path) ──
   "settings.nav.performance": "Performance",

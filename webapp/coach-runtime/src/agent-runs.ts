@@ -434,12 +434,16 @@ async function runAgentTurn(
     } else {
       const error = response.error;
       // turn 响应的 error 是 CoachRuntimeError（字段是 category/code，没有
-      // domain）。真实可分类的信号只有 code：流中断是网络类瞬断（turn.ts
-      // isTransientProviderError 同款判据），其余归 model。此前读 error.domain
-      // 恒为 undefined，所有上游失败都被折叠成 model。
+      // domain）。真实可分类的信号只有 code：流中断/网络瞬断/服务过载是网络
+      // 类（turn.ts classifyCoachFailureCode 的稳定 code），其余归 model。
+      // 此前读 error.domain 恒为 undefined，所有上游失败都被折叠成 model。
       const failure: AnyDict = error
         ? {
-            domain: error.code === "provider_stream_interrupted" ? "network" : "model",
+            domain: error.code === "provider_stream_interrupted"
+              || error.code === "network_transient"
+              || error.code === "service_overloaded"
+              ? "network"
+              : "model",
             code: error.code,
             message: error.message,
             retryable: error.retryable,
