@@ -305,6 +305,59 @@ def test_native_client_export_and_release_never_send_paths() -> None:
     }
 
 
+_GEOMETRY_EVENT_FIXTURE = {
+    "atUtcMs": 1_791_280_000_000,
+    "canonicalMs": 123_456,
+    "srcWidth": 1920,
+    "srcHeight": 1080,
+    "dstX": 320,
+    "dstY": 0,
+    "dstWidth": 1280,
+    "dstHeight": 1600,
+    "scale": 0.667,
+    "followed": True,
+}
+
+
+def _export_replay_via_server(replay_overrides: dict) -> dict:
+    response = _export_response()
+    response["replay"].update(replay_overrides)
+    address, _captured, thread = _serve_once(_json_line(response))
+    result = NativeCaptureClient(address, "a" * 64).export_replay(
+        request_id="request-1",
+        run_id=7,
+        capture_session_id="session-1",
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+    )
+    thread.join(timeout=1)
+    return result
+
+
+def test_native_export_accepts_optional_geometry_events_in_replay() -> None:
+    """(b)(c) geometryEvents 是 replay 内可选加性字段：带与不带都通过。"""
+    # (b) 空数组：字段存在但无漂移事件，照常通过。
+    empty = _export_replay_via_server({"geometryEvents": []})
+    assert empty["replay"]["geometryEvents"] == []
+    # (c) 合同形态事件列表：camelCase 字段原样通过，不触发
+    # capture_control_response_schema_invalid。
+    with_events = _export_replay_via_server(
+        {"geometryEvents": [_GEOMETRY_EVENT_FIXTURE]},
+    )
+    assert with_events["replay"]["geometryEvents"] == [_GEOMETRY_EVENT_FIXTURE]
+    # (d) 白名单只到顶层键：条目缺合同字段不做深度校验（消费端 fail-safe）。
+    malformed = _export_replay_via_server(
+        {"geometryEvents": [{"canonicalMs": None}, "not-a-dict"]},
+    )
+    assert malformed["replay"]["geometryEvents"] == [
+        {"canonicalMs": None}, "not-a-dict",
+    ]
+    # 非列表形态同样只做顶层键检查。
+    non_list = _export_replay_via_server({"geometryEvents": "not-a-list"})
+    assert non_list["replay"]["geometryEvents"] == "not-a-list"
+    # (a) 不含该字段：旧形状契约不变（_export_response fixture 本身不带）。
+
+
 def test_native_client_flushes_raw_snapshot_with_strict_coverage_receipt() -> None:
     response = {
         "type": "flushRawSnapshotResult",

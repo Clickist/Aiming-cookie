@@ -2981,9 +2981,27 @@ def _write_capture_video_bundle(
     start_epoch_ms: int = 1_000,
     end_epoch_ms: int = 2_000,
     contents: bytes = b"run-owned-mp4",
+    geometry_events: object = None,
+    geometry_events_location: str = "replay",
 ) -> tuple[Path, dict]:
     video_path.parent.mkdir(parents=True, exist_ok=True)
     video_path.write_bytes(contents)
+    replay = {
+        "requestedStart100ns": 20_000_000,
+        "requestedEnd100ns": 30_000_000,
+        "decodeStart100ns": 19_000_000,
+        "visibleDuration100ns": 10_000_000,
+        "decodePreroll100ns": 1_000_000,
+        "packetCount": 60,
+        "encodedBytes": len(contents),
+        "reencodedFrames": 0,
+        "captureClock": {
+            "utcEpochMs": 1_000,
+            "qpcNs": 2_000_000_000,
+            "clockSource": "utc_epoch_ms+qpc+wgc_system_relative_time",
+            "timebaseVersion": "time_alignment.v2",
+        },
+    }
     receipt = {
         "version": "capture_receipt.v1",
         "requestDigest": request_digest,
@@ -2992,27 +3010,17 @@ def _write_capture_video_bundle(
         "captureSessionId": capture_session_id,
         "startEpochMs": start_epoch_ms,
         "endEpochMs": end_epoch_ms,
-        "replay": {
-            "requestedStart100ns": 20_000_000,
-            "requestedEnd100ns": 30_000_000,
-            "decodeStart100ns": 19_000_000,
-            "visibleDuration100ns": 10_000_000,
-            "decodePreroll100ns": 1_000_000,
-            "packetCount": 60,
-            "encodedBytes": len(contents),
-            "reencodedFrames": 0,
-            "captureClock": {
-                "utcEpochMs": 1_000,
-                "qpcNs": 2_000_000_000,
-                "clockSource": "utc_epoch_ms+qpc+wgc_system_relative_time",
-                "timebaseVersion": "time_alignment.v2",
-            },
-        },
+        "replay": replay,
         "file": {
             "size": len(contents),
             "digest": hashlib.sha256(contents).hexdigest(),
         },
     }
+    if geometry_events is not None:
+        if geometry_events_location == "root":
+            receipt["geometryEvents"] = geometry_events
+        else:
+            replay["geometryEvents"] = geometry_events
     receipt_path = video_path.with_name(f"{video_path.stem}.receipt.json")
     receipt_path.write_text(
         json.dumps(receipt, separators=(",", ":")),
@@ -3077,6 +3085,120 @@ async def test_video_pending_attach_is_managed_and_persists_canonical_receipt(
         "timebaseVersion": "time_alignment.v2",
     }
     assert str(tmp_path) not in json.dumps(attached["video_summary"])
+
+
+_GEOMETRY_EVENT_FIXTURE = {
+    "atUtcMs": 1_791_280_000_000,
+    "canonicalMs": 123_456,
+    "srcWidth": 1920,
+    "srcHeight": 1080,
+    "dstX": 320,
+    "dstY": 0,
+    "dstWidth": 1280,
+    "dstHeight": 1600,
+    "scale": 0.667,
+    "followed": True,
+}
+
+
+async def _attach_with_geometry_events(
+    tmp_path: Path,
+    *,
+    geometry_events: object,
+    location: str = "replay",
+):
+    # 每个子场景独立的 run 记录：source_key 必须唯一，否则共享 DATA_ROOT 的
+    # 全局 run 存储会命中上一个场景已 attach 的 run（video 路径冲突）。
+    data_root = tmp_path / "data"
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1",
+        source_key=f"geometry-events-{location}-{tmp_path.name}",
+    )
+    video = data_root / "runs" / str(run["id"]) / "video-request-1.mp4"
+    request_digest = "a" * 64
+    await kovaak_run_store.begin_run_video_attach(
+        run["id"], "u1",
+        pending_video_path=video,
+        request_digest=request_digest,
+        capture_session_id="session-1",
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+        data_root=data_root,
+    )
+    _write_capture_video_bundle(
+        video,
+        run_id=run["id"],
+        geometry_events=geometry_events,
+        geometry_events_location=location,
+    )
+    return await kovaak_run_store.attach_run_video(
+        run["id"], "u1", video,
+        expected_pending_video_path=video,
+        expected_request_digest=request_digest,
+        data_root=data_root,
+    )
+
+
+@pytest.mark.asyncio
+async def test_video_receipt_accepts_geometry_events_as_optional_additive_field(
+    tmp_path: Path,
+):
+    """(b)(c) geometryEvents 是可选加性字段：带与不带都通过，replay/root 两处都收。"""
+    # (c) 合同形态事件列表（replay 内，Rust 控制响应内嵌 replay 的形状）。
+    with_events = await _attach_with_geometry_events(
+        tmp_path / "in-replay",
+        geometry_events=[_GEOMETRY_EVENT_FIXTURE],
+    )
+    assert with_events["video_state"] == "attached"
+    assert with_events["video_receipt"]["replay"]["geometryEvents"] == [
+        _GEOMETRY_EVENT_FIXTURE,
+    ]
+    # root 级落点同样接受（Rust 最终落点二选一）。
+    with_root_events = await _attach_with_geometry_events(
+        tmp_path / "at-root",
+        geometry_events=[_GEOMETRY_EVENT_FIXTURE],
+        location="root",
+    )
+    assert with_root_events["video_state"] == "attached"
+    assert with_root_events["video_receipt"]["geometryEvents"] == [
+        _GEOMETRY_EVENT_FIXTURE,
+    ]
+    # (b) 空数组：字段存在但无事件，照常通过。
+    with_empty = await _attach_with_geometry_events(
+        tmp_path / "empty",
+        geometry_events=[],
+    )
+    assert with_empty["video_state"] == "attached"
+    assert with_empty["video_receipt"]["replay"]["geometryEvents"] == []
+    # (a) 不含该字段：旧形状照常通过（与既有 attach 测试同为绿灯）。
+    without = await _attach_with_geometry_events(
+        tmp_path / "absent",
+        geometry_events=None,
+    )
+    assert without["video_state"] == "attached"
+    assert "geometryEvents" not in without["video_receipt"]
+    assert "geometryEvents" not in without["video_receipt"]["replay"]
+
+
+@pytest.mark.asyncio
+async def test_video_receipt_geometry_events_are_not_deep_validated(tmp_path: Path):
+    """(d) 白名单只到顶层键：条目缺合同字段不做深度校验，原样落库。"""
+    malformed_entries = [{"canonicalMs": None}, {"note": "not a geometry event"}]
+    attached = await _attach_with_geometry_events(
+        tmp_path / "malformed",
+        geometry_events=malformed_entries,
+    )
+    assert attached["video_state"] == "attached"
+    assert attached["video_receipt"]["replay"]["geometryEvents"] == (
+        malformed_entries
+    )
+    # 非列表形态同样只做顶层键检查（消费端 fail-safe 归一回退无变换）。
+    non_list = await _attach_with_geometry_events(
+        tmp_path / "non-list",
+        geometry_events="not-a-list",
+    )
+    assert non_list["video_state"] == "attached"
+    assert non_list["video_receipt"]["replay"]["geometryEvents"] == "not-a-list"
 
 
 @pytest.mark.asyncio

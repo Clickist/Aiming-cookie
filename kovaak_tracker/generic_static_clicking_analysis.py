@@ -17,7 +17,10 @@ from typing import Any, Mapping, Sequence
 
 from .generic_visual_detection import (
     GENERIC_VISUAL_DETECTOR_VERSION,
+    build_letterbox_segments,
+    crop_letterbox_content,
     detect_generic_targets,
+    letterbox_segment_at,
     select_color_hypothesis,
 )
 
@@ -117,6 +120,12 @@ def run_generic_static_clicking_detection_v1(
     Hypothesis selection runs on evenly spread, downscaled samples so the
     scoring sees the whole clip without holding full frames in memory; the
     detection pass then decodes every frame at native resolution.
+
+    窗口漂移 replay（病灶 A3）：``video_time_mapping`` 可携带
+    ``geometry_events``（capture receipt 随班车而来，见
+    ``generic_visual_detection`` 顶部）。采样帧先裁掉 letterbox 黑边再进
+    颜色假设；检测帧的 blob 按段反变换回内容空间。无该字段/空/非法时
+    全程无变换，输出与旧基线逐位一致。
     """
     import cv2
     import numpy as np
@@ -125,6 +134,9 @@ def run_generic_static_clicking_detection_v1(
         raise GenericVisualPreprocessingUnavailable(
             "generic_video_time_mapping_v2_required",
         )
+    letterbox_segments = build_letterbox_segments(
+        video_time_mapping.get("geometry_events"),
+    )
     window_start = int(canonical_time_window["start_ms"])
     window_end = int(canonical_time_window["end_ms"])
     frame_budget = min(
@@ -155,6 +167,24 @@ def run_generic_static_clicking_detection_v1(
                 ok, frame = capture.retrieve()
                 if not ok:
                     break
+                if letterbox_segments:
+                    # 采样帧先反 letterbox（裁掉黑边）再进颜色假设：黑边
+                    # 是低饱和暗区，会把暗簇分数与色相峰值份额带偏。
+                    pts = capture.get(cv2.CAP_PROP_POS_MSEC)
+                    pts_value = (
+                        float(pts)
+                        if isinstance(pts, (int, float))
+                        and math.isfinite(float(pts))
+                        else None
+                    )
+                    if pts_value is not None:
+                        frame = crop_letterbox_content(
+                            frame,
+                            letterbox_segment_at(
+                                letterbox_segments,
+                                _canonical_time_ms(video_time_mapping, pts_value),
+                            ),
+                        )
                 height, width = frame.shape[:2]
                 if width > HYPOTHESIS_SAMPLE_MAX_WIDTH:
                     scale = HYPOTHESIS_SAMPLE_MAX_WIDTH / width
@@ -215,9 +245,17 @@ def run_generic_static_clicking_detection_v1(
             canonical_ms = _canonical_time_ms(video_time_mapping, pts_value)
             if not window_start <= canonical_ms < window_end:
                 continue
+            active_transform = None
+            if letterbox_segments:
+                active_segment = letterbox_segment_at(
+                    letterbox_segments, canonical_ms,
+                )
+                if active_segment is not None:
+                    active_transform = active_segment["transform"]
             result = detect_generic_targets(
                 frame, native_hypothesis,
                 crosshair_exemption=crosshair_exemption,
+                letterbox=active_transform,
             )
             if result["targets"]:
                 frames_with_detection += 1

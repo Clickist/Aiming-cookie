@@ -409,6 +409,29 @@ def video_decode_preroll_ms(job: dict) -> float | None:
     return preroll_100ns / 10_000.0
 
 
+def video_geometry_events(job: dict) -> list | None:
+    """Extract capture receipt letterbox geometry events, if the job carries them.
+
+    与 ``video_decode_preroll_ms`` 同一通路：Rust 落盘 receipt 后由 job 的
+    ``video_receipt`` 带上。Rust 侧把 ``geometryEvents`` 放在 receipt 根级
+    还是 replay 对象内以最终落盘为准，这里两处都读；字段整体缺席/为空/
+    非列表 → None（调用方不附加 mapping 字段，消费端全程无变换，与旧基线
+    逐位一致）。单个事件字段的合法性不在这里校验：消费端
+    ``build_letterbox_segments`` 会做 fail-safe 归一并按无变换回退。
+    """
+    receipt = job.get("video_receipt")
+    if not isinstance(receipt, Mapping):
+        return None
+    candidates = [receipt.get("geometryEvents")]
+    replay = receipt.get("replay")
+    if isinstance(replay, Mapping):
+        candidates.append(replay.get("geometryEvents"))
+    for candidate in candidates:
+        if isinstance(candidate, list) and candidate:
+            return candidate
+    return None
+
+
 def _run_owned_visual_video_time_mapping(job: dict) -> dict:
     snapshot = job.get("input_snapshot")
     if not isinstance(snapshot, Mapping):
@@ -468,11 +491,18 @@ def _run_owned_visual_video_time_mapping_v2(job: dict) -> dict:
     preroll_ms = video_decode_preroll_ms(job)
     if preroll_ms is None:
         raise ValueError("video decode preroll is unavailable")
-    return {
+    extended = {
         **mapping,
         "schema_version": "visual_video_time_mapping.v2",
         "decode_preroll_ms": preroll_ms,
     }
+    # v2 加性字段（不升 v3）：窗口漂移 replay 的 letterbox 几何事件原样搭车，
+    # 事件内字段名保持 receipt 的 camelCase（canonicalMs/srcWidth/dstX/…），
+    # 由 generic_visual_detection 单点归一消费。缺席时不附加，保持旧形状。
+    geometry_events = video_geometry_events(job)
+    if geometry_events is not None:
+        extended["geometry_events"] = geometry_events
+    return extended
 
 
 def _visual_runtime_selector(

@@ -64,8 +64,23 @@ class NativeCaptureProtocolError(NativeCaptureTerminalError):
     pass
 
 
-def _exact_object(value: object, keys: set[str], label: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != keys:
+def _exact_object(
+    value: object,
+    keys: set[str],
+    label: str,
+    *,
+    optional: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Exact-key object check with an explicit optional-key allowance.
+
+    ``optional`` 只放宽“额外键”容忍度：必需键仍须全部在场，且不属于
+    ``keys | optional`` 的键依旧拒绝；可选字段值形态不做深度校验。
+    """
+    if (
+        not isinstance(value, dict)
+        or not keys <= set(value)
+        or not set(value) <= keys | optional
+    ):
         raise NativeCaptureProtocolError(
             f"capture_control_{label}_schema_invalid"
         )
@@ -198,6 +213,11 @@ def _validate_snapshot_barrier(value: object) -> dict[str, object]:
     return snapshot
 
 
+# 窗口漂移 replay 的 letterbox 几何事件（病灶 A3）：replay 内可选加性字段，
+# 值形态由消费端 fail-safe 归一，此处只做键级白名单（与落盘 receipt 一致）。
+_REPLAY_OPTIONAL_GEOMETRY_KEYS = frozenset({"geometryEvents"})
+
+
 def _validate_replay(value: object) -> dict[str, object]:
     replay = _exact_object(
         value,
@@ -213,6 +233,7 @@ def _validate_replay(value: object) -> dict[str, object]:
             "captureClock",
         },
         "response",
+        optional=_REPLAY_OPTIONAL_GEOMETRY_KEYS,
     )
     start = _strict_int(replay.get("requestedStart100ns"), "response")
     end = _strict_int(replay.get("requestedEnd100ns"), "response", minimum=1)

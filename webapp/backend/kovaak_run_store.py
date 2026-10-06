@@ -1521,10 +1521,29 @@ def _assert_exact_receipt_keys(
     value: object,
     expected: set[str],
     field: str,
+    *,
+    optional: frozenset[str] = frozenset(),
 ) -> dict:
-    if not isinstance(value, dict) or set(value) != expected:
+    """Exact-key check with an explicit optional-key allowance.
+
+    带 ``optional`` 的调用点仍要求全部必需键在场，只额外容忍白名单里的
+    可选加性字段（如窗口漂移 replay 的 ``geometryEvents``）；可选字段的
+    值形态不在这一层做深度校验，由消费端
+    ``kovaak_tracker.generic_visual_detection.build_letterbox_segments``
+    fail-safe 归一。
+    """
+    if (
+        not isinstance(value, dict)
+        or not expected <= set(value)
+        or not set(value) <= expected | optional
+    ):
         raise ValueError(f"capture receipt {field} is invalid")
     return value
+
+
+# 窗口漂移 replay 的 letterbox 几何事件（病灶 A3）：可选加性字段，值形态
+# 由消费端 fail-safe 处理；root 与 replay 两处落点都容忍。
+_RECEIPT_OPTIONAL_GEOMETRY_KEYS = frozenset({"geometryEvents"})
 
 
 def _validate_video_receipt(
@@ -1558,6 +1577,7 @@ def _validate_video_receipt(
             "file",
         },
         "root",
+        optional=_RECEIPT_OPTIONAL_GEOMETRY_KEYS,
     )
     if receipt.get("version") != "capture_receipt.v1":
         raise ValueError("capture receipt version is invalid")
@@ -1589,6 +1609,7 @@ def _validate_video_receipt(
             "captureClock",
         },
         "replay",
+        optional=_RECEIPT_OPTIONAL_GEOMETRY_KEYS,
     )
     requested_start = _strict_receipt_integer(
         replay.get("requestedStart100ns"), "requestedStart100ns",
