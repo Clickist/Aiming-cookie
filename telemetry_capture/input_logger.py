@@ -34,6 +34,9 @@ k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 u32.DefWindowProcW.restype = ctypes.c_longlong
 u32.DefWindowProcW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+u32.MsgWaitForMultipleObjectsEx.restype = wt.DWORD
+u32.MsgWaitForMultipleObjectsEx.argtypes = [
+    wt.DWORD, ctypes.c_void_p, wt.DWORD, wt.DWORD, wt.DWORD]
 
 QPF = wt.LARGE_INTEGER()
 k32.QueryPerformanceFrequency(ctypes.byref(QPF))
@@ -41,6 +44,7 @@ QPF = float(QPF.value)
 
 # ---- Raw Input 常量 ----
 WM_INPUT = 0x00FF
+QS_ALLINPUT = 0x04FF             # 含 QS_RAWINPUT：WM_INPUT 到队即唤醒等待
 RIDEV_INPUTSINK = 0x00000100
 RID_INPUT = 0x10000003
 RAWINPUTHEADER_SIZE = 24          # x64: {DWORD dwType; DWORD dwSize; HANDLE hDev; WPARAM wp;}
@@ -170,6 +174,22 @@ def make_wnd(logger):
     return hwnd, proc
 
 
+def wait_input_event(timeout_ms=250):
+    """阻塞等待消息队列出现输入事件（含 QS_RAWINPUT 的 WM_INPUT），超时返回。
+
+    [perf 2026-10-06] 替换主循环原先 0.5ms ``time.sleep`` 空转泵（~2000 次/秒
+    空醒，AC 在后台时与前台游戏抢 CPU）。WM_INPUT 是排队消息，等待期间只是
+    积压在队列不丢失，醒来后 PeekMessage 排空循环照常取走。已知可接受的行为
+    变化：交互模式（命令行直接运行）Ctrl+C 响应延迟从 ~0.5ms 变为
+    ≤timeout_ms；采集服务以 daemon 子进程 terminate 停止本脚本，不走 Ctrl+C
+    路径，不受影响。timeout_ms=250 兜底 clock_map 的 10s 节奏检查。
+    """
+    wait = u32.MsgWaitForMultipleObjectsEx(0, None, timeout_ms, QS_ALLINPUT, 0)
+    if wait == 0xFFFFFFFF:  # WAIT_FAILED：等待本身失效时兜底小睡，防空转泵复活
+        time.sleep(0.005)
+    return wait
+
+
 def run_raw(seconds=None, path=None):
     logger = Logger(path)
     hwnd, proc = make_wnd(logger)
@@ -180,11 +200,13 @@ def run_raw(seconds=None, path=None):
     nmsg = 0
     try:
         while seconds is None or time.perf_counter() - t0 < seconds:
+            # 事件等待替代空转泵：队列有输入立即醒，250ms 超时兜底 clock_map
+            # 节奏检查（见 wait_input_event 注释）。PeekMessage 排空循环不变。
+            wait_input_event(250)
             while u32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                 u32.TranslateMessage(ctypes.byref(msg))
                 u32.DispatchMessageW(ctypes.byref(msg))
                 nmsg += 1
-            time.sleep(0.0005)
             if logger.f and time.perf_counter() - logger.last_map > 10.0:
                 logger.map_line()
     except KeyboardInterrupt:

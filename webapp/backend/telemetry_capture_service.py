@@ -22,6 +22,7 @@ import ctypes
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -45,6 +46,10 @@ _PIDS_FILE = "pids.json"
 # [fix 2026-09-30] 子进程合并日志 {role}.log 的死亡尾部截取上限（对齐本文件
 # finalize.log 尾部截 8000 字符的既有先例；.log 命名避免撞三个数据 glob）。
 _CHILD_LOG_TAIL_CHARS = 8000
+# [fix 病灶B 2026-10-06] tp1.Proc OpenProcess 失败消息的稳定 cause 码（机读归因）。
+# 只认已知码：未知 token 不收录、不编造解释（与前端"未知码原样显示"合同对齐）。
+_KNOWN_ATTACH_CAUSES = frozenset({"open_process_denied", "open_process_failed"})
+_ATTACH_CAUSE_RE = re.compile(r"cause=([A-Za-z0-9_]+)")
 _FINALIZE_TIMEOUT_SECONDS = 300.0
 _TERMINATE_TIMEOUT_SECONDS = 5.0
 # 按局增量切窗（2026-09-29）：stats 局窗口 → 冻结活文件窗口切片 → cleaner/merge
@@ -220,9 +225,14 @@ class TelemetryCaptureService:
         # 按局增量切窗簿记：run_id → outcome（去重 + 诊断可见）。
         self._run_cuts: dict[int, str] = {}
         self._last_cut: dict[str, object] = {}
+        # 最近一次切窗三通道冻结读的总耗时（毫秒，诊断可见）。
+        self._last_cut_freeze_ms: float | None = None
         # 切窗请求被前置守卫拒绝的累计计数（原因 → 次数）。守卫静默 return
         # 会让「三通道零产出」机器在诊断里看起来一切正常，必须可见。
         self._run_cut_rejections: dict[str, int] = {}
+        # [fix 病灶B 2026-10-06] 最近一次拒绝的根因说明（原因 → "<role>:<cause>"）。
+        # no_session_outputs（附着从未成功被误标为零产出）的机读归因。
+        self._run_cut_rejection_details: dict[str, str] = {}
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -295,6 +305,9 @@ class TelemetryCaptureService:
                 1 for rid in self._run_cuts if run_cut_pending(rid)
             ),
             "run_cut_rejections": dict(self._run_cut_rejections),
+            # [perf 2026-10-06 C] 切窗增量读的全量回退累计（乱序守卫/毒化文件/
+            # 截断），回退绝不静默。
+            "freeze_full_scan_fallbacks": _freeze_full_scan_fallbacks(),
         }
 
     def _record_run_cut_rejection(self, reason: str) -> None:
@@ -460,6 +473,7 @@ class TelemetryCaptureService:
         self, run_id: int, window_start_ms: int, window_end_ms: int,
         event: threading.Event,
     ) -> None:
+        _lower_current_thread_priority()  # [perf 2026-10-06 A] 切窗线程让路前台
         outcome = "error"
         try:
             outcome = self._cut_run_window_inner(run_id, window_start_ms, window_end_ms)
@@ -472,6 +486,7 @@ class TelemetryCaptureService:
                 "run_id": run_id,
                 "finished_epoch_s": time.time(),
                 "outcome": outcome,
+                "freeze_ms": self._last_cut_freeze_ms,
             }
             self._persist_diagnostics()
             with _RUN_CUT_LOCK:
@@ -479,8 +494,9 @@ class TelemetryCaptureService:
             event.set()
         if outcome == "ok":
             log.info(
-                "telemetry run cut landed run=%s window=[%s,%s]",
+                "telemetry run cut landed run=%s window=[%s,%s] freeze_ms=%.1f",
                 run_id, window_start_ms, window_end_ms,
+                self._last_cut_freeze_ms or 0.0,
             )
 
     def _cut_run_window_inner(
@@ -499,6 +515,7 @@ class TelemetryCaptureService:
         input_hi = hi + _CUT_INPUT_EXTRA_MARGIN_S
 
         frozen_targets: list[Path] = []
+        freeze_t0 = time.perf_counter()   # [perf 2026-10-06 C] 切窗冻结读耗时打点
         for raw in sorted(session_dir.glob(_RAW_GLOB)):
             dst = frozen_dir / raw.name
             if _freeze_windowed_jsonl(raw, dst, "target", lo, hi) > 0:
@@ -520,6 +537,7 @@ class TelemetryCaptureService:
             dst = frozen_dir / _INPUT_NAME
             if _freeze_windowed_jsonl(input_log, dst, "input", input_lo, input_hi) > 0:
                 frozen_input = dst
+        self._last_cut_freeze_ms = (time.perf_counter() - freeze_t0) * 1000.0
 
         outcome = self._run_finalize_step(
             self._child_argv("cleaner.py")
@@ -617,6 +635,10 @@ class TelemetryCaptureService:
         self, argv: list[str], session_dir: Path, role: str,
     ) -> subprocess.Popen:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        if os.name == "nt":
+            # [perf 2026-10-06 A] 采集子进程降到低于正常优先级：AC 在后台常驻
+            # 时不得与前台游戏平等抢 CPU（用户报障：开 AC 打 KovaaK's 卡顿）。
+            flags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS
         # 自适应偏移表的用户缓存必须落用户数据目录：打包版内嵌表只读，写不进去
         child_env = dict(os.environ,
                          AIMING_COOKIE_OFFSETS_CACHE=str(config.DATA_ROOT / "offsets.local.json"),
@@ -804,6 +826,9 @@ class TelemetryCaptureService:
     def _run_finalize_step(self, argv: list[str], *, label: str) -> str:
         """跑单步收尾子进程；stdout/stderr 落会话 finalize.log；失败折损为返回码。"""
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        if os.name == "nt":
+            # [perf 2026-10-06 A] 同 _spawn_process：收尾子进程不与前台游戏抢 CPU。
+            flags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS
         try:
             completed = subprocess.run(  # noqa: S603 - argv 由本模块固定拼装
                 argv,
@@ -846,6 +871,22 @@ class TelemetryCaptureService:
             log.exception("telemetry capture diagnostics write failed")
 
 
+def _lower_current_thread_priority() -> None:
+    """当前线程降到 BELOW_NORMAL（[perf 2026-10-06 A] 切窗线程让路前台游戏）。
+
+    失败只记 debug 不阻断——降优先级是优化不是正确性依赖。
+    """
+    try:
+        # CURRENT_THREAD 伪句柄 = (HANDLE)-2；THREAD_PRIORITY_BELOW_NORMAL = -1
+        ok = ctypes.windll.kernel32.SetThreadPriority(
+            ctypes.c_void_p(-2), -1)
+    except Exception as error:  # noqa: BLE001 - 非 Windows/ctypes 缺失一律不阻断
+        log.debug("telemetry cut thread SetThreadPriority unavailable: %s", error)
+        return
+    if not ok:
+        log.debug("telemetry cut thread SetThreadPriority returned false")
+
+
 def _latest_by_name(paths) -> Path | None:
     ordered = sorted(paths, key=lambda p: p.name)
     return ordered[-1] if ordered else None
@@ -867,6 +908,59 @@ def _read_log_tail(path: Path, max_chars: int = _CHILD_LOG_TAIL_CHARS) -> str | 
     return text[-max_chars:] if text else None
 
 
+class _FreezeState:
+    """单个采集文件切窗增量读的记账（进程级内存态，不持久化 offset）。
+
+    服务重启/换数据目录 → 字典为空/键不同 → 自然全量首扫；无跨进程状态。
+    """
+
+    __slots__ = ("channel", "offset", "safe_epoch", "clock_lines", "anchor",
+                 "first_delta", "poisoned")
+
+    def __init__(self, channel: str) -> None:
+        self.channel = channel
+        self.offset = 0                       # 下次增量读起始字节（行边界）
+        self.safe_epoch: float | None = None  # 已安全推进到的 epoch 判据（守卫用）
+        # 已见 clock_map 的 (字节位, stripped 原文)，按文件序——增量路径按序
+        # 重发位于记账点之前的行，保证与全量读法字节级一致。
+        self.clock_lines: list[tuple[int, str]] = []
+        self.anchor: float | None = None      # target/camera 锚（文件首部）
+        self.first_delta: float | None = None  # input 锚（文件首部）
+        self.poisoned = False                 # 完整坏行 → 本会话内永远全量回退
+
+    def reset(self, channel: str) -> None:
+        self.channel = channel
+        self.offset = 0
+        self.safe_epoch = None
+        self.clock_lines = []
+        self.anchor = None
+        self.first_delta = None
+
+
+_FREEZE_LOCK = threading.Lock()
+_FREEZE_STATE: dict[Path, _FreezeState] = {}
+# 全量回退累计计数（诊断可见；切窗线程持 _FREEZE_LOCK 期间递增）。
+_FREEZE_FULL_SCAN_FALLBACKS = 0
+
+
+def _freeze_full_scan_fallbacks() -> int:
+    return _FREEZE_FULL_SCAN_FALLBACKS
+
+
+def _freeze_safe_epoch_threshold(channel: str, hi_epoch_s: float) -> float:
+    """本局切窗后 offset 的可推进判据：首个数据行 epoch ≥ 阈值处才可推进。
+
+    下一局窗口 lo 只要不早于该阈值（否则守卫回退全量），其所需行必然全部
+    位于记账位置之后。target/camera 取「本局 end」（hi 去掉后垫），input 再
+    减 extra margin——两通道效果对称：下一局 stats 起点距本局 end ≤10s 时
+    回退全量（可观测，见 _FREEZE_FULL_SCAN_FALLBACKS）。
+    """
+    threshold = hi_epoch_s - _CUT_POST_MARGIN_S
+    if channel == "input":
+        threshold -= _CUT_INPUT_EXTRA_MARGIN_S
+    return threshold
+
+
 def _freeze_windowed_jsonl(
     src: Path, dst: Path, channel: str, lo_epoch_s: float, hi_epoch_s: float,
 ) -> int:
@@ -876,62 +970,164 @@ def _freeze_windowed_jsonl(
     帧 epoch = 锚 + t；input 的 clock_map 带 t/t_unix（delta = t_unix - t，多次
     出现用于漂移监控），事件 epoch ≈ t + 首个 delta（漂移为毫秒级，远小于切窗
     垫量）。锚行无条件保留；撕裂的尾行（写了一半）直接丢弃。返回保留记录数。
+
+    [perf 2026-10-06 C] 增量读：按文件记账（_FREEZE_STATE）从上次安全推进点
+    继续读，clock_map 行由缓存按序重发，输出与全量重读字节级等价。offset 只
+    推进到「首个数据行 epoch ≥ 本局 end（input 再减 extra margin）」处，撕裂
+    半行下次重读（=现行为等价）。全量回退（全部可观测，计入诊断
+    freeze_full_scan_fallbacks）：首次见到该文件（正常首扫，不计）、新窗口 lo
+    早于记账 safe_epoch（stats 乱序/回放）、文件被截断、poisoned 文件（完整
+    坏行——全量读法在此 break 且其后永不可达，增量绝不允许越过，本会话内
+    永远回退全量）。
     """
+    global _FREEZE_FULL_SCAN_FALLBACKS
+    key = Path(src)
     kept = 0
-    anchor: float | None = None
-    first_delta: float | None = None
-    try:
-        with src.open("r", encoding="utf-8", errors="replace") as source, \
-                dst.open("w", encoding="utf-8") as target:
-            for line in source:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    record = json.loads(stripped)
-                except ValueError:
-                    break  # 采集进程写了一半的尾行：到此为止
-                if not isinstance(record, dict):
-                    continue
-                # 单行坏记录（缺字段/非数值）只跳过该行，绝不中断整个冻结。
-                try:
-                    ev = record.get("ev")
-                    if channel == "input":
-                        if ev == "clock_map":
-                            if first_delta is None:
-                                first_delta = (
-                                    float(record["t_unix"]) - float(record["t"])
-                                )
-                            target.write(stripped + "\n")
-                            kept += 1
-                            continue
-                        if ev != "m":
-                            continue
-                        base = first_delta
-                    elif channel in {"target", "camera"}:
-                        if ev == "clock_map":
-                            if anchor is None:
-                                anchor = float(record["t"])
-                            target.write(stripped + "\n")
-                            kept += 1
-                            continue
-                        # death 行（目标死亡边沿，flag 路径）与 frame 同域同锚，放行
-                        if channel == "target" and ev not in (None, "frame", "death"):
-                            continue
-                        if channel == "camera" and ev != "cam":
-                            continue
-                        base = anchor
-                    else:
-                        continue
-                    if base is not None and \
-                            lo_epoch_s <= base + float(record["t"]) <= hi_epoch_s:
+    threshold = _freeze_safe_epoch_threshold(channel, hi_epoch_s)
+    with _FREEZE_LOCK:
+        state = _FREEZE_STATE.get(key)
+        use_incremental = bool(
+            state is not None
+            and not state.poisoned
+            and state.channel == channel
+            and state.safe_epoch is not None
+            and lo_epoch_s >= state.safe_epoch
+        )
+        if state is None:
+            state = _FreezeState(channel)
+            _FREEZE_STATE[key] = state
+        elif not use_incremental and state.safe_epoch is not None:
+            # 有记账却不能用：乱序守卫 / poisoned / 通道不符。
+            _FREEZE_FULL_SCAN_FALLBACKS += 1
+            if not state.poisoned:
+                log.warning(
+                    "telemetry freeze full-scan fallback path=%s lo=%s "
+                    "safe_epoch=%s poisoned=%s",
+                    key.name, lo_epoch_s, state.safe_epoch, state.poisoned,
+                )
+        if not use_incremental:
+            state.reset(channel)
+        start = state.offset if use_incremental else 0
+        try:
+            if key.stat().st_size < start:
+                # 文件被截断/替换（正常采集只追加，不该发生）：回退全量，可观测。
+                _FREEZE_FULL_SCAN_FALLBACKS += 1
+                log.warning(
+                    "telemetry freeze truncated-file fallback path=%s", key.name)
+                state.reset(channel)
+                use_incremental = False
+                start = 0
+        except OSError:
+            return 0
+        threshold_pos: int | None = None
+        last_nl = start
+        pos = start
+        try:
+            with key.open("rb") as source, \
+                    dst.open("w", encoding="utf-8") as target:
+                if use_incremental:
+                    # 只保留并重发位于记账点之前的 clock_map 原文行（锚/首
+                    # delta 已在 state 内）；[start, …) 区间的旧缓存项由本次
+                    # 扫描重新入账，避免重切窗口造成重复条目。输出行序仍按
+                    # 文件位单调，与全量读法一致。
+                    state.clock_lines = [
+                        e for e in state.clock_lines if e[0] < start]
+                    for _line_pos, stripped in state.clock_lines:
                         target.write(stripped + "\n")
                         kept += 1
-                except (KeyError, TypeError, ValueError):
-                    continue
-    except OSError:
+                source.seek(start)
+                for raw_line in source:
+                    line_start = pos
+                    pos += len(raw_line)
+                    complete = raw_line.endswith(b"\n")
+                    stripped = raw_line.decode("utf-8", errors="replace").strip()
+                    if not stripped:
+                        if complete:
+                            last_nl = pos
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                    except ValueError:
+                        if complete:
+                            # 一行完整带换行却解析失败：全量读法在此 break 且
+                            # 其后永不可达。标记 poisoned，本会话内永远回退
+                            # 全量（增量若越过会读到全量读不到的行）。
+                            if not state.poisoned:
+                                state.poisoned = True
+                                log.warning(
+                                    "telemetry freeze poisoned file "
+                                    "(complete bad line) path=%s", key.name)
+                        break  # 采集进程写了一半的尾行：到此为止
+                    if not isinstance(record, dict):
+                        if complete:
+                            last_nl = pos
+                        continue
+                    # 单行坏记录（缺字段/非数值）只跳过该行，绝不中断整个冻结。
+                    try:
+                        ev = record.get("ev")
+                        if channel == "input":
+                            if ev == "clock_map":
+                                if state.first_delta is None:
+                                    state.first_delta = (
+                                        float(record["t_unix"]) - float(record["t"])
+                                    )
+                                state.clock_lines.append((line_start, stripped))
+                                target.write(stripped + "\n")
+                                kept += 1
+                                if complete:
+                                    last_nl = pos
+                                continue
+                            if ev != "m":
+                                if complete:
+                                    last_nl = pos
+                                continue
+                            base = state.first_delta
+                        elif channel in {"target", "camera"}:
+                            if ev == "clock_map":
+                                if state.anchor is None:
+                                    state.anchor = float(record["t"])
+                                state.clock_lines.append((line_start, stripped))
+                                target.write(stripped + "\n")
+                                kept += 1
+                                if complete:
+                                    last_nl = pos
+                                continue
+                            # death 行（目标死亡边沿，flag 路径）与 frame 同域同锚，放行
+                            if channel == "target" and ev not in (None, "frame", "death"):
+                                if complete:
+                                    last_nl = pos
+                                continue
+                            if channel == "camera" and ev != "cam":
+                                if complete:
+                                    last_nl = pos
+                                continue
+                            base = state.anchor
+                        else:
+                            if complete:
+                                last_nl = pos
+                            continue
+                        epoch = None
+                        if base is not None:
+                            epoch = base + float(record["t"])
+                            if lo_epoch_s <= epoch <= hi_epoch_s:
+                                target.write(stripped + "\n")
+                                kept += 1
+                        if complete:
+                            last_nl = pos
+                            if epoch is not None and threshold_pos is None \
+                                    and epoch >= threshold:
+                                threshold_pos = line_start
+                    except (KeyError, TypeError, ValueError):
+                        if complete:
+                            last_nl = pos
+                        continue
+        except OSError:
+            return kept
+        # 记账推进：只能推进到首个达标数据行处；未出现则推到文件末尾最后一个
+        # 完整行边界（撕裂半行留在原地，下次重读=现行为等价）。
+        state.offset = threshold_pos if threshold_pos is not None else last_nl
+        state.safe_epoch = threshold
         return kept
-    return kept
 
 
 def _remove_tree_quietly(path: Path) -> None:
