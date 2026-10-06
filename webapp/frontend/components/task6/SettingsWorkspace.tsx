@@ -21,8 +21,9 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
+import { describeEncoderPath } from "@/lib/encoder-path-label";
 import { getLocale, t, useLocale, useT, type Locale, type MessageKey } from "@/lib/i18n";
-import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, isDesktopRuntime, pickDesktopDirectory, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
+import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, getDesktopWindowCaptureStatus, isDesktopRuntime, pickDesktopDirectory, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics, type DesktopWindowCaptureStatus } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import {
   copyTextToClipboard,
@@ -355,11 +356,13 @@ function incompleteReasonLabel(value: IncompleteCaptureItemV1["reason"]): string
 // 分区切换化（点点拍板线框）：左栏切换项，点击只显示对应屏。
 // 0912 点点拍板：高级屏取消——诊断包挪回自动采集，外部遥测导入界面下线。
 // i18n 批 4（§2c）：label 是字典键（MessageKey），渲染时经 t() 解析。
+// 性能（点点拍板）：自动录像编码路径只读展示，紧跟自动采集屏。
 const NAV_ITEMS = [
   { id: "general", label: "settings.nav.general" },
   { id: "llm-provider", label: "settings.nav.llmProvider" },
   { id: "knowledge", label: "settings.nav.knowledge" },
   { id: "capture", label: "settings.nav.capture" },
+  { id: "performance", label: "settings.nav.performance" },
   { id: "kovaak", label: "settings.nav.kovaak" },
   { id: "storage", label: "settings.nav.storage" },
 ] as const satisfies ReadonlyArray<{ id: string; label: MessageKey }>;
@@ -378,6 +381,7 @@ const HASH_SECTION_ALIASES: Record<string, SettingsSectionId> = {
   "kovaak-directories": "kovaak",
   knowledge: "knowledge",
   "llm-provider": "llm-provider",
+  performance: "performance",
   profile: "general",
   storage: "storage",
   theme: "general",
@@ -417,6 +421,8 @@ export function SettingsWorkspace() {
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
   const [calibration, setCalibration] = useState<CalibrationProfileV1 | null>(null);
   const [capture, setCapture] = useState<CaptureStatusV1 | null>(null);
+  // 性能栏（点点拍板）：窗口自动录像状态（编码路径），仅桌面运行时轮询。
+  const [windowCapture, setWindowCapture] = useState<DesktopWindowCaptureStatus | null>(null);
   const [storage, setStorage] = useState<StorageResponse | null>(null);
   const [incomplete, setIncomplete] = useState<IncompleteCaptureItemV1[]>([]);
   const [runs, setRuns] = useState<KovaaKRunListItem[]>([]);
@@ -601,6 +607,27 @@ export function SettingsWorkspace() {
     };
   }, [desktop]);
 
+  // 性能栏（点点拍板）：自动录像编码路径只在桌面运行时存在；1s 轮询照抄上面
+  // 采集状态模式，首查立即执行避免空屏；失败保留上一份已知状态，不打扰用户。
+  useEffect(() => {
+    if (!desktop) return;
+    let disposed = false;
+    const pollWindowCaptureStatus = async () => {
+      try {
+        const next = await getDesktopWindowCaptureStatus();
+        if (!disposed) setWindowCapture(next);
+      } catch {
+        // Polling is best effort after the initial settings load.
+      }
+    };
+    void pollWindowCaptureStatus();
+    const timer = window.setInterval(() => void pollWindowCaptureStatus(), 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [desktop]);
+
   // hash 深链入口：/settings#id 经别名映射到对应屏（scroll spy 已随
   // 锚点长卷一起退役，左栏点击本身只写 state、不写 hash）。
   useEffect(() => {
@@ -671,6 +698,8 @@ export function SettingsWorkspace() {
   const externalBroken = externalTelemetry?.activation === "failed"
     || externalTelemetry?.activation === "runtime_unavailable";
   const captureIssue = (capture ? capture.runtime_health !== "healthy" : false) || externalBroken;
+  // 性能栏：编码路径展示映射（null=未在录制，未知枚举值原样透出）。
+  const encoderPathDisplay = describeEncoderPath(windowCapture ? windowCapture.encoderPath : null);
 
   // 清理行：attached 录像/Raw 的 Run + 行内 size/文件名事实（不可得为 null，
   // 该片段不渲染）；大小已知时按大小降序，未知者按原顺序垫底。
@@ -948,6 +977,30 @@ export function SettingsWorkspace() {
               <span className="task6-settings-section-hint">{t("settings.capture.diagnosticsHint")}</span>
             </div>
           ) : null}
+        </section>
+
+        {/* 性能（点点拍板）：自动录像编码路径只读展示——硬编静默降级到软编
+            （占满约一核、拖慢前台游戏）时用户必须看得见，只透出已有状态，
+            不新增降级路径。 */}
+        <section className="task6-settings-section" hidden={activeNav !== "performance"} id="performance" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">{t("settings.nav.performance")}</span>
+            <span className="task6-settings-section-note">{t("settings.performance.note")}</span>
+          </div>
+          <div className="task6-settings-subsection">
+            <Panel>
+              {!desktop ? <p className="task6-muted">{t("settings.performance.desktopOnly")}</p> : null}
+              {desktop && windowCapture === null ? <Loading>{t("settings.performance.loading")}</Loading> : null}
+              {desktop && windowCapture ? (
+                <div className="task6-form-row">
+                  <span className="task6-form-row-label">{t("settings.performance.encoderPathLabel")}</span>
+                  <span className="task6-update-chip" data-tone={encoderPathDisplay.tone}>
+                    {encoderPathDisplay.key ? t(encoderPathDisplay.key) : encoderPathDisplay.raw}
+                  </span>
+                </div>
+              ) : null}
+            </Panel>
+          </div>
         </section>
 
         {/* KovaaK：本地目录 + KovaaKs 在线成绩 两张自包含卡（0912 去嵌套拍板）。 */}

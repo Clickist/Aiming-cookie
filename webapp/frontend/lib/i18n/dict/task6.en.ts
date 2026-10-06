@@ -678,4 +678,14 @@ export const task6En = {
   "api.error.analysisFailed": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
   "api.error.staleLeaseExhausted": "The analysis was interrupted and its retry attempts are exhausted. Please submit again or hit retry.",
   "api.error.legacyError": "Analysis failed. Please retry; if it keeps failing, contact the maintainer.",
+
+  // ── SettingsWorkspace.tsx —— performance screen (read-only recording encoder path) ──
+  "settings.nav.performance": "Performance",
+  "settings.performance.note": "The encoder path currently used by automatic recording.",
+  "settings.performance.encoderPathLabel": "Recording encoder",
+  "settings.performance.encoderHardware": "Hardware encoding (low overhead)",
+  "settings.performance.encoderSoftware": "Software encoding (high CPU usage, may stutter games)",
+  "settings.performance.notRecording": "Not recording",
+  "settings.performance.loading": "Reading encoder path",
+  "settings.performance.desktopOnly": "Encoder path status is only available in the desktop app."
 } as const;

@@ -681,4 +681,14 @@ export const task6Zh = {
   "api.error.analysisFailed": "分析失败，请重试；若持续失败请联系维护者。",
   "api.error.staleLeaseExhausted": "分析中断且重试次数已用尽，请重新提交或点击重试。",
   "api.error.legacyError": "分析失败，请重试；若持续失败请联系维护者。",
+
+  // ── SettingsWorkspace.tsx —— 性能屏（录像编码路径只读展示）─────────────
+  "settings.nav.performance": "性能",
+  "settings.performance.note": "自动录像当前使用的编码路径。",
+  "settings.performance.encoderPathLabel": "录像编码路径",
+  "settings.performance.encoderHardware": "硬件编码（省资源）",
+  "settings.performance.encoderSoftware": "软件编码（CPU 占用较高，游戏时可能卡顿）",
+  "settings.performance.notRecording": "未在录制",
+  "settings.performance.loading": "正在读取编码路径",
+  "settings.performance.desktopOnly": "编码路径状态仅桌面端可用。"
 } as const;

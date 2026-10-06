@@ -108,6 +108,22 @@ export async function setDesktopCaptureEnabled(
   );
 }
 
+// 窗口自动录像状态（src-tauri window_capture.rs 的 WindowCaptureStatus 投影，
+// serde camelCase）：性能栏只读展示当前编码路径。这里只声明前端消费的字段，
+// 运行时回包字段更多（TS 结构类型按子集读取）；encoderPath 的取值映射见
+// lib/encoder-path-label.ts（HardwareEncoderPath 枚举的 serde 序列化值）。
+export interface DesktopWindowCaptureStatus {
+  recording: boolean;
+  encoderPath: string | null;
+}
+
+export async function getDesktopWindowCaptureStatus(): Promise<DesktopWindowCaptureStatus> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Window capture status is only available in the desktop app");
+  }
+  return invoke<DesktopWindowCaptureStatus>("desktop_window_capture_status");
+}
+
 export async function exportDesktopCaptureDiagnostics(): Promise<string | null> {
   if (!isDesktopRuntime()) {
     throw new Error("Capture diagnostics are only available in the desktop app");

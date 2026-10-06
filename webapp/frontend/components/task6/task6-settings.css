@@ -1040,6 +1040,11 @@
   font-weight: 600;
 }
 
+/* 警示 tone（性能栏软编回退复用此 chip）：橙 = 整理中/警示同款语义色。 */
+.task6-update-chip[data-tone="warning"] {
+  color: var(--event-peak);
+}
+
 /* 卡内标题：通用屏自包含卡的标题行沿用分组标题字级。 */
 
 .task6-profile-group-title {
