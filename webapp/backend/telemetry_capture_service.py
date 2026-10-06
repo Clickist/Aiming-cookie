@@ -282,6 +282,8 @@ class TelemetryCaptureService:
 
     def diagnostics(self) -> dict[str, object]:
         session = self._session_dir.name if self._session_dir else None
+        # 尾部现场只读一次，child_log_tail 与 attach_causes 共用同一份。
+        child_log_tail = self._collect_child_log_tails()
         return {
             "version": "telemetry_capture.v1",
             "state": self._state,
@@ -294,7 +296,10 @@ class TelemetryCaptureService:
             # [fix 2026-09-30] 死亡子进程的合并日志尾部（可选：无死亡/无日志时 None）。
             # [fix 2026-10-03] 活着但零产出的子进程同样不可见——现在活/死都收
             # 尾部：活着 role 现场读 {role}.log，死亡 role 用终态尾部。
-            "child_log_tail": self._collect_child_log_tails(),
+            "child_log_tail": child_log_tail,
+            # [fix 病灶B 2026-10-06] 每 role 的附着被拒稳定 cause 码（从上面同一
+            # 份尾部现算：有界、无状态；只认已知码，未知/无 token 的 role 缺席）。
+            "attach_causes": _scan_attach_causes(child_log_tail),
             # [fix 2026-10-03] 会话目录三通道产出清单：零产出机器（子进程活着
             # 但从未写数据）的指纹，与 run_cut_rejections 一起定位切窗为何空转。
             "session_outputs": self._session_output_counts(),
@@ -305,6 +310,9 @@ class TelemetryCaptureService:
                 1 for rid in self._run_cuts if run_cut_pending(rid)
             ),
             "run_cut_rejections": dict(self._run_cut_rejections),
+            # [fix 病灶B 2026-10-06] 最近一次拒绝的根因说明（"<role>:<cause>"），
+            # 加性字段：no_session_outputs 不再只是"没产出"的悬案。
+            "run_cut_rejection_details": dict(self._run_cut_rejection_details),
             # [perf 2026-10-06 C] 切窗增量读的全量回退累计（乱序守卫/毒化文件/
             # 截断），回退绝不静默。
             "freeze_full_scan_fallbacks": _freeze_full_scan_fallbacks(),
@@ -342,6 +350,10 @@ class TelemetryCaptureService:
             # 死亡子进程的终态尾部兜底（活 role 现场读已覆盖则不重复写）。
             tails.setdefault(role, tail)
         return tails if tails else None
+
+    def _attach_causes(self) -> dict[str, str]:
+        """[fix 病灶B 2026-10-06] 每 role 的附着被拒稳定 cause 码（拒绝记账用）。"""
+        return _scan_attach_causes(self._collect_child_log_tails())
 
     # ------------------------------------------------------------------ 内部
 
@@ -437,6 +449,18 @@ class TelemetryCaptureService:
                 reason = "game_absent"
             else:
                 reason = "no_session_outputs"
+                # [fix 病灶B 2026-10-06] 零产出的常见根因是附着被拒（tp1
+                # OpenProcess err=5 → 子进程从未写产出件）。拒绝记账附上稳定
+                # cause 码说明；说明描述最近一次拒绝，无 cause 时清掉旧说明，
+                # 避免过期归因。既有 reason 码不动。
+                attach_denied = ",".join(
+                    f"{role}:{cause}"
+                    for role, cause in sorted(self._attach_causes().items())
+                )
+                if attach_denied:
+                    self._run_cut_rejection_details[reason] = attach_denied
+                else:
+                    self._run_cut_rejection_details.pop(reason, None)
             self._record_run_cut_rejection(reason)
             return False
         try:
@@ -906,6 +930,21 @@ def _read_log_tail(path: Path, max_chars: int = _CHILD_LOG_TAIL_CHARS) -> str | 
         return None
     text = data.decode("utf-8", errors="replace")
     return text[-max_chars:] if text else None
+
+
+def _scan_attach_causes(tails: dict[str, str] | None) -> dict[str, str]:
+    """[fix 病灶B 2026-10-06] 从 child log 尾部提取每 role 最后一个已知 cause= 码。
+
+    无状态、有界（输入即 _read_log_tail 的尾部文本，诊断随用随算）。只认
+    open_process_denied / open_process_failed：未知码不收录、无 token 的 role
+    缺席——不编造归因（与前端"未知码原样显示"合同对齐）。
+    """
+    causes: dict[str, str] = {}
+    for role, tail in (tails or {}).items():
+        tokens = _ATTACH_CAUSE_RE.findall(tail)
+        if tokens and tokens[-1] in _KNOWN_ATTACH_CAUSES:
+            causes[role] = tokens[-1]
+    return causes
 
 
 class _FreezeState:

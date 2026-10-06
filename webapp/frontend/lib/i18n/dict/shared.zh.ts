@@ -40,6 +40,8 @@ export const sharedZh = {
   "capture.traceError.attachFailed": "输入轨迹写入失败",
   "capture.traceError.qualityUnknown": "输入数据质量无法判定",
   "capture.traceError.waitingSnapshot": "正在等待输入轨迹整理",
+  // telemetry 采集子进程附着被拒的稳定 cause 码（病灶 B；诊断包 attach_causes）
+  "capture.attachError.openProcessDenied": "无法读取游戏数据：请勿以管理员身份运行 KovaaK；若仍失败，请将 Aiming Cookie 加入杀毒软件白名单后重启采集",
   "capture.evidence.videoRecorded": "已录制",
   "capture.evidence.traceRecorded": "已记录",
   "capture.evidence.organizing": "整理中",

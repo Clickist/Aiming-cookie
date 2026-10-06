@@ -706,3 +706,101 @@ def test_diagnostics_reports_live_child_log_tails_and_session_outputs(
     assert service.diagnostics()["session_outputs"]["input_log"] is True
 
     service.stop()
+
+
+def test_diagnostics_attach_causes_from_child_log_tail(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """病灶 B2a：child log 尾部最后一个已知 cause= 码 → diagnostics.attach_causes。
+
+    野外形态（b3 报障）：target 子进程整场刷 OpenProcess err=5，现在诊断包必须
+    给出机读归因（open_process_denied / open_process_failed），未知码不收录。
+    """
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+
+    session_dir = service._session_dir
+    assert session_dir is not None
+    # 尾部有多个 token 时取最后一个；前面出现过被拒、后面恢复了不算被拒。
+    (session_dir / "target.log").write_text(
+        "OpenProcess(12940) failed err=5 cause=open_process_denied\n"
+        "[wait] 15s 后重试...\n",
+        encoding="utf-8",
+    )
+    # 未知码不收录（不编造归因）。
+    (session_dir / "camera.log").write_text(
+        "cause=some_future_code\n", encoding="utf-8",
+    )
+
+    diag = service.diagnostics()
+    assert diag["attach_causes"] == {"target": "open_process_denied"}
+
+    # 无任何 token：字段为空 dict（加性字段恒在，消费方免 None 判断）。
+    (session_dir / "target.log").write_text("all good\n", encoding="utf-8")
+    (session_dir / "camera.log").write_text("all good\n", encoding="utf-8")
+    assert service.diagnostics()["attach_causes"] == {}
+
+    service.stop()
+
+
+def test_diagnostics_attach_causes_include_dead_child_tails(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """病灶 B2a：附着被拒后子进程死亡（终态尾部）同样进 attach_causes。"""
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+
+    session_dir = service._session_dir
+    assert session_dir is not None
+    (session_dir / "target.log").write_text(
+        "OpenProcess(12940) failed err=5 cause=open_process_denied\n",
+        encoding="utf-8",
+    )
+    # 子进程死亡：终态尾部进 _child_log_tails（{role}.log 现场读之外的兜底）。
+    service._dead_children.add("target")
+    service._child_log_tails["target"] = (
+        "OpenProcess(12940) failed err=5 cause=open_process_denied\n")
+
+    assert service.diagnostics()["attach_causes"] == {
+        "target": "open_process_denied",
+    }
+
+    service.stop()
+
+
+def test_no_session_outputs_rejection_records_attach_denied(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """病灶 B2a：no_session_outputs 拒绝记账携带 attach_denied 根因说明。
+
+    零产出（附着从未成功）此前只记 no_session_outputs 计数，根因悬案；
+    现在把「零产出的根因是附着被拒」写进拒绝说明。既有 reason 码不动。
+    """
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+
+    session_dir = service._session_dir
+    assert session_dir is not None
+    (session_dir / "target.log").write_text(
+        "OpenProcess(12940) failed err=5 cause=open_process_denied\n",
+        encoding="utf-8",
+    )
+    assert service.request_run_cut(1, 0, 1) is False
+    diag = service.diagnostics()
+    assert diag["run_cut_rejections"] == {"no_session_outputs": 1}
+    assert diag["run_cut_rejection_details"] == {
+        "no_session_outputs": "target:open_process_denied",
+    }
+
+    # 最近一次拒绝无 cause 说明时，旧说明必须清掉（说明描述最近一次拒绝）。
+    (session_dir / "target.log").write_text("attached, writing...\n", encoding="utf-8")
+    assert service.request_run_cut(2, 0, 1) is False
+    assert service.diagnostics()["run_cut_rejection_details"] == {}
+
+    service.stop()

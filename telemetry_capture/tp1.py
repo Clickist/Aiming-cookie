@@ -35,6 +35,13 @@ k32.CreateToolhelp32Snapshot.restype = wt.HANDLE
 k32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
 
 PROCESS_ALL_ACCESS = 0x1F0FFF
+# [fix 病灶B 2026-10-06] 只读掩码：OpenProcess 仅申请 QUERY_INFORMATION|VM_READ。
+# 本文件全部读取走 ReadProcessMemory/模块枚举（零写内存），最小权限即可；
+# PROCESS_ALL_ACCESS 权限过大，野外被杀软/受限令牌拒绝（err=5）→ 轨迹全空。
+# 必须用完整 QUERY_INFORMATION 而非 QUERY_LIMITED_INFORMATION：_module_base
+# 依赖 EnumProcessModulesEx/GetModuleFileNameExW（文档要求完整查询权限）；
+# 与 reoffset.py 的只读 Proc 先例（已实证可用）保持一致。
+ACCESS_RO = 0x0400 | 0x0010
 TH32CS_SNAPPROCESS = 0x2
 TARGET_EXE = "FPSAimTrainer-Win64-Shipping.exe"
 
@@ -76,11 +83,16 @@ OUT_PATH = os.path.join(os.getcwd(), "target_poll_out.jsonl")
 
 
 class Proc:
-    def __init__(self, pid):
+    def __init__(self, pid, access_mask=ACCESS_RO):
         self.pid = pid
-        self.h = k32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+        self.h = k32.OpenProcess(access_mask, False, pid)
         if not self.h:
-            raise OSError("OpenProcess(%d) failed err=%d" % (pid, ctypes.get_last_error()))
+            err = ctypes.get_last_error()
+            # [fix 病灶B 2026-10-06] 稳定 cause 码（服务端诊断包机读归因）：
+            # err=5 Access Denied → open_process_denied；其余 → open_process_failed。
+            cause = "open_process_denied" if err == 5 else "open_process_failed"
+            raise OSError(
+                "OpenProcess(%d) failed err=%d cause=%s" % (pid, err, cause))
         self.base = self._module_base()
         self.module_path = self._module_path
         apply_offsets(self.module_path, proc=self)   # [v4] 四级链选表；未知版本可运行时自定位

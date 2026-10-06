@@ -37,6 +37,8 @@ export const sharedEn = {
   "capture.traceError.attachFailed": "Failed to write the input trace",
   "capture.traceError.qualityUnknown": "Input data quality can't be determined",
   "capture.traceError.waitingSnapshot": "Waiting for the input trace to be organized",
+  // telemetry 采集子进程附着被拒的稳定 cause 码（病灶 B；诊断包 attach_causes）
+  "capture.attachError.openProcessDenied": "Couldn't read game data: don't run KovaaK as administrator; if it still fails, add Aiming Cookie to your antivirus allowlist and restart capture",
   "capture.evidence.videoRecorded": "Recorded",
   "capture.evidence.traceRecorded": "Captured",
   "capture.evidence.organizing": "Organizing",
