@@ -517,6 +517,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 会话列表是否已完成首次加载：列表是「这条会话是否存在」的唯一信号，
   // 但它慢（大会话量实测 12–32s），不能成为会话绑定的前置门槛。
   const coachSessionsLoadedRef = useRef(false);
+  // rail 点击的用户意图标记（id + 点击时的路由值）：点击已 set 选中、
+  // router.push 尚未提交的窗口里路由还是旧会话，下方同步 effect 若按旧路由
+  // 回绑会把选择弹回旧会话（1006 CDP 实测：新→旧→新三连选中＋三个并发
+  // GET /v1/sessions/N，切换卡 ~0.8s、侧栏高亮/顶栏标题弹跳）。effect 见
+  // 「路由仍停在点击前值」就等 push 提交后自然收敛；路由去了别处则放弃标记。
+  const userSelectedSessionRef = useRef<{ id: number; prevRoute: number | null } | null>(null);
   useEffect(() => {
     if (shellHidden) return undefined;
     const controller = new AbortController();
@@ -564,6 +570,22 @@ export function AppShell({ children }: { children: ReactNode }) {
     // 空首页上——在途 run 没有指示、消息不显示，正是「发出消息后石沉大海」
     //（0919 P2）。列表只补标题/摘要等元数据，绑定后自然补齐。
     if (routeSessionId !== null) {
+      const userSelect = userSelectedSessionRef.current;
+      if (routeSessionId === selectedCoachSessionId) {
+        // 路由已追上选中：标记消化完毕，回到常规路由权威语义。
+        userSelectedSessionRef.current = null;
+      } else if (
+        userSelect !== null
+        && selectedCoachSessionId === userSelect.id
+        && routeSessionId === userSelect.prevRoute
+      ) {
+        // rail 点击导航在途（路由仍停在点击前值）：不回绑，等 push 提交后
+        // 本 effect 随 routeSessionId 变化再收敛——回绑就是选中弹跳。
+        return;
+      } else if (userSelect !== null) {
+        // 路由去了别处（点选导航输给了其他导航）：放弃标记，路由权威照旧。
+        userSelectedSessionRef.current = null;
+      }
       if (coachSessions.some((session) => Number(session.id) === routeSessionId)
         || !coachSessionsLoadedRef.current) {
         setSelectedCoachSessionId(routeSessionId);
@@ -881,6 +903,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               if (session.id === "draft") return; // 当前草稿，点击无操作
               setDraftSession(false);
               setSelectedCoachSessionId(Number(session.id));
+              // 记录点击意图（含点击时的路由值）供同步 effect 识别在途导航，
+              // 防止旧路由把刚点的选择弹回去（选中弹跳，见 ref 处注释）。
+              userSelectedSessionRef.current = { id: Number(session.id), prevRoute: routeSessionId };
               router.push(`/s?sessionId=${session.id}`);
             }}
             onSettings={() => router.push("/settings")}

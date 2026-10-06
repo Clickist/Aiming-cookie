@@ -86,7 +86,7 @@ test("AppShell binds the route session without waiting for the slow session list
   assert.match(shell, /coachSessionsLoadedRef\.current = true;/);
   assert.match(
     shell,
-    /if \(routeSessionId !== null\) \{\s*if \(coachSessions\.some\(\(session\) => Number\(session\.id\) === routeSessionId\)\s*\|\| !coachSessionsLoadedRef\.current\) \{\s*setSelectedCoachSessionId\(routeSessionId\);\s*return;\s*\}/,
+    /if \(routeSessionId !== null\) \{\s*const userSelect = userSelectedSessionRef\.current;[\s\S]*?if \(coachSessions\.some\(\(session\) => Number\(session\.id\) === routeSessionId\)\s*\|\| !coachSessionsLoadedRef\.current\) \{\s*setSelectedCoachSessionId\(routeSessionId\);\s*return;\s*\}/,
   );
   // 列表已加载且确认无此会话（死 id）：回空选择，绝不落 lastViewed/primary 兜底
   //（§12.5：回落会把顶栏/消息区闪成旧会话）。
