@@ -1,6 +1,6 @@
 # Aiming Cookie 开发指南
 
-本文件只维护本地开发、运行、测试和代码入口。产品范围看 [`PRD.md`](PRD.md)，架构边界看 [`ARCHITECTURE.md`](ARCHITECTURE.md)，当前状态看 [`PROGRESS.md`](PROGRESS.md)。
+本文件只维护本地开发、运行、测试和代码入口。产品范围看 [`PRD.md`](PRD.md)，架构边界看 [`ARCHITECTURE.md`](ARCHITECTURE.md)，当前状态看 [`PROGRESS.md`](PROGRESS.md)。打全量安装包并发布的流程（打包/安装/发布/更新通道）见 [`RELEASE.md`](RELEASE.md)。
 
 ## 1. 环境与依赖
 
