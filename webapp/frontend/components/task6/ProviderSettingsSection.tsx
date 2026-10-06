@@ -85,7 +85,7 @@ let memberMeCache: MemberMe | null = null;
 /** 订阅池下方的加油包小行（没买过包时不出现——线框：零负担）。 */
 function boosterSubline(me: MemberMe): string {
   const boost = me.pools.boost;
-  if (!boost || boost.remaining <= 0) return MEMBER_COPY.quotaPerCycle;
+  if (!boost || boost.remaining <= 0) return "";
   return `${MEMBER_COPY.boosterRow} · ${MEMBER_COPY.boosterRemain(boost.pct)}`;
 }
 
@@ -857,7 +857,7 @@ export function ProviderSettingsSection({
                             {memberMe.member
                               ? (memberMe.cancel_at_period_end
                                   ? t("settings.provider.canceledUntil", { date: formatMemberDate(memberMe.period_end) })
-                                  : t("settings.provider.autoRenewUntil", { date: formatMemberDate(memberMe.period_end) }))
+                                  : null)
                               : t("settings.provider.noSubscription")}
                           </p>
                         </div>

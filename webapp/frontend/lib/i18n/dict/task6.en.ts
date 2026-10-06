@@ -422,7 +422,6 @@ export const task6En = {
   "settings.provider.memberPlan": "{plan} member",
   "settings.provider.loggedInUnsubscribed": "Signed in · not subscribed",
   "settings.provider.canceledUntil": "Cancelled · quota usable until {date}",
-  "settings.provider.autoRenewUntil": "Renews automatically on {date}",
   "settings.provider.noSubscription": "No active subscription yet; this page updates automatically once you subscribe in the account center.",
   "settings.provider.quotaLabel": "Remaining quota",
   "settings.provider.subPoolCurrent": "Subscription pool · current",

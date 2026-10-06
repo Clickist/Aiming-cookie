@@ -426,7 +426,6 @@ export const task6Zh = {
   "settings.provider.memberPlan": "{plan} 会员",
   "settings.provider.loggedInUnsubscribed": "已登录 · 未订阅",
   "settings.provider.canceledUntil": "已取消 · 额度可用至 {date}",
-  "settings.provider.autoRenewUntil": "下期自动续费 {date}",
   "settings.provider.noSubscription": "还没有有效订阅；在账号中心完成订阅后本页自动更新。",
   "settings.provider.quotaLabel": "剩余额度",
   "settings.provider.subPoolCurrent": "订阅池 · 当前池",

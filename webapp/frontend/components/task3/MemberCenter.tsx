@@ -243,7 +243,7 @@ export function MemberCenter({
                     : canceled
                       ? MEMBER_COPY.usableUntil(endDate)
                       : recurring
-                        ? MEMBER_COPY.autoRenew(endDate)
+                        ? null
                         : MEMBER_COPY.expiresOn(endDate)}
                 </span>
               </div>
@@ -258,7 +258,7 @@ export function MemberCenter({
                     : canceled
                       ? MEMBER_COPY.cycleStillUsable(endDate)
                       : recurring
-                        ? MEMBER_COPY.quotaPerCycle
+                        ? null
                         : MEMBER_COPY.quotaPerCycleOnce}
                 </span>
               </div>
@@ -287,9 +287,9 @@ export function MemberCenter({
               </Button>
               <Button onClick={goBilling} variant="secondary">{MEMBER_COPY.requestRefund}</Button>
             </div>
-            <p className="task3-member-hint">
-              {ended ? MEMBER_COPY.resubscribeHint : MEMBER_COPY.webHint}
-            </p>
+            {ended ? (
+              <p className="task3-member-hint">{MEMBER_COPY.resubscribeHint}</p>
+            ) : null}
 
             <div className="task3-member-card-row">
               <div>

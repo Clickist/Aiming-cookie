@@ -289,10 +289,8 @@ export const sharedZh = {
   "member.center.title": "用户中心",
   "member.center.memberActive": "{plan} 会员 · 生效中",
   "member.center.memberCanceled": "{plan} 会员 · 已取消",
-  "member.center.autoRenew": "下期自动续费 {date}",
   "member.center.expiresOn": "{date} 到期，到期后教练额度停用",
   "member.center.usableUntil": "额度可用至 {date}",
-  "member.center.quotaPerCycle": "额度每周期发放 · 连续包月",
   "member.center.quotaPerCycleOnce": "额度每周期发放 · 按月购买",
   "member.center.cycleStillUsable": "本期仍可正常使用 · {date} 后不再续费",
   "member.center.boosterRow": "🍪 加油包 · 永不过期",
@@ -320,7 +318,6 @@ export const sharedZh = {
   "member.ended.cycleEnded": "订阅额度已停用 · 加油包余额仍可用",
   "member.ended.resubscribe": "重新订阅",
   "member.ended.resubscribeHint": "↑ 在系统浏览器打开订阅页（重新订阅后自动回到订阅额度）",
-  "member.ended.webHint": "↑ 两项在系统浏览器打开（账号中心 · 账单子页）",
   "member.ended.planEnded": "{plan} · 已结束",
   // lib/coach-home.ts —— 空对话首页问候与建议 chips（批 1）
   "coach.home.greeting.morning1": "早上好，今天想练什么？",

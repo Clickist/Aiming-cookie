@@ -190,11 +190,9 @@ export const MEMBER_COPY = {
   get centerTitle() { return t("member.center.title"); },
   memberActive: (plan: string) => t("member.center.memberActive", { plan }),
   memberCanceled: (plan: string) => t("member.center.memberCanceled", { plan }),
-  autoRenew: (date: string) => t("member.center.autoRenew", { date }),
   /** 非 recurring（按月一次性购买）的到期行。 */
   expiresOn: (date: string) => t("member.center.expiresOn", { date }),
   usableUntil: (date: string) => t("member.center.usableUntil", { date }),
-  get quotaPerCycle() { return t("member.center.quotaPerCycle"); },
   /** 非 recurring（按月一次性购买）的周期额度行。 */
   get quotaPerCycleOnce() { return t("member.center.quotaPerCycleOnce"); },
   cycleStillUsable: (date: string) => t("member.center.cycleStillUsable", { date }),
@@ -226,7 +224,6 @@ export const MEMBER_COPY = {
   get cycleEnded() { return t("member.ended.cycleEnded"); },
   get resubscribe() { return t("member.ended.resubscribe"); },
   get resubscribeHint() { return t("member.ended.resubscribeHint"); },
-  get webHint() { return t("member.ended.webHint"); },
   planEnded: (plan: string) => t("member.ended.planEnded", { plan }),
   get notSubscribedTitle() { return t("member.center.notSubscribedTitle"); },
   get notSubscribedCenterBody() { return t("member.center.notSubscribedBody"); },
