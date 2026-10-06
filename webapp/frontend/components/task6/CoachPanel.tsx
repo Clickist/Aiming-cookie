@@ -626,6 +626,14 @@ export function CoachPanel({
     ? memberNoticeText(memberSoftNoticeKey, member.me, memberEndDate(member.me))
     : null;
   const [loadError, setLoadError] = useState(false);
+  // 屏上 messages 归属哪条会话（"draft"=草稿首页，null=无权威内容）。切换
+  // 会话时 refresh 在途、旧会话消息原地保留（这是有意的——清空会闪），用
+  // 归属错位识别"标题已切、正文还是旧会话"的窗口，驱动顶部过渡细条
+  //（1006 点点报障：切换慢＋文字闪动；CDP 实测错位窗 ~0.8s）。
+  const [messagesSessionId, setMessagesSessionId] = useState<number | "draft" | null>(null);
+  // 会话详情在途拉取的取消器：会话再切换/refresh 重入时 abort 旧请求，
+  // 废请求不必跑完（实测一次弹跳切换并发三个 GET，总时长被最慢者拖住）。
+  const refreshAbortRef = useRef<AbortController | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; seq: number } | null>(null);
   const feedbackSeqRef = useRef(0);
   // Toast 的关闭是 200ms exit 后的延迟回调：若用户关掉提示后立刻重试
@@ -932,6 +940,7 @@ export function CoachPanel({
     if (capability !== "ready") return;
     if (draftSession) {
       setMessages([]);
+      setMessagesSessionId("draft");
       setAnalysisSessionIds([]);
       setAnalysisRefs([]);
       setDeepReadAnalysisSessionIds([]);
@@ -945,6 +954,7 @@ export function CoachPanel({
         // 同时清掉残留的 run 与失败卡——否则已删会话的错误卡和工作流会
         // 以僵尸形态挂在空页上（0912 晚点点截图实锤）。
         setMessages([]);
+        setMessagesSessionId(null);
         setRun(null);
         setFailedCard(null);
         setAnalysisSessionIds([]);
@@ -958,6 +968,7 @@ export function CoachPanel({
       // 发送后气泡凭空消失直到回合结束"的根源（0912 逐帧审计）；等 sessionId
       // 落地后 refresh 的合并逻辑会按 role+content 对乐观气泡去重接管。
       setMessages((current) => current.filter((message) => message.id < 0));
+      setMessagesSessionId(null);
       setAnalysisSessionIds([]);
       setAnalysisRefs([]);
       setDeepReadAnalysisSessionIds([]);
@@ -965,9 +976,14 @@ export function CoachPanel({
       return;
     }
     const revision = ++refreshRevisionRef.current;
+    // 上一次拉取（多半是旧会话的）直接取消：revision 守卫只保证结果不误上屏，
+    // 请求本身还会占着连接跑完，切换时长被最慢的废请求拖住。
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
     try {
-      const detail = await getCoachSession(sessionId);
-      if (revision !== refreshRevisionRef.current) return;
+      const detail = await getCoachSession(sessionId, { signal: controller.signal });
+      if (controller.signal.aborted || revision !== refreshRevisionRef.current) return;
       setMessages((current) => {
         const optimistic = current.filter((message) => message.id < 0);
         const backendMessages = detail.messages ?? [];
@@ -981,12 +997,14 @@ export function CoachPanel({
         );
         return [...backendMessages, ...uniqueOptimistic];
       });
+      setMessagesSessionId(sessionId);
       setAnalysisSessionIds(detail.analysis_session_ids ?? []);
       setAnalysisRefs(detail.analysis_refs ?? []);
       setDeepReadAnalysisSessionIds(detail.deep_read_analysis_session_ids ?? []);
       setLoadError(false);
     } catch {
-      if (revision === refreshRevisionRef.current) setLoadError(true);
+      // 被新切换 abort 的在途请求不算加载失败，不能误亮错误态。
+      if (!controller.signal.aborted && revision === refreshRevisionRef.current) setLoadError(true);
     }
   }, [capability, draftSession, sessionId, handoverSessionId]);
 
@@ -1355,6 +1373,8 @@ export function CoachPanel({
     void refresh();
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
+      // refresh 身份变化（会话再切换）或卸载时，取消还在途的会话详情拉取。
+      refreshAbortRef.current?.abort();
     };
   }, [refresh]);
 
@@ -2602,6 +2622,17 @@ export function CoachPanel({
   // 的泄漏点；目录被发现/手动确认后 hook 自动回落 false，卡片消失。
   const kovaakInstallGuideMissing = useKovaakInstallGuide();
   // 纯空对话（无消息、无 run、非过渡帧）才显示首页；发送首条后由常规消息流接管。
+  // 会话切换错位窗：选中会话（sessionId）与屏上已加载内容的归属
+  //（messagesSessionId）不一致且旧内容还挂着——顶部细过渡条标注"加载中"，
+  // 不清空旧内容（清空在大会话下更闪，0911 前科），内容落位整条消失。
+  // 拉取失败（loadError）不算加载中：条子撤下，旧内容原地保留（与修前
+  // 行为一致），不挂一根永不停的条。
+  const switchingSession =
+    sessionId != null
+    && messagesSessionId != null
+    && messagesSessionId !== sessionId
+    && messages.length > 0
+    && !loadError;
   const homeMode = messages.length === 0 && !run && !homeExit;
   // 空对话首页壳层（点点 0910 拍板）：header 状态行与"本次讨论"条是上次会话的
   // 上下文残留，空对话时连同过渡帧一起不渲染，首页只留居中 hero；异常分支
@@ -3079,8 +3110,10 @@ export function CoachPanel({
       ) : null}
 
       <div className="task6-messages-wrap" data-home-fly={homeExit ? "true" : undefined}>
+      {switchingSession ? <div aria-hidden="true" className="task6-switch-bar" /> : null}
       <section
         aria-label={t("coach.messages.label")}
+        aria-busy={switchingSession || undefined}
         className="task6-messages"
         onMouseUp={handleMessagesMouseUp}
       >
