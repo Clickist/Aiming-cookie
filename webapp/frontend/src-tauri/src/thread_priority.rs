@@ -28,8 +28,7 @@ pub fn apply_mmcss_capture_characteristics() {
         use windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW;
         let mut task_index: u32 = 0;
         unsafe {
-            if AvSetMmThreadCharacteristicsW(windows::core::w!("Capture"), &mut task_index)
-                .is_err()
+            if AvSetMmThreadCharacteristicsW(windows::core::w!("Capture"), &mut task_index).is_err()
             {
                 crate::dlog!(
                     "[thread-priority] MMCSS AvSetMmThreadCharacteristicsW(Capture) failed"

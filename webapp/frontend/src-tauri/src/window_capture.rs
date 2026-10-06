@@ -4,7 +4,7 @@
 //! The current task records frame metadata only. Pixel readback and MP4
 //! encoding are separate later steps so the Raw Input path stays priority.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::ops::Range;
@@ -594,7 +594,7 @@ pub struct ReplayExportFailure {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayExportReceipt {
     pub requested_start_100ns: i64,
@@ -609,6 +609,9 @@ pub struct ReplayExportReceipt {
     // Rust 侧，控制协议与落盘 receipt 的形状保持不变。
     pub tolerated_coverage_gaps: u64,
     pub capture_clock: CaptureClockMetadata,
+    // 病灶 A：会话内的窗口尺寸漂移跟随事件（等比 letterbox）。旧 receipt
+    // 无此字段 → 消费端按无变换处理，不做字段缺省迁移。
+    pub geometry_events: Vec<GeometryEvent>,
 }
 
 #[derive(Clone, Debug)]
@@ -618,6 +621,7 @@ struct ReplayMuxInput {
     width: u32,
     height: u32,
     capture_clock: CaptureClockMetadata,
+    geometry_events: Vec<GeometryEvent>,
 }
 
 fn replay_export_failure(
@@ -1273,6 +1277,7 @@ fn write_prepared_replay_mp4(
         reencoded_frames: 0,
         tolerated_coverage_gaps: plan.tolerated_gaps,
         capture_clock: input.capture_clock,
+        geometry_events: input.geometry_events.clone(),
     })
 }
 
@@ -1610,7 +1615,7 @@ fn replay_buffer_export_failure(error: ReplayBufferError) -> ReplayExportFailure
     replay_export_failure(kind, format!("replay snapshot failed: {error:?}"))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowCaptureStatus {
     pub supported: bool,
@@ -1645,6 +1650,9 @@ pub struct WindowCaptureStatus {
     pub replay_evicted_packets: u64,
     pub replay_coverage_gaps: u64,
     pub replay_bytes: usize,
+    // 病灶 A：窗口尺寸漂移事件史（跟随/终态化各记一条，capped 16），
+    // 随诊断包 windowCapture.resizeEvents 落盘（camelCase）。
+    pub resize_events: Vec<CaptureResizeEvent>,
     pub clock_source: &'static str,
     pub timebase_version: &'static str,
     pub clock_anchor_utc_ms: Option<i64>,
@@ -1811,6 +1819,10 @@ pub struct FrameQueue {
     replay_evicted_packets: u64,
     replay_coverage_gaps: u64,
     replay_bytes: usize,
+    // 窗口尺寸漂移事件史（capped 16，丢最旧）与「跟随生效」标志：
+    // 跟随与可观测同 PR（项目铁律）——跟随路径没有诊断字段=没做完。
+    resize_events: Vec<ResizeEventRecord>,
+    resize_following: bool,
 }
 
 impl FrameQueue {
@@ -1850,6 +1862,8 @@ impl FrameQueue {
             replay_evicted_packets: 0,
             replay_coverage_gaps: 0,
             replay_bytes: 0,
+            resize_events: Vec::new(),
+            resize_following: false,
         })
     }
 
@@ -1958,6 +1972,23 @@ impl FrameQueue {
         self.encode_height = Some(encode_height);
     }
 
+    /// 记录一次窗口尺寸漂移事件（跟随或终态化），超限丢最旧。
+    pub fn record_resize_event(&mut self, event: CaptureResizeEvent, frame_pts_100ns: i64) {
+        if self.resize_events.len() >= RESIZE_EVENT_HISTORY_LIMIT {
+            self.resize_events.remove(0);
+        }
+        self.resize_events.push(ResizeEventRecord {
+            event,
+            frame_pts_100ns,
+        });
+    }
+
+    /// 「跟随生效」标志：跟随事件生效时置位，内容回到会话尺寸或队列
+    /// reset 时清除。协调器据此把 video 子状态标注为 capture_resized_following。
+    pub fn set_resize_following(&mut self, active: bool) {
+        self.resize_following = active;
+    }
+
     /// 硬编层失败被软编回退顶替时留痕（类别+消息），不被末级软编聚合
     /// 错误遮蔽。
     pub fn record_hardware_rejection(&mut self, rejection: String) {
@@ -2010,6 +2041,8 @@ impl FrameQueue {
         self.replay_evicted_packets = 0;
         self.replay_coverage_gaps = 0;
         self.replay_bytes = 0;
+        self.resize_events.clear();
+        self.resize_following = false;
     }
 
     pub fn status(&self, enabled: bool, recording: bool) -> WindowCaptureStatus {
@@ -2044,6 +2077,11 @@ impl FrameQueue {
             replay_evicted_packets: self.replay_evicted_packets,
             replay_coverage_gaps: self.replay_coverage_gaps,
             replay_bytes: self.replay_bytes,
+            resize_events: self
+                .resize_events
+                .iter()
+                .map(|record| record.event.clone())
+                .collect(),
             clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
             timebase_version: "time_alignment.v2",
             clock_anchor_utc_ms: None,
@@ -2190,6 +2228,25 @@ impl WindowCaptureState {
                     == Some(HardwareEncoderFailure::CaptureResizedUnsupported)
             })
             .unwrap_or(false)
+    }
+
+    /// 硬编 letterbox 跟随是否正在生效（病灶 A）。终态化在场时一律返回
+    /// false：degraded/rebuild 路径拥有 video 状态，跟随标注不得覆盖它。
+    pub fn recording_following_resize(&self) -> bool {
+        if self.recording_terminated_by_resize() {
+            return false;
+        }
+        self.queue
+            .lock()
+            .map(|queue| queue.resize_following)
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_resize_following_for_test(&self, active: bool) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.set_resize_following(active);
+        }
     }
 
     /// 导出在途记账 +1：handle_export 在把导出排入 mux worker 前调用，
@@ -2793,10 +2850,18 @@ impl windows::Win32::Media::MediaFoundation::IMFAsyncCallback_Impl
 struct GpuBgraToNv12Converter {
     video_device: windows::Win32::Graphics::Direct3D11::ID3D11VideoDevice,
     video_context: windows::Win32::Graphics::Direct3D11::ID3D11VideoContext,
+    // UpdateSubresource（NV12 清黑）挂在基类 ID3D11DeviceContext 上，绑定
+    // 未把基类方法投到 ID3D11VideoContext，留一份引用清黑时用。
+    device_context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
     enumerator: windows::Win32::Graphics::Direct3D11::ID3D11VideoProcessorEnumerator,
     processor: windows::Win32::Graphics::Direct3D11::ID3D11VideoProcessor,
     output_texture: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
     output_view: windows::Win32::Graphics::Direct3D11::ID3D11VideoProcessorOutputView,
+    output_width: u32,
+    output_height: u32,
+    // 当前已应用于 video processor 的 stream 矩形；None = 默认矩形
+    // （全源→全目标，既有行为）。矩形变化时先清黑 NV12 目标。
+    applied_rect: Option<LetterboxRect>,
 }
 
 #[cfg(windows)]
@@ -2956,6 +3021,7 @@ impl GpuBgraToNv12Converter {
         Ok(Self {
             video_device,
             video_context,
+            device_context: context.clone(),
             enumerator,
             processor,
             output_texture,
@@ -2965,10 +3031,105 @@ impl GpuBgraToNv12Converter {
                     "GPU NV12 output view was not returned",
                 )
             })?,
+            output_width: width,
+            output_height: height,
+            applied_rect: None,
         })
     }
 
-    fn convert(
+    /// 带等比 letterbox 矩形的转换路径（病灶 A）：Blt 前设置 stream
+    /// source/dest rect（stream index=0），目标矩形由调用方按等比 fit
+    /// 居中算好；黑边靠对 NV12 目标清黑（Y=0、UV=128）实现。
+    /// 无矩形调用（None）恢复默认矩形，保持既有全源→全目标行为。
+    fn convert_with_letterbox(
+        &mut self,
+        source: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        letterbox: Option<LetterboxRect>,
+    ) -> Result<&windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, HardwareEncoderError> {
+        use windows::Win32::Foundation::RECT;
+
+        if letterbox != self.applied_rect {
+            match letterbox {
+                Some(rect) => {
+                    // 矩形首次生效或变化（含缩小后旧画面残留在新黑边里）：
+                    // 先清黑再 Blt。稳态跟随矩形不变时零额外成本。
+                    self.clear_nv12_output();
+                    let source_rect = RECT {
+                        left: 0,
+                        top: 0,
+                        right: rect.src_width,
+                        bottom: rect.src_height,
+                    };
+                    let destination_rect = RECT {
+                        left: rect.dst_x,
+                        top: rect.dst_y,
+                        right: rect.dst_x + rect.dst_width,
+                        bottom: rect.dst_y + rect.dst_height,
+                    };
+                    unsafe {
+                        self.video_context.VideoProcessorSetStreamSourceRect(
+                            &self.processor,
+                            0,
+                            true,
+                            Some(&source_rect),
+                        );
+                        self.video_context.VideoProcessorSetStreamDestRect(
+                            &self.processor,
+                            0,
+                            true,
+                            Some(&destination_rect),
+                        );
+                    }
+                }
+                None => {
+                    // 回到无矩形路径：显式禁用矩形，恢复默认全源→全目标。
+                    unsafe {
+                        self.video_context.VideoProcessorSetStreamSourceRect(
+                            &self.processor,
+                            0,
+                            false,
+                            None,
+                        );
+                        self.video_context.VideoProcessorSetStreamDestRect(
+                            &self.processor,
+                            0,
+                            false,
+                            None,
+                        );
+                    }
+                }
+            }
+            self.applied_rect = letterbox;
+        }
+        self.blt(source)
+    }
+
+    /// NV12 清黑：Y 平面 0、UV 平面 128（中灰，避免色度偏色）。只在
+    /// converter 创建后首个矩形生效与矩形变化时执行——每帧清零需要每帧
+    /// 上传 ~1.5×分辨率字节（2560x1600 下约 6MB/帧），而 Blt 只写 dst
+    /// 矩形，两次矩形变化之间黑边内容不变。UpdateSubresource 无返回值，
+    /// 失败只在调试层可见，不影响录制继续（诚实性由事件与日志承担）。
+    fn clear_nv12_output(&mut self) {
+        let width = self.output_width;
+        let height = self.output_height;
+        let luma_bytes = width as usize * height as usize;
+        let mut data = vec![0u8; luma_bytes + luma_bytes / 2];
+        for byte in &mut data[luma_bytes..] {
+            *byte = 128;
+        }
+        unsafe {
+            self.device_context.UpdateSubresource(
+                &self.output_texture,
+                0,
+                None,
+                data.as_ptr().cast(),
+                width,
+                width * height * 3 / 2,
+            );
+        }
+    }
+
+    fn blt(
         &self,
         source: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
     ) -> Result<&windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, HardwareEncoderError> {
@@ -3391,6 +3552,7 @@ impl HardwareH264Encoder {
         source: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
         pts_100ns: i64,
         duration_100ns: i64,
+        letterbox: Option<LetterboxRect>,
     ) -> Result<(), HardwareEncoderError> {
         use windows::core::Interface;
         use windows::Win32::Media::MediaFoundation::{MFCreateDXGISurfaceBuffer, MFCreateSample};
@@ -3402,7 +3564,7 @@ impl HardwareH264Encoder {
                 "hardware H.264 input submitted without an MFT NeedInput permit",
             ));
         }
-        let nv12 = self.converter.convert(source)?;
+        let nv12 = self.converter.convert_with_letterbox(source, letterbox)?;
         let buffer = unsafe {
             MFCreateDXGISurfaceBuffer(
                 &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D::IID,
@@ -3664,6 +3826,7 @@ impl HardwareH264Encoder {
             width,
             height,
             capture_clock,
+            geometry_events: queue_geometry_events(&self.queue),
         })
     }
 
@@ -4352,6 +4515,7 @@ impl SoftwareH264Encoder {
             width,
             height,
             capture_clock,
+            geometry_events: queue_geometry_events(&self.queue),
         })
     }
 
@@ -4556,10 +4720,16 @@ impl AutomaticH264Encoder {
         let duration = 10_000_000 * DEFAULT_RECORDING_FPS_DENOMINATOR as i64
             / DEFAULT_RECORDING_FPS_NUMERATOR as i64;
         match self {
-            Self::Hardware(encoder) => {
-                encoder.submit_texture(&source, captured.encoded_pts_100ns, duration)
-            }
+            Self::Hardware(encoder) => encoder.submit_texture(
+                &source,
+                captured.encoded_pts_100ns,
+                duration,
+                captured.letterbox,
+            ),
             Self::Software(encoder) => {
+                // 软编不跟随尺寸漂移（无 scaler，漂移即终态化）；矩形字段
+                // 在软编变体下恒为 None。
+                debug_assert!(captured.letterbox.is_none());
                 // 自适应下采样：基准 30fps；帧通道有积压说明编码吞吐跟不上，
                 // 按积压深度放大接受间隔，让包间隔稳定贴住可持续节奏（积压
                 // n 帧就约每 n+1 帧取 1），避免包间隔随编码完成时刻抖动、
@@ -4654,6 +4824,9 @@ struct HardwareCaptureFrame {
     frame: windows::Graphics::Capture::Direct3D11CaptureFrame,
     sample: FrameSample,
     encoded_pts_100ns: i64,
+    // 病灶 A：尺寸漂移跟随的 letterbox 矩形（等比 fit 居中）；None =
+    // 默认全源→全目标转换。仅硬编变体会携带（软编漂移即终态化）。
+    letterbox: Option<LetterboxRect>,
 }
 
 // Direct3D11CaptureFrame is an agile WinRT object. The free-threaded WGC
@@ -4905,6 +5078,413 @@ fn sequence_header(transform: &windows::Win32::Media::MediaFoundation::IMFTransf
 #[cfg(windows)]
 fn frame_size_drifts_from_session(session: (i32, i32), content: (i32, i32)) -> bool {
     content != session
+}
+
+/// 一次窗口尺寸漂移事件的诊断记录（诊断包 windowCapture.resizeEvents，
+/// camelCase 落盘）。followed=false 表示该事件触发了终态化而非跟随；
+/// 终态化路径同样记一条再走原逻辑。frame_pts_100ns 是该漂移生效帧的
+/// 会话时间基（WGC system relative time），仅供 receipt canonical_ms
+/// 换算使用，不进诊断包。
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureResizeEvent {
+    pub at_utc_ms: i64,
+    pub src_width: u32,
+    pub src_height: u32,
+    pub dst_x: i64,
+    pub dst_y: i64,
+    pub dst_width: u32,
+    pub dst_height: u32,
+    pub scale: f64,
+    pub followed: bool,
+}
+
+/// 跟随事件的内部记录：诊断形态 + canonical_ms 换算所需的帧 PTS。
+#[derive(Clone, Debug, PartialEq)]
+struct ResizeEventRecord {
+    event: CaptureResizeEvent,
+    frame_pts_100ns: i64,
+}
+
+/// 漂移跟随事件的落盘上限：超过后丢最旧（FIFO）。足够回放一次会话内
+/// 的完整尺寸变化史，又不会在 resize 风暴里撑爆诊断包。
+const RESIZE_EVENT_HISTORY_LIMIT: usize = 16;
+
+/// 等比 letterbox 的目标几何：src 为漂移帧内容区域（源表面左上原点），
+/// dst 为等比 fit 后在 NV12 编码目标里的居中矩形（黑边 = fit 剩余区域）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg(windows)]
+struct LetterboxFit {
+    src_width: u32,
+    src_height: u32,
+    dst_x: i64,
+    dst_y: i64,
+    dst_width: u32,
+    dst_height: u32,
+    scale: f64,
+}
+
+/// D3D RECT 用的 i32 形态（VideoProcessorSetStreamSourceRect/DestRect）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(windows)]
+struct LetterboxRect {
+    src_width: i32,
+    src_height: i32,
+    dst_x: i32,
+    dst_y: i32,
+    dst_width: i32,
+    dst_height: i32,
+}
+
+#[cfg(windows)]
+impl LetterboxFit {
+    fn to_rect(self) -> LetterboxRect {
+        LetterboxRect {
+            src_width: self.src_width as i32,
+            src_height: self.src_height as i32,
+            dst_x: self.dst_x as i32,
+            dst_y: self.dst_y as i32,
+            dst_width: self.dst_width as i32,
+            dst_height: self.dst_height as i32,
+        }
+    }
+}
+
+/// 等比缩放下限：s ≥ 0.5 跟随（含放大：只糊不变形，坐标变换精确）；
+/// s < 0.5 画面过小失去训练价值，退回终态化。
+const RESIZE_FOLLOW_MIN_SCALE: f64 = 0.5;
+/// 单会话跟随事件预算：超过后防抖退回终态化（resize 抖动风暴保护）。
+const RESIZE_FOLLOW_MAX_EVENTS: usize = 8;
+/// 2s 窗口内 ≥3 次尺寸来回振荡 → 退回终态化。
+const RESIZE_FOLLOW_OSCILLATION_LIMIT: usize = 3;
+/// 振荡检测窗口：2s（WGC system relative time 100ns 单位）。
+const RESIZE_FOLLOW_OSCILLATION_WINDOW_100NS: i64 = 20_000_000;
+
+/// 跟随决策拒绝理由（稳定码，只进日志与事件追踪，不进控制面 reason）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(windows)]
+enum ResizeFollowDenial {
+    ScaleBelowFloor,
+    FollowBudgetExhausted,
+    ResizeOscillation,
+}
+
+#[cfg(windows)]
+impl ResizeFollowDenial {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ScaleBelowFloor => "resize_follow_scale_below_floor",
+            Self::FollowBudgetExhausted => "resize_follow_budget_exhausted",
+            Self::ResizeOscillation => "resize_follow_oscillation",
+        }
+    }
+}
+
+/// 漂移帧的跟随决策：Follow 产出 letterbox 几何；Deny 附带原几何
+/// （事件里可见 ratio）与拒绝理由，调用方走既有终态化逻辑。
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg(windows)]
+enum ResizeFollowDecision {
+    Follow(LetterboxFit),
+    Deny {
+        fit: LetterboxFit,
+        reason: ResizeFollowDenial,
+    },
+}
+
+/// 等比 fit 居中：s = min(dstW/srcW, dstH/srcH)，四舍五入后 clamp 进
+/// 编码目标，剩余维度居中。encode* 是会话启动时算好的取偶编码尺寸
+/// （单一计算点），这里只消费、不重算。
+#[cfg(windows)]
+fn letterbox_fit(encode: (u32, u32), content: (u32, u32)) -> LetterboxFit {
+    let (encode_width, encode_height) = encode;
+    let (src_width, src_height) = content;
+    let scale_x = f64::from(encode_width) / f64::from(src_width);
+    let scale_y = f64::from(encode_height) / f64::from(src_height);
+    let scale = scale_x.min(scale_y);
+    let dst_width = ((f64::from(src_width) * scale).round() as u32).min(encode_width);
+    let dst_height = ((f64::from(src_height) * scale).round() as u32).min(encode_height);
+    let dst_x = i64::from((encode_width - dst_width) / 2);
+    let dst_y = i64::from((encode_height - dst_height) / 2);
+    let applied_scale = (f64::from(dst_width) / f64::from(src_width))
+        .min(f64::from(dst_height) / f64::from(src_height));
+    LetterboxFit {
+        src_width,
+        src_height,
+        dst_x,
+        dst_y,
+        dst_width,
+        dst_height,
+        scale: applied_scale,
+    }
+}
+
+/// 一次已生效的跟随事件（防抖历史）：会话时基戳 + 漂移源尺寸。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(windows)]
+struct ResizeFollowRecord {
+    at_100ns: i64,
+    src_width: u32,
+    src_height: u32,
+}
+
+/// 阈值与防抖的纯决策（A1c）。判定顺序：scale 下限 → 会话预算 → 振荡。
+/// history 只含已生效的跟随事件；at_100ns 是当前漂移帧的会话时基戳。
+#[cfg(windows)]
+fn resize_follow_decision(
+    encode: (u32, u32),
+    content: (u32, u32),
+    history: &[ResizeFollowRecord],
+    at_100ns: i64,
+) -> ResizeFollowDecision {
+    let fit = letterbox_fit(encode, content);
+    if fit.scale < RESIZE_FOLLOW_MIN_SCALE {
+        return ResizeFollowDecision::Deny {
+            fit,
+            reason: ResizeFollowDenial::ScaleBelowFloor,
+        };
+    }
+    // 预算：本会话已生效的跟随事件达到上限后，新的漂移尺寸退回终态化。
+    if history.len() >= RESIZE_FOLLOW_MAX_EVENTS {
+        return ResizeFollowDecision::Deny {
+            fit,
+            reason: ResizeFollowDenial::FollowBudgetExhausted,
+        };
+    }
+    // 振荡防抖：2s 窗口内 A→B→A 反复 ≥3 次（含当前事件）→ 退回终态化。
+    let window_start = at_100ns.saturating_sub(RESIZE_FOLLOW_OSCILLATION_WINDOW_100NS);
+    let mut recent: Vec<u64> = history
+        .iter()
+        .filter(|record| record.at_100ns >= window_start)
+        .map(resize_oscillation_key)
+        .collect();
+    recent.push(u64::from(content.0) * 0x1_0000_0000 + u64::from(content.1));
+    let oscillations = recent
+        .iter()
+        .enumerate()
+        .skip(2)
+        .filter(|(index, size)| *size == &recent[index - 2] && *size != &recent[index - 1])
+        .count();
+    if oscillations >= RESIZE_FOLLOW_OSCILLATION_LIMIT {
+        return ResizeFollowDecision::Deny {
+            fit,
+            reason: ResizeFollowDenial::ResizeOscillation,
+        };
+    }
+    ResizeFollowDecision::Follow(fit)
+}
+
+/// 振荡比较键：把源尺寸折成一个可比较整数。
+#[cfg(windows)]
+fn resize_oscillation_key(record: &ResizeFollowRecord) -> u64 {
+    u64::from(record.src_width) * 0x1_0000_0000 + u64::from(record.src_height)
+}
+
+/// handler 侧一帧的跟随判定输入。drifted 由调用方按会话 item size 判定
+/// 后显式传入（encode* 是取偶值，不能作为漂移判定基准）；encode 只作
+/// letterbox fit 的目标矩形基准。
+#[derive(Clone, Copy, Debug)]
+#[cfg(windows)]
+struct ResizeFollowFrameInput {
+    encode: (u32, u32),
+    content: (u32, u32),
+    drifted: bool,
+    at_100ns: i64,
+    at_utc_ms: i64,
+    hardware_encoder: bool,
+    has_encoded_output: bool,
+}
+
+/// 单帧判定结果。Follow.event 只在尺寸变化沿（新漂移尺寸首次生效）时
+/// 携带事件；稳态漂移帧复用既定矩形、不重复记事件。Terminate.denial
+/// 是决策性拒绝理由（超阈值/防抖）；结构性拒绝（软编/首帧）为 None。
+#[derive(Clone, Debug, PartialEq)]
+#[cfg(windows)]
+enum ResizeFollowOutcome {
+    PassThrough,
+    Follow {
+        fit: LetterboxFit,
+        event: Option<CaptureResizeEvent>,
+    },
+    Terminate {
+        event: CaptureResizeEvent,
+        denial: Option<ResizeFollowDenial>,
+    },
+}
+
+/// 会话内跟随状态机（handler 持有；WGC FrameArrived 串行派发，无需加锁）。
+/// 硬编 + 已有编码产出 + 决策放行 → 跟随；其余 → 记 followed=false 事件
+/// 后由调用方走既有终态化逻辑（软编/首帧/超阈值/防抖）。
+#[cfg(windows)]
+struct ResizeFollowController {
+    following: bool,
+    last_content: Option<(u32, u32)>,
+    history: Vec<ResizeFollowRecord>,
+}
+
+#[cfg(windows)]
+impl ResizeFollowController {
+    fn new() -> Self {
+        Self {
+            following: false,
+            last_content: None,
+            history: Vec::new(),
+        }
+    }
+
+    /// 跟随是否正在生效（上一帧判定为 Follow 且未回到会话尺寸）。
+    fn is_following(&self) -> bool {
+        self.following
+    }
+
+    fn on_frame(&mut self, input: ResizeFollowFrameInput) -> ResizeFollowOutcome {
+        let (src_width, src_height) = input.content;
+        if !input.drifted {
+            // 内容回到会话尺寸：跟随解除，矩形不再随帧传递。
+            self.following = false;
+            self.last_content = Some(input.content);
+            return ResizeFollowOutcome::PassThrough;
+        }
+        // 硬编 + 已有编码产出是跟随的两个硬前提；否则记 followed=false
+        // 事件后走既有终态化（软编无 scaler、首帧漂移维持诚实终态化）。
+        if !input.hardware_encoder || !input.has_encoded_output {
+            let event = self.structural_deny_event(input);
+            return ResizeFollowOutcome::Terminate {
+                event,
+                denial: None,
+            };
+        }
+        let transition = self.last_content != Some(input.content);
+        if !transition {
+            if !self.following {
+                // 防御：非沿帧且未在跟随（正常流不可达，终态化后 handler
+                // 不再到达此处）——按终态化处理，不静默放行。
+                let event = self.structural_deny_event(input);
+                return ResizeFollowOutcome::Terminate {
+                    event,
+                    denial: None,
+                };
+            }
+            // 稳态漂移帧：复用既定矩形，不重复记事件。
+            return ResizeFollowOutcome::Follow {
+                fit: letterbox_fit(input.encode, input.content),
+                event: None,
+            };
+        }
+        match resize_follow_decision(input.encode, input.content, &self.history, input.at_100ns) {
+            ResizeFollowDecision::Follow(fit) => {
+                self.following = true;
+                self.last_content = Some(input.content);
+                self.history.push(ResizeFollowRecord {
+                    at_100ns: input.at_100ns,
+                    src_width,
+                    src_height,
+                });
+                ResizeFollowOutcome::Follow {
+                    fit,
+                    event: Some(CaptureResizeEvent {
+                        at_utc_ms: input.at_utc_ms,
+                        src_width,
+                        src_height,
+                        dst_x: fit.dst_x,
+                        dst_y: fit.dst_y,
+                        dst_width: fit.dst_width,
+                        dst_height: fit.dst_height,
+                        scale: fit.scale,
+                        followed: true,
+                    }),
+                }
+            }
+            ResizeFollowDecision::Deny { fit, reason } => {
+                let event = CaptureResizeEvent {
+                    at_utc_ms: input.at_utc_ms,
+                    src_width,
+                    src_height,
+                    dst_x: fit.dst_x,
+                    dst_y: fit.dst_y,
+                    dst_width: fit.dst_width,
+                    dst_height: fit.dst_height,
+                    scale: fit.scale,
+                    followed: false,
+                };
+                ResizeFollowOutcome::Terminate {
+                    event,
+                    denial: Some(reason),
+                }
+            }
+        }
+    }
+
+    /// 结构性终态化事件（followed=false，无决策性拒绝理由）：几何按等比
+    /// fit 计算，ratio 随事件可见。
+    fn structural_deny_event(&self, input: ResizeFollowFrameInput) -> CaptureResizeEvent {
+        let fit = letterbox_fit(input.encode, input.content);
+        CaptureResizeEvent {
+            at_utc_ms: input.at_utc_ms,
+            src_width: input.content.0,
+            src_height: input.content.1,
+            dst_x: fit.dst_x,
+            dst_y: fit.dst_y,
+            dst_width: fit.dst_width,
+            dst_height: fit.dst_height,
+            scale: fit.scale,
+            followed: false,
+        }
+    }
+}
+
+/// 帧会话时基戳 → UTC epoch ms（与 CaptureClockMetadata 锚点同源换算）。
+#[cfg(windows)]
+fn frame_timestamp_to_utc_ms(
+    clock: CaptureClockMetadata,
+    system_relative_time_100ns: i64,
+) -> Option<i64> {
+    let anchor_100ns = i64::try_from(clock.qpc_ns / 100).ok()?;
+    let delta_100ns = system_relative_time_100ns.checked_sub(anchor_100ns)?;
+    Some(clock.utc_epoch_ms + delta_100ns.div_euclid(10_000))
+}
+
+/// 队列中的跟随事件 → receipt geometryEvents：canonical_ms = epoch 毫秒，
+/// 与诊断包 resizeEvents.atUtcMs 同源同轴（消费端 letterbox_segment_at
+/// 按 run window 的 start_epoch_ms epoch 轴选段）。
+#[cfg(windows)]
+fn queue_geometry_events(queue: &Arc<Mutex<FrameQueue>>) -> Vec<GeometryEvent> {
+    queue
+        .lock()
+        .map(|queue| {
+            queue
+                .resize_events
+                .iter()
+                .map(|record| GeometryEvent {
+                    canonical_ms: record.event.at_utc_ms,
+                    src_width: record.event.src_width,
+                    src_height: record.event.src_height,
+                    dst_x: record.event.dst_x,
+                    dst_y: record.event.dst_y,
+                    dst_width: record.event.dst_width,
+                    dst_height: record.event.dst_height,
+                    scale: record.event.scale,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// receipt 导出的几何变换事件（camelCase 落盘）。canonical_ms 为该漂移
+/// 生效帧的 **epoch 毫秒**（与诊断包 resizeEvents.atUtcMs 同源同轴，由
+/// frame_timestamp_to_utc_ms 从会话 PTS 换算）；消费端按 run window 的
+/// start_epoch_ms epoch 轴选段。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeometryEvent {
+    pub canonical_ms: i64,
+    pub src_width: u32,
+    pub src_height: u32,
+    pub dst_x: i64,
+    pub dst_y: i64,
+    pub dst_width: u32,
+    pub dst_height: u32,
+    pub scale: f64,
 }
 
 #[cfg(windows)]
@@ -5557,6 +6137,11 @@ fn run_wgc_window_capture(
         let encoder_frame_sender_for_handler = encoder_frame_sender.clone();
         let last_recorded_timestamp_for_handler = Arc::clone(&last_recorded_timestamp);
         let recording_failed_for_handler = Arc::clone(&recording_failed);
+        // 病灶 A：硬编 letterbox 跟随。编码器变体在装配点即已确定且会话
+        // 内不变；跟随状态机由本回调独占（WGC FrameArrived 串行派发）。
+        let hardware_encoder_active =
+            matches!(automatic_encoder, Some(AutomaticH264Encoder::Hardware(_)));
+        let mut resize_follow = ResizeFollowController::new();
         let frame_arrived_token = frame_pool
             .FrameArrived(
                 &TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
@@ -5581,7 +6166,9 @@ fn run_wgc_window_capture(
                             clock: clock_metadata,
                             bgra8: Vec::new(),
                         };
-                        {
+                        // 本会话是否已有编码帧产出（record_hardware_packet
+                        // 计数）：首帧漂移（无产出）不跟随，维持诚实终态化。
+                        let has_encoded_output = {
                             let mut guard = queue_for_handler
                                 .lock()
                                 .map_err(|_| windows::core::Error::from_win32())?;
@@ -5598,7 +6185,8 @@ fn run_wgc_window_capture(
                                     error.to_string(),
                                 )
                             })?;
-                        }
+                            guard.submitted_packets > 0
+                        };
 
                         if recording_failed_for_handler.load(Ordering::Acquire) {
                             return Ok(());
@@ -5611,31 +6199,92 @@ fn run_wgc_window_capture(
                         ) else {
                             return Ok(());
                         };
-                        if frame_size_drifts_from_session(
+                        // 病灶 A：尺寸漂移分支。硬编 + 已有编码产出 + 决策
+                        // 放行 → 等比 letterbox 跟随（本局视频保住）；软编
+                        // 变体、首帧即漂移、s<0.5、防抖触发 → 记 followed=
+                        // false 事件后走既有诚实终态化逻辑（语义不变）。
+                        // 非漂移帧也过一遍状态机：跟随解除（内容回到会话
+                        // 尺寸）要能清除队列里的跟随标注。
+                        let drifted = frame_size_drifts_from_session(
                             (size.Width, size.Height),
                             (content_size.Width, content_size.Height),
-                        ) {
-                            // F6：旧实现在此静默丢弃后续所有帧（含硬件 replay
-                            // 路径），UI 仍显示采集中，局末导出才发现 coverage
-                            // gap。编码管线按启动尺寸固化、无法会话中途重建，
-                            // 改为诚实终态化：旧/新尺寸写入日志并记录显式错误
-                            // 码（诊断包与协调器 video 状态可见）；下一局 start
-                            // 重置队列后按新尺寸自动恢复。
-                            crate::dlog!(
-                                "[capture-resize] recording terminated: session={}x{} frame={}x{} sequence={}",
-                                size.Width,
-                                size.Height,
-                                content_size.Width,
-                                content_size.Height,
-                                sample.sequence
-                            );
-                            recording_failed_for_handler.store(true, Ordering::Release);
-                            if let Ok(mut guard) = queue_for_handler.lock() {
-                                guard.record_hardware_failure(
-                                    HardwareEncoderFailure::CaptureResizedUnsupported,
-                                );
+                        );
+                        let mut letterbox = None;
+                        let was_following = resize_follow.is_following();
+                        match resize_follow.on_frame(ResizeFollowFrameInput {
+                            encode: (encode_width, encode_height),
+                            content: (content_size.Width as u32, content_size.Height as u32),
+                            drifted,
+                            at_100ns: timestamp,
+                            at_utc_ms: frame_timestamp_to_utc_ms(clock_metadata, timestamp)
+                                .unwrap_or_default(),
+                            hardware_encoder: hardware_encoder_active,
+                            has_encoded_output,
+                        }) {
+                            ResizeFollowOutcome::PassThrough => {
+                                if was_following {
+                                    crate::dlog!(
+                                        "[capture-resize] following ended: frame back to \
+                                         session size sequence={}",
+                                        sample.sequence
+                                    );
+                                    if let Ok(mut guard) = queue_for_handler.lock() {
+                                        guard.set_resize_following(false);
+                                    }
+                                }
                             }
-                            return Ok(());
+                            ResizeFollowOutcome::Follow { fit, event } => {
+                                letterbox = Some(fit.to_rect());
+                                if let Some(event) = event {
+                                    crate::dlog!(
+                                        "[capture-resize] following: session={}x{} \
+                                         frame={}x{} dst={}x{}+{},+{} scale={:.3} \
+                                         sequence={}",
+                                        size.Width,
+                                        size.Height,
+                                        content_size.Width,
+                                        content_size.Height,
+                                        fit.dst_width,
+                                        fit.dst_height,
+                                        fit.dst_x,
+                                        fit.dst_y,
+                                        fit.scale,
+                                        sample.sequence
+                                    );
+                                    if let Ok(mut guard) = queue_for_handler.lock() {
+                                        guard.record_resize_event(event, timestamp);
+                                        guard.set_resize_following(true);
+                                    }
+                                }
+                            }
+                            ResizeFollowOutcome::Terminate { event, denial } => {
+                                // F6：旧实现在此静默丢弃后续所有帧（含硬件
+                                // replay 路径），UI 仍显示采集中，局末导出
+                                // 才发现 coverage gap。编码管线按启动尺寸
+                                // 固化、无法会话中途重建，跟随不可用（软
+                                // 编/首帧/超阈值/防抖）时诚实终态化：先落
+                                // resize 事件再记显式错误码（诊断包与协调
+                                // 器 video 状态可见）；下一局 start 重置队
+                                // 列后按新尺寸自动恢复。
+                                crate::dlog!(
+                                    "[capture-resize] recording terminated: \
+                                     session={}x{} frame={}x{} sequence={} denial={}",
+                                    size.Width,
+                                    size.Height,
+                                    content_size.Width,
+                                    content_size.Height,
+                                    sample.sequence,
+                                    denial.map(|reason| reason.as_str()).unwrap_or("structural")
+                                );
+                                recording_failed_for_handler.store(true, Ordering::Release);
+                                if let Ok(mut guard) = queue_for_handler.lock() {
+                                    guard.record_resize_event(event, timestamp);
+                                    guard.record_hardware_failure(
+                                        HardwareEncoderFailure::CaptureResizedUnsupported,
+                                    );
+                                }
+                                return Ok(());
+                            }
                         }
 
                         if let Some(sender) = encoder_frame_sender_for_handler.as_ref() {
@@ -5655,6 +6304,7 @@ fn run_wgc_window_capture(
                                 frame,
                                 sample,
                                 encoded_pts_100ns,
+                                letterbox,
                             }) {
                                 Ok(()) => {
                                     encoder_frame_backlog_for_handler
@@ -5865,9 +6515,8 @@ fn run_wgc_window_capture(
                 {
                     waited_for_frame = true;
                     let (captured, disconnected) = apply_frame_wait_result(
-                        receiver.recv_timeout(std::time::Duration::from_millis(
-                            WORKER_FRAME_WAIT_MS,
-                        )),
+                        receiver
+                            .recv_timeout(std::time::Duration::from_millis(WORKER_FRAME_WAIT_MS)),
                     );
                     encoder_channel_disconnected |= disconnected;
                     captured
@@ -6075,6 +6724,456 @@ mod tests {
             serde_json::to_string(&HardwareEncoderFailure::CaptureResizedUnsupported).unwrap(),
             "\"captureResizedUnsupported\""
         );
+    }
+
+    // ---- 病灶 A：硬编 letterbox 跟随（窗口尺寸漂移不再整场终态化）----
+
+    #[test]
+    #[cfg(windows)]
+    fn letterbox_fit_centers_equal_ratio_fit_inside_encode_rect() {
+        // 等比 fit 合同：s = min(dstW/srcW, dstH/srcH)，居中、零变形；
+        // 放大（s>1）同样合法：只糊不变形，坐标变换精确。
+        let fit = letterbox_fit((2560, 1600), (1280, 800));
+        assert_eq!((fit.dst_width, fit.dst_height), (2560, 1600));
+        assert_eq!((fit.dst_x, fit.dst_y), (0, 0));
+        assert!((fit.scale - 2.0).abs() < 1e-9);
+
+        // 纵向黑边：s = 2560/1920，dst 2560x1440 上下各留 80。
+        let fit = letterbox_fit((2560, 1600), (1920, 1080));
+        assert_eq!((fit.dst_width, fit.dst_height), (2560, 1440));
+        assert_eq!((fit.dst_x, fit.dst_y), (0, 80));
+        assert!((fit.scale - 2560.0 / 1920.0).abs() < 1e-9);
+
+        // 奇数内容（item size 可奇）：四舍五入后仍不超 encode 并居中。
+        let fit = letterbox_fit((2560, 1600), (2559, 1599));
+        assert!(fit.dst_width <= 2560 && fit.dst_height <= 1600);
+        assert_eq!(fit.dst_x, i64::from((2560 - fit.dst_width) / 2));
+        assert_eq!(fit.dst_y, i64::from((1600 - fit.dst_height) / 2));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_decision_follows_when_scale_meets_floor() {
+        // 缩小到恰好一半（s=0.5）与放大（s>1）都在跟随阈值上。
+        assert!(matches!(
+            resize_follow_decision((1280, 800), (2560, 1600), &[], 1_000),
+            ResizeFollowDecision::Follow(_)
+        ));
+        assert!(matches!(
+            resize_follow_decision((2560, 1600), (1280, 800), &[], 1_000),
+            ResizeFollowDecision::Follow(_)
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_decision_denies_when_scale_below_floor() {
+        // s < 0.5（内容远大于编码目标）：退回终态化。
+        match resize_follow_decision((2560, 1600), (6400, 4000), &[], 1_000) {
+            ResizeFollowDecision::Deny { reason, .. } => {
+                assert_eq!(reason.as_str(), "resize_follow_scale_below_floor");
+            }
+            ResizeFollowDecision::Follow(_) => panic!("s<0.5 must deny the follow"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_decision_budget_exhausts_after_eight_follows() {
+        let record = |index: usize| ResizeFollowRecord {
+            at_100ns: 1_000_000 * index as i64,
+            src_width: 1280,
+            src_height: 800,
+        };
+        // 历史含 7 条时第 8 次跟随仍放行。
+        let history: Vec<_> = (0..7).map(record).collect();
+        assert!(matches!(
+            resize_follow_decision((2560, 1600), (1280, 800), &history, 8_000_000),
+            ResizeFollowDecision::Follow(_)
+        ));
+        // 第 9 次触发预算防抖 → 终态化。
+        let history: Vec<_> = (0..8).map(record).collect();
+        match resize_follow_decision((2560, 1600), (1920, 1200), &history, 9_000_000) {
+            ResizeFollowDecision::Deny { reason, .. } => {
+                assert_eq!(reason.as_str(), "resize_follow_budget_exhausted");
+            }
+            ResizeFollowDecision::Follow(_) => panic!("budget must exhaust after 8 follows"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_decision_denies_three_oscillations_within_two_seconds() {
+        // A→B→A 记一次振荡；2s 窗口内累计 3 次 → 退回终态化。
+        let oscillating = |at_100ns: i64| ResizeFollowRecord {
+            at_100ns,
+            src_width: 1280,
+            src_height: 800,
+        };
+        let other = |at_100ns: i64| ResizeFollowRecord {
+            at_100ns,
+            src_width: 1920,
+            src_height: 1200,
+        };
+        // 历史 4 条 + 当前事件构成 A,B,A,B,A（间隔 3ms，全部落在 2s 窗口）。
+        let history = vec![
+            oscillating(0),
+            other(3_000_000),
+            oscillating(6_000_000),
+            other(9_000_000),
+        ];
+        match resize_follow_decision((2560, 1600), (1280, 800), &history, 12_000_000) {
+            ResizeFollowDecision::Deny { reason, .. } => {
+                assert_eq!(reason.as_str(), "resize_follow_oscillation");
+            }
+            ResizeFollowDecision::Follow(_) => panic!("3 oscillations in 2s must deny"),
+        }
+        // 同样 4 条历史摊开到 2s 窗口之外：只看得到 1 条，不触发防抖。
+        let history = vec![
+            oscillating(0),
+            other(30_000_000),
+            oscillating(60_000_000),
+            other(90_000_000),
+        ];
+        assert!(matches!(
+            resize_follow_decision((2560, 1600), (1280, 800), &history, 120_000_000),
+            ResizeFollowDecision::Follow(_)
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_follows_hardware_drift_after_encoded_output() {
+        // 红测 (1)：硬编 + 已有编码产出 + 漂移 → 跟随：不终态化，
+        // 产出预期 letterbox 矩形并记录 followed=true 事件。
+        let input = ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (1280, 800),
+            drifted: true,
+            at_100ns: 10_000_000,
+            at_utc_ms: 1_791_280_000_000,
+            hardware_encoder: true,
+            has_encoded_output: true,
+        };
+        let mut controller = ResizeFollowController::new();
+        match controller.on_frame(input) {
+            ResizeFollowOutcome::Follow { fit, event } => {
+                assert_eq!((fit.dst_width, fit.dst_height), (2560, 1600));
+                let event = event.expect("first follow must record a resize event");
+                assert!(event.followed);
+                assert_eq!(event.at_utc_ms, 1_791_280_000_000);
+                assert_eq!((event.src_width, event.src_height), (1280, 800));
+                assert!((event.scale - 2.0).abs() < 1e-9);
+            }
+            ResizeFollowOutcome::Terminate { .. } => {
+                panic!("hardware drift with prior output must follow, not terminate")
+            }
+            ResizeFollowOutcome::PassThrough => panic!("drifted frame must not pass through"),
+        }
+
+        // 稳态漂移帧（同尺寸）：继续跟随，不重复记事件。
+        let steady = ResizeFollowFrameInput {
+            at_100ns: 10_333_333,
+            at_utc_ms: 1_791_280_000_033,
+            ..input
+        };
+        match controller.on_frame(steady) {
+            ResizeFollowOutcome::Follow { event, .. } => assert!(event.is_none()),
+            _ => panic!("steady drifted frame must keep following"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_terminates_on_first_frame_drift_without_output() {
+        // 红测 (4)：首帧即漂移（无编码帧产出）→ 仍终态化，事件 followed=false。
+        let mut controller = ResizeFollowController::new();
+        match controller.on_frame(ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (1280, 800),
+            drifted: true,
+            at_100ns: 10_000,
+            at_utc_ms: 1_791_280_000_000,
+            hardware_encoder: true,
+            has_encoded_output: false,
+        }) {
+            ResizeFollowOutcome::Terminate { event, .. } => {
+                assert!(!event.followed);
+                assert_eq!((event.src_width, event.src_height), (1280, 800));
+            }
+            _ => panic!("first-frame drift must terminate"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_terminates_software_variant_drift() {
+        // 红测 (3)：软编变体漂移 → 仍终态化。
+        let mut controller = ResizeFollowController::new();
+        match controller.on_frame(ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (1280, 800),
+            drifted: true,
+            at_100ns: 10_000,
+            at_utc_ms: 1_791_280_000_000,
+            hardware_encoder: false,
+            has_encoded_output: true,
+        }) {
+            ResizeFollowOutcome::Terminate { event, .. } => assert!(!event.followed),
+            _ => panic!("software variant drift must terminate"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_terminates_when_scale_below_floor() {
+        // 红测 (2)：s<0.5 → 仍终态化，事件带 ratio。
+        let mut controller = ResizeFollowController::new();
+        match controller.on_frame(ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (6400, 4000),
+            drifted: true,
+            at_100ns: 10_000,
+            at_utc_ms: 1_791_280_000_000,
+            hardware_encoder: true,
+            has_encoded_output: true,
+        }) {
+            ResizeFollowOutcome::Terminate { event, .. } => {
+                assert!(!event.followed);
+                assert!(event.scale < 0.5);
+            }
+            _ => panic!("below-floor scale must terminate"),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_debounce_falls_back_to_termination() {
+        // 红测 (5)：防抖触发（预算耗尽）→ 终态化。
+        let mut controller = ResizeFollowController::new();
+        let frame = |at_100ns: i64, width: u32, height: u32| ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (width, height),
+            drifted: true,
+            at_100ns,
+            at_utc_ms: 1_791_280_000_000 + at_100ns / 10_000,
+            hardware_encoder: true,
+            has_encoded_output: true,
+        };
+        // 8 个互不相同的漂移尺寸全部跟随。
+        let sizes = [
+            (1280u32, 800u32),
+            (1281, 800),
+            (1280, 801),
+            (1282, 800),
+            (1280, 802),
+            (1283, 800),
+            (1280, 803),
+            (1284, 800),
+        ];
+        for (index, (width, height)) in sizes.iter().enumerate() {
+            let outcome = controller.on_frame(frame(10_000_000 * index as i64, *width, *height));
+            assert!(
+                matches!(outcome, ResizeFollowOutcome::Follow { .. }),
+                "follow #{index} must succeed"
+            );
+        }
+        // 第 9 个尺寸：预算防抖 → 退回终态化。
+        let outcome = controller.on_frame(frame(80_000_000, 1285, 800));
+        assert!(
+            matches!(outcome, ResizeFollowOutcome::Terminate { .. }),
+            "9th resize must trip the debounce"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resize_follow_controller_passthrough_resumes_without_letterbox() {
+        // 漂移解除（内容回到会话尺寸）→ PassThrough；再次漂移（预算内）仍可跟随。
+        let input = ResizeFollowFrameInput {
+            encode: (2560, 1600),
+            content: (1280, 800),
+            drifted: true,
+            at_100ns: 10_000_000,
+            at_utc_ms: 1_791_280_000_000,
+            hardware_encoder: true,
+            has_encoded_output: true,
+        };
+        let mut controller = ResizeFollowController::new();
+        assert!(matches!(
+            controller.on_frame(input),
+            ResizeFollowOutcome::Follow { .. }
+        ));
+        assert!(matches!(
+            controller.on_frame(ResizeFollowFrameInput {
+                content: (2560, 1600),
+                drifted: false,
+                at_100ns: 20_000_000,
+                at_utc_ms: 1_791_280_000_001,
+                ..input
+            }),
+            ResizeFollowOutcome::PassThrough
+        ));
+        assert!(matches!(
+            controller.on_frame(ResizeFollowFrameInput {
+                at_100ns: 30_000_000,
+                at_utc_ms: 1_791_280_000_002,
+                ..input
+            }),
+            ResizeFollowOutcome::Follow { event: Some(_), .. }
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn frame_timestamp_maps_to_utc_ms_via_capture_clock() {
+        let clock = CaptureClockMetadata {
+            utc_epoch_ms: 1_791_280_000_000,
+            qpc_ns: 5_000_000_000, // 锚点 = QPC 500ms
+            clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
+            timebase_version: "time_alignment.v2",
+        };
+        // 帧时间恰为锚点 → 原样；+250ms → +250。
+        assert_eq!(
+            frame_timestamp_to_utc_ms(clock, 50_000_000),
+            Some(1_791_280_000_000)
+        );
+        assert_eq!(
+            frame_timestamp_to_utc_ms(clock, 52_500_000),
+            Some(1_791_280_000_250)
+        );
+    }
+
+    #[test]
+    fn resize_events_cap_at_sixteen_drop_oldest_and_clear_on_reset() {
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        let event = |sequence: u32| CaptureResizeEvent {
+            at_utc_ms: 1_000 + i64::from(sequence),
+            src_width: 1280,
+            src_height: 800,
+            dst_x: 0,
+            dst_y: 0,
+            dst_width: 2560,
+            dst_height: 1600,
+            scale: 2.0,
+            followed: true,
+        };
+        {
+            let mut queue = state.queue.lock().unwrap();
+            for sequence in 0..18u32 {
+                queue.record_resize_event(event(sequence), 100 * i64::from(sequence));
+            }
+        }
+        let status = state.status();
+        assert_eq!(status.resize_events.len(), 16);
+        // 丢最旧：首条是 sequence=2。
+        assert_eq!(status.resize_events[0].at_utc_ms, 1_002);
+        assert_eq!(status.resize_events[15].at_utc_ms, 1_017);
+
+        // reset 后清空（随 last_encoder_failure 一并清）。
+        state.queue.lock().unwrap().reset();
+        assert!(state.status().resize_events.is_empty());
+    }
+
+    #[test]
+    fn resize_following_predicate_reflects_queue_flag_and_terminated_override() {
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        assert!(!state.recording_following_resize());
+        state.queue.lock().unwrap().set_resize_following(true);
+        assert!(state.recording_following_resize());
+        // 终态化优先：跟随标志在场也不得报「跟随中」。
+        state
+            .queue
+            .lock()
+            .unwrap()
+            .record_hardware_failure(HardwareEncoderFailure::CaptureResizedUnsupported);
+        assert!(!state.recording_following_resize());
+        assert!(state.recording_terminated_by_resize());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn queue_geometry_events_map_resize_events_to_epoch_canonical_ms() {
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        state.queue.lock().unwrap().record_resize_event(
+            CaptureResizeEvent {
+                at_utc_ms: 1_791_280_000_000,
+                src_width: 1280,
+                src_height: 800,
+                dst_x: 0,
+                dst_y: 0,
+                dst_width: 2560,
+                dst_height: 1600,
+                scale: 2.0,
+                followed: true,
+            },
+            12_345_678, // 会话 PTS（100ns），仅内部换算留痕
+        );
+        let events = queue_geometry_events(&state.queue);
+        assert_eq!(events.len(), 1);
+        // canonical_ms = epoch 毫秒（与诊断包 resizeEvents.atUtcMs 同源同轴），
+        // 不是会话相对轴——消费端 letterbox_segment_at 按 run window 的
+        // start_epoch_ms epoch 轴选段，两轴错位会让段永远选错/选不到。
+        assert_eq!(events[0].canonical_ms, 1_791_280_000_000);
+        assert_eq!((events[0].src_width, events[0].src_height), (1280, 800));
+        assert_eq!((events[0].dst_width, events[0].dst_height), (2560, 1600));
+        assert!((events[0].scale - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn geometry_events_and_resize_events_share_the_same_frame_clock() {
+        // 对齐性合同：同一漂移帧产出的 resizeEvents.atUtcMs 与落盘 receipt
+        // 的 geometryEvents.canonicalMs 必须同值同轴（epoch 毫秒），消费端
+        // 才能用 run window 的 start_epoch_ms 把段选对。
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        state.queue.lock().unwrap().record_resize_event(
+            CaptureResizeEvent {
+                at_utc_ms: 1_791_280_001_234,
+                src_width: 1280,
+                src_height: 800,
+                dst_x: 0,
+                dst_y: 0,
+                dst_width: 2560,
+                dst_height: 1600,
+                scale: 2.0,
+                followed: true,
+            },
+            12_345_678,
+        );
+        let at_utc_ms = state.status().resize_events[0].at_utc_ms;
+        let canonical_ms = queue_geometry_events(&state.queue)[0].canonical_ms;
+        assert_eq!(at_utc_ms, 1_791_280_001_234);
+        assert_eq!(canonical_ms, at_utc_ms);
+    }
+
+    #[test]
+    fn replay_receipt_serializes_geometry_events_as_camel_case() {
+        let mut input = replay_mux_input(replay_mux_snapshot());
+        input.geometry_events = vec![GeometryEvent {
+            canonical_ms: 17_912_800_000_000,
+            src_width: 1280,
+            src_height: 800,
+            dst_x: 320,
+            dst_y: 0,
+            dst_width: 1280,
+            dst_height: 1600,
+            scale: 0.667,
+        }];
+        let (_, receipt) = build_replay_mp4(&input).unwrap();
+        assert_eq!(receipt.geometry_events.len(), 1);
+        assert_eq!(receipt.geometry_events[0].canonical_ms, 17_912_800_000_000);
+
+        let json = serde_json::to_string(&receipt).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let geometry = &value["geometryEvents"];
+        assert_eq!(geometry[0]["canonicalMs"].as_f64(), Some(1.79128e13));
+        assert_eq!(geometry[0]["srcWidth"], 1280);
+        assert_eq!(geometry[0]["dstX"], 320);
+        assert_eq!(geometry[0]["dstHeight"], 1600);
+        assert_eq!(geometry[0]["scale"].as_f64(), Some(0.667));
+        // 旧 receipt 无 geometryEvents 字段：消费端按无变换处理，Rust 侧
+        // 不做字段缺省迁移；此处只锁定新 receipt 的落盘形态。
     }
 
     #[test]
@@ -6404,6 +7503,7 @@ mod tests {
                 clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
                 timebase_version: "time_alignment.v2",
             },
+            geometry_events: Vec::new(),
         }
     }
 
@@ -7072,7 +8172,7 @@ mod tests {
                 "hardware H.264 input permit timed out"
             );
             encoder
-                .submit_texture(&source, index * frame_duration, frame_duration)
+                .submit_texture(&source, index * frame_duration, frame_duration, None)
                 .expect("GPU texture should submit without CPU readback");
         }
         for _ in 0..2_000 {
@@ -7227,7 +8327,7 @@ mod tests {
             };
             unsafe { context.ClearRenderTargetView(&render_target, &color) };
             encoder
-                .submit_texture(&source, index * frame_duration, frame_duration)
+                .submit_texture(&source, index * frame_duration, frame_duration, None)
                 .expect("GPU texture should submit without CPU readback");
             encoder
                 .drain_events()

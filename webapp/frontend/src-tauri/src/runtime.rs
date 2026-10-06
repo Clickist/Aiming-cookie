@@ -531,7 +531,10 @@ fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String>
             // panic（exit 101）= 闪退，完全绕过启动闸门的失败卡。降级为落日志
             // 并照常返回 layout，让后台拉起在此路径上 spawn 失败 → 3 次重启
             // 预算 → runtime.failed → 失败卡（不闪退、一键导出诊断包）。
-            crate::dlog!("[desktop-runtime] {label} is missing: {} —— 继续启动，由后台拉起失败接管", path.display());
+            crate::dlog!(
+                "[desktop-runtime] {label} is missing: {} —— 继续启动，由后台拉起失败接管",
+                path.display()
+            );
         }
     }
     Ok(RuntimeLayout {

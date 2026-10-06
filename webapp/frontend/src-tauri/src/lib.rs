@@ -772,7 +772,7 @@ fn build_capture_diagnostics_bundle(
     window_status.gpu_driver_suspect =
         window_capture::gpu_driver_suspect(&gpu_names, last_start_failure.as_ref());
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v9",
+        schema_version: "capture_diagnostics.v10",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,

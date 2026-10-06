@@ -2598,7 +2598,8 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("waiter returned");
         assert_eq!(
-            result, winapi::um::winbase::WAIT_OBJECT_0,
+            result,
+            winapi::um::winbase::WAIT_OBJECT_0,
             "WM_APP must wake the pump wait"
         );
         assert!(

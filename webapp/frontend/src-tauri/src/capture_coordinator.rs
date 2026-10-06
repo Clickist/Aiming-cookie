@@ -1,6 +1,7 @@
 use crate::raw_input::{RawInputState, SnapshotBarrierReceipt};
 use crate::window_capture::{
-    CaptureClockMetadata, ReplayExportReceipt, WindowCaptureState, WindowCaptureStatus,
+    CaptureClockMetadata, GeometryEvent, ReplayExportReceipt, WindowCaptureState,
+    WindowCaptureStatus,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -128,6 +129,10 @@ pub struct CaptureSourceStatus {
     pub state: CaptureSourceState,
     pub reason: Option<String>,
 }
+
+/// 病灶 A：硬编 letterbox 跟随生效时的 video 子状态 reason（稳定码，
+/// 对齐 capture_resized_unsupported 的字符串风格）。
+const CAPTURE_RESIZED_FOLLOWING: &str = "capture_resized_following";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -425,7 +430,7 @@ struct FileFingerprint {
     digest: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredReplayReceipt {
     requested_start_100ns: i64,
@@ -437,6 +442,11 @@ struct StoredReplayReceipt {
     encoded_bytes: usize,
     reencoded_frames: u64,
     capture_clock: StoredCaptureClock,
+    // 病灶 A：窗口尺寸漂移 letterbox 跟随事件（epoch 毫秒轴，canonicalMs
+    // 与 resizeEvents.atUtcMs 同源同轴）。#[serde(default)] 是历史兼容硬
+    // 要求：旧落盘 receipt 无此键，读回必须成功并按无变换处理。
+    #[serde(default)]
+    geometry_events: Vec<GeometryEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -459,7 +469,7 @@ impl From<CaptureClockMetadata> for StoredCaptureClock {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReceiptRecord {
     version: String,
@@ -498,6 +508,7 @@ impl ReceiptRecord {
                     clock_source: "unavailable".to_string(),
                     timebase_version: "time_alignment.v2".to_string(),
                 },
+                geometry_events: Vec::new(),
             },
             file: FileFingerprint {
                 size: 0,
@@ -531,6 +542,7 @@ impl ReceiptRecord {
                     clock_source: "test".to_string(),
                     timebase_version: "time_alignment.v2".to_string(),
                 },
+                geometry_events: Vec::new(),
             },
             file: FileFingerprint::from_bytes(b"mp4"),
         }
@@ -559,6 +571,7 @@ impl ReceiptRecord {
                 encoded_bytes: receipt.encoded_bytes,
                 reencoded_frames: receipt.reencoded_frames,
                 capture_clock: receipt.capture_clock.into(),
+                geometry_events: receipt.geometry_events,
             },
             file: FileFingerprint::from_file(path)?,
         })
@@ -1011,6 +1024,7 @@ impl CaptureCoordinatorState {
         }
         if current.phase == CapturePhase::Capturing {
             self.recover_unhealthy_raw();
+            self.report_following_resize(&current);
             self.report_or_rebuild_resized_video(&current, hwnd, |capture, hwnd| {
                 capture.stop();
                 capture.start_for_window(hwnd)
@@ -1178,6 +1192,50 @@ impl CaptureCoordinatorState {
         let (process_present, _hwnd) = find_kovaak_window().unwrap_or((false, None));
         self.replace_status(CaptureCoordinatorStatus::after_release(process_present));
         true
+    }
+
+    // 病灶 A：硬编 letterbox 跟随生效时把 video 子状态标注为
+    // capture_resized_following（state 维持 Capturing）；漂移解除后清除
+    // 标注。终态化在场时完全不触碰 video 状态——degraded/rebuild 路径
+    // 拥有它，两者不得互相覆盖。
+    fn report_following_resize(&self, current: &CaptureCoordinatorStatus) {
+        if current.phase != CapturePhase::Capturing {
+            return;
+        }
+        let (terminated, following) = match self.window_capture.lock() {
+            Ok(capture) => (
+                capture.recording_terminated_by_resize(),
+                capture.recording_following_resize(),
+            ),
+            Err(_) => return,
+        };
+        if terminated {
+            return;
+        }
+        if following {
+            // 非本链路造成的 video 降级不碰；已在跟随标注则 tick 幂等。
+            if current.video.state != CaptureSourceState::Capturing
+                || current.video.reason.as_deref() == Some(CAPTURE_RESIZED_FOLLOWING)
+            {
+                return;
+            }
+            self.replace_status(CaptureCoordinatorStatus {
+                video: CaptureSourceStatus {
+                    state: CaptureSourceState::Capturing,
+                    reason: Some(CAPTURE_RESIZED_FOLLOWING.to_string()),
+                },
+                ..current.clone()
+            });
+        } else if current.video.reason.as_deref() == Some(CAPTURE_RESIZED_FOLLOWING) {
+            // 漂移解除（内容回到会话尺寸）：清除跟随标注，state 不动。
+            self.replace_status(CaptureCoordinatorStatus {
+                video: CaptureSourceStatus {
+                    state: CaptureSourceState::Capturing,
+                    reason: None,
+                },
+                ..current.clone()
+            });
+        }
     }
 
     // F6 联动：录制会话因窗口尺寸漂移被诚实终态化后，先把 video 子状态
@@ -2240,8 +2298,8 @@ mod tests {
         CONTROL_MAX_MESSAGE_BYTES, RESIZE_REBUILD_MIN_INTERVAL, RESIZE_REBUILD_QUIET_DURATION,
     };
     use crate::window_capture::{
-        HardwareEncoderFailure, ReplayExportFailureKind, WindowCaptureState,
-        DEFAULT_FRAME_QUEUE_CAPACITY,
+        CaptureClockMetadata, GeometryEvent, HardwareEncoderFailure, ReplayExportFailureKind,
+        ReplayExportReceipt, WindowCaptureState, DEFAULT_FRAME_QUEUE_CAPACITY,
     };
     use std::fs;
     use std::io::{Cursor, Read, Write};
@@ -2735,6 +2793,117 @@ mod tests {
     }
 
     #[test]
+    fn receipt_record_serializes_geometry_events_inside_replay() {
+        // 病灶 A：geometryEvents 必须落进 replay 对象内（Python 消费端的
+        // replay 白名单已覆盖该位置），不得成为需要新白名单的顶层新键。
+        let mut record = ReceiptRecord::fixture(ExportReplayRequest {
+            request_id: "request-geometry".to_string(),
+            run_id: 7,
+            capture_session_id: "session-1".to_string(),
+            start_epoch_ms: 1_000,
+            end_epoch_ms: 2_000,
+        });
+        record.replay.geometry_events = vec![GeometryEvent {
+            canonical_ms: 1_791_280_000_000,
+            src_width: 1280,
+            src_height: 800,
+            dst_x: 0,
+            dst_y: 0,
+            dst_width: 2560,
+            dst_height: 1600,
+            scale: 2.0,
+        }];
+        let value: serde_json::Value = serde_json::to_value(&record).expect("serialize");
+        let geometry = &value["replay"]["geometryEvents"];
+        assert!(
+            geometry.is_array(),
+            "geometryEvents must live inside replay"
+        );
+        assert_eq!(
+            geometry[0]["canonicalMs"].as_f64(),
+            Some(1_791_280_000_000.0)
+        );
+        assert_eq!(geometry[0]["srcWidth"], 1280);
+        assert_eq!(geometry[0]["dstX"], 0);
+        assert_eq!(geometry[0]["dstHeight"], 1600);
+        assert_eq!(geometry[0]["scale"].as_f64(), Some(2.0));
+    }
+
+    #[test]
+    fn legacy_receipt_without_geometry_events_reads_back_as_empty() {
+        // 历史落盘 receipt（无 geometryEvents 键）必须继续可读：
+        // serde(default) 兜底为空数组，消费端按无变换处理。
+        let record = ReceiptRecord::fixture(ExportReplayRequest {
+            request_id: "request-legacy".to_string(),
+            run_id: 8,
+            capture_session_id: "session-1".to_string(),
+            start_epoch_ms: 1_000,
+            end_epoch_ms: 2_000,
+        });
+        let mut legacy = serde_json::to_value(&record).expect("serialize");
+        legacy["replay"]
+            .as_object_mut()
+            .expect("replay object")
+            .remove("geometryEvents");
+        let read_back: ReceiptRecord =
+            serde_json::from_value(legacy).expect("legacy receipt must deserialize");
+        assert!(read_back.replay.geometry_events.is_empty());
+    }
+
+    #[test]
+    fn from_export_forwards_geometry_events_from_the_export_receipt() {
+        // export 返回值 → StoredReplayReceipt 的转发必须携带跟随事件，
+        // 否则落盘 receipt 静默丢字段、Python letterbox 消费整链失效。
+        let request = ExportReplayRequest {
+            request_id: "request-forward".to_string(),
+            run_id: 9,
+            capture_session_id: "session-1".to_string(),
+            start_epoch_ms: 1_000,
+            end_epoch_ms: 2_000,
+        };
+        let export_receipt = ReplayExportReceipt {
+            requested_start_100ns: 250,
+            requested_end_100ns: 450,
+            decode_start_100ns: 200,
+            visible_duration_100ns: 200,
+            decode_preroll_100ns: 50,
+            packet_count: 2,
+            encoded_bytes: 17,
+            reencoded_frames: 0,
+            tolerated_coverage_gaps: 0,
+            capture_clock: CaptureClockMetadata {
+                utc_epoch_ms: 1_700_000_000_000,
+                qpc_ns: 5_000_000_000,
+                clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
+                timebase_version: "time_alignment.v2",
+            },
+            geometry_events: vec![GeometryEvent {
+                canonical_ms: 1_791_280_000_000,
+                src_width: 1280,
+                src_height: 800,
+                dst_x: 0,
+                dst_y: 0,
+                dst_width: 2560,
+                dst_height: 1600,
+                scale: 2.0,
+            }],
+        };
+        let mp4 = std::env::temp_dir().join(format!(
+            "aiming-cookie-receipt-forward-{}.mp4",
+            std::process::id()
+        ));
+        fs::write(&mp4, b"mp4").expect("fixture mp4");
+        let record = ReceiptRecord::from_export(&request, export_receipt, &mp4).expect("record");
+        assert_eq!(record.replay.geometry_events.len(), 1);
+        assert_eq!(
+            record.replay.geometry_events[0].canonical_ms,
+            1_791_280_000_000
+        );
+        assert_eq!((record.replay.geometry_events[0].src_width), 1280);
+        let _ = fs::remove_file(mp4);
+    }
+
+    #[test]
     fn file_fingerprint_streams_large_files_without_changing_the_digest() {
         let path = std::env::temp_dir().join(format!(
             "aiming-cookie-coordinator-fingerprint-{}",
@@ -3133,6 +3302,76 @@ mod tests {
             coordinator.status().video.state,
             CaptureSourceState::Degraded
         );
+    }
+
+    #[test]
+    fn resize_following_reports_video_reason_while_capturing() {
+        let coordinator = test_coordinator("resize-follow-reason");
+        let current = capturing_status_fixture("session-1");
+        coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .set_resize_following_for_test(true);
+
+        coordinator.report_following_resize(&current);
+        let status = coordinator.status();
+        assert_eq!(status.phase, CapturePhase::Capturing);
+        assert_eq!(status.video.state, CaptureSourceState::Capturing);
+        assert_eq!(
+            status.video.reason.as_deref(),
+            Some("capture_resized_following")
+        );
+
+        // tick 幂等：跟随已标注时不再刷事件流。
+        let events_before = coordinator.diagnostic_events().len();
+        coordinator.report_following_resize(&status);
+        assert_eq!(coordinator.diagnostic_events().len(), events_before);
+    }
+
+    #[test]
+    fn resize_following_clears_reason_when_window_returns_to_session_size() {
+        let coordinator = test_coordinator("resize-follow-clear");
+        let mut current = capturing_status_fixture("session-1");
+        current.video.reason = Some("capture_resized_following".to_string());
+        coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .set_resize_following_for_test(false);
+
+        coordinator.report_following_resize(&current);
+        let status = coordinator.status();
+        assert_eq!(status.phase, CapturePhase::Capturing);
+        assert_eq!(status.video.state, CaptureSourceState::Capturing);
+        assert_eq!(status.video.reason, None);
+    }
+
+    #[test]
+    fn resize_following_defers_to_terminated_resize_status() {
+        // 终态化在场：跟随报告不得触碰 video 状态（degraded/rebuild 路径
+        // 完全不动，两者不得互相覆盖）。
+        let coordinator = test_coordinator("resize-follow-terminated");
+        let current = capturing_status_fixture("session-1");
+        coordinator.replace_status(current.clone());
+        {
+            let capture = coordinator.window_capture.lock().expect("window capture");
+            capture.set_resize_following_for_test(true);
+            capture.set_resize_rebuild_probe_for_test(
+                Some(HardwareEncoderFailure::CaptureResizedUnsupported),
+                None,
+            );
+        }
+        assert!(coordinator
+            .window_capture
+            .lock()
+            .expect("window capture state")
+            .recording_terminated_by_resize());
+
+        coordinator.report_following_resize(&current);
+        let status = coordinator.status();
+        assert_eq!(status.video.state, CaptureSourceState::Capturing);
+        assert_eq!(status.video.reason, None);
     }
 
     fn read_tcp_line(stream: &mut TcpStream) -> Vec<u8> {

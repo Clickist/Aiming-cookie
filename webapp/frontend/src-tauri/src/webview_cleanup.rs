@@ -397,7 +397,10 @@ mod tests {
         assert!(!live_sibling_instance_present(&HashSet::from([123]), 123));
         // 另一个本应用主实例存活（第二实例启动时主实例在跑）→ 必须放弃清理：
         // 它可能正用着「父已死」的旧池（采纳自上次崩溃实例），绝不能误杀。
-        assert!(live_sibling_instance_present(&HashSet::from([123, 456]), 123));
+        assert!(live_sibling_instance_present(
+            &HashSet::from([123, 456]),
+            123
+        ));
         // 空集（快照异常兜底后不可能出现，但语义上）→ 无兄弟。
         assert!(!live_sibling_instance_present(&HashSet::new(), 123));
     }
