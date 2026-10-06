@@ -1,6 +1,42 @@
 {
   "versions": [
     {
+      "version": "1.4.3",
+      "date": "2026-10-07",
+      "items": [
+        {
+          "type": "new",
+          "zh": "游戏中途调整窗口大小或切换分辨率，录制不再中断，训练数据照常保留",
+          "en": "Resizing the game window or switching resolution mid-session no longer interrupts recording — your training data is kept"
+        },
+        {
+          "type": "fix",
+          "zh": "窗口尺寸变化过的对局，整理结果不再因画面黑边而偏移",
+          "en": "Analysis results for sessions where the window was resized no longer drift due to letterbox bars"
+        },
+        {
+          "type": "fix",
+          "zh": "游戏数据读取被拦截时，现在会说明具体原因（如游戏以管理员运行、杀毒软件拦截）并给出解决办法",
+          "en": "When game data can't be read, the app now explains why (e.g. KovaaK running as administrator, antivirus interference) and what to do"
+        },
+        {
+          "type": "imp",
+          "zh": "Coach 出错提示更明确：额度用完、网络波动、服务繁忙分开说清楚，额度用完可一键前往充值",
+          "en": "Coach errors are now clearer: quota exhausted, network hiccups and busy service are explained separately, with a one-click top-up when quota runs out"
+        },
+        {
+          "type": "imp",
+          "zh": "很长的对话会自动整理记忆以保证回答质量，整理期间显示进度提示",
+          "en": "Very long conversations are compacted automatically to keep reply quality, with a visible progress note while it happens"
+        },
+        {
+          "type": "fix",
+          "zh": "会员页移除了不准确的「自动续费」描述（当前为按月一次性购买）",
+          "en": "Removed inaccurate auto-renewal wording from the member page (purchases are one-time per month)"
+        }
+      ]
+    },
+    {
       "version": "1.4.2",
       "date": "2026-10-06",
       "items": [
