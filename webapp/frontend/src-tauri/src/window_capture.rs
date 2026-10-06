@@ -2373,6 +2373,7 @@ impl WindowCaptureState {
             let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
             let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(1);
             let join = thread::spawn(move || {
+                crate::thread_priority::apply_capture_thread_priority();
                 run_wgc_window_capture(
                     hwnd,
                     queue,
@@ -4669,6 +4670,48 @@ fn dequeue_if_permitted<T>(
     accepts_input.then(|| receiver.try_recv().ok()).flatten()
 }
 
+// D1：worker 循环尾部的等待策略。gate 开时条件等待——帧由 FrameArrived
+// 回调 try_send 进通道，到达即醒，替代固定 1ms 轮询的后台 CPU 空转；
+// gate 关或通道已断开时退回 20ms 轮询。
+#[cfg(windows)]
+const WORKER_FRAME_WAIT_MS: u64 = 100;
+#[cfg(windows)]
+const WORKER_IDLE_POLL_MS: u64 = 20;
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameWaitDecision {
+    /// gate 开：recv_timeout 条件等待，帧到达即醒。
+    WaitForFrame,
+    /// gate 关 / 通道已断：固定 20ms 轮询。
+    PollSleep,
+}
+
+/// 等待决策。Disconnected 必须粘住 PollSleep：通道断开后 recv 立即返回，
+/// 继续条件等待会退化成忙等。
+#[cfg(windows)]
+fn frame_wait_decision(accepts_input: bool, channel_disconnected: bool) -> FrameWaitDecision {
+    if accepts_input && !channel_disconnected {
+        FrameWaitDecision::WaitForFrame
+    } else {
+        FrameWaitDecision::PollSleep
+    }
+}
+
+/// recv_timeout 结果 →（出队的帧，是否发生 Disconnected）。
+/// 供 gate 已确认开启的调用方消费；gate 关时绝不能调用——
+/// dequeue_if_permitted 的既有语义是帧不被消费就留在通道里。
+#[cfg(windows)]
+fn apply_frame_wait_result<T>(
+    result: std::result::Result<T, std::sync::mpsc::RecvTimeoutError>,
+) -> (Option<T>, bool) {
+    match result {
+        Ok(frame) => (Some(frame), false),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (None, false),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => (None, true),
+    }
+}
+
 #[cfg(windows)]
 impl Drop for HardwareH264Encoder {
     fn drop(&mut self) {
@@ -5472,6 +5515,7 @@ fn run_wgc_window_capture(
             let writer_queue = Arc::clone(&queue);
             let writer_failed = Arc::clone(&recording_failed);
             let writer_join = thread::spawn(move || {
+                crate::thread_priority::apply_capture_thread_priority();
                 run_mp4_writer(
                     path,
                     encode_width,
@@ -5692,7 +5736,12 @@ fn run_wgc_window_capture(
             .map_err(|_| "capture startup receiver closed".to_string())?;
 
         let mut export_join = None::<JoinHandle<()>>;
+        // D1：encoder 帧通道断开粘滞标志。Disconnected 后 recv 会立即返回，
+        // 继续条件等待就退化成忙等，必须退回 20ms 轮询。
+        let mut encoder_channel_disconnected = false;
         while !stop.load(Ordering::Acquire) {
+            // D1：本轮已由 recv_timeout 条件等待过 → 不再追加 sleep。
+            let mut waited_for_frame = false;
             if export_join.as_ref().is_some_and(JoinHandle::is_finished) {
                 if let Some(finished) = export_join.take() {
                     let _ = finished.join();
@@ -5740,6 +5789,7 @@ fn run_wgc_window_capture(
                                         output_path.display()
                                     );
                                     export_join = Some(thread::spawn(move || {
+                                        crate::thread_priority::apply_capture_thread_priority();
                                         let mux_started = std::time::Instant::now();
                                         crate::dlog!("[capture-export] mux: begin");
                                         let result =
@@ -5807,9 +5857,24 @@ fn run_wgc_window_capture(
                 if let Err(error) = encoder.drain_events() {
                     failure = Some(error.failure);
                 }
-                if let Some(captured) =
-                    dequeue_if_permitted(failure.is_none() && encoder.accepts_input(), receiver)
+                // 先查 gate 再等帧：dequeue_if_permitted 的既有语义是 gate 关
+                // 时帧留在通道里不被消费，先 recv 再查 gate 会偷走一帧。
+                let gate_open = failure.is_none() && encoder.accepts_input();
+                let captured = if frame_wait_decision(gate_open, encoder_channel_disconnected)
+                    == FrameWaitDecision::WaitForFrame
                 {
+                    waited_for_frame = true;
+                    let (captured, disconnected) = apply_frame_wait_result(
+                        receiver.recv_timeout(std::time::Duration::from_millis(
+                            WORKER_FRAME_WAIT_MS,
+                        )),
+                    );
+                    encoder_channel_disconnected |= disconnected;
+                    captured
+                } else {
+                    dequeue_if_permitted(gate_open, receiver)
+                };
+                if let Some(captured) = captured {
                     let backlog = encoder_frame_backlog.fetch_sub(1, Ordering::AcqRel) as usize;
                     if let Err(error) = encoder.submit_capture_frame(captured, backlog) {
                         failure = Some(error.failure);
@@ -5822,12 +5887,9 @@ fn run_wgc_window_capture(
                     }
                 }
             }
-            let poll_interval_ms = if encoder_frame_receiver.is_some() {
-                1
-            } else {
-                20
-            };
-            thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
+            if !waited_for_frame {
+                thread::sleep(std::time::Duration::from_millis(WORKER_IDLE_POLL_MS));
+            }
         }
         let _ = session.Close();
         let _ = frame_pool.RemoveFrameArrived(frame_arrived_token);
@@ -5933,6 +5995,52 @@ mod tests {
         assert!(frame_size_drifts_from_session((1920, 1080), (1280, 1080)));
         assert!(frame_size_drifts_from_session((1920, 1080), (1920, 720)));
         assert!(frame_size_drifts_from_session((1920, 1080), (2560, 1440)));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn frame_wait_decision_gates_on_accepts_input_and_disconnection() {
+        // gate 关 → 轮询：帧必须留在通道里，先等帧会偷走一帧。
+        assert_eq!(
+            frame_wait_decision(false, false),
+            FrameWaitDecision::PollSleep
+        );
+        assert_eq!(
+            frame_wait_decision(false, true),
+            FrameWaitDecision::PollSleep
+        );
+        // gate 开 + 通道健在 → 条件等待（帧到达即醒）。
+        assert_eq!(
+            frame_wait_decision(true, false),
+            FrameWaitDecision::WaitForFrame
+        );
+        // gate 开但通道已断 → 粘住轮询：Disconnected 后 recv 立即返回会忙等。
+        assert_eq!(
+            frame_wait_decision(true, true),
+            FrameWaitDecision::PollSleep
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn apply_frame_wait_result_maps_frame_timeout_and_disconnection() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<usize>(1);
+        sender.send(7).expect("seed frame");
+        let (frame, disconnected) =
+            apply_frame_wait_result(receiver.recv_timeout(std::time::Duration::from_millis(1)));
+        assert_eq!(frame, Some(7));
+        assert!(!disconnected);
+        // 超时：无帧、不断开。
+        let (frame, disconnected) =
+            apply_frame_wait_result(receiver.recv_timeout(std::time::Duration::from_millis(1)));
+        assert_eq!(frame, None);
+        assert!(!disconnected, "timeout must not latch disconnection");
+        // Disconnected：置粘滞标志，调用方必须退回轮询。
+        drop(sender);
+        let (frame, disconnected) =
+            apply_frame_wait_result(receiver.recv_timeout(std::time::Duration::from_millis(100)));
+        assert_eq!(frame, None);
+        assert!(disconnected, "Disconnected must latch the poll fallback");
     }
 
     #[test]

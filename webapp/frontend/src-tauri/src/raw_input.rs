@@ -37,6 +37,14 @@ const CONTROL_QUEUE_CAPACITY: usize = 1;
 const SNAPSHOT_IDLE_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(windows)]
 const RAW_INPUT_WM_QUIT: u32 = 0x0012;
+// D2：消息泵事件等待。QS_ALLINPUT 含 QS_RAWINPUT，WM_INPUT 到达即醒；
+// 250ms 超时兜底驱动 500ms 的 KovaaK 进程检查（elapsed 门控不变）。
+#[cfg(windows)]
+const RAW_INPUT_PUMP_WAIT_MS: u32 = 250;
+// WM_APP 只作唤醒哨兵：stop / FlushSnapshot 设置后 PostThreadMessageW 投递，
+// WndProc 默认分支原样交给 DefWindowProcW，不做任何处理。
+#[cfg(windows)]
+const RAW_INPUT_WM_APP: u32 = 0x8000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePoint {
@@ -997,10 +1005,25 @@ impl SnapshotCadence {
     }
 }
 
+/// D2：向 raw input 线程投递 WM_APP，立即唤醒 MsgWaitForMultipleObjectsEx。
+/// 线程退出前 id 已清零；目标无消息队列或已退出时投递失败，无害忽略。
+#[cfg(windows)]
+fn wake_raw_input_thread(thread_id: &std::sync::atomic::AtomicUsize) {
+    use winapi::um::winuser::PostThreadMessageW;
+    let id = thread_id.load(std::sync::atomic::Ordering::Acquire);
+    if id != 0 {
+        unsafe {
+            PostThreadMessageW(id as u32, RAW_INPUT_WM_APP, 0, 0);
+        }
+    }
+}
+
 #[cfg(windows)]
 struct WindowsBackend {
     stop: Arc<std::sync::atomic::AtomicBool>,
     control: std::sync::mpsc::SyncSender<RawControlRequest>,
+    // D2：raw input 线程 id，stop / FlushSnapshot 投递 WM_APP 立即唤醒泵等待。
+    thread_id: Arc<std::sync::atomic::AtomicUsize>,
     capture_join: Option<std::thread::JoinHandle<()>>,
     snapshot_join: Option<std::thread::JoinHandle<()>>,
 }
@@ -1013,6 +1036,8 @@ impl WindowsBackend {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
+        let thread_id = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let thread_id_for_capture = Arc::clone(&thread_id);
         let (points_tx, points_rx) = sync_channel(CAPTURE_QUEUE_CAPACITY);
         let (control_tx, control_rx) = sync_channel(CONTROL_QUEUE_CAPACITY);
         let snapshot_diagnostics = diagnostics.clone();
@@ -1024,7 +1049,16 @@ impl WindowsBackend {
         let capture_join = match std::thread::Builder::new()
             .name("aiming-cookie-raw-input".to_string())
             .spawn(move || unsafe {
-                raw_input_thread(thread_stop, points_tx, control_rx, diagnostics, ready_tx)
+                // 只挂 MMCSS、不降优先级：SyncSender 满即丢，泵速优先。
+                crate::thread_priority::apply_mmcss_capture_characteristics();
+                raw_input_thread(
+                    thread_stop,
+                    points_tx,
+                    control_rx,
+                    diagnostics,
+                    ready_tx,
+                    thread_id_for_capture,
+                )
             }) {
             Ok(join) => join,
             Err(error) => {
@@ -1036,6 +1070,7 @@ impl WindowsBackend {
             Ok(Ok(())) => Ok(Self {
                 stop,
                 control: control_tx,
+                thread_id,
                 capture_join: Some(capture_join),
                 snapshot_join: Some(snapshot_join),
             }),
@@ -1046,6 +1081,7 @@ impl WindowsBackend {
             }
             Err(_) => {
                 stop.store(true, std::sync::atomic::Ordering::Release);
+                wake_raw_input_thread(&thread_id);
                 let _ = capture_join.join();
                 let _ = snapshot_join.join();
                 Err("Raw Input startup timed out".to_string())
@@ -1059,7 +1095,11 @@ impl WindowsBackend {
             .control
             .try_send(RawControlRequest::FlushSnapshot { ack })
         {
-            Ok(()) => {}
+            Ok(()) => {
+                // 泵在 MsgWait 里最长睡 250ms 且 control 是无人监听通道——
+                // 投递 WM_APP 立即唤醒，barrier 延迟回到毫秒级。
+                wake_raw_input_thread(&self.thread_id);
+            }
             Err(std::sync::mpsc::TrySendError::Full(_)) => {
                 return Err("raw_snapshot_busy".to_string());
             }
@@ -1081,6 +1121,7 @@ impl WindowsBackend {
     fn stop(mut self) {
         use std::sync::atomic::Ordering;
         self.stop.store(true, Ordering::Release);
+        wake_raw_input_thread(&self.thread_id);
         if let Some(join) = self.capture_join.take() {
             let _ = join.join();
         }
@@ -1384,16 +1425,21 @@ unsafe fn raw_input_thread(
     control: std::sync::mpsc::Receiver<RawControlRequest>,
     diagnostics: Arc<CaptureDiagnostics>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
+    thread_id: Arc<std::sync::atomic::AtomicUsize>,
 ) {
     use std::mem::{size_of, zeroed};
     use std::ptr::{null, null_mut};
     use std::sync::atomic::Ordering;
-    use std::thread;
     use std::time::Instant;
     use winapi::shared::minwindef::{LRESULT, UINT, WPARAM};
     use winapi::shared::windef::HWND;
     use winapi::um::libloaderapi::GetModuleHandleW;
+    use winapi::um::processthreadsapi::GetCurrentThreadId;
     use winapi::um::winuser::*;
+
+    // D2：先发布线程 id，stop / FlushSnapshot 的 WM_APP 唤醒才有投递目标
+    //（队列未建好前投递失败无害）。
+    thread_id.store(GetCurrentThreadId() as usize, Ordering::Release);
 
     struct ThreadState {
         points: std::sync::mpsc::SyncSender<CaptureMessage>,
@@ -1425,6 +1471,8 @@ unsafe fn raw_input_thread(
                 }
             }
         }
+        // D2：WM_APP 只是泵等待的唤醒哨兵，走默认分支原样交给
+        // DefWindowProcW，不做任何处理。
         DefWindowProcW(hwnd, message, wparam, lparam)
     }
 
@@ -1560,7 +1608,18 @@ unsafe fn raw_input_thread(
                 thread_state.normalizer.reset();
             }
         }
-        thread::sleep(std::time::Duration::from_millis(5));
+        // D2：事件等待替代 5ms 轮询。QS_ALLINPUT 含 QS_RAWINPUT，WM_INPUT
+        // 到达即醒；消息队列电平触发 + MWMO_INPUTAVAILABLE，上方 PeekMessage
+        // 排空循环语义不变，不丢消息。250ms 超时兜底驱动上方 500ms 进程
+        // 检查（elapsed 门控不变）；stop / FlushSnapshot 经 PostThreadMessageW
+        // 投递 WM_APP 立即唤醒。
+        MsgWaitForMultipleObjectsEx(
+            0,
+            null(),
+            RAW_INPUT_PUMP_WAIT_MS,
+            QS_ALLINPUT,
+            MWMO_INPUTAVAILABLE,
+        );
     }
 
     flush_pending_motion(
@@ -1577,6 +1636,8 @@ unsafe fn raw_input_thread(
         hwndTarget: null_mut(),
     };
     RegisterRawInputDevices(&remove_device, 1, size_of::<RAWINPUTDEVICE>() as UINT);
+    // D2：注销唤醒目标，迟到的 WM_APP 投递失败无害。
+    thread_id.store(0, Ordering::Release);
     STATE.store(0, Ordering::Release);
     thread_state.diagnostics.record_capture_stopped();
     drop(thread_state);
@@ -2491,6 +2552,60 @@ mod tests {
             CaptureMessage::Barrier { .. }
         ));
         assert_eq!(diagnostics.status().dropped_points, 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pump_wait_wakes_on_post_thread_message_before_timeout() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let thread_id = Arc::new(AtomicUsize::new(0));
+        let thread_id_for_waiter = Arc::clone(&thread_id);
+        let (started_tx, started_rx) = sync_channel(1);
+        let (result_tx, result_rx) = sync_channel(1);
+        let waiter = thread::spawn(move || unsafe {
+            use winapi::um::processthreadsapi::GetCurrentThreadId;
+            use winapi::um::winuser::{
+                MsgWaitForMultipleObjectsEx, MWMO_INPUTAVAILABLE, QS_ALLINPUT,
+            };
+            // 先 Peek 一次确保线程消息队列已创建，PostThreadMessageW 才必达。
+            let mut message: winapi::um::winuser::MSG = std::mem::zeroed();
+            winapi::um::winuser::PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, 0);
+            thread_id_for_waiter.store(
+                GetCurrentThreadId() as usize,
+                std::sync::atomic::Ordering::Release,
+            );
+            started_tx.send(()).expect("notify started");
+            let begin = Instant::now();
+            let result = MsgWaitForMultipleObjectsEx(
+                0,
+                std::ptr::null(),
+                RAW_INPUT_PUMP_WAIT_MS,
+                QS_ALLINPUT,
+                MWMO_INPUTAVAILABLE,
+            );
+            let _ = result_tx.send((result, begin.elapsed()));
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter started");
+        let id = thread_id.load(Ordering::Acquire);
+        assert_ne!(id, 0, "waiter must publish its thread id first");
+        wake_raw_input_thread(&thread_id);
+        let (result, elapsed) = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter returned");
+        assert_eq!(
+            result, winapi::um::winbase::WAIT_OBJECT_0,
+            "WM_APP must wake the pump wait"
+        );
+        assert!(
+            elapsed < Duration::from_millis(RAW_INPUT_PUMP_WAIT_MS as u64 / 2),
+            "wake must be prompt, got {elapsed:?}"
+        );
+        waiter.join().expect("waiter exits");
     }
 
     #[cfg(windows)]

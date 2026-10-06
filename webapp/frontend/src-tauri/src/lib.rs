@@ -5,6 +5,7 @@ mod raw_input;
 mod runtime;
 mod scenario_launch;
 mod storage_location;
+mod thread_priority;
 mod webview_cleanup;
 mod window_capture;
 
