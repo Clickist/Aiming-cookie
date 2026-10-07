@@ -23,6 +23,11 @@
           "type": "fix",
           "zh": "知识库校订：修正个别场景参数的引用错误，教练引用的知识均为核对过的版本",
           "en": "Knowledge base revision: a few cited scenario values corrected - what the coach cites is now the verified version"
+        },
+        {
+          "type": "fix",
+          "zh": "修复个别电脑上教练对话记录保存失败的问题：记录文件被同步盘或杀毒软件短暂占用时会自动等待重试，对话不再中断",
+          "en": "Fixed coach conversations failing to save on some machines: when the log file is briefly locked by cloud sync or antivirus, we now wait and retry instead of interrupting the chat"
         }
       ]
     },
