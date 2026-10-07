@@ -83,14 +83,18 @@ test("default coach prompt carries the sensitivity scenario-attribution rule", (
 test("default coach prompt carries the honest empty-diagnosis rule", () => {
   // Prompt 硬规矩合同：问题列表为空时必须明说没有标出问题，严禁把空
   // 字段编成有内容或发明评级词。生产案例：空 issues 被讲成「分析标出
-  // 典型问题，属于基线档」。
+  // 典型问题，属于基线档」。同时「没标」≠「没问题」——Coach 必须基于
+  // 数据自己诊断（2026-10-07 二次生产案例：Coach 把「自动诊断空」讲成
+  // 「这局没典型问题」，放弃了自己的诊断职责）。
   const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
   try {
     delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     const prompt = loadDefaultCoachSystemPrompt();
-    assert.match(prompt, /问题列表（diagnosis\.issues）为空时，必须明说「这一局没有标出典型问题」/);
+    assert.match(prompt, /问题列表（diagnosis\.issues）为空时，说明「自动诊断没有标出典型问题」即可/);
     assert.match(prompt, /严禁说成「标出了问题」/);
     assert.match(prompt, /严禁发明评级词/);
+    assert.match(prompt, /绝不等于「这局没有问题」/);
+    assert.match(prompt, /自己诊断/);
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
