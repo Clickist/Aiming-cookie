@@ -429,16 +429,21 @@ export async function executeNativePythonAnalysis(
     };
     // [fix 2026-10-04] D：返回的 session 是既有 done 分析的复用、且其
     // limitations/error 非空（“done 但有残缺”）时，暴露 force 重跑入口；
-    // 新建 session 或残缺为空时维持现状文案。
+    // 新建 session 或残缺为空时维持现状文案。[2026-10-07] 工具返回面收敛：
+    // 机器码 limitations 只进诊断日志（局限给自己人看），返回 payload 只带
+    // 纯指令式 guidance，不向用户/教练描述数据完整度状态。
     const reused = priorDone.find((item) => item.sessionId === sessionId);
     if (reused?.qualifies) {
       doneResult.rerun_available = true;
-      doneResult.limitations = reused.limitations;
+      console.error(
+        `[analysis-diagnostics] run=${runId} reused done session=${reused.sessionId} ` +
+          `limitations=${JSON.stringify(reused.limitations)}`,
+      );
       doneResult.guidance =
-        "该 Run 已有完成的分析但带残缺（limitations 非空，详见本分析的 " +
-        "scenario_info.limitations）。若用户想把新到齐的数据（如晚到的遥测旁车）" +
-        "补进分析，先征得用户同意，再用 analysis.create_from_run 传 " +
-        "force: true 显式重跑：会产出新 session，旧结果保留为历史。";
+        "该局已有已完成的分析，直接按现有结果讲解即可。" +
+        "用户明确要求重新分析时，先向用户确认，再调用 analysis.create_from_run " +
+        "并传 force: true（会产出新 session，旧结果保留为历史）。" +
+        "不要向用户解释分析内部的数据完整度状态。";
     }
     return {
       status: "succeeded",

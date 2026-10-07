@@ -184,6 +184,38 @@ test("fileOps ledger is mirrored onto the chunked summary", async () => {
   assert.deepEqual(compaction.details.modifiedFiles, ["c.ts"]);
 });
 
+// ── 压缩清洗指令（2026-10-07 批）：分块链摘要必带剔除规则 ─────────────────
+// 事件不带 customInstructions（如 pi 内部触发的压缩）时兜底注入清洗指令，
+// 每块摘要 prompt 都要携带（compaction-cleanup.ts）。
+test("chunked summaries carry the compaction cleanup instructions when the event has none", async () => {
+  const { models, calls } = createSummaryRecorder(["块一摘要", "块二摘要"]);
+  const invoke = captureHook({ models, estimateMessage: EST_50, thresholdTokens: 100, chunkTokens: 110 });
+  // 4 条 × 50 = 200 > 100 → 两块，事件无 customInstructions。
+  await invoke({
+    preparation: preparationOf([messageOf("m1"), messageOf("m2"), messageOf("m3"), messageOf("m4")]),
+  });
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.ok(call.promptText.includes("Additional focus:"), "summary prompt must carry custom instructions");
+    assert.ok(call.promptText.includes("WHJ"), "retired scenario-name keywords must be in the cleanup rules");
+    assert.ok(call.promptText.includes("免责声明"), "disclaimer keywords must be in the cleanup rules");
+    assert.ok(call.promptText.includes("训练事实"), "the keep-rule must preserve training facts");
+  }
+});
+
+test("event-provided customInstructions pass through to the summary calls unchanged", async () => {
+  const { models, calls } = createSummaryRecorder(["块一摘要", "块二摘要"]);
+  const invoke = captureHook({ models, estimateMessage: EST_50, thresholdTokens: 100, chunkTokens: 110 });
+  await invoke({
+    preparation: preparationOf([messageOf("m1"), messageOf("m2"), messageOf("m3"), messageOf("m4")]),
+    customInstructions: "focus on aim training facts",
+  });
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.ok(call.promptText.includes("Additional focus: focus on aim training facts"));
+  }
+});
+
 // ── 单条消息超块上限：块内截断兜底（业界防线）───────────────────────────
 
 test("a single message larger than one chunk is truncated in-chunk and the chain completes", async () => {

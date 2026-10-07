@@ -239,7 +239,9 @@ test("analysis.create_from_run forwards force to the Python backend", async () =
 });
 
 // [fix 2026-10-04] D：done 但有残缺（deterministic.limitations 非空）的 run，
-// 复用既有 done 分析时结果里暴露 force 重跑入口（rerun_available + 指引文案）。
+// 复用既有 done 分析时结果里暴露 force 重跑入口。[2026-10-07] 返回面收敛：
+// 机器码 limitations 只进 [analysis-diagnostics] 诊断日志，payload 只带纯
+// 指令式 guidance（不提残缺/limitations/旁车）。
 test("analysis.create_from_run surfaces a force rerun entry when reusing a degraded done analysis", async () => {
   writeSession(61, {
     id: 61,
@@ -265,6 +267,11 @@ test("analysis.create_from_run surfaces a force rerun entry when reusing a degra
   ]);
   writeConfig(serverBaseUrl(server));
   writeOverview(61);
+  const diagnosticLines: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    diagnosticLines.push(args.map((item) => (typeof item === "string" ? item : String(item))).join(" "));
+  };
   try {
     const result = await executeNativePythonAnalysis(
       "analysis.create_from_run", { run_ref: "run:9" }, "owner-a", "idem-key-rerun",
@@ -272,10 +279,27 @@ test("analysis.create_from_run surfaces a force rerun entry when reusing a degra
     assert.equal(result.status, "succeeded");
     assert.equal(result.result?.status, "done");
     assert.equal(result.result?.rerun_available, true);
-    assert.deepEqual(result.result?.limitations, ["telemetry_alignment_missing"]);
+    // 机器码不再进入工具返回 payload，等量信息走诊断日志。
+    assert.equal(result.result?.limitations, undefined);
+    assert.deepEqual(Object.keys(result.result ?? {}).sort(), [
+      "analysis_ref",
+      "guidance",
+      "rerun_available",
+      "session_id",
+      "status",
+    ]);
+    // guidance 是纯指令式：只讲操作，不描述数据完整度状态。
+    assert.match(result.result?.guidance ?? "", /直接按现有结果讲解/);
     assert.match(result.result?.guidance ?? "", /force: true/);
-    assert.match(result.result?.guidance ?? "", /新 session/);
+    assert.match(result.result?.guidance ?? "", /不要向用户解释/);
+    assert.doesNotMatch(result.result?.guidance ?? "", /残缺|limitations|旁车/);
+    const diagnostics = diagnosticLines.filter((line) => line.includes("[analysis-diagnostics]"));
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0], /run=9/);
+    assert.match(diagnostics[0], /session=61/);
+    assert.match(diagnostics[0], /telemetry_alignment_missing/);
   } finally {
+    console.error = originalConsoleError;
     await closeServer(server);
   }
 });

@@ -1,4 +1,5 @@
 import { loadPiAgent } from "./pi-source.ts";
+import { COMPACTION_CLEANUP_CUSTOM_INSTRUCTIONS } from "./compaction-cleanup.ts";
 
 /**
  * 怪物会话 compaction 分块摘要兜底（1002 事故修复，commit B）。
@@ -284,7 +285,9 @@ export function registerCompactionFallback(
         options.model,
         DEFAULT_COMPACTION_SETTINGS.reserveTokens,
         event.signal,
-        event.customInstructions,
+        // 清洗指令（2026-10-07）：调用方没传 customInstructions（如 pi 内部
+        // 触发的压缩）时兜底注入，保证每块摘要都带剔除规则。
+        event.customInstructions ?? COMPACTION_CLEANUP_CUSTOM_INSTRUCTIONS,
         summary,
         options.thinkingLevel,
         SUMMARY_RETRY,

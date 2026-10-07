@@ -100,10 +100,18 @@ function fakeStream(
 /** 摘要调用判别：pi generateSummaryWithUsage 固定携带 SUMMARIZATION_SYSTEM_PROMPT。 */
 const SUMMARY_SYSTEM_MARKER = "context summarization assistant";
 
+/** 捕获每次摘要调用的 prompt 正文（清洗指令断言用，2026-10-07 批）。 */
+const summaryPrompts: string[] = [];
+
 function compactionStreamFn(summaryMode: "ok" | "error"): StreamFn {
   return (_model, context) => {
     const systemPrompt = (context as { systemPrompt?: unknown } | null)?.systemPrompt;
     if (typeof systemPrompt === "string" && systemPrompt.includes(SUMMARY_SYSTEM_MARKER)) {
+      const firstMessage = (context as { messages?: unknown[] } | null)?.messages?.[0] as
+        | { content?: Array<{ text?: unknown }> }
+        | undefined;
+      const promptText = firstMessage?.content?.[0]?.text;
+      if (typeof promptText === "string") summaryPrompts.push(promptText);
       if (summaryMode === "error") {
         // 文案刻意避开可重试 pattern（无状态码/overloaded 字样）：摘要立即
         // 失败、无重试退避，测试不必等 pi 的 1s/2s 补偿延迟。
@@ -230,4 +238,32 @@ test("compaction failure publishes started→failed and fail-open keeps the dial
   assert.equal(run.status, "succeeded", `error: ${JSON.stringify(run.error)}`);
   assertCompactionEvents(run, ["compaction_started", "compaction_failed"]);
   assert.match(run.partial_text ?? "", /压缩后的正常回答/);
+});
+
+// ── 压缩清洗指令（2026-10-07 批）：harness.compact 携带 customInstructions ─
+// 摘要调用 prompt 必须带剔除规则（退役场景名 WHJ、内部数据边界解释、免责
+// 声明），防已废弃内容经压缩摘要进入未来上下文自强化（compaction-cleanup.ts）。
+test("compaction summary call carries the cleanup custom instructions end to end", async () => {
+  const threadId = 7603;
+  await seedHistory(threadId);
+  summaryPrompts.length = 0;
+  const created = createAgentRun("compaction-owner", "带清洗指令的压缩", {
+    sessionId: threadId,
+    streamFn: compactionStreamFn("ok"),
+  });
+  await waitForTask(created.run_ref);
+
+  const run = getAgentRun("compaction-owner", created.run_ref);
+  assert.ok(run);
+  assert.equal(run.status, "succeeded", `error: ${JSON.stringify(run.error)}`);
+  assertCompactionEvents(run, ["compaction_started", "compaction_completed"]);
+  assert.ok(summaryPrompts.length > 0, "compaction summary call must have been captured");
+  assert.ok(
+    summaryPrompts.some((text) => text.includes("Additional focus:") && text.includes("WHJ")),
+    "harness.compact must pass the cleanup customInstructions into the summary prompt",
+  );
+  assert.ok(
+    summaryPrompts.some((text) => text.includes("免责声明") && text.includes("训练事实")),
+    "cleanup instructions must list the deprecated content classes and the keep-rule",
+  );
 });

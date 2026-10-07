@@ -34,6 +34,7 @@ import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
 import { isIntroSession } from "./intro-session.ts";
 import { registerCompactionFallback } from "./compaction-fallback.ts";
+import { COMPACTION_CLEANUP_CUSTOM_INSTRUCTIONS } from "./compaction-cleanup.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -1354,7 +1355,9 @@ export async function runCoachTurn(
       if (shouldCompact) {
         await publishActivity({ kind: "compaction", state: "started" });
         try {
-          await harness.compact();
+          // 清洗指令（2026-10-07）：摘要剔除已退役场景名/内部数据边界解释/
+          // 免责声明，防会话历史自强化（见 compaction-cleanup.ts）。
+          await harness.compact(COMPACTION_CLEANUP_CUSTOM_INSTRUCTIONS);
           await publishActivity({ kind: "compaction", state: "completed" });
         } catch (compactionError) {
           await publishActivity({ kind: "compaction", state: "failed" });
