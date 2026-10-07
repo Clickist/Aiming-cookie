@@ -34,6 +34,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_SCENARIO_NAME_CHARS = 200;
 const MAX_SCENARIO_QUERY_CHARS = 200;
 
+// 产品拍板（2026-10-07）：WHJ 系列是开发期样板场景（判型锚点已随 9b37c97d
+// 退役），不得进入 Coach 上下文引导推荐——本机清单在此滤除。注意这是为了
+// 不引导，不是清单不存在：Coach 主动 scenario.search 官方库仍可能碰到，
+// 那是它自己的检索选择。退役面扩大时在此追加前缀。
+const RETIRED_SCENARIO_PREFIXES = ["WHJ "];
+
 export function isNativeScenarioCommand(commandName: string): boolean {
   return commandName === "scenario.open" || commandName === "scenario.list" || commandName === "scenario.search";
 }
@@ -64,7 +70,9 @@ async function listLocalScenarios(): Promise<NativeScenarioResult> {
     };
   }
   const scenarios = Array.isArray(payload.scenarios)
-    ? payload.scenarios.filter((item): item is string => typeof item === "string" && item.length > 0)
+    ? payload.scenarios
+        .filter((item): item is string => typeof item === "string" && item.length > 0)
+        .filter((name) => !RETIRED_SCENARIO_PREFIXES.some((prefix) => name.startsWith(prefix)))
     : [];
   return {
     status: "succeeded",

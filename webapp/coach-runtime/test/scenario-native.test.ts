@@ -86,6 +86,37 @@ test("scenario.list 从 Python 后端读取本机场景清单", async () => {
   assert.deepEqual((result.result as any).scenarios, ["1wall 6targets small", "pasu"]);
 });
 
+test("scenario.list 滤除退役样板场景（WHJ 前缀不进 Coach 上下文）", async () => {
+  const runtimeConfig = join(dataRoot, "desktop-runtime.json");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(runtimeConfig, JSON.stringify({ python_base_url: "http://127.0.0.1:9999", python_token: "tok" }), "utf-8");
+  process.env.AIMING_COOKIE_DESKTOP_RUNTIME_CONFIG = runtimeConfig;
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      schema_version: "kovaak_scenarios.v1",
+      availability: "available",
+      scenarios: [
+        "WHJ SmoothStrafeSphere Very Easy",
+        "WHJ SmoothStrafeSphere Easy",
+        "Controlsphere Easy",
+        "WHJX keeps its letters.sce",
+        "Cata Orb Long Strafes",
+      ],
+    }),
+  })) as typeof fetch;
+
+  const result = await executeNativeScenario("scenario.list", {});
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual((result.result as any).scenarios, [
+    "Controlsphere Easy",
+    "WHJX keeps its letters.sce",
+    "Cata Orb Long Strafes",
+  ]);
+});
+
 test("scenario.list 在 Python 未就绪时返回 unavailable", async () => {
   process.env.AIMING_COOKIE_DESKTOP_RUNTIME_CONFIG = join(dataRoot, "missing-runtime.json");
   const result = await executeNativeScenario("scenario.list", {});
