@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.4.4",
+      "date": "2026-10-07",
+      "items": [
+        {
+          "type": "new",
+          "zh": "多目标移动靶对局（如 Cata IC 长横移）的误差、在靶率等指标修复，数字回到可信范围",
+          "en": "Metrics for multi-target strafing scenarios (e.g. Cata IC Long Strafes) are fixed and back in a trustworthy range"
+        },
+        {
+          "type": "fix",
+          "zh": "Coach 解读更如实：这局没有典型问题时会明说，不再出现不存在的场景名或自创评级",
+          "en": "Coach reads results honestly: says clearly when a session has no flagged issues, and no longer invents scenario names or ratings"
+        },
+        {
+          "type": "fix",
+          "zh": "修正分析报告把正常数据表述为「降级/受限制」的误导说法",
+          "en": "Removed misleading wording that described normal data as degraded or limited"
+        },
+        {
+          "type": "imp",
+          "zh": "场景推荐不再反复出现训练用样板场景",
+          "en": "Scenario recommendations no longer repeat dev-template scenarios"
+        }
+      ]
+    },
+    {
       "version": "1.4.3",
       "date": "2026-10-07",
       "items": [
