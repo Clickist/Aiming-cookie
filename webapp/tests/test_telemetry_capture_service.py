@@ -804,3 +804,44 @@ def test_no_session_outputs_rejection_records_attach_denied(
     assert service.diagnostics()["run_cut_rejection_details"] == {}
 
     service.stop()
+
+
+def test_request_run_cut_rejection_writes_run_meta_receipt(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[fix 2026-10-07 W4] 守卫拒绝回写 run meta（telemetry_cut_state/error），
+    让单局能回答「动作层为何缺失」，不再只有服务级聚合计数。"""
+    import asyncio
+
+    from webapp.backend import config, kovaak_run_store
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    game_state = {"procs": []}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    assert service.start() is True
+
+    run = asyncio.run(kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="w4-receipt - challenge - 2026.10.07-20.00.00",
+        scenario="W4 Receipt",
+    ))
+
+    # 游戏不在场：game_absent 拒绝 → run meta 带码。
+    assert service.request_run_cut(run["id"], 0, 1) is False
+    stored = asyncio.run(kovaak_run_store.get_kovaak_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+    ))
+    assert stored["telemetry_cut_state"] == "rejected"
+    assert stored["telemetry_cut_error"] == "game_absent"
+
+    # 游戏在场但零产出：no_session_outputs 覆盖回执。
+    game_state["procs"] = ["game"]
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+    assert service.request_run_cut(run["id"], 0, 1) is False
+    stored = asyncio.run(kovaak_run_store.get_kovaak_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+    ))
+    assert stored["telemetry_cut_state"] == "rejected"
+    assert stored["telemetry_cut_error"] == "no_session_outputs"
+
+    service.stop()

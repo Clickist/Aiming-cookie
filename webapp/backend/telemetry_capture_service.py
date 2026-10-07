@@ -424,6 +424,21 @@ class TelemetryCaptureService:
 
     # ------------------------------------------------------------------ 按局增量切窗
 
+    def _report_cut_state(
+        self, run_id: int, state: str, error: str | None = None,
+    ) -> None:
+        # [fix 2026-10-07 W4] 切窗状态回写 run meta（拒绝/受理/完成），让
+        # 单局可回答「动作层为何缺失」，而不是只留服务级聚合计数。回写失败
+        # 只记日志，不碍切窗主链路。
+        try:
+            from . import kovaak_run_store
+
+            kovaak_run_store.set_run_telemetry_cut_state_sync(
+                run_id, config.DESKTOP_LOCAL_PROFILE, state, error,
+            )
+        except Exception:
+            log.exception("telemetry cut state writeback failed run=%s", run_id)
+
     def request_run_cut(
         self, run_id: int, window_start_ms: int, window_end_ms: int,
     ) -> bool:
@@ -462,15 +477,18 @@ class TelemetryCaptureService:
                 else:
                     self._run_cut_rejection_details.pop(reason, None)
             self._record_run_cut_rejection(reason)
+            self._report_cut_state(run_id, "rejected", reason)
             return False
         try:
             (self._session_dir / "cuts").mkdir(exist_ok=True)
         except OSError as error:
             self._last_error = f"cut_staging_unavailable: {error}"
             self._record_run_cut_rejection("cut_staging_unavailable")
+            self._report_cut_state(run_id, "rejected", "cut_staging_unavailable")
             return False
         # 请求即登记（pending）：跨线程去重 + 诊断的 in-flight 计数都以此为准。
         self._run_cuts[run_id] = "pending"
+        self._report_cut_state(run_id, "accepted")
         event = threading.Event()
         with _RUN_CUT_LOCK:
             _RUN_CUT_EVENTS[run_id] = event
@@ -486,6 +504,7 @@ class TelemetryCaptureService:
             self._run_cuts[run_id] = "spawn_failed"
             self._last_error = f"cut_spawn_failed: {error}"
             self._record_run_cut_rejection("cut_spawn_failed")
+            self._report_cut_state(run_id, "failed", f"cut_spawn_failed: {error}")
             with _RUN_CUT_LOCK:
                 _RUN_CUT_EVENTS.pop(run_id, None)
             event.set()
@@ -506,6 +525,10 @@ class TelemetryCaptureService:
             log.exception("telemetry run cut failed run=%s", run_id)
         finally:
             self._run_cuts[run_id] = outcome
+            self._report_cut_state(
+                run_id, "ok" if outcome == "ok" else "failed",
+                None if outcome == "ok" else str(outcome),
+            )
             self._last_cut = {
                 "run_id": run_id,
                 "finished_epoch_s": time.time(),
@@ -668,7 +691,12 @@ class TelemetryCaptureService:
                          AIMING_COOKIE_OFFSETS_CACHE=str(config.DATA_ROOT / "offsets.local.json"),
                          # [fix 2026-09-30] 子进程输出恒 utf-8：中文 Windows 默认
                          # cp936 会把崩溃 traceback 打成乱码，日志文件按 utf-8 解不开。
-                         PYTHONIOENCODING="utf-8")
+                         PYTHONIOENCODING="utf-8",
+                         # [fix 2026-10-07 W1] stdout 重定向到文件时默认 8KB 块缓冲，
+                         # 采集脚本全用无 flush 的 print → {role}.log 在子进程存活期
+                         # 恒空，attach_causes/child_log_tail 全失明（10-07 报障包
+                         # 分诊盲区根因）。
+                         PYTHONUNBUFFERED="1")
         # [fix 2026-09-30] 子进程 stdout/stderr 合并落会话目录 {role}.log（此前
         # DEVNULL 吞掉一切未捕获异常，rc=1 无从定位）。开不出来（如用户数据目录
         # 在已拔出的移动盘）就降级回 DEVNULL + warning，绝不让拉起整体失败。

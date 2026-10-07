@@ -27,7 +27,11 @@ from .native_capture_client import (
 _TERMINAL_VIDEO_ERRORS = {
     "capture_coverage_gap": "video_coverage_gap",
     "capture_session_mismatch": "video_capture_session_mismatch",
-    "capture_window_invalid": "video_window_invalid",
+    # [fix 2026-10-07 W8] native 的 capture_window_invalid = 窗口整体不在
+    # replay 覆盖内（重启后全量补跑旧局的必然形态），与 control_window_invalid
+    # （Python 侧窗口合法性，如 >300s）语义不同，拆码让补跑旧局在历史页/诊断
+    # 里可辨认；前端合同=未知码原样显示，无需前端改动。
+    "capture_window_invalid": "video_replay_window_out_of_range",
     "control_window_invalid": "video_window_invalid",
     "capture_video_invalid": "video_hardware_invalid",
     # control_auth_failed 是鉴权层终态失败；control_message_invalid 自
@@ -35,6 +39,10 @@ _TERMINAL_VIDEO_ERRORS = {
     "control_auth_failed": "video_capture_protocol_invalid",
     "managed_path_invalid": "video_capture_protocol_invalid",
 }
+
+# [fix 2026-10-07 W7] 补跑预判的 30 天活动窗：只把「最近 30 天内打的局」
+# 当补跑预判对象，远古窗口（含测试假窗口）不截胡。
+_REPLAY_REBUILD_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 log = logging.getLogger(__name__)
 
 
@@ -307,6 +315,28 @@ class KovaaKCaptureFinalizer:
             return await self._finish_or_retry_trace(
                 run, trace_pending, "video_window_invalid",
             )
+
+        # [fix 2026-10-07 W7] 补跑预判跳过：重启/首启的全量补跑会把远早于
+        # 采集覆盖（video replay buffer=300s=MAX_CAPTURE_WINDOW_MS 同源设计值；
+        # raw ring 保留=10min=MAX_SNAPSHOT_SPAN_MS）的旧局整队送进 export +
+        # trace 重试，每一局都是注定失败的 IO 与日志放大（10-07 报障实锤：
+        # queue_depth 84 全量补跑，40+ 局 video_window_invalid/trace_stale）。
+        # 预判只在「30 天活动窗内且窗口终点早于 video 覆盖下界（两界中更严
+        # 的 300s）」时截胡：更老的局量少且老路径终态语义本就正确；刚打完的
+        # 局（窗口终点距现在秒级）不受影响。时间源 wall clock，预判不抛错。
+        now_ms = int(time.time() * 1000)
+        if (
+            now_ms - _REPLAY_REBUILD_ACTIVITY_WINDOW_MS
+            < end_epoch_ms
+            < now_ms - kovaak_run_store.MAX_CAPTURE_WINDOW_MS
+        ):
+            run = await kovaak_run_store.mark_run_video_unavailable(
+                run["id"], self._user_id, "video_replay_expired",
+            ) or run
+            run = await kovaak_run_store.mark_mouse_trace_unavailable(
+                run["id"], self._user_id, "trace_snapshot_out_of_coverage",
+            ) or run
+            return await self._finish_or_retry_trace(run, None, "video_replay_expired")
 
         # 挑战窗有效即触发按局增量遥测切窗（与 mp4/raw-input 同一收尾时机；
         # 服务侧幂等去重 + fire-and-forget，失败不影响本函数）。

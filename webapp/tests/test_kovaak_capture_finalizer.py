@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1562,3 +1563,45 @@ def test_transport_corruption_codes_are_not_terminal_video_errors() -> None:
     assert "control_message_invalid" not in _TERMINAL_VIDEO_ERRORS
     assert "control_read_failed" not in _TERMINAL_VIDEO_ERRORS
     assert "control_auth_failed" in _TERMINAL_VIDEO_ERRORS
+
+
+@pytest.mark.asyncio
+async def test_stale_window_replay_rebuild_skips_export_and_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[fix 2026-10-07 W7] 窗口终点早于 replay 覆盖下界（重启后全量补跑旧局）
+    直接终态新 cause 码：不发起 export、不触发切窗、不进 trace 重试循环。"""
+    stale_start = int(time.time() * 1000) - 600_000  # 窗口 [now-10min, now-9min]
+    _configure_parsers(monkeypatch, start_epoch_ms=stale_start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    client = FakeNativeCaptureClient(tmp_path / "data")
+
+    run = await _finalizer(tmp_path, client).finalize(KovaaKFileDiscovery(
+        stem="replay-expired",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert client.export_calls == []
+    assert run["video_state"] == "unavailable"
+    assert run["video_error"] == "video_replay_expired"
+    assert run["trace_state"] == "unavailable"
+    assert run["trace_error"] == "trace_snapshot_out_of_coverage"
+    assert run["finalization_state"] == "finalized"
+
+
+def test_capture_window_invalid_maps_to_replay_range_code() -> None:
+    """[fix 2026-10-07 W8] native 的 capture_window_invalid（窗口不在 replay
+    覆盖内，重启补跑旧局的必然形态）与 control_window_invalid（Python 侧窗口
+    合法性）拆码，历史页/诊断可辨认补跑局。"""
+    from webapp.backend.kovaak_capture_finalizer import _TERMINAL_VIDEO_ERRORS
+
+    assert (
+        _TERMINAL_VIDEO_ERRORS["capture_window_invalid"]
+        == "video_replay_window_out_of_range"
+    )
+    assert _TERMINAL_VIDEO_ERRORS["control_window_invalid"] == "video_window_invalid"

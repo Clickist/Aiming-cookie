@@ -1824,9 +1824,13 @@ fn handle_control_connection(
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT));
+    // [fix 2026-10-07 W2] 每请求心跳行（reading request / accepted / writing
+    // response）全部删除：capture_exit 0.5s 轮询 status 让这三行以 ~120 行/
+    // 分钟刷屏，诊断包 nativeLogTail 尾部被它们填满（10-07 报障包 1786 行里
+    // 1784 行是 conn），camera/target 的关键日志全被挤出窗口。错误路径与
+    // 连接级事件保留；健康性由 status 接口承载。
     loop {
         let started = Instant::now();
-        crate::dlog!("[capture-export] conn: reading request");
         let line = match read_control_line(&mut stream) {
             Ok(Some(line)) => line,
             Ok(None) => {
@@ -1865,7 +1869,6 @@ fn handle_control_connection(
                 continue;
             }
         };
-        crate::dlog!("[capture-export] conn: request accepted: {request:?}");
         let response_type = response_type_for_request(&request);
         let result = match request {
             ControlRequest::Status => coordinator
@@ -1949,19 +1952,24 @@ fn write_control_response(
             return false;
         }
     };
-    crate::dlog!(
-        "[capture-export] conn: writing response type={} ok={} bytes={} elapsed_ms={}",
-        response
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("?"),
-        response
-            .get("ok")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        payload.len(),
-        started.elapsed().as_millis()
-    );
+    // [fix 2026-10-07 W2] 每请求的响应行降噪为慢请求守卫：超 1s 才记一行
+    // （慢响应是诊断信号），常规请求零日志。
+    let elapsed_ms = started.elapsed().as_millis();
+    if elapsed_ms > 1000 {
+        crate::dlog!(
+            "[capture-export] conn: slow response type={} ok={} bytes={} elapsed_ms={}",
+            response
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?"),
+            response
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            payload.len(),
+            elapsed_ms
+        );
+    }
     let write = stream
         .write_all(&payload)
         .and_then(|()| stream.write_all(b"\n"))

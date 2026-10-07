@@ -571,6 +571,14 @@ pub struct RawInputStatus {
     pub snapshot_error_code: Option<String>,
     pub snapshot_error_at_ms: Option<i64>,
     pub snapshot_error: Option<String>,
+    // [fix 2026-10-07 W3] 静默丢弃插桩透出：诊断包 rawInput 节点随之携带，
+    // 下次 run113 型现场用 gate_discarded / last_wm_input_seen / probe 三元
+    // 组直接二选一钉死「门误判 vs 消息未送达」。
+    pub gate_discarded_events: u64,
+    pub gate_last_discard_ms: Option<i64>,
+    pub last_wm_input_seen_ms: Option<i64>,
+    pub last_probe_ok_at_ms: Option<i64>,
+    pub probe_failures: u64,
     pub timebase_version: &'static str,
     pub clock_source: &'static str,
     pub clock_anchor_utc_ms: i64,
@@ -591,6 +599,11 @@ struct CaptureStatus {
     snapshot_error_code: Option<String>,
     snapshot_error_at_ms: Option<i64>,
     snapshot_error: Option<String>,
+    gate_discarded_events: u64,
+    gate_last_discard_ms: Option<i64>,
+    last_wm_input_seen_ms: Option<i64>,
+    last_probe_ok_at_ms: Option<i64>,
+    probe_failures: u64,
 }
 
 #[derive(Default)]
@@ -612,6 +625,15 @@ struct CaptureDiagnostics {
     queue_drop_last_epoch_ms: std::sync::atomic::AtomicI64,
     expired_points: std::sync::atomic::AtomicU64,
     ring_expired_through_epoch_ms: std::sync::atomic::AtomicI64,
+    // [fix 2026-10-07 W3] 静默丢弃插桩：window_proc 的 process_running 门
+    // 丢弃 WM_INPUT 时原来零计数（门误判 vs 消息未送达不可区分，10-07 报障
+    // run113 型断点无法归因）。gate_* = 消息到达但被门丢；last_wm_input_seen
+    // = 通过门进入 capture 的最近时刻；probe_* = 进程探测结果时间线。
+    gate_discarded_events: std::sync::atomic::AtomicU64,
+    gate_last_discard_ms: std::sync::atomic::AtomicI64,
+    last_wm_input_seen_ms: std::sync::atomic::AtomicI64,
+    last_probe_ok_at_ms: std::sync::atomic::AtomicI64,
+    probe_failures: std::sync::atomic::AtomicU64,
     snapshot: Mutex<SnapshotStatus>,
     clock_anchor: CaptureClockAnchor,
 }
@@ -627,6 +649,11 @@ impl CaptureDiagnostics {
             queue_drop_last_epoch_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             expired_points: std::sync::atomic::AtomicU64::new(0),
             ring_expired_through_epoch_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            gate_discarded_events: std::sync::atomic::AtomicU64::new(0),
+            gate_last_discard_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            last_wm_input_seen_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            last_probe_ok_at_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            probe_failures: std::sync::atomic::AtomicU64::new(0),
             snapshot: Mutex::new(SnapshotStatus::default()),
             clock_anchor: capture_clock_anchor(),
         }
@@ -672,6 +699,30 @@ impl CaptureDiagnostics {
             .fetch_add(points as u64, std::sync::atomic::Ordering::Relaxed);
         self.ring_expired_through_epoch_ms
             .fetch_max(through_epoch_ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // [fix 2026-10-07 W3] 三元组计数：区分「门丢弃」与「WM_INPUT 未送达」。
+    fn record_gate_discarded(&self) {
+        let now_ms = self.capture_timestamp_ms();
+        self.gate_discarded_events
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.gate_last_discard_ms
+            .fetch_max(now_ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record_wm_input_seen(&self) {
+        self.last_wm_input_seen_ms
+            .fetch_max(self.capture_timestamp_ms(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record_probe_ok(&self) {
+        self.last_probe_ok_at_ms
+            .fetch_max(self.capture_timestamp_ms(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record_probe_failure(&self) {
+        self.probe_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn record_snapshot_success(&self, timestamp_ms: i64, points: usize) {
@@ -754,6 +805,23 @@ impl CaptureDiagnostics {
                 .as_ref()
                 .and_then(|value| value.snapshot_error_at_ms),
             snapshot_error: snapshot.and_then(|value| value.snapshot_error.clone()),
+            gate_discarded_events: self
+                .gate_discarded_events
+                .load(std::sync::atomic::Ordering::Acquire),
+            gate_last_discard_ms: {
+                let value = self.gate_last_discard_ms.load(std::sync::atomic::Ordering::Acquire);
+                (value != i64::MIN).then_some(value)
+            },
+            last_wm_input_seen_ms: {
+                let value =
+                    self.last_wm_input_seen_ms.load(std::sync::atomic::Ordering::Acquire);
+                (value != i64::MIN).then_some(value)
+            },
+            last_probe_ok_at_ms: {
+                let value = self.last_probe_ok_at_ms.load(std::sync::atomic::Ordering::Acquire);
+                (value != i64::MIN).then_some(value)
+            },
+            probe_failures: self.probe_failures.load(std::sync::atomic::Ordering::Acquire),
         }
     }
 }
@@ -799,6 +867,11 @@ impl RawInputState {
             snapshot_error_code: capture.snapshot_error_code,
             snapshot_error_at_ms: capture.snapshot_error_at_ms,
             snapshot_error: capture.snapshot_error,
+            gate_discarded_events: capture.gate_discarded_events,
+            gate_last_discard_ms: capture.gate_last_discard_ms,
+            last_wm_input_seen_ms: capture.last_wm_input_seen_ms,
+            last_probe_ok_at_ms: capture.last_probe_ok_at_ms,
+            probe_failures: capture.probe_failures,
             timebase_version: inner.diagnostics.clock_anchor.timebase_version,
             clock_source: inner.diagnostics.clock_anchor.clock_source,
             clock_anchor_utc_ms: inner.diagnostics.clock_anchor.utc_epoch_ms,
@@ -1459,15 +1532,21 @@ unsafe fn raw_input_thread(
     ) -> LRESULT {
         if message == WM_INPUT {
             let state = STATE.load(Ordering::Acquire) as *mut ThreadState;
-            if !state.is_null() && (*state).process_running {
-                let state = &mut *state;
-                if let Err(error) = capture_raw_mouse(
-                    lparam,
-                    &state.points,
-                    &state.diagnostics,
-                    &mut state.normalizer,
-                ) {
-                    state.diagnostics.record_runtime_failure(error);
+            if !state.is_null() {
+                if (*state).process_running {
+                    let state = &mut *state;
+                    if let Err(error) = capture_raw_mouse(
+                        lparam,
+                        &state.points,
+                        &state.diagnostics,
+                        &mut state.normalizer,
+                    ) {
+                        state.diagnostics.record_runtime_failure(error);
+                    }
+                } else {
+                    // [fix 2026-10-07 W3] 门丢弃原来零计数（门误判 vs 消息
+                    // 未送达不可区分）；计数 + 最近丢弃时刻进诊断。
+                    (*state).diagnostics.record_gate_discarded();
                 }
             }
         }
@@ -1580,6 +1659,10 @@ unsafe fn raw_input_thread(
                 Ok(process_running) => {
                     thread_state.process_running = process_running;
                     thread_state.process_probe_failed = false;
+                    // [fix 2026-10-07 W3] probe 结果时间线：Ok（无论真假）都
+                    // 记时刻，与 last_wm_input_seen 对齐判断「探测活着但返回
+                    // false 时消息是否仍在到达」。
+                    thread_state.diagnostics.record_probe_ok();
                     thread_state.diagnostics.clear_runtime_failure();
                     thread_state
                         .diagnostics
@@ -1587,6 +1670,7 @@ unsafe fn raw_input_thread(
                 }
                 Err(error) => {
                     thread_state.process_running = false;
+                    thread_state.diagnostics.record_probe_failure();
                     thread_state
                         .diagnostics
                         .record_kovaak_process_present(false);
@@ -1660,6 +1744,10 @@ unsafe fn capture_raw_mouse(
         RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP, RI_MOUSE_MIDDLE_BUTTON_DOWN,
         RI_MOUSE_MIDDLE_BUTTON_UP, RI_MOUSE_RIGHT_BUTTON_DOWN, RI_MOUSE_RIGHT_BUTTON_UP,
     };
+
+    // [fix 2026-10-07 W3] 通过门的最近 WM_INPUT 时刻：与 gate_discarded /
+    // last_probe_ok 组成三元组，钉死「门误判 vs 消息未送达」。
+    diagnostics.record_wm_input_seen();
 
     let handle = lparam as HRAWINPUT;
     let mut size: UINT = 0;
