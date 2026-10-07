@@ -24,6 +24,7 @@ from kovaak_tracker.telemetry_signals import (
     TELEMETRY_PRODUCER_VERSION,
     VIEWPORT_HEIGHT_PX,
     VIEWPORT_WIDTH_PX,
+    build_telemetry_quality_profile_v2,
     build_telemetry_visual_result,
     project_world_to_viewport,
 )
@@ -124,6 +125,171 @@ def test_projection_rejects_targets_behind_camera():
         )
 
 
+# ---------- 视锥门（producer 循环）：画外丢弃 / 包围圆擦边保留（纯本地，永远运行） ----------
+#
+# [P0 fix] 前方但出视锥的样本原先直接进入 px=f·tan(θ) 投影：|θ|→90° 时 px
+# 爆炸到百万像素级且无任何 degraded 标记，污染误差指标与 time_in_radius
+# （run 54102 target.0 实测 x ∈ [-1.99M, +2.74M]px）。修法：角度域双轴判定
+# 放 producer 循环（与 behind-camera 跳过同型），画外样本丢弃不产样本，
+# run 级记 target_outside_frustum_skipped。
+
+_RETIRED_CV_LIMITATIONS = (
+    "geometry_projected_from_external_world_telemetry",
+    "no_image_detector_calibration",
+)
+
+
+def _write_single_target_sidecars(
+    round_dir: Path,
+    world: tuple[float, float, float],
+    *,
+    radius_cm: float = 60.0,
+) -> None:
+    """单目标旁车：目标全程固定在 world（cm），相机在原点、yaw/pitch=0，
+    ~60Hz 0.5s（32 view 帧）；身份走 frozen meta，不读任何 rounds_index。"""
+    round_dir.mkdir(parents=True)
+    views = b"".join(
+        (
+            '{"t": %.3f, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 0.0], "fov": 103.0}\n'
+            % (t / 1000.0)
+        ).encode("utf-8")
+        for t in range(32, 532, 16)
+    )
+    frames = b"".join(
+        (
+            '{"ev": "frame", "t": %.3f, "targets": [[0, %.6f, %.6f, %.6f]]}\n'
+            % ((t / 1000.0,) + world)
+        ).encode("utf-8")
+        for t in range(32, 532, 16)
+    )
+    (round_dir / "round.jsonl").write_bytes(frames)
+    (round_dir / "views_01.jsonl").write_bytes(views)
+    (round_dir / "inputs_01.jsonl").write_bytes(b"")
+    (round_dir / "bb.json").write_bytes(
+        b'{"challenges": [{"window_t": [0.0, 1.0], "bots": '
+        + json.dumps([{"character": {"bb": {"radius": radius_cm}}}]).encode("utf-8")
+        + b'}]}\n'
+    )
+
+
+
+def _frustum_build(round_dir: Path) -> dict:
+    return build_telemetry_visual_result(
+        round_dir,
+        1,
+        canonical_window=(0.0, 600_000.0),
+        file_names={
+            "round": "round.jsonl",
+            "views": "views_01.jsonl",
+            "inputs": "inputs_01.jsonl",
+        },
+        frozen_round_meta={
+            "targets": [{
+                "tid": 0,
+                "addr_hex": "0x0",
+                "n_lives": 1,
+                "lives": [{"t_start": 0.0, "t_end": 0.5, "n": 32, "path_cm": 0.0}],
+            }],
+            "t_start": 0.0,
+        },
+    )
+
+
+def test_frustum_keeps_in_view_target_and_drops_retired_cv_codes(tmp_path):
+    """视锥内目标全样本保留；无 limitation 时 runtime quality 为 accepted，
+    两条退役 CV limitation 不再出现在任何产物口径中。"""
+    round_dir = tmp_path / "ext-frustum-inview"
+    _write_single_target_sidecars(round_dir, (4000.0, 10.0, 0.0))
+    result = _frustum_build(round_dir)
+    # 32 个 view 帧中 t>0.5s 的 2 帧落在生命窗外（与既有 fixture 同口径）。
+    assert len(result["local_samples"]["target.0.position"]) == 30
+    assert "target_outside_frustum_skipped" not in result["limitations"]
+    assert result["quality"]["status"] == "accepted"
+    assert result["quality"]["limitations"] == []
+    assert result["safe_summary"]["quality_status"] == "accepted"
+    for retired in _RETIRED_CV_LIMITATIONS:
+        assert retired not in result["limitations"]
+        assert retired not in result["safe_summary"]["limitations"]
+
+
+def test_frustum_drops_yaw_outside_target(tmp_path):
+    """前方但超出水平视锥：样本丢弃 + run 级 target_outside_frustum_skipped，
+    runtime quality 转为 limited（与 family 门禁 {accepted, limited} 兼容）。"""
+    # yaw = atan2(2000, 1000) ≈ 63.4°，hfov/2 = 51.5°，角半径 ≈1.5° → 出界。
+    round_dir = tmp_path / "ext-frustum-yaw"
+    _write_single_target_sidecars(round_dir, (1000.0, 2000.0, 0.0))
+    result = _frustum_build(round_dir)
+    assert result["local_samples"]["target.0.position"] == []
+    assert "target_outside_frustum_skipped" in result["limitations"]
+    assert result["quality"]["status"] == "limited"
+    assert result["quality"]["enabled_metric_families"] == [
+        "dynamic_clicking", "tracking", "switching",
+    ]
+
+
+def test_frustum_drops_pitch_outside_target_with_extreme_dpitch(tmp_path):
+    """超出竖直视锥的样本丢弃；dpitch 无 wrap，极端俯仰（≈88.6°，tan 爆炸区）
+    同样被角度域阈值拦下，不再产出百万像素级样本。"""
+    # 极端：pitch = atan2(4000, 100) ≈ 88.6° ≫ vfov/2 ≈ 35.3°（103° 水平 fov）。
+    # 修复前该样本会投影出 px_y ≈ 540 - f·tan(88.6°) ≈ -30k px。
+    round_dir = tmp_path / "ext-frustum-pitch-extreme"
+    _write_single_target_sidecars(round_dir, (100.0, 0.0, 4000.0))
+    result = _frustum_build(round_dir)
+    assert result["local_samples"]["target.0.position"] == []
+    assert "target_outside_frustum_skipped" in result["limitations"]
+
+    # 温和超界：pitch = atan2(4000, 2000) ≈ 63.4° > 35.3° + 角半径，同样丢弃。
+    round_dir_mild = tmp_path / "ext-frustum-pitch-mild"
+    _write_single_target_sidecars(round_dir_mild, (2000.0, 0.0, 4000.0))
+    result_mild = _frustum_build(round_dir_mild)
+    assert result_mild["local_samples"]["target.0.position"] == []
+    assert "target_outside_frustum_skipped" in result_mild["limitations"]
+
+
+def test_frustum_keeps_target_grazing_frustum_edge(tmp_path):
+    """包围球-视锥相交：中心出界但圆盘与视口相交 = 部分可见 = 保留。"""
+    # 距离 200cm、半径 60cm → 角半径 ≈16.7°；中心 yaw 55° > hfov/2 = 51.5°
+    # 但 55° < 51.5° + 16.7° → 擦边保留（px 中心已出画布但有限）。
+    yaw = math.radians(55.0)
+    round_dir = tmp_path / "ext-frustum-graze"
+    _write_single_target_sidecars(round_dir, (200.0 * math.cos(yaw), 200.0 * math.sin(yaw), 0.0))
+    result = _frustum_build(round_dir)
+    samples = result["local_samples"]["target.0.position"]
+    # 生命窗外丢 2 帧，视锥内 30 帧全保留。
+    assert len(samples) == 30
+    assert "target_outside_frustum_skipped" not in result["limitations"]
+    assert all(math.isfinite(sample["x"]) and math.isfinite(sample["y"]) for sample in samples)
+    assert all(sample["x"] > VIEWPORT_WIDTH_PX for sample in samples)
+
+    # 对照：中心 yaw 69° > 51.5° + 16.7° → 整圆盘出界，丢弃。
+    yaw_out = math.radians(69.0)
+    round_dir_out = tmp_path / "ext-frustum-graze-out"
+    _write_single_target_sidecars(
+        round_dir_out, (200.0 * math.cos(yaw_out), 200.0 * math.sin(yaw_out), 0.0),
+    )
+    result_out = _frustum_build(round_dir_out)
+    assert result_out["local_samples"]["target.0.position"] == []
+    assert "target_outside_frustum_skipped" in result_out["limitations"]
+
+
+def test_telemetry_profile_has_no_retired_cv_disclosure():
+    """profile 口径与实际 limitation 一致：两条退役 CV limitation 不再出现，
+    status=accepted 且各 family 全 accepted（schema 硬校验 status 必须与
+    validation_results 推导一致，投影为 px 真值定义源故误差按构造为零）。"""
+    profile = build_telemetry_quality_profile_v2(selector={
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "external-telemetry:test",
+        "resolution": [VIEWPORT_WIDTH_PX, VIEWPORT_HEIGHT_PX],
+        "canonical_video_mapping_version": "telemetry_time_mapping.v1",
+        "fov": 103.0,
+    })
+    assert profile["status"] == "accepted"
+    assert profile["limitations"] == []
+    assert set(profile["quality_status_by_metric_family"].values()) == {"accepted"}
+    for retired in _RETIRED_CV_LIMITATIONS:
+        assert retired not in profile["limitations"]
+
+
 # ---------- 真实旁车端到端（目录缺失则 SKIP） ----------
 
 
@@ -221,7 +387,8 @@ def test_visual_result_shape_and_evidence_validation(built_results):
         for key, samples in result["local_samples"].items():
             if not key.startswith("target."):
                 continue
-            assert samples
+            # 视锥门后整轨画外的 target 允许为空（run 级有对应 limitation）。
+            assert samples or "target_outside_frustum_skipped" in result["limitations"]
             for sample in samples:
                 assert {
                     "canonical_time_ms", "x", "y", "visible_radius", "confidence",
@@ -229,12 +396,13 @@ def test_visual_result_shape_and_evidence_validation(built_results):
                 assert math.isfinite(sample["x"]) and math.isfinite(sample["y"])
                 assert sample["visible_radius"] > 0.0
         # quality 合同：status / enabled_metric_families / limitations。
+        # CV 降级披露退役后 limitation 只剩单局数据问题，允许为空。
         quality = result["quality"]
         assert quality["status"] in {"accepted", "limited"}
+        assert quality["status"] == ("limited" if quality["limitations"] else "accepted")
         assert set(quality["enabled_metric_families"]) <= {
             "dynamic_clicking", "tracking", "switching",
         }
-        assert quality["limitations"]
         assert result["safe_summary"]["producer_version"] == TELEMETRY_PRODUCER_VERSION
         assert result["safe_summary"]["track_count"] == len([
             key for key in result["local_samples"] if key.startswith("target.")

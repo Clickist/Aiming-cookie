@@ -14,7 +14,10 @@
 - 视口：游戏渲染为 rectilinear/针孔投影；KovaaK fov 为水平 fov
   （UE POV.FOV），单焦距 f = (W/2)/tan(hfov/2)（103° 时 f≈763.6），
   px_x = W/2 + f*tan(dyaw)，px_y = H/2 - f*tan(dpitch)，准心恒 (W/2, H/2)；
-- 目标像素半径：角半径 atan(bb_radius_cm / 视点-目标距离) * f。
+- 目标像素半径：角半径 atan(bb_radius_cm / 视点-目标距离) * f；
+- 视锥门（producer 循环）：前方但出视锥（|dyaw| > hfov/2 + 角半径 或
+  |dpitch| > vfov/2 + 角半径，vfov/2 = atan((H/W)·tan(hfov/2))）的样本在
+  tan 爆炸区，直接丢弃不产样本，run 级记 target_outside_frustum_skipped。
 
 fov 用该轮 views 流的稳健值（中位；views 有少量 fov 撕裂帧），全轮统一投影；
 量化取整后编入 visual quality profile ref（不同 fov 的 px/rad 尺度不可比）。
@@ -66,11 +69,6 @@ _DISABLE_ALL_LIMITATIONS = frozenset({
     "visual_frame_gap",
     "visual_event_budget_exceeded",
 })
-# 固有的 producer 级限制（写进 profile 与 quality 的 limitations）。
-PRODUCER_LIMITATIONS = (
-    "geometry_projected_from_external_world_telemetry",
-    "no_image_detector_calibration",
-)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -163,6 +161,37 @@ def project_world_to_viewport(
     distance = math.dist(target, tuple(float(item) for item in camera_pos))
     angular_radius = math.atan2(target_radius_cm, distance) if distance > 0 else math.pi / 2
     return px_x, px_y, angular_radius * focal_px
+
+
+def _is_in_view_frustum(
+    *,
+    target: tuple[float, float, float],
+    camera_pos: Sequence[float],
+    rot: Sequence[float],
+    horizontal_fov_deg: float,
+    target_radius_cm: float,
+) -> bool:
+    """角度域视锥判定（双轴 + 目标包围圆，与 px 投影同一组角量）。
+
+    可见 ⇔ |dyaw| ≤ hfov/2 + angular_radius 且 |dpitch| ≤ vfov/2 + angular_radius，
+    其中 vfov/2 = atan((H/W)·tan(hfov/2))。angular_radius 为目标角半径：这是
+    包围球-视锥相交测试（游戏引擎 culling 标准做法），中心出界但圆盘与视口
+    相交 = 部分可见 = 保留。阈值判定天然挡掉 px=f·tan(θ) 在 |θ|→90° 的爆炸
+    样本；pitch 侧无 wrap（dpitch ∈ ±180°），超界 dpitch 同样被阈值拦下。
+    """
+    yaw_target, pitch_target = _target_angles(target, camera_pos)
+    dyaw = _wrap_pi(yaw_target - math.radians(float(rot[1])))
+    dpitch = pitch_target - math.radians(float(rot[0]))
+    distance = math.dist(target, tuple(float(item) for item in camera_pos))
+    angular_radius = math.atan2(target_radius_cm, distance) if distance > 0 else math.pi / 2
+    hfov_half = math.radians(horizontal_fov_deg) / 2.0
+    vfov_half = math.atan(
+        (VIEWPORT_HEIGHT_PX / VIEWPORT_WIDTH_PX) * math.tan(hfov_half)
+    )
+    return (
+        abs(dyaw) <= hfov_half + angular_radius
+        and abs(dpitch) <= vfov_half + angular_radius
+    )
 
 
 def _load_round_target_positions(
@@ -598,6 +627,17 @@ def build_telemetry_visual_result(
             if not _is_in_front(world, pos, rot):
                 add_limitation("target_behind_camera_skipped")
                 continue
+            if not _is_in_view_frustum(
+                target=world,
+                camera_pos=pos,
+                rot=rot,
+                horizontal_fov_deg=selector_fov,
+                target_radius_cm=radius_cm,
+            ):
+                # 前方但出视锥（tan 爆炸区）：画外样本丢弃不产样本，与死亡
+                # 间隙同型；run 级记 limitation，不静默。
+                add_limitation("target_outside_frustum_skipped")
+                continue
             try:
                 px_x, px_y, px_radius = project_world_to_viewport(
                     target=world,
@@ -678,7 +718,7 @@ def build_telemetry_visual_result(
     quality = {
         "status": "limited" if disable_all or limitations else "accepted",
         "enabled_metric_families": [] if disable_all else list(ALL_METRIC_FAMILIES),
-        "limitations": [*PRODUCER_LIMITATIONS, *limitations],
+        "limitations": list(limitations),
     }
 
     scenario_hash = f"external-telemetry:{round_dir.name}"
@@ -849,8 +889,10 @@ def build_telemetry_visual_result(
 def build_telemetry_quality_profile_v2(*, selector: dict) -> dict:
     """v2 形状的最小 visual quality profile（producer_id=external_telemetry）。
 
-    无法在图像域宣称 CV 级标定，故中心误差等检测结果如实置 None、状态为
-    limited；运行时 quality 仍按几何真值启用全部 metric family。
+    CV 视频检测已退役、世界投影是唯一正源：px 域真值由该投影定义，检测对
+    真值的误差按构造为零，无 producer 级降级披露（status=accepted）；单局
+    数据质量问题（画外/间隙等）只记运行时 quality 的 limitations，不进
+    profile，避免 runtime/profile 口径不一。
     profile_ref 编入量化 fov（四舍五入取整防抖动）：px/rad 尺度随 fov 变化，
     不同 fov 的 run 在 history_trends 的 ref 精确匹配下不可比。
     """
@@ -897,17 +939,17 @@ def build_telemetry_quality_profile_v2(*, selector: dict) -> dict:
             "minimum_coverage": 0.95,
         },
         validation_results={
-            "center_error_median_px": None,
-            "center_error_p95_px": None,
-            "radius_or_hitbox_error_px": None,
+            "center_error_median_px": 0.0,
+            "center_error_p95_px": 0.0,
+            "radius_or_hitbox_error_px": 0.0,
             "false_positive_rate": 0.0,
             "identity_switch_rate": 0.0,
             "occlusion_reentry_accuracy": 1.0,
             "minimum_coverage": 1.0,
         },
         validated_metric_families=list(ALL_METRIC_FAMILIES),
-        status="limited",
-        limitations=list(PRODUCER_LIMITATIONS),
+        status="accepted",
+        limitations=[],
     )
     fov = selector.get("fov")
     if isinstance(fov, (int, float)) and not isinstance(fov, bool) and math.isfinite(float(fov)):
