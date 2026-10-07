@@ -95,6 +95,12 @@ test("default coach prompt carries the honest empty-diagnosis rule", () => {
     assert.match(prompt, /严禁发明评级词/);
     assert.match(prompt, /绝不等于「这局没有问题」/);
     assert.match(prompt, /自己诊断/);
+    // 内部工程标注不外讲（2026-10-07）：limitations/投影估算/校准缺失这类
+    // 管道状态不对用户转述，不可用指标直接跳过。生产案例：Coach 把
+    // 「遥测投影估算、没有图像校准」念给用户听。
+    assert.match(prompt, /内部工程标注不外讲/);
+    assert.match(prompt, /一律不对用户转述或解释/);
+    assert.match(prompt, /某项指标不可用时直接跳过不提/);
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
@@ -120,17 +126,18 @@ test("default coach prompt carries the real-names-only scenario recommendation r
 });
 
 test("default coach prompt carries the internal-stats expression rule", () => {
-  // Prompt 硬规矩合同：coverage/置信度是分析器内部口径，不得对用户讲
-  // 成「数据覆盖率/证据覆盖率」或暗示数据丢失。生产案例：coverage
-  // 0.539 被讲成「证据覆盖率只有五成多」。
+  // Prompt 硬规矩合同：limitations/coverage/置信度/数据来源说明都是内部
+  // 工程标注，不对用户转述或解释，不可用指标直接跳过。生产案例：coverage
+  // 0.539 被讲成「证据覆盖率只有五成多」；limitations 被念成「遥测投影
+  // 估算、没有图像校准」。
   const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
   try {
     delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     const prompt = loadDefaultCoachSystemPrompt();
-    assert.match(prompt, /内部统计不外讲/);
-    assert.match(prompt, /不对用户表述为「数据覆盖率」「证据覆盖率」/);
-    assert.match(prompt, /「分析器可用的采样比例」/);
-    assert.match(prompt, /不得暗示数据丢失/);
+    assert.match(prompt, /内部工程标注不外讲/);
+    assert.match(prompt, /一律不对用户转述或解释/);
+    assert.match(prompt, /某项指标不可用时直接跳过不提/);
+    assert.match(prompt, /不得展开工程细节/);
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
