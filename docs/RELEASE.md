@@ -54,7 +54,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release-install.ps1
 
 ## ④ 本机逐项验证
 
-按本次改动清单逐项真机走查。常用配方：
+按本次改动清单逐项真机走查。**改动涉及 Coach / 分析链路时，走查必须包含「回答内容质量」逐句审**：让 Coach 解读一局已知情况的对局，逐句核对——引用的数字是否与分析落盘一致、有没有编造诊断/评级、具名推荐是否出自知识库或本机场景清单、有没有把内部口径说成数据覆盖率。回答"看起来专业"不是通过标准。（2026-10-07 定：1.4.3 走查只验了"能回复、能引用"没验内容，漏放了坏指标+Coach 编造。）
+
+常用配方：
 
 - **触发分析**：读 `E:\ACData\desktop-runtime.json` 拿 `python_base_url`+`python_token`（每次启动刷新），`POST {base}/api/kovaak-runs/{id}/analyze`，body `{"force":true}`，头 `X-Aiming-Cookie-Desktop-Token: <token>`+`X-User-Id: desktop-local`；轮询 `GET /api/sessions` 看状态（别用 `/sessions/{id}`，按 owner 鉴权易 forbidden）。
 - **真机 UI 走查**：启动前设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"`，playwright-core `connectOverCDP("http://127.0.0.1:9223")`。
