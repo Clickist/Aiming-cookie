@@ -3167,9 +3167,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                         )
                     except Exception as error:
                         log.warning(
-                            "dynamic outcome association unavailable session=%s error=%s",
+                            "dynamic outcome association unavailable session=%s error=%r",
                             sid,
-                            type(error).__name__,
+                            repr(error),
                         )
                     try:
                         dynamic_result = await asyncio.to_thread(
@@ -3182,9 +3182,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                         raise
                     except Exception as error:
                         log.warning(
-                            "dynamic clicking analysis unavailable session=%s error=%s",
+                            "dynamic clicking analysis unavailable session=%s error=%r",
                             sid,
-                            type(error).__name__,
+                            repr(error),
                         )
                         result = _build_outcome_only_result_v2(
                             job,
@@ -3213,9 +3213,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             )
                         except Exception as error:
                             log.warning(
-                                "dynamic baseline unavailable session=%s error=%s",
+                                "dynamic baseline unavailable session=%s error=%r",
                                 sid,
-                                type(error).__name__,
+                                repr(error),
                             )
                         else:
                             if comparison.get("comparable") is True:
@@ -3409,9 +3409,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                         )
                     except Exception as error:
                         log.warning(
-                            "continuous tracking baseline unavailable session=%s error=%s",
+                            "continuous tracking baseline unavailable session=%s error=%r",
                             sid,
-                            type(error).__name__,
+                            repr(error),
                         )
                     else:
                         if comparison.get("comparable") is True:
@@ -3490,9 +3490,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                         except Exception as error:
                             log.warning(
                                 "target switching telemetry analysis unavailable "
-                                "session=%s error=%s",
+                                "session=%s error=%r",
                                 sid,
-                                type(error).__name__,
+                                repr(error),
                             )
                             result = _build_outcome_only_result_v2(
                                 job,
@@ -3530,9 +3530,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             except Exception as error:
                                 log.warning(
                                     "target switching baseline unavailable "
-                                    "session=%s error=%s",
+                                    "session=%s error=%r",
                                     sid,
-                                    type(error).__name__,
+                                    repr(error),
                                 )
                             else:
                                 if comparison.get("comparable") is True:
@@ -3595,9 +3595,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             raise
                         except Exception as error:
                             log.warning(
-                                "target switching analysis unavailable session=%s error=%s",
+                                "target switching analysis unavailable session=%s error=%r",
                                 sid,
-                                type(error).__name__,
+                                repr(error),
                             )
                             result = _build_outcome_only_result_v2(
                                 job,
@@ -3628,9 +3628,9 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                                 )
                             except Exception as error:
                                 log.warning(
-                                    "target switching baseline unavailable session=%s error=%s",
+                                    "target switching baseline unavailable session=%s error=%r",
                                     sid,
-                                    type(error).__name__,
+                                    repr(error),
                                 )
                             else:
                                 if comparison.get("comparable") is True:

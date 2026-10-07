@@ -24,6 +24,11 @@ _CANVAS_WIDTH_PX = 1920
 _CANVAS_HEIGHT_PX = 1080
 _OFFSCREEN_MARGIN_PX = 1000
 NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED = "nonfinite_or_offscreen_samples_filtered"
+# bb.json 缺失时 producer 的兜底采样帧记 visible_radius=None（缺测；通道域半径
+# 仍是有限常数）。switching 分析器以 require_radius=True 解析目标轨道，对非
+# 有限半径 raise——装样侧先剔除缺测样本并计数（可观测），避免从「兜底假数」
+# 恶化成「解析报错拖垮整场」。
+MISSING_RADIUS_SAMPLES_FILTERED = "missing_radius_samples_filtered"
 
 
 def _sample_geometry_valid(sample: Mapping) -> bool:
@@ -58,12 +63,41 @@ def _partition_valid_geometry_samples(samples: list) -> tuple[list, int]:
     return valid, filtered_count
 
 
+def _partition_measured_radius_samples(samples: list) -> tuple[list, int]:
+    """按半径可测性分区（保持原序），返回 (visible_radius 有限的样本, 被剔除数)。
+
+    bb.json 缺失时 producer 的兜底采样帧记 ``visible_radius=None``（缺测；
+    通道域半径仍是有限常数）。switching 分析器以 ``require_radius=True`` 解析
+    目标轨道，对非有限半径 raise——缺测样本不剔除会从「兜底假数」恶化成
+    「解析报错拖垮整场」。装样侧剔除缺测样本；全被剔除的空轨道交给既有空轨
+    道过滤（不进 payload）。输入应为几何过滤后的样本（元素均为 Mapping）。
+    """
+    valid: list = []
+    filtered_count = 0
+    for sample in samples:
+        radius = sample.get("visible_radius")
+        if (
+            isinstance(radius, (int, float))
+            and not isinstance(radius, bool)
+            and math.isfinite(radius)
+        ):
+            valid.append(sample)
+        else:
+            filtered_count += 1
+    return valid, filtered_count
+
+
+def _mark_quality_limitation(quality: dict, limitation: str) -> None:
+    """把降级标注写进 visual_quality limitations（幂等；仅在确实降级时调用）。"""
+    limitations = list(quality.get("limitations") or [])
+    if limitation not in limitations:
+        limitations.append(limitation)
+    quality["limitations"] = limitations
+
+
 def _mark_samples_filtered(quality: dict) -> None:
     """把样本过滤降级写进 visual_quality limitations（仅在确实过滤时调用）。"""
-    limitations = list(quality.get("limitations") or [])
-    if NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED not in limitations:
-        limitations.append(NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED)
-    quality["limitations"] = limitations
+    _mark_quality_limitation(quality, NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED)
 
 
 def _parse_frozen_stats_for_visual(snapshot: Mapping[str, object]):
@@ -421,6 +455,12 @@ def run_dynamic_clicking_analysis(
         # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
         valid_samples, track_filtered = _partition_valid_geometry_samples(samples)
         filtered_invalid_samples += track_filtered
+        # 空样本轨道（遥测旁车对窗外生命期声明的 tid 保持 0 样本，或样本全被
+        # 几何过滤）无几何可分析；跳过以对齐 switching 家族先例，避免分析器
+        # 对空 samples 抛错导致整族 unavailable。全空时 tracks=[]，分析器仍
+        # 照常产出 outcome 类结果。
+        if not valid_samples:
+            continue
         track_ref = f"{analysis_ref}:target-track:{match.group(1)}"
         summary = track_summaries.get(track_ref) or {}
         target_tracks.append({
@@ -504,6 +544,176 @@ def _tracking_change_points_for_track(
     ]
 
 
+def _tracking_frozen_trace_source(
+    job: Mapping[str, object],
+    snapshot: Mapping[str, object],
+) -> dict | None:
+    """冻结 raw input trace 源解析（装样缝/融合 alignment 共用取数源）。
+
+    真实遥测路径的队列 job 上 ``input_snapshot.trace`` 可缺席（visual_result
+    由 ``worker._build_external_telemetry_visual_result`` 从 kovaak_run 冻结
+    数据运行时重建，不依赖快照 trace）。取数照同源回退：
+
+    1. 快照 trace available → 原样返回（冻结指纹 fail-closed 契约不变）；
+    2. 否则从 kovaak_run 的 runs 目录冻结 trace bin 取——run 标识与 producer
+       同源（``job.kovaak_run_id``，缺了回落 ``snapshot.run_id``），目录
+       ``{DATA_ROOT}/runs/{run_id}/trace-*.bin``（``kovaak_run_store`` 的 run
+       布局）。运行时计算指纹装源，读取仍经 ``_read_frozen_source_bytes``
+       （读中变更/身份缺失照旧 raise，不做静默降级）。
+
+    缺件（无 run 标识 / runs 目录无唯一 trace bin）返回 None，由调用方按既有
+    缺件语义降级，不拖垮整场。
+    """
+    trace = snapshot.get("trace")
+    if isinstance(trace, Mapping) and trace.get("availability") == "available":
+        return dict(trace)
+    run_id = job.get("kovaak_run_id")
+    if run_id is None and isinstance(snapshot, Mapping):
+        run_id = snapshot.get("run_id")
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+        return None
+    from . import config
+    from .kovaak_run_store import _run_root
+
+    run_dir = _run_root(config.DATA_ROOT, run_id)
+    try:
+        candidates = sorted(run_dir.glob("trace-*.bin"))
+    except OSError:
+        return None
+    if len(candidates) != 1:
+        return None
+    path = candidates[0]
+    try:
+        data = path.read_bytes()
+        stat = path.stat()
+    except OSError:
+        return None
+    import hashlib
+
+    return {
+        "artifact_ref": f"run:{run_id}:trace",
+        "path": str(path),
+        "availability": "available",
+        "fingerprint": {
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+            "mtime_ns": stat.st_mtime_ns,
+        },
+    }
+
+
+def _tracking_player_motion_inputs(
+    job: Mapping[str, object],
+    visual_result: Mapping[str, object],
+    window: Mapping[str, object],
+) -> dict:
+    """S3 装样缝：fused raw input trace 角位置 -> px 域准星运动样本。
+
+    trace 取数经 ``_tracking_frozen_trace_source``：快照冻结指纹优先，缺件
+    回落 runs 目录冻结 trace bin（同 ``_apply_fused_alignment_metric``）；
+    校准取 calibration_snapshot.cm_per_360 + parsed_stats.dpi。鼠标计数序列经
+    ``build_angular_position_series`` 转窗内相对角位置，再经 ``f*tan()`` 换到
+    与目标投影一致的 px 域（f 取 visual_runtime_selector 的 fov，换算式同
+    ``telemetry_signals`` 的 ``_focal_length_px``；缺 selector 时沿用 103°
+    先例默认）。
+
+    px 域方向与投影 ``project_world_to_viewport`` 同域同向，最终 (x, y) 语义
+    是「屏幕像素坐标里的准星运动」：
+    - x：yaw 右正 → x 右正，同 px_x = W/2 + f*tan(dyaw) 的右正方向；yaw 的
+      ±180 wrap 对 tan 无影响（tan 周期 180°），px 序列连续；
+    - y：投影 px_y = H/2 - f*tan(dpitch)（dpitch 为视图角，上正），而角度序列
+      pitch 是屏幕 dy 约定（dy 正 = 向下 = 增，不 wrap），dpitch = -pitch序列，
+      代入得 Δy = +f*tan(pitch序列)：鼠标下移 → y 增，与屏幕 y 向下语义一致。
+
+    缺件（窗非法 / trace 缺席或不可解码 / 无校准 cm_per_360 或 DPI / 窗内无
+    点）返回 ``{}``——不拖垮整场，纪律同 ``_switching_press_fusion_inputs``
+    先例；``SourceSnapshotChangedError`` 原样上抛（fail-closed 契约）。
+    ``player_motion_status`` 的既有 unavailable 语义不动（error/on_target
+    几何仍钉死中心）。
+    """
+    start_ms = window.get("start_ms")
+    end_ms = window.get("end_ms")
+    if (
+        isinstance(start_ms, bool) or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int) or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+    ):
+        return {}
+    snapshot = job.get("input_snapshot")
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    source = _tracking_frozen_trace_source(job, snapshot)
+    if source is None:
+        return {}
+    calibration = job.get("calibration_snapshot")
+    cm_per_360 = (
+        calibration.get("cm_per_360", {}).get("value")
+        if isinstance(calibration, Mapping)
+        and isinstance(calibration.get("cm_per_360"), Mapping)
+        else None
+    )
+    if not isinstance(cm_per_360, (int, float)) or isinstance(cm_per_360, bool):
+        return {}
+    try:
+        parsed_stats = _parse_frozen_stats_for_visual(snapshot)
+        dpi = getattr(parsed_stats, "dpi", None)
+    except SourceSnapshotChangedError:
+        raise
+    except ValueError:
+        return {}
+    if not isinstance(dpi, int) or dpi <= 0:
+        return {}
+
+    from . import worker
+    from .kovaak_run_store import decode_mouse_snapshot_bytes
+    from kovaak_tracker.input_fusion import (
+        build_angular_position_series,
+        deg_per_count,
+    )
+
+    try:
+        trace_points = decode_mouse_snapshot_bytes(
+            worker._read_frozen_source_bytes("raw_input", source),
+        )
+    except ValueError:
+        return {}
+    if not trace_points:
+        return {}
+    series = build_angular_position_series(
+        trace_points,
+        deg_per_count_value=deg_per_count(float(cm_per_360), float(dpi)),
+        start_ms=start_ms,
+        end_ms=end_ms,
+    )
+    if not series:
+        return {}
+    selector = visual_result.get("visual_runtime_selector")
+    fov = (
+        selector.get("fov")
+        if isinstance(selector, Mapping)
+        and isinstance(selector.get("fov"), (int, float))
+        and not isinstance(selector.get("fov"), bool)
+        else 103.0
+    )
+    from kovaak_tracker.telemetry_signals import VIEWPORT_WIDTH_PX
+
+    focal_px = (VIEWPORT_WIDTH_PX / 2.0) / math.tan(math.radians(float(fov)) / 2.0)
+    samples: list[dict] = []
+    for time_ms, yaw_deg, pitch_deg in series:
+        entry = {
+            "canonical_time_ms": time_ms,
+            "x": focal_px * math.tan(math.radians(yaw_deg)),
+            "y": focal_px * math.tan(math.radians(pitch_deg)),
+        }
+        # codec 只校验时间戳非递减（按钮沿可与移动同毫秒），而分析器要求严格
+        # 递增；角位置是窗内累计量，同毫秒保留最后一个点（含该毫秒全部位移）。
+        if samples and samples[-1]["canonical_time_ms"] == time_ms:
+            samples[-1] = entry
+        else:
+            samples.append(entry)
+    return {"player_motion_samples": samples}
+
+
 def _continuous_tracking_track_payload(
     *,
     analysis_ref: str,
@@ -517,6 +727,7 @@ def _continuous_tracking_track_payload(
     available_channel_keys: list[str],
     alignment_latency_ms: float | None,
     crosshair_samples: list | None,
+    player_motion_samples: list | None,
 ) -> dict:
     """Build the unchanged single-track analyzer input for one target track."""
     # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
@@ -530,7 +741,7 @@ def _continuous_tracking_track_payload(
     quality_payload = dict(quality or {})
     if filtered_invalid_samples:
         _mark_samples_filtered(quality_payload)
-    return {
+    payload = {
         "schema_version": "continuous_tracking_input.v1",
         "analysis_ref": analysis_ref,
         "canonical_time_window": dict(window),
@@ -565,6 +776,13 @@ def _continuous_tracking_track_payload(
         "alignment_latency_ms": alignment_latency_ms,
         "comparison": None,
     }
+    if player_motion_samples is not None:
+        # S3 装样缝：fused raw input trace 的 px 域准星运动样本（可选增强，
+        # 供分析器的 crosshair_velocity/频谱/修正线性插值）。键缺席时分析器
+        # 行为与既有逐字节不变；player_motion_status 保持既有 unavailable
+        # 语义（error/on_target 几何仍钉死中心）。
+        payload["player_motion_samples"] = player_motion_samples
+    return payload
 
 
 def _apply_fused_alignment_metric(
@@ -580,7 +798,8 @@ def _apply_fused_alignment_metric(
     锚事件 = 权威击杀 N（producer kill 事件）→ 下一受害目标出生（同轨道
     kill 前最近一次出生事件，孰晚）；值 = 锚后 trace 角速度流（cm_per_360
     + DPI 换算）首个（角速度 >= 阈值 且 方向朝目标）桶与锚之差。不需要
-    按压沿。
+    按压沿。trace 取数经 ``_tracking_frozen_trace_source``：快照冻结指纹
+    优先，缺件回落 runs 目录冻结 trace bin。
 
     前提不满足（kill < 2 / trace 缺席或不可解码 / 校准缺 cm_per_360 或
     DPI / 无可判方位段）时不改指标——既有 capture 描述子语义原样保留。
@@ -595,8 +814,10 @@ def _apply_fused_alignment_metric(
     ):
         return
     snapshot = job.get("input_snapshot")
-    trace = snapshot.get("trace") if isinstance(snapshot, Mapping) else None
-    if not isinstance(trace, Mapping) or trace.get("availability") != "available":
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    source = _tracking_frozen_trace_source(job, snapshot)
+    if source is None:
         return
     calibration = job.get("calibration_snapshot")
     cm_per_360 = (
@@ -665,7 +886,7 @@ def _apply_fused_alignment_metric(
 
     try:
         trace_points = decode_mouse_snapshot_bytes(
-            worker._read_frozen_source_bytes("raw_input", trace),
+            worker._read_frozen_source_bytes("raw_input", source),
         )
     except ValueError:
         return
@@ -850,11 +1071,15 @@ def run_continuous_tracking_analysis(
     if not isinstance(local_samples, Mapping):
         raise ValueError("continuous tracking visual samples are unavailable")
     crosshair_samples = local_samples.get("crosshair.position")
+    # 空样本轨道（窗外生命期声明的 tid 保持 0 样本）先滤除：全空时落到下方
+    # "requires one unambiguous target track" 的受控 ValueError（outcome_only
+    # 降级），而不是在分析器内 crash。语义对齐 switching 家族先例。
     target_tracks = [
         (match.group(1), samples)
         for sample_key, samples in local_samples.items()
         if (match := re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key)))
         and isinstance(samples, list)
+        and samples
     ]
     if not target_tracks:
         raise ValueError("continuous tracking requires one unambiguous target track")
@@ -878,6 +1103,8 @@ def run_continuous_tracking_analysis(
         else None
     )
     quality = visual_result.get("quality") or {}
+    # S3 装样缝：一次性取准星运动样本（缺件 {} → payload 键缺席，行为不变）。
+    player_motion_inputs = _tracking_player_motion_inputs(job, visual_result, window)
 
     if len(target_tracks) > 1:
         # 多目标路径：噪声过滤（样本数阈值见常量注释），逐轨校验后独立分析。
@@ -918,6 +1145,7 @@ def run_continuous_tracking_analysis(
                 available_channel_keys=available_channel_keys,
                 alignment_latency_ms=alignment_latency_ms,
                 crosshair_samples=crosshair_samples,
+                player_motion_samples=player_motion_inputs.get("player_motion_samples"),
             )
             entries.append({
                 "track_ref": track_ref,
@@ -955,6 +1183,7 @@ def run_continuous_tracking_analysis(
         available_channel_keys=available_channel_keys,
         alignment_latency_ms=alignment_latency_ms,
         crosshair_samples=crosshair_samples,
+        player_motion_samples=player_motion_inputs.get("player_motion_samples"),
     )
     result = analyze_continuous_tracking_v1(payload)
     _apply_fused_alignment_metric(
@@ -1238,16 +1467,23 @@ def _telemetry_switching_inputs(
     ]
     tracks = []
     filtered_invalid_samples = 0
+    filtered_radius_samples = 0
     for track_id, samples in sorted(target_tracks, key=lambda item: str(item[0])):
         # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
         valid_samples, track_filtered = _partition_valid_geometry_samples(samples)
         filtered_invalid_samples += track_filtered
+        # 纵深防御：bb 缺失兜底帧的 visible_radius=None（缺测）在 require_radius
+        # 解析前剔除并计数，避免解析 raise 拖垮整场（见 MISSING_RADIUS_SAMPLES_FILTERED 注释）。
+        measured_samples, track_radius_filtered = (
+            _partition_measured_radius_samples(valid_samples)
+        )
+        filtered_radius_samples += track_radius_filtered
         # 空样本轨道（窗内从不可见，如始终在相机后方，或样本全被几何过滤）
         # 无几何可分析；它的生命窗仍参与候选可见性（target_lives）。
-        if valid_samples:
+        if measured_samples:
             tracks.append({
                 "track_ref": f"{analysis_ref}:target-track:{track_id}",
-                "samples": valid_samples,
+                "samples": measured_samples,
             })
     target_lives = [
         {
@@ -1263,6 +1499,8 @@ def _telemetry_switching_inputs(
     quality = dict(visual_result.get("quality") or {})
     if filtered_invalid_samples:
         _mark_samples_filtered(quality)
+    if filtered_radius_samples:
+        _mark_quality_limitation(quality, MISSING_RADIUS_SAMPLES_FILTERED)
     enabled_families = [
         "target_switching" if family == "switching" else family
         for family in quality.get("enabled_metric_families") or []

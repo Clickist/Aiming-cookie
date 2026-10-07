@@ -15,6 +15,9 @@ import pytest
 
 from webapp.backend import worker_family_analysis
 from webapp.backend.worker_family_analysis import (
+    MISSING_RADIUS_SAMPLES_FILTERED as MISSING_RADIUS_CODE,
+)
+from webapp.backend.worker_family_analysis import (
     NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED as FILTERED_CODE,
 )
 
@@ -377,6 +380,108 @@ def test_switching_telemetry_clean_samples_leave_no_filter_limitation():
         worker_family_analysis.run_target_switching_telemetry_analysis(job, visual)
 
     assert FILTERED_CODE not in captured[0]["visual_quality"]["limitations"]
+    assert MISSING_RADIUS_CODE not in captured[0]["visual_quality"]["limitations"]
+
+
+# ---- 半径缺测防线（bb.json 缺失：兜底帧 visible_radius=None）----
+
+
+def test_switching_telemetry_filters_missing_radius_samples_and_marks_quality():
+    """bb 缺失兜底帧（visible_radius=None/字段缺失）在 require_radius 解析前
+    剔除：真实分析器不再 raise，缺测样本不进 payload，标注
+    missing_radius_samples_filtered（可观测）。"""
+    from kovaak_tracker import switching_analysis
+
+    job = {
+        "id": ANALYSIS_ID,
+        "input_snapshot": _snapshot("target_switching", with_trace=False),
+    }
+    visual = _switching_visual([
+        {"canonical_time_ms": 25, "x": 990.0, "y": 540.0, "visible_radius": 5.0, "confidence": 1.0},
+        {"canonical_time_ms": 50, "x": 991.0, "y": 540.0, "visible_radius": None, "confidence": 1.0},
+        {"canonical_time_ms": 75, "x": 992.0, "y": 540.0, "confidence": 1.0},  # 字段缺失
+        {"canonical_time_ms": 150, "x": 993.0, "y": 540.0, "visible_radius": 5.0, "confidence": 1.0},
+    ])
+    meta = _telemetry_meta()
+    captured: list = []
+
+    with _spy_real_analyzer(
+        switching_analysis, "analyze_target_switching_telemetry_v1", captured,
+    ), patch(
+        "webapp.backend.worker._external_telemetry_source",
+        lambda _job: {"external_run_id": "ext-fixture"},
+    ), patch(
+        "webapp.backend.external_telemetry_store.load_meta",
+        lambda _external_run_id: meta,
+    ):
+        result = worker_family_analysis.run_target_switching_telemetry_analysis(
+            job, visual,
+        )
+
+    # 真实分析器跑完（未因 None 半径 raise）。
+    assert result["schema_version"] == "target_switching_analysis.v1"
+    tracks = {track["track_ref"]: track for track in captured[0]["target_tracks"]}
+    samples = tracks[f"{ANALYSIS_REF}:target-track:0"]["samples"]
+    assert [(s["canonical_time_ms"], s["x"]) for s in samples] == [
+        (25, 990.0),
+        (150, 993.0),
+    ]
+    # 降级可观测：半径缺测码进入 visual_quality 并透传到结果；本例无几何
+    # 过滤，几何过滤码不出现。
+    assert MISSING_RADIUS_CODE in captured[0]["visual_quality"]["limitations"]
+    assert MISSING_RADIUS_CODE in result["limitations"]
+    assert FILTERED_CODE not in captured[0]["visual_quality"]["limitations"]
+
+
+def test_switching_telemetry_all_radius_missing_track_dropped_without_crash():
+    """整轨半径全缺测（bb 缺失局）：轨道被既有空轨道过滤剔除、不进 payload，
+    生命窗仍参与候选可见性（target_lives）；无权威 kill 引用它 → 分析器照常
+    完成，不 crash。"""
+    from kovaak_tracker import switching_analysis
+
+    job = {
+        "id": ANALYSIS_ID,
+        "input_snapshot": _snapshot("target_switching", with_trace=False),
+    }
+    visual = _switching_visual([
+        {"canonical_time_ms": 25, "x": 990.0, "y": 540.0, "visible_radius": 5.0, "confidence": 1.0},
+        {"canonical_time_ms": 150, "x": 990.0, "y": 540.0, "visible_radius": 5.0, "confidence": 1.0},
+    ])
+    # tid 2：生命窗整体在 canonical 窗外（to_ms 1200-1600，cross-validation 只
+    # 数窗内生命窗终点），无权威 kill；窗内采样帧全部半径缺测。
+    meta = {
+        "targets": [
+            {"tid": 0, "lives": [{"t_start": 0.0, "t_end": 0.2}]},
+            {"tid": 1, "lives": [{"t_start": 0.25, "t_end": 0.6}]},
+            {"tid": 2, "lives": [{"t_start": 1.2, "t_end": 1.6}]},
+        ],
+    }
+    visual["local_samples"]["target.2.position"] = [
+        {"canonical_time_ms": 300, "x": 900.0, "y": 540.0, "visible_radius": None, "confidence": 1.0},
+        {"canonical_time_ms": 400, "x": 910.0, "y": 540.0, "visible_radius": None, "confidence": 1.0},
+    ]
+    captured: list = []
+
+    with _spy_real_analyzer(
+        switching_analysis, "analyze_target_switching_telemetry_v1", captured,
+    ), patch(
+        "webapp.backend.worker._external_telemetry_source",
+        lambda _job: {"external_run_id": "ext-fixture"},
+    ), patch(
+        "webapp.backend.external_telemetry_store.load_meta",
+        lambda _external_run_id: meta,
+    ):
+        result = worker_family_analysis.run_target_switching_telemetry_analysis(
+            job, visual,
+        )
+
+    assert result["schema_version"] == "target_switching_analysis.v1"
+    track_refs = {track["track_ref"] for track in captured[0]["target_tracks"]}
+    assert f"{ANALYSIS_REF}:target-track:2" not in track_refs
+    # 全缺测轨道的生命窗仍参与候选可见性。
+    lives = {life["track_ref"] for life in captured[0]["target_lives"]}
+    assert f"{ANALYSIS_REF}:target-track:2" in lives
+    assert MISSING_RADIUS_CODE in captured[0]["visual_quality"]["limitations"]
 
 
 @pytest.mark.parametrize(
