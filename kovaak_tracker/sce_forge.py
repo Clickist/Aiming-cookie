@@ -10,9 +10,9 @@
 - [Map Data] 几何与出生网格格式：拷贝自 ``1wall 6targets small.sce`` 的
   封闭立方体房间（内径 ±1024uu）与 PlayerSpawn 实体写法；CameraPath 块取自
   ``Reactive Flick.sce``（无悬空实体引用的形态）。
-- 处方参数与难度递进语法：``.zcode/route-mining/generation-rules.md`` v0.2
-  （规则 R1.1/R2.1/R3.6/R4.1/R9.3/R8.3，出处以各预设函数注释标注）。
-- 能力域命名：``.zcode/route-mining/capability-vocabulary.md`` v1.2。
+- 处方参数与难度递进语法：``.zcode/route-mining/generation-rules.md`` v0.3
+  （规则 R1.1/R2.1/R3.6/R4.1/R9.3/R8.3/R9.5/R4.1-IR，出处以各预设函数注释标注）。
+- 能力域命名：``.zcode/route-mining/capability-vocabulary.md`` v1.3。
 - 空间分布档判据：parameter-distributions.md D6（宽 >1500uu=拉枪链 /
   窄 <500uu=快速微调 / 中等 500–1500uu；无出生网格由 Dodge dist 承担）。
 
@@ -87,7 +87,7 @@ class ForgePrescription:
     # 身份
     name: str                     # 中文基名（显示名由 naming_scheme 组装）
     rule_id: str                  # 配方书规则 ID，如 "R1.1"
-    domain: str                   # 能力域（capability-vocabulary v1.2 域名）
+    domain: str                   # 能力域（capability-vocabulary v1.3 域名）
     difficulty_tier: int = 1
     lr_step_per_tier: float = DEFAULT_LR_STEP_PER_TIER
 
@@ -105,6 +105,7 @@ class ForgePrescription:
     target_jump_velocity: float = 0.0
     target_health_regen_per_sec: float = 0.0
     target_health_regen_delay: float = 0.0
+    target_respawn: tuple[float, float] = (1.0, 1.0)   # Min/MaxRespawnDelay（序列接续节奏）
 
     # 变向（Dodge Profile）
     toggle_left_right: bool = True
@@ -121,12 +122,14 @@ class ForgePrescription:
     time_between_shots: float = 0.01
     damage_per_shot: float = 1.0
     magazine_max: int = 0
+    ammo_per_shot: int = 1                  # 单发成本（改良换弹三键之一，纪律 10）
     ammo_reloaded_on_kill: int = 0
     headshot_multiplier: float = 2.0
 
     # 计分（header）
     score_per_kill: float = 0.0
     score_per_damage: float = 0.0
+    score_per_hit: float = 0.0              # 按命中计分（R9.5 gauntlet，官方原文 §1.8）
     score_per_time: float = 0.0
     score_to_win: float = 0.0
     score_mult_accuracy: bool = False
@@ -135,6 +138,11 @@ class ForgePrescription:
     invincible_bots: bool = False
     timelimit: float = 60.0
     timescale: float = 1.0
+
+    # S5 基准型 FOV 头（纪律 19）：true → LockFOVRange=true/103.0/140.0/Clamped Horizontal
+    lock_fov_s5: bool = False
+    # 同屏多靶关碰撞（纪律 22）：≥2 同屏靶默认开；序列单活靶保持 false
+    disable_character_collision: bool = False
 
     # 空间分布档（D6）：narrow / medium / wide / none
     space_tier: str = "none"
@@ -194,6 +202,7 @@ _HEADER_TEMPLATE: list[tuple[str, str]] = [
     ('TimeRefilledByKill', '%time_refilled_by_kill%'),
     ('ScoreToWin', '%score_to_win%'),
     ('ScorePerDamage', '%score_per_damage%'),
+    ('ScorePerHit', '%score_per_hit%'),
     ('ScorePerKill', '%score_per_kill%'),
     ('ScorePerMidairDirect', '0.0'),
     ('ScorePerAnyDirect', '0.0'),
@@ -236,9 +245,11 @@ _HEADER_TEMPLATE: list[tuple[str, str]] = [
     ('DistScoreCondAcceptTime', '0.2'),
     ('ScoreLossPerMiss', '%score_loss_per_miss%'),
     ('MultSqrtAcc', 'false'),
-    ('LockFOVRange', 'false'),
-    ('LockedFOVMin', '60.0'),
-    ('LockedFOVMax', '120.0'),
+    # FOV 锁定（纪律 19）：默认 false + 60/120（lock=false 模板默认对，写了未启用）；
+    # lock_fov_s5=true → S5 基准型头 true/103.0/140.0/Clamped Horizontal（官方原文 §1.2）
+    ('LockFOVRange', '%lock_fov_range%'),
+    ('LockedFOVMin', '%locked_fov_min%'),
+    ('LockedFOVMax', '%locked_fov_max%'),
     ('LockedFOVScale', 'Clamped Horizontal'),
     ('ScenarioVersion', 'Initial'),
 ]
@@ -407,6 +418,8 @@ _CHARACTER_PROFILE_TEMPLATE: list[tuple[str, str]] = [
     ('FlightVelocityDown', '800.0'),
     ('FlightAccelDown', '800.0'),
     ('IsFlyUpOnJumpAndCrouch', 'false'),
+    # 同屏多靶关碰撞（纪律 22；键序取自 VT Pasu Novice S5 真实文件同位置）
+    ('DisableCharacterCollision', '%disable_character_collision%'),
     ('LifeStealPercent', '0.0'),
     ('AbilityGlobalCooldown', '0.0'),
     ('DragCoefficient', '10.0'),
@@ -504,7 +517,7 @@ _WEAPON_PROFILE_TEMPLATE: list[tuple[str, str]] = [
     ('HeadshotCapable', 'false'),
     ('HeadshotMultiplier', '%headshot_multiplier%'),
     ('MagazineMax', '%magazine_max%'),
-    ('AmmoPerShot', '1'),
+    ('AmmoPerShot', '%ammo_per_shot%'),
     ('ReloadTimeFromEmpty', '0.1'),
     ('ReloadTimeFromPartial', '0.1'),
     ('DamageFalloffStartDistance', '100000.0'),
@@ -784,6 +797,7 @@ def _character_params(
     movement_type: str, max_speed: float, acceleration: float, bb_type: str,
     bb_height: float, bb_radius: float, has_head: bool, head_radius: float,
     regen_per_sec: float, regen_delay: float, gravity: float, jump_velocity: float,
+    disable_collision: bool = False,
 ) -> dict[str, str]:
     return {
         "char_name": name,
@@ -803,6 +817,7 @@ def _character_params(
         "health_regen_delay": _num(regen_delay),
         "gravity": _num(gravity),
         "jump_velocity": _num(jump_velocity),
+        "disable_character_collision": _bool(disable_collision),
     }
 
 
@@ -814,8 +829,19 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         raise ForgeError(f"难度档必须 >=1，收到 {prescription.difficulty_tier}")
     if prescription.bot_instances < 1:
         raise ForgeError(f"bot 实例数必须 >=1，收到 {prescription.bot_instances}")
+    if prescription.disable_character_collision and prescription.bot_instances < 2:
+        raise ForgeError(
+            "disable_character_collision 是同屏多靶纪律（generation-rules v0.3 纪律 22）："
+            f"仅对同屏 >=2 靶有意义，收到 bot_instances={prescription.bot_instances}"
+        )
 
     bots = [f"{_TARGET_BOT}.bot"] * prescription.bot_instances
+    if prescription.lock_fov_s5:
+        # S5 基准型 FOV 头：6/6 在库 S5 场景实测 103–140 Clamped Horizontal（纪律 19）
+        fov_params = {"lock_fov_range": "true", "locked_fov_min": "103.0", "locked_fov_max": "140.0"}
+    else:
+        # 默认不锁：60/120 是 lock=false 的模板默认对（写了未启用，勿当特化档引用）
+        fov_params = {"lock_fov_range": "false", "locked_fov_min": "60.0", "locked_fov_max": "120.0"}
     header_params = {
         "name": name,
         "bot_characters": ";".join(bots),
@@ -828,10 +854,12 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         "time_refilled_by_kill": _num(prescription.time_refilled_by_kill),
         "score_to_win": _num(prescription.score_to_win),
         "score_per_damage": _num(prescription.score_per_damage),
+        "score_per_hit": _num(prescription.score_per_hit),
         "score_per_kill": _num(prescription.score_per_kill),
         "score_per_time": _num(prescription.score_per_time),
         "score_mult_accuracy": _bool(prescription.score_mult_accuracy),
         "score_loss_per_miss": _num(prescription.score_loss_per_miss),
+        **fov_params,
         "game_tag": prescription.game_tag,
         "weapon_hero_tag": "",
         "aim_type_tag": prescription.aim_type_tag,
@@ -864,6 +892,7 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         "time_between_shots": _num(prescription.time_between_shots),
         "damage_per_shot": _num(prescription.damage_per_shot),
         "magazine_max": str(int(prescription.magazine_max)),
+        "ammo_per_shot": str(int(prescription.ammo_per_shot)),
         "ammo_reloaded_on_kill": str(int(prescription.ammo_reloaded_on_kill)),
         "headshot_multiplier": _num(prescription.headshot_multiplier),
     }
@@ -871,7 +900,7 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         name=_TARGET_CHAR,
         max_health=prescription.target_max_health,
         weapon_names=";;;;;;;",
-        respawn=(1.0, 1.0),
+        respawn=prescription.target_respawn,
         movement_type=prescription.target_movement_type,
         max_speed=prescription.target_max_speed,
         acceleration=prescription.target_acceleration,
@@ -884,6 +913,7 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         regen_delay=prescription.target_health_regen_delay,
         gravity=prescription.target_gravity,
         jump_velocity=prescription.target_jump_velocity,
+        disable_collision=prescription.disable_character_collision,
     )
     player_char = _character_params(
         name=_PLAYER_CHAR,
@@ -902,6 +932,7 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         regen_delay=0.0,
         gravity=0.0,
         jump_velocity=0.0,
+        disable_collision=False,   # 玩家角色恒 false（S5 真实文件同值）
     )
 
     parts = [_render(_HEADER_TEMPLATE, header_params)]
@@ -961,8 +992,15 @@ def self_check(data: bytes, prescription: ForgePrescription, *, name: str) -> di
         float(prescription.target_health_regen_per_sec),
         character.get("health_regen_per_sec") or 0.0,
     )
-    # 注：sce_reading 事实层未暴露 HealthRegenDelay（不进回读比对面）；
-    # 该键由 tests/test_sce_forge.py 的文本级断言覆盖。
+    check(
+        "target.respawn_delay_s",
+        [float(prescription.target_respawn[0]), float(prescription.target_respawn[1])],
+        character.get("respawn_delay_s"),
+    )
+    # 注：sce_reading 事实层未暴露的键不入回读比对面（HealthRegenDelay 先例），
+    # 由 tests/test_sce_forge.py 文本级断言覆盖：HealthRegenDelay、ScorePerHit、
+    # AmmoPerShot、LockFOVRange 系（103–140 Clamped Horizontal）、
+    # DisableCharacterCollision。
 
     # —— 变向（Dodge Profile）——
     check("dodge.toggle_left_right", prescription.toggle_left_right, dodge.get("toggle_left_right"))
@@ -1091,6 +1129,10 @@ RULE_LABELS: dict[str, tuple[str, str]] = {
     "R4.1": ("MicroDrift", "微调慢漂"),
     "R9.3": ("RegenPress", "回血压输出"),
     "R8.3": ("SurvTime", "生存计分"),
+    # v0.3 新增：R9.5=gauntlet 计时器；R4.1-IR=R4.1 弹药经济的官方改良换弹变体
+    # （-IR 后缀锚定 R4.1/纪律 10 三键辨析，非独立新规则编号）
+    "R9.5": ("Gauntlet", "gauntlet 计时"),
+    "R4.1-IR": ("ImprReload", "改良换弹"),
 }
 
 _NAMING_NOTES = {
@@ -1186,13 +1228,13 @@ def forge_and_write(
 
 
 # ---------------------------------------------------------------------------
-# 内置配方书规则（generation-rules.md v0.2 拷贝改写；出处见各函数注释）
+# 内置配方书规则（generation-rules.md v0.3 拷贝改写；出处见各函数注释）
 # ---------------------------------------------------------------------------
 
 def forge_R1_1(difficulty_tier: int = 1) -> ForgePrescription:
     """R1.1 变向密度降档（跟不上变向的第一处方）。
 
-    出处：generation-rules v0.2 G1/R1.1【坐实链 C60】【档位统计 -0.1s/档 主导语法】。
+    出处：generation-rules v0.3 G1/R1.1【坐实链 C60】【档位统计 -0.1s/档 主导语法】。
     骨架典型值（Humanoid Strafe / Ground Plaza / rA STRAFETRACK）：MinLR 0.4/MaxLR 0.8
     起步、每档 -0.1s 递进；HP300+伤害计分让"在靶时间"成为唯一得分路径；
     受击变向 false 保节奏纯净（纪律 4：不用运行时自适应）。
@@ -1224,7 +1266,7 @@ def forge_R1_1(difficulty_tier: int = 1) -> ForgePrescription:
         description=(
             f"Aiming Cookie R1.1 变向阶梯 A{difficulty_tier}档："
             f"LR {_lr_ladder((0.4, 0.8), difficulty_tier)} 每档-0.1s；"
-            "伤害计分3.0/Win1000；hp300 r45 v1100。出处 generation-rules v0.2 R1.1"
+            "伤害计分3.0/Win1000；hp300 r45 v1100。出处 generation-rules v0.3 R1.1"
         ),
         expected_semantics="continuous_tracking",
     )
@@ -1233,7 +1275,7 @@ def forge_R1_1(difficulty_tier: int = 1) -> ForgePrescription:
 def forge_R2_1(difficulty_tier: int = 1) -> ForgePrescription:
     """R2.1 单向化（删除变向变量）。
 
-    出处：generation-rules v0.2 G2/R2.1【坐实链 C51 Smooth Thin LR1000-1000 / SYW】。
+    出处：generation-rules v0.3 G2/R2.1【坐实链 C51 Smooth Thin LR1000-1000 / SYW】。
     长周期档 LR 1000-1000 把变向变量删掉，误差只剩速度匹配与张力。
     阶梯不适用（变向已删除，tier 只作标记）；血量取 SYW 变体 hp200（Thin 系 hp1
     一发杀会引入击杀重置干扰，取同规则 SYW 形态）。
@@ -1262,7 +1304,7 @@ def forge_R2_1(difficulty_tier: int = 1) -> ForgePrescription:
         aim_sub_type_tag="Smoothness",
         description=(
             "Aiming Cookie R2.1 单向化：LR 1000-1000 删除变向变量，"
-            "只考速度匹配与张力。出处 generation-rules v0.2 R2.1（C51/SYW）"
+            "只考速度匹配与张力。出处 generation-rules v0.3 R2.1（C51/SYW）"
         ),
         expected_semantics="continuous_tracking",
     )
@@ -1271,7 +1313,7 @@ def forge_R2_1(difficulty_tier: int = 1) -> ForgePrescription:
 def forge_R3_6(difficulty_tier: int = 1) -> ForgePrescription:
     """R3.6 空间分布分岔——宽分布分支（拉枪链）。
 
-    出处：generation-rules v0.2 G3/R3.6【档位统计 space_axis_stats；坐实链 C22】。
+    出处：generation-rules v0.3 G3/R3.6【档位统计 space_axis_stats；坐实链 C22】。
     宽分布（span>1500uu）小靶=长距离拉枪链考纲；载体形态取 1wall 6targets small
     （hp1 一发杀+kill10×准确率乘算+6 靶位+SemiAuto 0.1s 点击计价），
     出生网格 span 1840uu（1w6ts 系 1856–1920 同档）。LR 阶梯对静态靶惰性
@@ -1304,7 +1346,7 @@ def forge_R3_6(difficulty_tier: int = 1) -> ForgePrescription:
         aim_sub_type_tag="Precision",
         description=(
             "Aiming Cookie R3.6 空间分岔·宽分布：span1840 拉枪链+kill10×准确率+一发杀。"
-            "出处 generation-rules v0.2 R3.6（C22/1w6ts 形态）"
+            "出处 generation-rules v0.3 R3.6（C22/1w6ts 形态）"
         ),
         expected_semantics="static_clicking",
     )
@@ -1313,7 +1355,7 @@ def forge_R3_6(difficulty_tier: int = 1) -> ForgePrescription:
 def forge_R4_1(difficulty_tier: int = 1) -> ForgePrescription:
     """R4.1 纯指尖场（慢漂+多发杀+限弹杀后回弹）。
 
-    出处：generation-rules v0.2 G4/R4.1【坐实链 C123/XN42 Floating Heads Timing
+    出处：generation-rules v0.3 G4/R4.1【坐实链 C123/XN42 Floating Heads Timing
     400%】。LR 10-10 单向慢漂 + v300/a100000 即停即走 + r20/hp36 多发杀 +
     mag3+AmmoReloadedOnKill=3（弹药击杀回弹真键）——微调窗口被计分结构强制存在。
     空间分布按 R4.5 纪律取窄网格（微调场默认窄分布形态，Reactive Flick
@@ -1345,7 +1387,7 @@ def forge_R4_1(difficulty_tier: int = 1) -> ForgePrescription:
         aim_sub_type_tag="Micro Adjust",
         description=(
             "Aiming Cookie R4.1 纯指尖场：LR10-10 慢漂+r20/hp36 多发杀+mag3 杀后回弹3。"
-            "出处 generation-rules v0.2 R4.1（C123 FHT 形态）"
+            "出处 generation-rules v0.3 R4.1（C123 FHT 形态）"
         ),
         expected_semantics="dynamic_clicking",
     )
@@ -1354,7 +1396,7 @@ def forge_R4_1(difficulty_tier: int = 1) -> ForgePrescription:
 def forge_R9_3(difficulty_tier: int = 1) -> ForgePrescription:
     """R9.3 回血压输出密度（持续性计价）。
 
-    出处：generation-rules v0.2 G9/R9.3【坐实键值 C81/KL20/KL46，原册 0.3s 笔误
+    出处：generation-rules v0.3 G9/R9.3【坐实键值 C81/KL20/KL46，原册 0.3s 笔误
     已修正】。真实键值：HealthRegenDelay=0.03s + HealthRegenPerSec=62.5/s +
     hp55/r27.5（domiSwitch Easy）——回血快于单发伤害就必须连续命中。
     运动/计分骨架未指定 → tracking 标准型（v700 + ScorePerDamage3+Win1000 +
@@ -1387,7 +1429,7 @@ def forge_R9_3(difficulty_tier: int = 1) -> ForgePrescription:
         aim_sub_type_tag="Reactivity",
         description=(
             "Aiming Cookie R9.3 回血压输出：hp55+回血0.03s/62.5每秒（真实键值，"
-            "原册0.3s系笔误），停顿即见回血缺口。出处 generation-rules v0.2 R9.3"
+            "原册0.3s系笔误），停顿即见回血缺口。出处 generation-rules v0.3 R9.3"
         ),
         expected_semantics="continuous_tracking",
     )
@@ -1396,7 +1438,7 @@ def forge_R9_3(difficulty_tier: int = 1) -> ForgePrescription:
 def forge_R8_3(difficulty_tier: int = 1) -> ForgePrescription:
     """R8.3 生存型计分（反应跟枪基础）。
 
-    出处：generation-rules v0.2 G8/R8.3【坐实链 KL12/C60 Ground Plaza
+    出处：generation-rules v0.3 G8/R8.3【坐实链 KL12/C60 Ground Plaza
     ScorePerTime；档位统计 时间×1+Win1000】。ScorePerTime=1.0+ScoreToWin=1000+
     无敌靶多 bot——离开=立即停分，考"持续接触"。
     运动/靶参数取 Ground Plaza 形态的 tracking 中速带基档；3 bot 同屏
@@ -1429,9 +1471,122 @@ def forge_R8_3(difficulty_tier: int = 1) -> ForgePrescription:
         aim_sub_type_tag="Reactivity",
         description=(
             "Aiming Cookie R8.3 生存型计分：ScorePerTime1.0+Win1000+无敌靶，"
-            "离开=停分。出处 generation-rules v0.2 R8.3（Ground Plaza 形态）"
+            "离开=停分。出处 generation-rules v0.3 R8.3（Ground Plaza 形态）"
         ),
         expected_semantics="continuous_tracking",
+    )
+
+
+def forge_R9_5(difficulty_tier: int = 1, target_duration_s: float = 19.0) -> ForgePrescription:
+    """R9.5 gauntlet 计时器（负回血=固定时长靶，v0.3 新增）。
+
+    出处：generation-rules v0.3 G9/R9.5【官方原文：Voltaic S5 blog §1.8——
+    "the duration of each target is fixed, with the target's health decaying
+    automatically and the player being scored on the number of hits … not have
+    any filler targets"】＋【对表：VT PGT Novice S5 .sce 原文逐键核对
+    （intent-crosscheck §1.1 #8）】。
+    机关：HealthRegenPerSec=-100（负回血=计时器）× MaxHealth=100×target_duration_s
+    → 每靶存活时长=可指定的 target_duration_s（官方 Novice 档 1900÷100=恰 19s）；
+    ScorePerHit=1.0 按命中计分；respawn 1.48s 序列接续。
+    靶行为取 PGT Bounce 1：r32/v800/a900/固定JV1750/grav1.0/LR3–4/jumpF1.0/
+    dist1300–2000；LR 阶梯按 -0.1s/档从该基档递进。
+    S5 基准型 FOV 头（103–140 Clamped Horizontal）默认开启（纪律 19）；
+    序列制单活靶 → 碰撞保持 false（纪律 22 同屏/序列分工）。
+    """
+    if target_duration_s <= 0:
+        raise ForgeError(f"每靶存活时长必须 >0，收到 {target_duration_s}")
+    regen = -100.0
+    return ForgePrescription(
+        name=RULE_LABELS["R9.5"][1],
+        rule_id="R9.5",
+        domain="压力与节奏",
+        difficulty_tier=difficulty_tier,
+        target_radius=32.0,        # PGT Bounce 1（小于同层 Aether/Ground，佐证"small goats"）
+        target_shape="Spheroid",
+        target_height=64.0,
+        target_max_health=round(abs(regen) * target_duration_s, 4),   # 时长=血量÷|regen|
+        target_max_speed=800.0,
+        target_acceleration=900.0,
+        target_gravity=1.0,
+        target_jump_velocity=1750.0,                                   # 固定 JV 档（min=max）
+        target_health_regen_per_sec=regen,
+        target_health_regen_delay=0.0,
+        target_respawn=(1.48, 1.48),   # PGT 原文键：序列接续节奏
+        lr_time_change=_lr_ladder((3.0, 4.0), difficulty_tier),        # PGT Long Strafes Jumping
+        jump_frequency=1.0,
+        target_distance=(1300.0, 2000.0),
+        weapon_category="FullyAuto",
+        time_between_shots=0.01,
+        damage_per_shot=1.0,
+        score_per_hit=1.0,         # 按命中计分（命中数=唯一得分路径）
+        score_to_win=1.0,          # 无终点计时赛写法（纪律 11）
+        timelimit=60.0,
+        lock_fov_s5=True,          # S5 基准型 FOV 头（纪律 19 官方原文 §1.2）
+        space_tier="none",         # PGT 靶位由地图 json 提供；forge 侧分布轴由 dist 承担（D6）
+        game_tag="Tracking",
+        aim_type_tag="Tracking",
+        aim_sub_type_tag="Precision",
+        description=(
+            f"Aiming Cookie R9.5 gauntlet 计时器 A{difficulty_tier}档：负回血-100/s×"
+            f"血量{round(abs(regen) * target_duration_s, 4)}=每靶{target_duration_s}s，"
+            "ScorePerHit 按命中计分。出处 generation-rules v0.3 R9.5"
+            "（官方原文 S5 blog §1.8 + PGT S5 指纹逐值）"
+        ),
+        expected_semantics="continuous_tracking",
+    )
+
+
+def forge_R4_1_IR(difficulty_tier: int = 1) -> ForgePrescription:
+    """R4.1-IR 改良换弹（R4.1 弹药经济的官方高阶形态，三键组占位）。
+
+    出处：generation-rules v0.3 纪律 10（弹药经济三键辨析）＋【官方原文：
+    Voltaic S5 blog §1.1——"you start with 100 ammo in a clip … it costs 30
+    ammo to shoot, and a hit refunds 37 ammo … at least two consecutive misses
+    is always required to trigger a reload"（VT ww5t Intermediate S5）】。
+    弹药三键=官方值：MagazineMax=100 / AmmoPerShot=30 / AmmoReloadedOnKill=37
+    （回补>成本）。**改良换弹要求 MagazineMax>0 才生效**——mag=0 时 AmmoPerShot/
+    AmmoReloadedOnKill 是躺尸对（S5 Pasu/Pentashot 陷阱，纪律 10 方法论警示）。
+    载体=ww5t 型静态点击（宽墙 5 靶同屏，§1.7 多靶关碰撞）；ScoreMultAccuracy
+    保持 false——官方声明改良换弹与平方根精度计分二选一（§1.1）。
+    非弹药参数（r50/clicking p50、hp1 一发杀、kill10）为 1w6ts 系骨架档，
+    待 S5 ww5t 文件到手回填（intent-crosscheck 裁决案 #5）。
+    """
+    return ForgePrescription(
+        name=RULE_LABELS["R4.1-IR"][1],
+        rule_id="R4.1-IR",
+        domain="静态定位",
+        difficulty_tier=difficulty_tier,
+        target_radius=50.0,        # clicking 靶 p50（D3）；ww5t "small to medium" 待实值回填
+        target_shape="Spheroid",
+        target_height=100.0,
+        target_max_health=1.0,     # 一发杀档（纪律 8：hp1 配 dmg1）
+        target_max_speed=0.0,
+        target_acceleration=0.0,
+        lr_time_change=_lr_ladder((0.2, 0.5), difficulty_tier),   # 惰性（静态靶）
+        target_distance=(750.0, 2500.0),
+        weapon_category="SemiAuto",
+        time_between_shots=0.1,
+        damage_per_shot=1.0,
+        magazine_max=100,          # 官方 clip 值（blog §1.1）
+        ammo_per_shot=30,          # miss 净扣 30%
+        ammo_reloaded_on_kill=37,  # hit 净返 7%（回补>成本）
+        score_per_kill=10.0,
+        score_to_win=1.0,
+        score_mult_accuracy=False, # 改良换弹与平方根计分二选一（blog §1.1）
+        timelimit=60.0,
+        lock_fov_s5=True,          # S5 基准家族 6/6 锁 103–140（纪律 19 官方源头）
+        disable_character_collision=True,   # 同屏 5 靶 → 关碰撞（纪律 22，blog §1.7）
+        space_tier="wide",         # ww5t 宽墙（span>1500 拉枪链档）
+        bot_instances=5,
+        game_tag="Mouse Control",
+        aim_type_tag="Clicking",
+        aim_sub_type_tag="Speed",
+        description=(
+            "Aiming Cookie R4.1-IR 改良换弹：mag100/耗30/返37（至少两 miss 才换弹），"
+            "宽墙 5 靶关碰撞。出处 generation-rules v0.3 纪律 10"
+            "（官方原文 S5 blog §1.1 + §1.7）"
+        ),
+        expected_semantics="static_clicking",
     )
 
 
@@ -1443,6 +1598,8 @@ FORGE_PRESETS: dict[str, Callable[..., ForgePrescription]] = {
     "R4.1": forge_R4_1,
     "R9.3": forge_R9_3,
     "R8.3": forge_R8_3,
+    "R9.5": forge_R9_5,
+    "R4.1-IR": forge_R4_1_IR,
 }
 
 __all__ = [
@@ -1468,4 +1625,6 @@ __all__ = [
     "forge_R4_1",
     "forge_R9_3",
     "forge_R8_3",
+    "forge_R9_5",
+    "forge_R4_1_IR",
 ]
