@@ -3,10 +3,18 @@
 The analyzer consumes already aligned numeric tracks.  It deliberately keeps
 capture alignment latency separate from observed tracking timing and produces
 descriptive measurements only; it does not infer a player mechanism.
+
+真实鼠标运动缝（镜像 switching 的 input_fusion 接法）：payload 可选携带
+``player_motion_samples``（``[{canonical_time_ms, x, y}]``，raw input trace
+角位置换算成的 px 域运动样本，adapter 组装）时，该序列经线性插值到
+shared_times 提供 ``crosshair_velocity``（供 correction/SPARC/lag/频谱）。
+铁律：运动学序列绝不进 ``crosshair_position``——error/on_target 几何仍用
+钉死视口中心的准星；缺字段时行为与既有语义逐字节一致。
 """
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from copy import deepcopy
 from math import hypot, isfinite
 from statistics import median
@@ -208,7 +216,14 @@ def _frequency_metrics(samples: Sequence[Mapping[str, Any]], model: str) -> dict
     if not len(deltas) or np.max(np.abs(deltas - np.median(deltas))) > 1.0:
         return None
     target_xy = np.asarray([sample["target_position"] for sample in usable], dtype=float)
-    crosshair_xy = np.asarray([sample["crosshair_position"] for sample in usable], dtype=float)
+    # 铁律：运动学序列不进 crosshair_position；有 fused 运动样本时仅频域
+    # 输入切换到插值运动位置（error/on_target 几何不受影响）。
+    crosshair_xy = np.asarray([
+        sample["motion_position"]
+        if sample.get("motion_position") is not None
+        else sample["crosshair_position"]
+        for sample in usable
+    ], dtype=float)
     centered = target_xy - np.mean(target_xy, axis=0)
     if not np.any(centered):
         return None
@@ -383,6 +398,39 @@ def _predictability_events(
     return events, sorted(set(accepted))
 
 
+def _player_motion_samples(raw: Any) -> list[dict[str, float]] | None:
+    """Parse the optional fused raw-input motion sample series (fail-closed).
+
+    Shaped like ``[{canonical_time_ms, x, y}]``（px 域，adapter 从 raw input
+    trace 角位置换算）；时间戳必须严格递增（有序且唯一），非法 raise。
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence) or not raw:
+        raise TrackingAnalysisError("player_motion_samples must be a non-empty list")
+    samples: list[dict[str, float]] = []
+    previous: int | None = None
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise TrackingAnalysisError(f"player_motion_samples[{index}] is invalid")
+        time_ms = _number(
+            item.get("canonical_time_ms"),
+            f"player_motion_samples[{index}].canonical_time_ms",
+            minimum=0,
+        )
+        if int(time_ms) != time_ms or (previous is not None and int(time_ms) <= previous):
+            raise TrackingAnalysisError(
+                "player_motion_samples timestamps are not strictly ordered"
+            )
+        samples.append({
+            "canonical_time_ms": int(time_ms),
+            "x": _number(item.get("x"), f"player_motion_samples[{index}].x"),
+            "y": _number(item.get("y"), f"player_motion_samples[{index}].y"),
+        })
+        previous = int(time_ms)
+    return samples
+
+
 def _prepared_tracking_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and parse the shared single-target tracking input prelude."""
     if not isinstance(payload, Mapping) or payload.get("schema_version") != INPUT_SCHEMA_VERSION:
@@ -415,7 +463,11 @@ def _prepared_tracking_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
         "unavailable_fixed_viewport_center",
     }:
         raise TrackingAnalysisError("player_motion_status is invalid")
-    player_motion_available = player_motion_status == "available_shared_trajectory"
+    motion_samples = _player_motion_samples(payload.get("player_motion_samples"))
+    player_motion_available = (
+        player_motion_status == "available_shared_trajectory"
+        or motion_samples is not None
+    )
     target_raw = payload.get("target_track")
     if not isinstance(target_raw, Mapping):
         raise TrackingAnalysisError("target_track is required")
@@ -444,6 +496,7 @@ def _prepared_tracking_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
         "quality": quality,
         "quality_enabled": quality_enabled,
         "player_motion_available": player_motion_available,
+        "player_motion_samples": motion_samples,
         "target_ref": target_ref,
         "target": target,
         "crosshair": crosshair,
@@ -454,6 +507,28 @@ def _prepared_tracking_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
         "crosshair_index": crosshair_index,
         "alignment_latency_ms": alignment_latency_ms,
     }
+
+
+def _interpolate_motion_position(
+    times: Sequence[int],
+    samples: Sequence[Mapping[str, Any]],
+    time_ms: int,
+) -> tuple[float, float]:
+    """运动样本线性插值到任意时刻；采样范围外端点钳制（最近邻兜底）。"""
+    if time_ms <= times[0]:
+        first = samples[0]
+        return (float(first["x"]), float(first["y"]))
+    if time_ms >= times[-1]:
+        last = samples[-1]
+        return (float(last["x"]), float(last["y"]))
+    right = bisect_right(times, time_ms)
+    left = right - 1
+    fraction = (time_ms - times[left]) / (times[right] - times[left])
+    left_x, left_y = float(samples[left]["x"]), float(samples[left]["y"])
+    return (
+        left_x + fraction * (float(samples[right]["x"]) - left_x),
+        left_y + fraction * (float(samples[right]["y"]) - left_y),
+    )
 
 
 def _tracking_sample_series(
@@ -468,9 +543,23 @@ def _tracking_sample_series(
     target_index: Mapping[int, int],
     crosshair_index: Mapping[int, int],
     shared_times: Sequence[int],
+    player_motion_samples: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Deterministic per-sample tracking measurements for one target track."""
+    """Deterministic per-sample tracking measurements for one target track.
+
+    ``player_motion_samples`` 存在时（fused raw input trace 的 px 域运动样本），
+    先线性插值到 shared_times，再以共享时刻间的有限差分提供
+    ``crosshair_velocity``；铁律：该序列只进 ``motion_position``/速度，
+    绝不进 ``crosshair_position``（error/on_target 几何仍用钉死准星）。
+    """
+    motion_times = (
+        [int(sample["canonical_time_ms"]) for sample in player_motion_samples]
+        if player_motion_samples is not None
+        else None
+    )
     samples: list[dict[str, Any]] = []
+    previous_motion: tuple[float, float] | None = None
+    previous_motion_time: int | None = None
     for ordinal, time_ms in enumerate(shared_times, 1):
         target_point, crosshair_point = target_by_time[time_ms], crosshair_by_time[time_ms]
         usable = quality_enabled and _available(target_point, crosshair_point)
@@ -484,12 +573,27 @@ def _tracking_sample_series(
             sample_limitations.append("target_radius_unavailable")
         error = hypot(float(target_point["x"]) - float(crosshair_point["x"]), float(target_point["y"]) - float(crosshair_point["y"])) if usable else None
         on_target = (error <= float(radius)) if error is not None and radius is not None else None
+        motion_position = (
+            _interpolate_motion_position(motion_times, player_motion_samples, time_ms)
+            if motion_times is not None
+            else None
+        )
+        crosshair_velocity = None
+        if usable and player_motion_available:
+            if motion_position is not None:
+                # fused 运动序列：shared_times 上的有限差分（px/ms）。
+                if previous_motion is not None:
+                    delta = time_ms - previous_motion_time
+                    crosshair_velocity = (
+                        (motion_position[0] - previous_motion[0]) / delta,
+                        (motion_position[1] - previous_motion[1]) / delta,
+                    )
+            else:
+                crosshair_velocity = _velocity(crosshair, crosshair_index[time_ms])
+        if motion_position is not None:
+            previous_motion, previous_motion_time = motion_position, time_ms
         target_velocity = (
             _velocity(target, target_index[time_ms])
-            if usable and player_motion_available else None
-        )
-        crosshair_velocity = (
-            _velocity(crosshair, crosshair_index[time_ms])
             if usable and player_motion_available else None
         )
         lag_ms = gain = None
@@ -507,6 +611,7 @@ def _tracking_sample_series(
             "crosshair_velocity": crosshair_velocity,
             "target_position": (float(target_point["x"]), float(target_point["y"])),
             "crosshair_position": (float(crosshair_point["x"]), float(crosshair_point["y"])),
+            "motion_position": motion_position,
             "limitations": sample_limitations,
         })
     return samples
@@ -523,6 +628,14 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
     quality_enabled = inputs["quality_enabled"]
     player_motion_available = inputs["player_motion_available"]
     player_motion_limitation = "player_aim_motion_unavailable_fixed_viewport_center"
+    # fused raw input trace 提供真实鼠标运动时的 provenance 标注（镜像
+    # mouse_trajectory_from_external_telemetry 纪律）：随 result 与受影响
+    # metric record 输出，不进 error/几何类记录。
+    motion_provenance_limitations = (
+        ["player_aim_motion_from_fused_raw_input_trace"]
+        if inputs["player_motion_samples"] is not None
+        else []
+    )
     target_ref = inputs["target_ref"]
     target = inputs["target"]
     target_index = inputs["target_index"]
@@ -544,6 +657,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
         target_index=target_index,
         crosshair_index=inputs["crosshair_index"],
         shared_times=shared_times,
+        player_motion_samples=inputs["player_motion_samples"],
     )
     limitations = list(quality.get("limitations") or [])
     if not quality_enabled:
@@ -764,6 +878,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
             else "frequency_metrics_require_long_uniform_steady_segment"
         ]
     )
+    spectral_limitations = [*spectral_limitations, *motion_provenance_limitations]
 
     def metric(
         key: str,
@@ -825,7 +940,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
                 "alignment_latency_reported_separately",
                 *(
                     [player_motion_limitation]
-                    if not player_motion_available else []
+                    if not player_motion_available else motion_provenance_limitations
                 ),
             ],
         ),
@@ -855,7 +970,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
             extra_limitations=(
                 [player_motion_limitation]
                 if not player_motion_available
-                else [] if change_rows
+                else [*motion_provenance_limitations] if change_rows
                 else ["no_validated_change_points"]
             ),
         ),
@@ -870,7 +985,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
                 "descriptive_correction_burden",
                 *(
                     [player_motion_limitation]
-                    if not player_motion_available else []
+                    if not player_motion_available else motion_provenance_limitations
                 ),
             ],
         ),
@@ -881,7 +996,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
                 "descriptive_smoothness_not_a_mechanism",
                 *(
                     [player_motion_limitation]
-                    if not player_motion_available else []
+                    if not player_motion_available else motion_provenance_limitations
                 ),
             ],
         ),
@@ -891,7 +1006,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
                 "tracking_sparc_requires_uniform_window_and_accuracy_guardrail",
                 *(
                     [player_motion_limitation]
-                    if not player_motion_available else []
+                    if not player_motion_available else motion_provenance_limitations
                 ),
             ],
         ),
@@ -1048,6 +1163,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
                 [player_motion_limitation]
                 if not player_motion_available else []
             ),
+            *motion_provenance_limitations,
         ])),
         "evidence_extension": {
             "event_bundle": event_bundle,
@@ -1131,6 +1247,7 @@ def aggregate_continuous_tracking_multi_target_v1(
             target_index=inputs["target_index"],
             crosshair_index=inputs["crosshair_index"],
             shared_times=inputs["shared_times"],
+            player_motion_samples=inputs["player_motion_samples"],
         )
         analyses.append((track_ref, inputs, analysis, series))
 

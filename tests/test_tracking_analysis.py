@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from math import pi, sin
+from math import isfinite, pi, sin
 
 import pytest
 
@@ -560,3 +560,201 @@ def test_multi_target_aggregate_requires_two_bound_entries():
     })
     with pytest.raises(TrackingAnalysisError, match="another analysis or window"):
         aggregate_continuous_tracking_multi_target_v1(entries)
+
+
+# ---------------------------------------------------------------------------
+# fused raw input 运动样本（player_motion_samples）：真实鼠标运动缝
+# ---------------------------------------------------------------------------
+
+
+def _fused_motion_payload(*, motion_lag_ms: int = 0, radius: float = 100.0) -> dict:
+    """钉死视口中心准星 + fused 运动样本（真实 tracking 遥测形态）。
+
+    目标 1Hz 正弦（40px），运动样本按 motion_lag_ms 滞后跟随；准星样本
+    全部钉在 (0, 0)（unavailable_fixed_viewport_center 语义）。
+    """
+    payload = _periodic_payload(lag_ms=0, gain=1.0)
+    payload["player_motion_status"] = "unavailable_fixed_viewport_center"
+    for sample in payload["crosshair_samples"]:
+        sample["x"] = 0.0
+        sample["y"] = 0.0
+    for sample in payload["target_track"]["samples"]:
+        sample["radius"] = radius
+    payload["player_motion_samples"] = [
+        {
+            "canonical_time_ms": time_ms,
+            "x": 40.0 * sin(2 * pi * (time_ms - motion_lag_ms) / 1_000.0),
+            "y": 0.0,
+        }
+        for time_ms in range(0, 256 * 20, 20)
+    ]
+    return payload
+
+
+def test_fused_player_motion_samples_unlock_tracking_kinematics():
+    payload = _fused_motion_payload(motion_lag_ms=100)
+
+    result = analyze_continuous_tracking_v1(payload)
+
+    assert result["support_status"] == "supported"
+    for metric_key in (
+        "continuous_tracking.sparc",
+        "continuous_tracking.smoothness_acceleration_rms",
+        "continuous_tracking.correction_direction_reversal_count",
+        "continuous_tracking.relative_lag_ms",
+        "continuous_tracking.phase_lag_ms",
+        "continuous_tracking.velocity_gain",
+        "continuous_tracking.coherence",
+    ):
+        metric = result["metrics"][metric_key]
+        assert metric["availability"] == "available", metric_key
+        assert metric["value"] is not None and isfinite(metric["value"]), metric_key
+    # 频谱由插值运动序列驱动：滞后 100ms / 增益 1 的跟随者可复原。
+    assert result["metrics"]["continuous_tracking.phase_lag_ms"]["value"] == pytest.approx(
+        100.0, abs=12.0,
+    )
+    assert result["metrics"]["continuous_tracking.velocity_gain"]["value"] == pytest.approx(
+        1.0, rel=0.05,
+    )
+    assert result["metrics"]["continuous_tracking.coherence"]["value"] > 0.95
+    # provenance limitation：result 与受影响 metric record 携带，钉死口径退场。
+    assert "player_aim_motion_from_fused_raw_input_trace" in result["limitations"]
+    assert "player_aim_motion_unavailable_fixed_viewport_center" not in result["limitations"]
+    assert "player_aim_motion_from_fused_raw_input_trace" in (
+        result["metrics"]["continuous_tracking.sparc"]["limitations"]
+    )
+    assert "player_aim_motion_from_fused_raw_input_trace" in (
+        result["metrics"]["continuous_tracking.smoothness_acceleration_rms"]["limitations"]
+    )
+    episode = next(
+        row for row in result["processed_rows"]
+        if row["row_kind"] == "tracking_episode"
+    )
+    assert episode["sparc"] is not None
+    assert episode["correction_burden"] is not None
+
+
+def test_removing_player_motion_samples_keeps_geometry_records_byte_identical():
+    payload_with = _fused_motion_payload(motion_lag_ms=100, radius=15.0)
+    payload_without = deepcopy(payload_with)
+    payload_without.pop("player_motion_samples")
+
+    with_motion = analyze_continuous_tracking_v1(payload_with)
+    without_motion = analyze_continuous_tracking_v1(payload_without)
+
+    # error/time_in_radius 及其派生（loss/reacquisition/fixed window 几何）
+    # record 逐字节不变：运动学序列绝不进准星位置几何。
+    for metric_key in (
+        "continuous_tracking.target_relative_error_px",
+        "continuous_tracking.time_in_radius_ratio",
+        "continuous_tracking.loss_count",
+        "continuous_tracking.loss_duration_ms",
+        "continuous_tracking.reacquisition_latency_ms",
+    ):
+        assert with_motion["metrics"][metric_key] == without_motion["metrics"][metric_key]
+    geometry_fields = (
+        "start_ms", "end_ms", "sample_count", "usable_sample_count",
+        "target_relative_error_px", "time_in_radius_ratio",
+    )
+
+    def _fixed_geometry(result):
+        return [
+            {field: row[field] for field in geometry_fields}
+            for row in result["processed_rows"]
+            if row["row_kind"] == "tracking_fixed_window"
+        ]
+
+    assert _fixed_geometry(with_motion) == _fixed_geometry(without_motion)
+    outcome_kinds = {"tracking_loss", "tracking_reacquisition"}
+    assert [
+        row for row in with_motion["processed_rows"] if row["row_kind"] in outcome_kinds
+    ] == [
+        row for row in without_motion["processed_rows"] if row["row_kind"] in outcome_kinds
+    ]
+    # 缺字段回落既有口径：运动学 unavailable + 钉死 limitation。
+    assert without_motion["metrics"]["continuous_tracking.sparc"]["availability"] == "unavailable"
+    assert (
+        "player_aim_motion_unavailable_fixed_viewport_center"
+        in without_motion["limitations"]
+    )
+    assert with_motion["metrics"]["continuous_tracking.sparc"]["availability"] == "available"
+
+
+def test_motion_samples_never_enter_crosshair_position_geometry():
+    payload = _payload()
+    payload["player_motion_status"] = "unavailable_fixed_viewport_center"
+    # 离谱运动值若泄入准星位置，误差几何立即变形（钉死准星恒差 10px）。
+    payload["player_motion_samples"] = [
+        {"canonical_time_ms": time_ms, "x": 9999.0, "y": -9999.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+
+    result = analyze_continuous_tracking_v1(payload)
+
+    error = result["metrics"]["continuous_tracking.target_relative_error_px"]
+    assert error["value"] == pytest.approx(10.0)
+    assert result["metrics"]["continuous_tracking.time_in_radius_ratio"]["value"] == 1.0
+    episode = next(
+        row for row in result["processed_rows"]
+        if row["row_kind"] == "tracking_episode"
+    )
+    assert episode["target_relative_error_px"] == pytest.approx(10.0)
+
+
+def test_fused_motion_velocity_interpolates_and_takes_precedence():
+    # 匀速 0.1 px/ms 直线运动（密采样覆盖 shared_times 内点）：线性插值回
+    # 0/100/200/300 后速度仍恒定 → 加速度 rms=0、修正反转=0。
+    payload = _payload()
+    payload["player_motion_status"] = "unavailable_fixed_viewport_center"
+    payload["player_motion_samples"] = [
+        {"canonical_time_ms": time_ms, "x": time_ms * 0.1, "y": 0.0}
+        for time_ms in range(0, 401, 40)
+    ]
+
+    result = analyze_continuous_tracking_v1(payload)
+
+    rms = result["metrics"]["continuous_tracking.smoothness_acceleration_rms"]
+    assert rms["availability"] == "available"
+    assert rms["value"] == pytest.approx(0.0, abs=1e-9)
+    reversal = result["metrics"]["continuous_tracking.correction_direction_reversal_count"]
+    assert reversal["availability"] == "available"
+    assert reversal["value"] == 0.0
+
+    # precedence：status available（准星样本匀速 → rms 0）与运动样本并存时，
+    # 速度取自运动序列（速度 0→1→0 → 加速度 1,-1 → rms=1.0）。
+    payload_both = _payload()
+    payload_both["player_motion_samples"] = [
+        {"canonical_time_ms": time_ms, "x": 0.0 if time_ms <= 100 else 100.0, "y": 0.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+    result_both = analyze_continuous_tracking_v1(payload_both)
+    rms_both = result_both["metrics"]["continuous_tracking.smoothness_acceleration_rms"]
+    assert rms_both["availability"] == "available"
+    assert rms_both["value"] == pytest.approx(1.0)
+
+
+def test_invalid_player_motion_samples_fail_closed():
+    base = _payload()
+    invalid_series = (
+        [],
+        "not-a-list",
+        ["nope"],
+        [{"canonical_time_ms": -5, "x": 0.0, "y": 0.0}],
+        [{"canonical_time_ms": 0.5, "x": 0.0, "y": 0.0}],
+        [{"canonical_time_ms": 0, "x": "bad", "y": 0.0}],
+        [{"canonical_time_ms": 0},],
+        # 时间戳乱序 / 重复：显式拒绝。
+        [
+            {"canonical_time_ms": 100, "x": 0.0, "y": 0.0},
+            {"canonical_time_ms": 50, "x": 1.0, "y": 0.0},
+        ],
+        [
+            {"canonical_time_ms": 100, "x": 0.0, "y": 0.0},
+            {"canonical_time_ms": 100, "x": 1.0, "y": 0.0},
+        ],
+    )
+    for bad in invalid_series:
+        payload = deepcopy(base)
+        payload["player_motion_samples"] = bad
+        with pytest.raises(TrackingAnalysisError):
+            analyze_continuous_tracking_v1(payload)

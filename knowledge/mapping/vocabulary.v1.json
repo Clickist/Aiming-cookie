@@ -206,6 +206,7 @@
     "outcome_association_click_time_mismatch",
     "outcome_association_inferred",
     "outcome_association_unavailable",
+    "player_aim_motion_from_fused_raw_input_trace",
     "player_aim_motion_unavailable_fixed_viewport_center",
     "predictability_evidence_rejected",
     "previous_outcome_association_unavailable",

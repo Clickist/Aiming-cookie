@@ -11,6 +11,7 @@ from kovaak_tracker.input_fusion import (
     MOTION_ONSET_THRESHOLD_DEG_S,
     InputFusionError,
     bearing_toward_target,
+    build_angular_position_series,
     build_angular_speed_stream,
     deg_per_count,
     fuse_press_edges,
@@ -305,6 +306,89 @@ def test_movement_onset_search_cap_bounds_the_window():
     assert movement_onset_ms(
         stream, anchor_ms=2000, bearing=(1.0, 0.0), max_search_ms=100,
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# input_fusion: 角位置序列（tracking 家族运动学输入）
+# ---------------------------------------------------------------------------
+
+
+def test_build_angular_position_series_converts_counts_to_degrees():
+    # 10 counts/点 × 0.1 deg/count = 每点 +1 deg；pitch 全零。
+    points = _straight_move_points(0, 5, dx=10)
+    series = build_angular_position_series(
+        points, deg_per_count_value=0.1, start_ms=0, end_ms=100,
+    )
+    assert [time_ms for time_ms, _, _ in series] == [0, 1, 2, 3, 4]
+    assert [yaw for _, yaw, _ in series] == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert all(pitch == pytest.approx(0.0) for _, _, pitch in series)
+    # 负方向：累计递减。
+    series_left = build_angular_position_series(
+        _straight_move_points(0, 3, dx=-10), deg_per_count_value=0.1,
+        start_ms=0, end_ms=100,
+    )
+    assert [yaw for _, yaw, _ in series_left] == pytest.approx([-1.0, -2.0, -3.0])
+
+
+def test_build_angular_position_series_wraps_yaw_to_plus_minus_180():
+    def _one(dx):
+        return [{"timestamp_ms": 0, "dx": dx, "dy": 0, "buttons": 0}]
+
+    # 恰好 +180 归 -180（半开 [-180, 180)）；190 → -170；-190 → +170。
+    assert build_angular_position_series(
+        _one(1800), deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    )[0][1] == pytest.approx(-180.0)
+    assert build_angular_position_series(
+        _one(1900), deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    )[0][1] == pytest.approx(-170.0)
+    assert build_angular_position_series(
+        _one(-1900), deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    )[0][1] == pytest.approx(170.0)
+    # 跨步累计同样 wrap：+170 再 +30 → -160。
+    across = build_angular_position_series(
+        [{"timestamp_ms": 0, "dx": 1700, "dy": 0, "buttons": 0},
+         {"timestamp_ms": 1, "dx": 300, "dy": 0, "buttons": 0}],
+        deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    )
+    assert [yaw for _, yaw, _ in across] == pytest.approx([170.0, -160.0])
+
+
+def test_build_angular_position_series_pitch_accumulates_without_wrap():
+    # dy 正 = 向下 = pitch 增（屏幕约定，不 wrap、不取反）；负 dy 递减。
+    points = [
+        {"timestamp_ms": 0, "dx": 0, "dy": 500, "buttons": 0},
+        {"timestamp_ms": 1, "dx": 0, "dy": -200, "buttons": 0},
+    ]
+    series = build_angular_position_series(
+        points, deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    )
+    assert [pitch for _, _, pitch in series] == pytest.approx([50.0, 30.0])
+
+
+def test_build_angular_position_series_clips_to_half_open_window():
+    # 半开窗 [3, 7)：窗外点不参与；原点 = 窗内首点（窗内相对角位移）。
+    points = _straight_move_points(0, 10, dx=10)
+    series = build_angular_position_series(
+        points, deg_per_count_value=0.1, start_ms=3, end_ms=7,
+    )
+    assert [time_ms for time_ms, _, _ in series] == [3, 4, 5, 6]
+    assert [yaw for _, yaw, _ in series] == pytest.approx([1.0, 2.0, 3.0, 4.0])
+    # 空点列 / 全窗外 → 空序列。
+    assert build_angular_position_series(
+        [], deg_per_count_value=0.1, start_ms=0, end_ms=10,
+    ) == []
+    assert build_angular_position_series(
+        points, deg_per_count_value=0.1, start_ms=100, end_ms=200,
+    ) == []
+
+
+def test_build_angular_position_series_rejects_invalid_params():
+    with pytest.raises(InputFusionError):
+        build_angular_position_series([], deg_per_count_value=0.0, start_ms=0, end_ms=10)
+    with pytest.raises(InputFusionError):
+        build_angular_position_series([], deg_per_count_value=-0.1, start_ms=0, end_ms=10)
+    with pytest.raises(InputFusionError):
+        build_angular_position_series([], deg_per_count_value=0.1, start_ms=10, end_ms=10)
 
 
 def test_bearing_toward_target_sign_conventions():

@@ -15,6 +15,10 @@ canonical_time_window 天然同域）与遥测事件，输出两类事实供 fam
   ``cm_per_360`` 与 DPI 反推 counts_per_360 = cm_per_360 × DPI / 2.54）在
   ``MOTION_WINDOW_MS`` 桶上聚合为角速度流；锚事件后的运动发起 = 首个
   （角速度 >= 阈值 且 速度方向朝目标）桶的起点。
+- **角位置序列**（``build_angular_position_series``）：窗内 dx/dy 逐点累计
+  × deg/count 得 ``(t_ms, yaw_deg, pitch_deg)``（yaw 右正并 wrap ±180，
+  pitch 取屏幕约定 dy 正 = 向下 = 增），供 tracking 家族把真实鼠标运动
+  （crosshair 遥测恒钉视口中心）投影回运动学分析。
 
 方向朝目标的方位用投影角域（px 偏移 -> atan，与 telemetry_signals 的
 rectilinear 投影同一焦距语义；mouse dy 正 = 向下 = pitch 下降，故
@@ -260,6 +264,43 @@ def build_angular_speed_stream(
     return stream
 
 
+def build_angular_position_series(
+    points: Sequence[Mapping[str, int]],
+    *,
+    deg_per_count_value: float,
+    start_ms: int,
+    end_ms: int,
+) -> list[tuple[int, float, float]]:
+    """trace 点列 -> 窗内角位置序列 ``[(t_ms, yaw_deg, pitch_deg)]``。
+
+    与 ``build_angular_speed_stream`` 同族的位置版：以窗内首点为原点 (0, 0)，
+    dx/dy 逐点累计 × ``deg_per_count``；yaw 右正并 wrap 到 ±180（+180 归
+    -180，半开区间 [-180, 180)），pitch 取屏幕约定（dy 正 = 向下 = 增，
+    不 wrap；换算视图角由消费方按 ``bearing_toward_target`` 的 -pitch
+    约定处理）。仅窗内点（``start_ms <= t < end_ms``，半开窗）参与累计，
+    窗外点不贡献位移；点列时间须单调（codec 已校验）。trace 只携带相对
+    计数，序列即窗内相对角位移，无绝对朝向语义。
+    """
+    per_count = float(deg_per_count_value)
+    start = int(start_ms)
+    end = int(end_ms)
+    if not math.isfinite(per_count) or per_count <= 0:
+        raise InputFusionError("deg_per_count must be a positive finite number")
+    if end <= start:
+        raise InputFusionError("window must satisfy end_ms > start_ms")
+    series: list[tuple[int, float, float]] = []
+    yaw_deg = 0.0
+    pitch_deg = 0.0
+    for point in points:
+        time_ms = int(point["timestamp_ms"])
+        if not start <= time_ms < end:
+            continue
+        yaw_deg = (yaw_deg + int(point["dx"]) * per_count + 180.0) % 360.0 - 180.0
+        pitch_deg += int(point["dy"]) * per_count
+        series.append((time_ms, yaw_deg, pitch_deg))
+    return series
+
+
 def movement_onset_ms(
     stream: Sequence[Mapping[str, float]],
     *,
@@ -317,6 +358,7 @@ __all__ = [
     "VIEWPORT_CENTER_Y_PX",
     "InputFusionError",
     "bearing_toward_target",
+    "build_angular_position_series",
     "build_angular_speed_stream",
     "counts_per_360",
     "deg_per_count",
