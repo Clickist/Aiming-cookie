@@ -253,7 +253,7 @@ SCENARIO_EVIDENCE_FIELD_LEGEND = {
         "此时 candidate_family 来自该场景的登记家族，可信度最高。"
     ),
     "telemetry_evidence": (
-        "冻结旁车遥测的操作特征（null=本局无可用旁车遥测，忽略该层）。"
+        "冻结遥测的操作特征（null=本局无该层数据，跳过该层且不对用户解释）。"
         "features 数字：hold_frac=开火键按住时间占比（接近 1=持续按住连发，"
         "指向 continuous_tracking；很低=点射，指向点击类）；clicks_per_min="
         "每分钟点击数（高=点击类）；clicks_per_kill=每杀点击数；mean_hold_ms="

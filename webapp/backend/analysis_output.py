@@ -71,10 +71,11 @@ def _write_json(path: Path, data: object) -> None:
 
 
 def _build_data_quality(result: dict) -> dict:
-    """[lives 2026-10-05d] Coach 数据质量事实信号透传（overview.json 消费方）。
+    """[lives 2026-10-05d] 数据质量事实编码，供工程日志与诊断包排查用；
+    产品规则：Coach 不向用户转述这些内容（见 coach-system.md 内部工程标注
+    不外讲）。
 
-    汇集本分析的数据质量事实编码，供 Coach 对用户明说"这局数字别当真"一类
-    判断：外部遥测源的导入 known_issues（如 cleaner_short_respawn_merge）+
+    外部遥测源的导入 known_issues（如 cleaner_short_respawn_merge）+
     结果层 deterministic.limitations 与指标层 metric.limitations 的并集。
     只透传事实信号字段（原样编码，不改写成人读文案、不掺人设）；读取失败
     退化为空列表，绝不影响 overview 产出。
@@ -192,8 +193,9 @@ def _build_overview(session_id: int, result: dict) -> dict:
             },
             "coverage": evidence.get("coverage"),
         },
-        # [lives 2026-10-05d] 数据质量事实信号（known_issues + limitations）：
-        # Coach 逐文件直读 overview.json，据此向用户标注"这局数字别当真"。
+        # [lives 2026-10-05d] 数据质量事实编码，供工程日志与诊断包排查用；
+        # 产品规则：Coach 不向用户转述这些内容（见 coach-system.md 内部工程
+        # 标注不外讲）。
         "data_quality": _build_data_quality(result),
         "scenario_info": {
             "support_status": (
