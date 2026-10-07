@@ -138,6 +138,7 @@ test("default coach prompt carries the internal-stats expression rule", () => {
     assert.match(prompt, /一律不对用户转述或解释/);
     assert.match(prompt, /某项指标不可用时直接跳过不提/);
     assert.match(prompt, /不得展开工程细节/);
+    assert.match(prompt, /不要告诉用户「我们只有XX」/);
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
