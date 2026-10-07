@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.4.5",
+      "date": "2026-10-07",
+      "items": [
+        {
+          "type": "new",
+          "zh": "修复部分电脑上鼠标轨迹与目标数据采不到、动作层分析缺数据的问题：重开游戏后采集照常工作",
+          "en": "Fixed missing mouse-trace and target data on some machines: capture keeps working across game restarts"
+        },
+        {
+          "type": "fix",
+          "zh": "重启应用后重新整理历史对局不再做大量无效分析，历史页出结果更快",
+          "en": "Re-processing history after an app restart no longer runs piles of useless work — results show up faster"
+        },
+        {
+          "type": "new",
+          "zh": "分析的命中判定半径改用官方场景真实数据回填，几何类指标更准",
+          "en": "Hit-detection radii are now backfilled from real official scenario data, making geometry metrics more accurate"
+        },
+        {
+          "type": "imp",
+          "zh": "超出采集保留范围的历史对局会在详情里如实标注数据边界",
+          "en": "Sessions outside the capture retention window are now honestly labeled in their details"
+        }
+      ]
+    },
+    {
       "version": "1.4.4",
       "date": "2026-10-07",
       "items": [

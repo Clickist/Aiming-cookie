@@ -1,6 +1,6 @@
 {
   "name": "aiming-cookie-frontend",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "scripts": {
     "predev": "node scripts/sync-changelog.mjs",
