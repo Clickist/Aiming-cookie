@@ -11,6 +11,61 @@ from .worker_source_validation import (
 )
 
 
+# ---- 纵深防御：无效几何样本过滤（第二道防线）----
+# producer（kovaak_tracker.telemetry_signals.project_world_to_viewport）对贴近
+# 视锥边界的靶子会投影出爆炸像素坐标（tan(dyaw) 无界，实测 x 百万级）且无标记
+# 进入下游；源头修复（视锥门 + 丢弃）在 producer。这里保证即使爆炸/非法坐标
+# 漏过源头，也在装进分析器 payload 前被剔除并计数：tracking_analysis._points
+# 对非有限值 raise，会让整场分析 fail-closed 而不是降级。
+# 合理界 = 画布 1920x1080 外扩固定保守余量 _OFFSCREEN_MARGIN_PX：游戏内可见
+# 靶半径最大数百 px，1000px 外扩不会误伤任何合法样本；爆炸投影（百万级）
+# 相对几千 px 的界必然全拦。
+_CANVAS_WIDTH_PX = 1920
+_CANVAS_HEIGHT_PX = 1080
+_OFFSCREEN_MARGIN_PX = 1000
+NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED = "nonfinite_or_offscreen_samples_filtered"
+
+
+def _sample_geometry_valid(sample: Mapping) -> bool:
+    """样本像素坐标必须为有限数值且在画布合理界内（画布外扩保守余量）。"""
+    x = sample.get("x")
+    y = sample.get("y")
+    for value in (x, y):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(value):
+            return False
+    return (
+        -_OFFSCREEN_MARGIN_PX <= x <= _CANVAS_WIDTH_PX + _OFFSCREEN_MARGIN_PX
+        and -_OFFSCREEN_MARGIN_PX <= y <= _CANVAS_HEIGHT_PX + _OFFSCREEN_MARGIN_PX
+    )
+
+
+def _partition_valid_geometry_samples(samples: list) -> tuple[list, int]:
+    """按几何有效性分区（保持原序），返回 (合法样本, 被剔除数)。
+
+    非 Mapping 样本维持各装样点既有的静默丢弃语义，不计入剔除数。
+    """
+    valid: list = []
+    filtered_count = 0
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        if _sample_geometry_valid(sample):
+            valid.append(sample)
+        else:
+            filtered_count += 1
+    return valid, filtered_count
+
+
+def _mark_samples_filtered(quality: dict) -> None:
+    """把样本过滤降级写进 visual_quality limitations（仅在确实过滤时调用）。"""
+    limitations = list(quality.get("limitations") or [])
+    if NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED not in limitations:
+        limitations.append(NONFINITE_OR_OFFSCREEN_SAMPLES_FILTERED)
+    quality["limitations"] = limitations
+
+
 def _parse_frozen_stats_for_visual(snapshot: Mapping[str, object]):
     from kovaak_tracker.csv_parser import parse_stats_bytes
 
@@ -358,10 +413,14 @@ def run_dynamic_clicking_analysis(
         if isinstance(summary, Mapping) and isinstance(summary.get("track_ref"), str)
     }
     target_tracks = []
+    filtered_invalid_samples = 0
     for sample_key, samples in sorted(local_samples.items()):
         match = re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key))
         if match is None or not isinstance(samples, list):
             continue
+        # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
+        valid_samples, track_filtered = _partition_valid_geometry_samples(samples)
+        filtered_invalid_samples += track_filtered
         track_ref = f"{analysis_ref}:target-track:{match.group(1)}"
         summary = track_summaries.get(track_ref) or {}
         target_tracks.append({
@@ -374,11 +433,13 @@ def run_dynamic_clicking_analysis(
                     "radius": sample["visible_radius"],
                     "confidence": sample.get("confidence", 1.0),
                 }
-                for sample in samples
-                if isinstance(sample, Mapping)
+                for sample in valid_samples
             ],
             "limitations": list(summary.get("limitations") or []),
         })
+    visual_quality = dict(visual_result.get("quality") or {})
+    if filtered_invalid_samples:
+        _mark_samples_filtered(visual_quality)
     signal_bundle = visual_result.get("signal_bundle")
     channels = signal_bundle.get("channels") if isinstance(signal_bundle, Mapping) else []
     available_channel_keys = [
@@ -391,7 +452,7 @@ def run_dynamic_clicking_analysis(
         "analysis_ref": analysis_ref,
         "canonical_time_window": dict(window),
         "scenario_resolution": dict(resolution),
-        "visual_quality": dict(visual_result.get("quality") or {}),
+        "visual_quality": visual_quality,
         "crosshair_samples": crosshair_samples,
         "available_channel_keys": available_channel_keys,
         "target_tracks": target_tracks,
@@ -458,12 +519,23 @@ def _continuous_tracking_track_payload(
     crosshair_samples: list | None,
 ) -> dict:
     """Build the unchanged single-track analyzer input for one target track."""
+    # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
+    valid_target_samples, filtered_invalid_samples = (
+        _partition_valid_geometry_samples(target_samples)
+    )
+    valid_crosshair_samples, crosshair_filtered = (
+        _partition_valid_geometry_samples(list(crosshair_samples or []))
+    )
+    filtered_invalid_samples += crosshair_filtered
+    quality_payload = dict(quality or {})
+    if filtered_invalid_samples:
+        _mark_samples_filtered(quality_payload)
     return {
         "schema_version": "continuous_tracking_input.v1",
         "analysis_ref": analysis_ref,
         "canonical_time_window": dict(window),
         "scenario_resolution": dict(resolution),
-        "visual_quality": dict(quality or {}),
+        "visual_quality": quality_payload,
         "player_motion_status": "unavailable_fixed_viewport_center",
         "target_track": {
             "track_ref": track_ref,
@@ -476,8 +548,7 @@ def _continuous_tracking_track_payload(
                     "confidence": sample.get("confidence", 1.0),
                     "measurement_complete": True,
                 }
-                for sample in target_samples
-                if isinstance(sample, Mapping)
+                for sample in valid_target_samples
             ],
             "limitations": list(summary.get("limitations") or []),
         },
@@ -486,8 +557,7 @@ def _continuous_tracking_track_payload(
                 **dict(sample),
                 "measurement_complete": True,
             }
-            for sample in crosshair_samples or []
-            if isinstance(sample, Mapping)
+            for sample in valid_crosshair_samples
         ],
         "available_channel_keys": available_channel_keys,
         "target_change_points": target_change_points,
@@ -1166,18 +1236,19 @@ def _telemetry_switching_inputs(
         if (match := re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key)))
         and isinstance(samples, list)
     ]
-    tracks = [
-        {
-            "track_ref": f"{analysis_ref}:target-track:{track_id}",
-            "samples": [
-                sample for sample in samples if isinstance(sample, Mapping)
-            ],
-        }
-        # 空样本轨道（窗内从不可见，如始终在相机后方）无几何可分析；
-        # 它的生命窗仍参与候选可见性（target_lives）。
-        for track_id, samples in sorted(target_tracks, key=lambda item: str(item[0]))
-        if samples
-    ]
+    tracks = []
+    filtered_invalid_samples = 0
+    for track_id, samples in sorted(target_tracks, key=lambda item: str(item[0])):
+        # 纵深防御：爆炸/非法坐标样本在进入分析器前剔除并计数（见模块头注释）。
+        valid_samples, track_filtered = _partition_valid_geometry_samples(samples)
+        filtered_invalid_samples += track_filtered
+        # 空样本轨道（窗内从不可见，如始终在相机后方，或样本全被几何过滤）
+        # 无几何可分析；它的生命窗仍参与候选可见性（target_lives）。
+        if valid_samples:
+            tracks.append({
+                "track_ref": f"{analysis_ref}:target-track:{track_id}",
+                "samples": valid_samples,
+            })
     target_lives = [
         {
             "track_ref": f"{analysis_ref}:target-track:{tid}",
@@ -1190,6 +1261,8 @@ def _telemetry_switching_inputs(
         if windows
     ]
     quality = dict(visual_result.get("quality") or {})
+    if filtered_invalid_samples:
+        _mark_samples_filtered(quality)
     enabled_families = [
         "target_switching" if family == "switching" else family
         for family in quality.get("enabled_metric_families") or []
