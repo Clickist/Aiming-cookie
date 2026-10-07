@@ -25,6 +25,8 @@ import { loadProfile } from "./provider-store.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 import {
   appendUserMessageOnce,
+  classifyCoachFailureCode,
+  isRetryableFailureCode,
   queueCoachTurnMessage,
   runCoachTurn,
   stopCoachTurn,
@@ -482,9 +484,20 @@ async function runAgentTurn(
     } catch {
       // Best-effort error capture; never mask the original failure.
     }
+    // turn 调用之外的失败（如开场 open session 的读/写撞 EBUSY、会话列表扫描
+    // 被锁）也走同一分类矩阵——验收实机实测这类失败此前被折叠成 internal_error
+    // 不可重试，把一次文件锁抖动变成死局。分类不了的仍落 turn_failed 不可重试。
     const failure = error instanceof AgentRunError
       ? { domain: "tool", code: error.code, message: error.message, retryable: false }
-      : { domain: "coach_runtime", code: "internal_error", message: "Coach internal error", retryable: false };
+      : (() => {
+          const code = classifyCoachFailureCode(error);
+          return {
+            domain: "coach_runtime",
+            code,
+            message: "Coach internal error",
+            retryable: isRetryableFailureCode(code),
+          };
+        })();
     setRunStatus(record, "failed", "completed", { error: failure, finished: true });
     appendEvent(record, "error", "completed", failure.code, failure.message);
   }

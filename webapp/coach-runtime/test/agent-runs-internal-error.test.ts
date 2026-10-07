@@ -58,7 +58,10 @@ test("a non-AgentRunError crash is classified as an internal error, not a model 
   assert.ok(failed);
   assert.equal(failed.status, "failed", `run should fail, error: ${JSON.stringify(failed.error)}`);
   assert.equal(failed.error?.domain, "coach_runtime", `error should be internal, got: ${JSON.stringify(failed.error)}`);
-  assert.equal(failed.error?.code, "internal_error", `error should be internal_error, got: ${JSON.stringify(failed.error)}`);
+  // 兜底走 classifyCoachFailureCode：EISDIR 不命中任何家族 → turn_failed
+  // （1008 前 code=internal_error；分类矩阵统一后兜底码与 turn 层一致）。
+  // 瞬态锁家族（EBUSY）会落 local_storage_busy 且 retryable=true。
+  assert.equal(failed.error?.code, "turn_failed", `error should be turn_failed, got: ${JSON.stringify(failed.error)}`);
   assert.equal(failed.error?.retryable, false, `internal errors must not be retryable, got: ${JSON.stringify(failed.error)}`);
 
   // The original error is appended to coach-error.log for diagnosis.
