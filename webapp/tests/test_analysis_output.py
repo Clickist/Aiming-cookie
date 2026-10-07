@@ -164,3 +164,104 @@ def test_overview_passes_through_data_quality_signals(
     # 无外部遥测源、无 limitations → 空列表（确定性形状，不抛错）
     bare = _build_overview(9, _result_with_timeline([], []))
     assert bare["data_quality"] == {"known_issues": [], "limitations": []}
+
+
+# ---------------------------------------------------------------------------
+# 施工单④：诊断读图语境摘要进 overview 主读取面 + 详单文件按需展开
+# ---------------------------------------------------------------------------
+
+_AVAILABLE_DESCRIPTOR = {
+    "schema_version": "scenario_reading_descriptor.v1",
+    "display_name": "Tile Frenzy",
+    "availability": "available",
+    "parameter_facts": {"targets": [{"character": {"main_bb_radius": 100.0}}]},
+    "training": {
+        "semantics": "static_clicking",
+        "semantics_basis": "reposition_style",
+        "primary_domain": "static_positioning",
+        "domains": ["static_positioning"],
+    },
+    "economy": {"scoring_camp": "kill", "structures": ["multiplier_dilution"]},
+    "space": {"tier": "medium"},
+}
+
+
+def test_overview_carries_scenario_reading_summary():
+    from webapp.backend.analysis_output import _build_overview
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {
+        "scenario": "Tile Frenzy",
+        "scenario_reading_descriptor": _AVAILABLE_DESCRIPTOR,
+    }
+    overview = _build_overview(9, result)
+    reading = overview["scenario_reading"]
+    assert reading["availability"] == "available"
+    assert reading["reading_scope"] == "speed_throughput"
+    assert reading["training"]["semantics"] == "static_clicking"
+    assert reading["economy"]["scoring_camp"] == "kill"
+    assert reading["detail_file"] == "scenario_reading.json"
+    assert 3 <= len(reading["lines"]) <= 5
+    # 全量描述符不内嵌进 overview（摘要面保持精炼）
+    assert "parameter_facts" not in reading
+
+
+def test_overview_scenario_reading_respects_locale():
+    from webapp.backend.analysis_output import _build_overview
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {
+        "scenario": "Tile Frenzy",
+        "scenario_reading_descriptor": _AVAILABLE_DESCRIPTOR,
+    }
+    en = _build_overview(9, result, locale="en-US")
+    assert any("Reading scope" in line for line in en["scenario_reading"]["lines"])
+
+
+def test_overview_omits_scenario_reading_without_descriptor():
+    from webapp.backend.analysis_output import _build_overview
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {"scenario": "fixture"}
+    assert "scenario_reading" not in _build_overview(9, result)
+
+
+def test_overview_scenario_reading_unavailable_is_faithful():
+    from webapp.backend.analysis_output import _build_overview
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {
+        "scenario": "No Such Map",
+        "scenario_reading_descriptor": {
+            "availability": "unavailable", "reason": "sce_not_found",
+        },
+    }
+    reading = _build_overview(9, result)["scenario_reading"]
+    assert reading["availability"] == "unavailable"
+    assert reading["reason"] == "sce_not_found"
+    assert reading["reading_scope"] == "generic"
+
+
+def test_write_progressive_disclosure_emits_scenario_reading_detail(tmp_path):
+    from webapp.backend.analysis_output import write_progressive_disclosure
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {
+        "scenario": "Tile Frenzy",
+        "scenario_reading_descriptor": _AVAILABLE_DESCRIPTOR,
+    }
+    write_progressive_disclosure(str(tmp_path), 9, result)
+    detail = tmp_path / "analyses" / "9" / "scenario_reading.json"
+    assert detail.exists()
+    assert detail.read_text(encoding="utf-8").strip().startswith("{")
+    overview = tmp_path / "analyses" / "9" / "overview.json"
+    assert overview.exists()
+
+
+def test_write_progressive_disclosure_skips_detail_when_unavailable(tmp_path):
+    from webapp.backend.analysis_output import write_progressive_disclosure
+
+    result = _result_with_timeline([], [])
+    result["input_snapshot"] = {"scenario": "fixture"}
+    write_progressive_disclosure(str(tmp_path), 9, result)
+    assert not (tmp_path / "analyses" / "9" / "scenario_reading.json").exists()

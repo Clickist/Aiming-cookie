@@ -53,12 +53,17 @@ _UNCALIBRATED_SPARC_V2 = frozenset({
 })
 
 
+# 施工单⑤：速度吞吐判读档下 reverse_ratio 的触发阈值分支。速度吞吐图上
+# 小幅收尾反向修正 = 正常"快中带控"技术，只有更明显的修正形态才升格为
+# 改写判读（节奏代价框架）；精瞄/中间档维持 reverse_high 原阈值。初始值
+# 未校准，与 reverse_high 同样以实验口径出（limitations 不变）。
 THRESHOLDS = {
     "decel_frac_high": 0.65,
     "decel_frac_low": 0.40,
     "linearity_high": 0.13,
     "sparc_low_legacy_unversioned": -5.0,  # old experimental scale only; v2 is uncalibrated
     "reverse_high": 0.20,
+    "reverse_high_speed_throughput": 0.35,
     "two_stage_overlap": 0.30,  # corrective/primary overlap < this = discrete two-stage (§6.2)
     "peak_pos_low": 30.0,
     "peak_pos_high": 60.0,
@@ -176,6 +181,7 @@ def advise(
     reference_summary: dict | None = None,
     cm_per_360: float | None = None,
     locale: str = "zh-CN",
+    scenario_reading: dict | None = None,
 ) -> list[Finding]:
     """Rule engine: fair-metric summary -> diagnosis + prescriptions.
 
@@ -184,6 +190,10 @@ def advise(
     optional high-level player's summary for relative comparison.
     ``cm_per_360`` enables an experimental sensitivity note. The trigger is not
     a calibrated health band and cannot establish sensitivity as a root cause.
+    ``scenario_reading`` is the optional scenario reading descriptor
+    (``sce_reading.build_scenario_reading_descriptor`` shape); when its
+    reading scope is speed_throughput, the reverse_ratio judgment takes the
+    pacing-cost branch (施工单⑤) instead of the terminal-control framing.
     B3 i18n: finding copy comes from the ``coach/labels`` catalog for *locale*.
     """
     from .coach.labels import catalog
@@ -313,7 +323,78 @@ def advise(
             _copy_prescriptions("sensitivity high"),
         ))
 
-    return _finalize_uncalibrated_findings(f, locale)
+    findings = _finalize_uncalibrated_findings(f, locale)
+    return apply_reading_scope(findings, self_summary, scenario_reading, locale)
+
+
+def _speed_throughput_reverse_finding(
+    reverse: float, locale: str = "zh-CN",
+) -> Finding:
+    """速度吞吐判读档下的 reverse_ratio 改写 finding（施工单⑤）。
+
+    文案/处方来自 labels 的 SPEED_* 层（metronome-pacing-method 口径 + 既有
+    "练果断加速、提速"同向处方）；经统一 finalize 补全契约字段后，把
+    plain_language_meaning 覆写为速度档语义。此档下 settle/停稳类处方绝迹。
+    """
+    from .coach.labels import catalog
+
+    cat = catalog(locale)
+    finding = Finding(
+        "reverse_ratio high",
+        "watch",
+        cat.SPEED_FINDING_DIAGNOSES["reverse_ratio high"].format(
+            reverse_pct=reverse * 100,
+        ),
+        [
+            Prescription(scenario, reason)
+            for scenario, reason in cat.SPEED_FINDING_PRESCRIPTIONS[
+                "reverse_ratio high"
+            ]
+        ],
+    )
+    finding = _finalize_uncalibrated_findings([finding], locale)[0]
+    finding.plain_language_meaning = cat.SPEED_PLAIN_MEANINGS["reverse_ratio high"]
+    return finding
+
+
+def apply_reading_scope(
+    findings: list[Finding],
+    summary: dict,
+    scenario_reading: dict | None,
+    locale: str = "zh-CN",
+) -> list[Finding]:
+    """按场景读图判读档改写 findings（施工单⑤；幂等，整字段替换）。
+
+    - speed_throughput 档：reverse_ratio 触发阈值升为
+      ``reverse_high_speed_throughput``（小幅反向修正=快中带控，不触发），
+      超阈值时以节奏代价框架整字段替换该 finding——肯定吞吐有余量、
+      处方=节拍配速+果断提速，settle/停稳类处方绝迹。
+    - precision_terminal / generic / 描述符缺失 → 原样返回（精瞄语义与
+      未接读图的旧数据维持既有判读，不全局封禁）。
+
+    供 :func:`advise` 与 ``mapping_rules.dispatch_static``（映射引擎路径）
+    共用，保证两条静态判读轨道行为一致。
+    """
+    from .sce_reading import (
+        READING_SCOPE_SPEED_THROUGHPUT,
+        reading_scope as _scope_of,
+    )
+
+    if _scope_of(scenario_reading) != READING_SCOPE_SPEED_THROUGHPUT:
+        return findings
+    reverse = _med(summary, "reverse_ratio")
+    speed_trigger = THRESHOLDS["reverse_high_speed_throughput"]
+    rewritten = []
+    for finding in findings:
+        if finding.signal == "reverse_ratio high":
+            if reverse is not None and reverse > speed_trigger:
+                rewritten.append(
+                    _speed_throughput_reverse_finding(reverse, locale),
+                )
+            # 阈值内：速度吞吐档下视为正常快中带控，直接不再触发。
+            continue
+        rewritten.append(finding)
+    return rewritten
 
 
 # metrics where lower is better (cleaner / more stopped / shorter decel);
@@ -370,4 +451,7 @@ def compare_table(self_summary: dict, reference_summary: dict) -> list[dict]:
     return rows
 
 
-__all__ = ["Prescription", "Finding", "advise", "compare_table", "THRESHOLDS"]
+__all__ = [
+    "Prescription", "Finding", "advise", "apply_reading_scope", "compare_table",
+    "THRESHOLDS",
+]

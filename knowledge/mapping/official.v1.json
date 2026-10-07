@@ -15,13 +15,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "练完整的加速→减速，接近目标时果断完成制动",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "1w4ts Voltaic",
+          "scenario": "static_positioning",
           "reason": "保持 90%+ 准确率，练完整 flick 的加减速",
           "target_metrics": [],
           "expected_direction": []
@@ -42,7 +42,7 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "练匀减速，把减速段当一次独立动作",
           "target_metrics": [],
           "expected_direction": []
@@ -63,13 +63,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "把减速段练成干净、连贯的制动",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "1w4ts 30% larger",
+          "scenario": "micro_adjust",
           "reason": "减速段精度专项",
           "target_metrics": [],
           "expected_direction": []
@@ -100,13 +100,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "clean lines，让减速速度连续下降，避免突然硬停",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "1w4ts 30% larger",
+          "scenario": "micro_adjust",
           "reason": "减速段精度专项",
           "target_metrics": [],
           "expected_direction": []
@@ -128,13 +128,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "把修正并入减速过程，避免停住后再二次修正",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "Multiclick",
+          "scenario": "micro_adjust",
           "reason": "落点精度，减少二次修正",
           "target_metrics": [],
           "expected_direction": []
@@ -156,13 +156,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "Multiclick",
+          "scenario": "micro_adjust",
           "reason": "落点精度，减少二次修正",
           "target_metrics": [],
           "expected_direction": []
@@ -188,7 +188,7 @@
       ],
       "prescriptions": [
         {
-          "scenario": "pasu",
+          "scenario": "static_positioning",
           "reason": "平衡加减速，把峰往中段靠",
           "target_metrics": [],
           "expected_direction": []
@@ -214,7 +214,7 @@
       ],
       "prescriptions": [
         {
-          "scenario": "Tile Frenzy",
+          "scenario": "static_positioning",
           "reason": "练果断加速、提速",
           "target_metrics": [],
           "expected_direction": []
@@ -235,13 +235,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "linetrace",
+          "scenario": "static_positioning",
           "reason": "练直线 flick，走最短路径",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "clean lines",
+          "scenario": "static_positioning",
           "reason": "意识：flick 走直线，不画弧",
           "target_metrics": [],
           "expected_direction": []
@@ -267,13 +267,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "Tile Frenzy",
+          "scenario": "static_positioning",
           "reason": "在可控精度下逐步提高动态速度",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "speed 类场景",
+          "scenario": "static_positioning",
           "reason": "大胆加速，先求速度再收精度",
           "target_metrics": [],
           "expected_direction": []
@@ -299,13 +299,13 @@
       ],
       "prescriptions": [
         {
-          "scenario": "Tile Frenzy",
+          "scenario": "static_positioning",
           "reason": "在可控精度下逐步提高动态速度",
           "target_metrics": [],
           "expected_direction": []
         },
         {
-          "scenario": "speed 类场景",
+          "scenario": "static_positioning",
           "reason": "先求速度再收精度",
           "target_metrics": [],
           "expected_direction": []

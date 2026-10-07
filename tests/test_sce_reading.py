@@ -478,3 +478,73 @@ def test_read_scenario_reading_from_dirs_prefers_local_then_workshop(tmp_path):
     assert found2["availability"] == "available"
     assert found2["source"]["origin"] == "workshop"
     assert found2["source"]["workshop_id"] == "123"
+
+
+# ---------------------------------------------------------------------------
+# 施工单④⑤：判读档（reading_scope）与 Coach 摘要（scenario_reading_summary）
+# ---------------------------------------------------------------------------
+
+def _descriptor(**kwargs):
+    return sce_reading.build_scenario_reading_descriptor(
+        _sce_text(**kwargs), display_name=kwargs.get("name", "Synth A"),
+    )
+
+
+def test_reading_scope_static_micro_target_is_precision_terminal():
+    d = _descriptor(target_radius="8.0")
+    assert sce_reading.reading_scope(d) == sce_reading.READING_SCOPE_PRECISION_TERMINAL
+
+
+def test_reading_scope_static_giant_target_is_speed_throughput():
+    d = _descriptor(target_radius="100.0")
+    assert sce_reading.reading_scope(d) == sce_reading.READING_SCOPE_SPEED_THROUGHPUT
+
+
+def test_reading_scope_mid_target_and_missing_descriptor_are_generic():
+    assert sce_reading.reading_scope(_descriptor(target_radius="60.0")) == (
+        sce_reading.READING_SCOPE_GENERIC
+    )
+    assert sce_reading.reading_scope(None) == sce_reading.READING_SCOPE_GENERIC
+    assert sce_reading.reading_scope(
+        {"availability": "unavailable", "reason": "sce_not_found"},
+    ) == sce_reading.READING_SCOPE_GENERIC
+
+
+def test_reading_scope_tracking_semantics_are_generic():
+    d = _descriptor(
+        target_max_speed="1300.0",
+        weapon_category="FullyAuto",
+        time_between_shots="0.01",
+        score_per_damage="3.0",
+        score_per_kill="0.0",
+        target_radius="100.0",
+    )
+    assert d["training"]["semantics"] == "continuous_tracking"
+    assert sce_reading.reading_scope(d) == sce_reading.READING_SCOPE_GENERIC
+
+
+def test_summary_available_shape_and_lines():
+    d = _descriptor(target_radius="100.0")
+    s = sce_reading.scenario_reading_summary(d)
+    assert s["schema_version"] == "scenario_reading_summary.v1"
+    assert s["availability"] == "available"
+    assert s["reading_scope"] == "speed_throughput"
+    assert s["detail_file"] == "scenario_reading.json"
+    assert s["training"]["semantics"] == "static_clicking"
+    assert s["economy"]["scoring_camp"] == "kill"
+    assert 3 <= len(s["lines"]) <= 5
+    assert any("判读档" in line for line in s["lines"])
+    en = sce_reading.scenario_reading_summary(d, locale="en-US")
+    assert any("Reading scope" in line for line in en["lines"])
+    assert not any("判读档" in line for line in en["lines"])
+
+
+def test_summary_unavailable_fails_open():
+    s = sce_reading.scenario_reading_summary(
+        {"availability": "unavailable", "reason": "sce_not_found"},
+    )
+    assert s["availability"] == "unavailable"
+    assert s["reading_scope"] == "generic"
+    assert s["reason"] == "sce_not_found"
+    assert s["lines"] == ["读图语境不可用（sce_not_found）"]
+    assert sce_reading.scenario_reading_summary(None)["reason"] == "descriptor_missing"

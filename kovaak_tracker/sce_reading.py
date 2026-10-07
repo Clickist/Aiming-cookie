@@ -506,6 +506,53 @@ def _training(facts: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 判读档（施工单⑤的分支键）：速度吞吐 / 精瞄收尾 / 通用
+# ---------------------------------------------------------------------------
+
+# 巨型靶档下限（cm）。静态点击图的活动主靶半径 ≥ 此档 = 精度宽裕、吞吐优先
+# （Tile Frenzy r100 / 6 Tile Jumbo Frenzy r150 / Valorant One Taps r100，
+# 出处：.zcode/route-mining/mechanics-db.md 指纹总表 + full_extract/_index.json）。
+SPEED_THROUGHPUT_MIN_BB_RADIUS_CM = 100.0
+
+READING_SCOPE_SPEED_THROUGHPUT = "speed_throughput"
+READING_SCOPE_PRECISION_TERMINAL = "precision_terminal"
+READING_SCOPE_GENERIC = "generic"
+
+
+def reading_scope(descriptor: dict[str, Any] | None) -> str:
+    """从描述符折算 advice 判读档（施工单⑤："判读阈值按语义分支"的键）。
+
+    判据（capability-vocabulary.md 域3/域4 + mechanics-db 档位事实）：
+    - 只对 static_clicking 语义分档；dynamic_clicking / continuous_tracking /
+      unavailable 一律 generic（维持既有判读，不轻判）。
+    - 微型靶档（任一活动主靶 0 < r ≤ 24，域4"微调变显性主任务"）→ precision_terminal。
+    - 巨型靶档（任一活动主靶 r ≥ 100）→ speed_throughput：精度宽裕的换位式
+      点击图，收尾小幅反向修正更可能是节奏代价而非欠控病灶。
+    - 中间档（r 25–99，如 1w6ts small r60）→ generic。
+    已知边界（待点点审）：Valorant One Taps（r100、远距、角尺寸小、社区按精瞄
+    练）与 Tile Frenzy 参数同构，描述符无法区分，会一并落入 speed_throughput。
+    """
+    if not isinstance(descriptor, dict) or descriptor.get("availability") != "available":
+        return READING_SCOPE_GENERIC
+    training = descriptor.get("training")
+    if not isinstance(training, dict) or training.get("semantics") != "static_clicking":
+        return READING_SCOPE_GENERIC
+    radii: list[float] = []
+    for target in (descriptor.get("parameter_facts") or {}).get("targets") or []:
+        if not isinstance(target, dict):
+            continue
+        character = target.get("character")
+        radius = (character or {}).get("main_bb_radius") if isinstance(character, dict) else None
+        if isinstance(radius, (int, float)) and not isinstance(radius, bool):
+            radii.append(float(radius))
+    if any(0 < r <= 24 for r in radii):
+        return READING_SCOPE_PRECISION_TERMINAL
+    if any(r >= SPEED_THROUGHPUT_MIN_BB_RADIUS_CM for r in radii):
+        return READING_SCOPE_SPEED_THROUGHPUT
+    return READING_SCOPE_GENERIC
+
+
+# ---------------------------------------------------------------------------
 # 经济结构 / 空间分布 / 证据链
 # ---------------------------------------------------------------------------
 
@@ -992,12 +1039,113 @@ def read_scenario_reading_from_dirs(
     return _unavailable(scenario, "sce_not_found")
 
 
+# ---------------------------------------------------------------------------
+# Coach 读取面摘要（施工单④：3-5 行精炼语义，完整字段按需展开）
+# ---------------------------------------------------------------------------
+
+SCENARIO_READING_SUMMARY_SCHEMA_VERSION = "scenario_reading_summary.v1"
+
+# 摘要行模板（zh/en 平行变体；行数 3-5，训练语义/主域/经济结构/空间档各一行）。
+_SUMMARY_LABELS = {
+    "zh-CN": {
+        "training": "训练语义：{semantics}（主域 {primary}；能力域 {domains}）",
+        "economy": "经济结构：{camp} 计分阵营{structures}",
+        "space": "空间分布：{tier}档",
+        "scope": "判读档：{scope}",
+        "unavailable": "读图语境不可用（{reason}）",
+        "detail": "完整参数事实与机制依据见 {detail}",
+    },
+    "en-US": {
+        "training": "Training semantics: {semantics} (primary domain {primary}; domains {domains})",
+        "economy": "Economy: {camp} scoring camp{structures}",
+        "space": "Space distribution: {tier}",
+        "scope": "Reading scope: {scope}",
+        "unavailable": "Scenario reading unavailable ({reason})",
+        "detail": "Full parameter facts and mechanism evidence in {detail}",
+    },
+}
+
+
+def scenario_reading_summary(
+    descriptor: dict[str, Any] | None,
+    *,
+    locale: str = "zh-CN",
+    detail_file: str = "scenario_reading.json",
+) -> dict[str, Any]:
+    """描述符 → 给 Coach 用的精炼图语义摘要（施工单④）。
+
+    结构化字段（训练语义/主域/经济结构/空间档/判读档）+ 3-5 行人读摘要；
+    不内嵌全量描述符——完整字段随 ``detail_file``（analyses 目录下的独立
+    文件）按需展开。unavailable 时如实降级，绝不伪造语义。
+    """
+    labels = _SUMMARY_LABELS.get(locale) or _SUMMARY_LABELS["zh-CN"]
+    if (
+        not isinstance(descriptor, dict)
+        or descriptor.get("availability") != "available"
+    ):
+        reason = (
+            descriptor.get("reason")
+            if isinstance(descriptor, dict) and isinstance(descriptor.get("reason"), str)
+            else "descriptor_missing"
+        )
+        return {
+            "schema_version": SCENARIO_READING_SUMMARY_SCHEMA_VERSION,
+            "availability": "unavailable",
+            "reason": reason,
+            "reading_scope": READING_SCOPE_GENERIC,
+            "lines": [labels["unavailable"].format(reason=reason)],
+        }
+    training = descriptor.get("training") or {}
+    economy = descriptor.get("economy") or {}
+    space = descriptor.get("space") or {}
+    structures = [
+        str(item) for item in (economy.get("structures") or []) if isinstance(item, str)
+    ]
+    lines = [
+        labels["training"].format(
+            semantics=training.get("semantics"),
+            primary=training.get("primary_domain"),
+            domains="+".join(
+                str(item) for item in (training.get("domains") or [])
+            )
+            or "-",
+        ),
+        labels["economy"].format(
+            camp=economy.get("scoring_camp"),
+            structures=("（" + "+".join(structures) + "）") if structures else "",
+        ),
+        labels["space"].format(tier=space.get("tier")),
+        labels["scope"].format(scope=reading_scope(descriptor)),
+        labels["detail"].format(detail=detail_file),
+    ]
+    return {
+        "schema_version": SCENARIO_READING_SUMMARY_SCHEMA_VERSION,
+        "availability": "available",
+        "display_name": descriptor.get("display_name"),
+        "reading_scope": reading_scope(descriptor),
+        "training": {
+            key: training.get(key)
+            for key in ("semantics", "semantics_basis", "primary_domain", "domains")
+        },
+        "economy": {
+            "scoring_camp": economy.get("scoring_camp"),
+            "structures": structures,
+        },
+        "space": {"tier": space.get("tier")},
+        "detail_file": detail_file,
+        "lines": lines,
+    }
+
+
 __all__ = [
     "SCENARIO_READING_DESCRIPTOR_SCHEMA_VERSION",
+    "SCENARIO_READING_SUMMARY_SCHEMA_VERSION",
     "SceParseError",
     "build_scenario_reading_descriptor",
     "extract_bounding_radius_from_bytes",
     "read_scenario_reading_from_dirs",
     "reading_unavailable",
+    "reading_scope",
     "resolve_scenario_bounding_radius",
+    "scenario_reading_summary",
 ]

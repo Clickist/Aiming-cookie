@@ -1170,7 +1170,7 @@ def _fallback_cm_per_360(settings) -> float | None:
     return None
 
 
-def dispatch_static(summary, reference=None, settings=None, locale="zh-CN"):
+def dispatch_static(summary, reference=None, settings=None, locale="zh-CN", scenario_reading=None):
     """Production static diagnosis path (plan C5).
 
     Loads the active mapping (``knowledge_active.load_active_mapping``),
@@ -1180,6 +1180,9 @@ def dispatch_static(summary, reference=None, settings=None, locale="zh-CN"):
     compilation, evaluation, active resolution) fails closed to the frozen
     built-in ``advice.advise`` with a recorded diagnostic. Diagnostics of the
     latest call are readable via :func:`last_static_diagnostics`.
+    ``scenario_reading`` is the optional scenario reading descriptor; when its
+    scope is speed_throughput, :func:`advice.apply_reading_scope` rewrites the
+    reverse_ratio judgment on BOTH tracks (施工单⑤，engine/built-in 一致).
     B3 i18n: *locale* picks the official mapping variant file and the
     built-in fallback catalog (pack mapping keeps pack-authored copy).
     """
@@ -1187,22 +1190,29 @@ def dispatch_static(summary, reference=None, settings=None, locale="zh-CN"):
     try:
         doc, _reason = knowledge_active.load_active_mapping(locale)
         if doc is None:
-            return advice.advise(
+            findings = advice.advise(
                 summary, reference, _fallback_cm_per_360(settings), locale=locale,
             )
-        validate_mapping(
-            doc,
-            vocabulary=_load_vocabulary(),
-            registry=knowledge_active.load_active_registry(),
-        )
-        compiled = compile_mapping(doc)
-        return evaluate_static(
-            compiled, summary, reference=reference, settings=settings, locale=locale,
-        )
+        else:
+            validate_mapping(
+                doc,
+                vocabulary=_load_vocabulary(),
+                registry=knowledge_active.load_active_registry(),
+            )
+            compiled = compile_mapping(doc)
+            findings = evaluate_static(
+                compiled, summary, reference=reference, settings=settings, locale=locale,
+            )
+        return advice.apply_reading_scope(findings, summary, scenario_reading, locale)
     except Exception as exc:  # fail-closed to the frozen built-in rules
         _static_diagnostics.append(f"active mapping unusable, built-in fallback: {exc}")
-        return advice.advise(
-            summary, reference, _fallback_cm_per_360(settings), locale=locale,
+        return advice.apply_reading_scope(
+            advice.advise(
+                summary, reference, _fallback_cm_per_360(settings), locale=locale,
+            ),
+            summary,
+            scenario_reading,
+            locale,
         )
 
 

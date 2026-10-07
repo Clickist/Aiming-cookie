@@ -8,7 +8,7 @@
         "diagnosis": "减速段占整个 flick 的 66%——速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "练完整的加速→减速，接近目标时果断完成制动",
             "cue": "练完整的加速→减速，接近目标时果断完成制动",
             "purpose": "速度峰值后用了较长时间完成减速",
@@ -23,7 +23,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "1w4ts Voltaic",
+            "scenario": "static_positioning",
             "reason": "保持 90%+ 准确率，练完整 flick 的加减速",
             "cue": "保持 90%+ 准确率，练完整 flick 的加减速",
             "purpose": "速度峰值后用了较长时间完成减速",
@@ -70,7 +70,7 @@
         "diagnosis": "减速段只占 39%，连续减速时间较短；是否属于制动问题仍需结合 settle/reverse 和个体历史验证。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "练匀减速，把减速段当一次独立动作",
             "cue": "练匀减速，把减速段当一次独立动作",
             "purpose": "速度峰值后留给连续减速的时间较短",
@@ -116,7 +116,7 @@
         "diagnosis": "减速段速度曲线偏离匀减速直线 0.14——速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；抖动看 SPARC。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "把减速段练成干净、连贯的制动",
             "cue": "把减速段练成干净、连贯的制动",
             "purpose": "减速阶段的速度下降节奏不够均匀",
@@ -131,7 +131,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "1w4ts 30% larger",
+            "scenario": "micro_adjust",
             "reason": "减速段精度专项",
             "cue": "减速段精度专项",
             "purpose": "减速阶段的速度下降节奏不够均匀",
@@ -179,7 +179,7 @@
         "diagnosis": "减速段平滑度 SPARC=-5.5——速度轮廓中的快速波动较多。SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "clean lines，让减速速度连续下降，避免突然硬停",
             "cue": "clean lines，让减速速度连续下降，避免突然硬停",
             "purpose": "减速阶段的速度轮廓含较多快速波动",
@@ -194,7 +194,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "1w4ts 30% larger",
+            "scenario": "micro_adjust",
             "reason": "减速段精度专项",
             "cue": "减速段精度专项",
             "purpose": "减速阶段的速度轮廓含较多快速波动",
@@ -239,7 +239,7 @@
         "diagnosis": "减速段平滑度 SPARC=-5.5——速度轮廓中的快速波动较多。SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "clean lines，让减速速度连续下降，避免突然硬停",
             "cue": "clean lines，让减速速度连续下降，避免突然硬停",
             "purpose": "减速阶段的速度轮廓含较多快速波动",
@@ -254,7 +254,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "1w4ts 30% larger",
+            "scenario": "micro_adjust",
             "reason": "减速段精度专项",
             "cue": "减速段精度专项",
             "purpose": "减速阶段的速度轮廓含较多快速波动",
@@ -300,7 +300,7 @@
         "diagnosis": "减速段有 21% 的帧在反向加速，表现为反复修正。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "把修正并入减速过程，避免停住后再二次修正",
             "cue": "把修正并入减速过程，避免停住后再二次修正",
             "purpose": "移动收尾时出现了较多反向修正",
@@ -315,7 +315,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "Multiclick",
+            "scenario": "micro_adjust",
             "reason": "落点精度，减少二次修正",
             "cue": "落点精度，减少二次修正",
             "purpose": "移动收尾时出现了较多反向修正",
@@ -361,7 +361,7 @@
         "diagnosis": "主要移动和后续修正呈较分离的两个阶段。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
             "cue": "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正",
             "purpose": "主要移动与后续修正更像两个分离动作",
@@ -376,7 +376,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "Multiclick",
+            "scenario": "micro_adjust",
             "reason": "落点精度，减少二次修正",
             "cue": "落点精度，减少二次修正",
             "purpose": "主要移动与后续修正更像两个分离动作",
@@ -422,7 +422,7 @@
         "diagnosis": "峰位 29%（偏前），速度峰值较早出现；具体动作原因未被输入数据直接测量。",
         "prescriptions": [
           {
-            "scenario": "pasu",
+            "scenario": "static_positioning",
             "reason": "平衡加减速，把峰往中段靠",
             "cue": "平衡加减速，把峰往中段靠",
             "purpose": "速度峰值出现得较早",
@@ -470,7 +470,7 @@
         "diagnosis": "峰位 61%（偏后），速度峰值较晚出现；具体动作原因未被输入数据直接测量。",
         "prescriptions": [
           {
-            "scenario": "Tile Frenzy",
+            "scenario": "static_positioning",
             "reason": "练果断加速、提速",
             "cue": "练果断加速、提速",
             "purpose": "速度峰值出现得较晚",
@@ -515,7 +515,7 @@
         "diagnosis": "flick 路径直线效率 0.84，实际路径相对终点直线距离更绕；绝对阈值仍需产品校准。",
         "prescriptions": [
           {
-            "scenario": "linetrace",
+            "scenario": "static_positioning",
             "reason": "练直线 flick，走最短路径",
             "cue": "练直线 flick，走最短路径",
             "purpose": "实际移动路径比起终点直线距离更绕",
@@ -530,7 +530,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "clean lines",
+            "scenario": "static_positioning",
             "reason": "意识：flick 走直线，不画弧",
             "cue": "意识：flick 走直线，不画弧",
             "purpose": "实际移动路径比起终点直线距离更绕",
@@ -576,7 +576,7 @@
         "diagnosis": "甩枪角速度 7°/s 只有参考的 69%（10°/s）；峰值速度低于当前参考，身体原因未被输入数据直接测量。",
         "prescriptions": [
           {
-            "scenario": "Tile Frenzy",
+            "scenario": "static_positioning",
             "reason": "在可控精度下逐步提高动态速度",
             "cue": "在可控精度下逐步提高动态速度",
             "purpose": "峰值速度低于当前比较参考",
@@ -591,7 +591,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "speed 类场景",
+            "scenario": "static_positioning",
             "reason": "大胆加速，先求速度再收精度",
             "cue": "大胆加速，先求速度再收精度",
             "purpose": "峰值速度低于当前比较参考",
@@ -638,7 +638,7 @@
         "diagnosis": "Fitts throughput 6.9 bits/s 只有参考的 69%（10.0）；速度-精度综合效率低于当前参考，身体原因未被输入数据直接测量（throughput 已按目标距离/宽度归一化，§6.3）。",
         "prescriptions": [
           {
-            "scenario": "Tile Frenzy",
+            "scenario": "static_positioning",
             "reason": "在可控精度下逐步提高动态速度",
             "cue": "在可控精度下逐步提高动态速度",
             "purpose": "速度与精度综合效率低于当前比较参考",
@@ -653,7 +653,7 @@
             "source_level": "community_consensus"
           },
           {
-            "scenario": "speed 类场景",
+            "scenario": "static_positioning",
             "reason": "先求速度再收精度",
             "cue": "先求速度再收精度",
             "purpose": "速度与精度综合效率低于当前比较参考",

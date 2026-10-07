@@ -84,51 +84,107 @@ FINDING_DIAGNOSES = {
     ),
 }
 
-# advice.py 静态回退：signal -> ((scenario, reason), ...)。
+# Construction order ⑥ two-layer split: this table keeps only the
+# "signal -> capability-domain prescription" layer — values are
+# (capability-domain id, training action); see CAPABILITY_DOMAINS
+# (capability-vocabulary nine domains). **No concrete scenario names**; the
+# named-scenario list layer is removed. "Capability domain -> standard-answer
+# scenarios" is handled by coach/standard_anchors.py via the three-way relay
+# (locally installed -> recommend + subscription note -> custom/search).
+# The "lower sens" entry is a settings experiment action, not a scenario.
 FINDING_PRESCRIPTIONS = {
     "decel_frac high": (
-        ("pasu", "Practice the full accelerate→decelerate arc and commit to the brake near the target"),
-        ("1w4ts Voltaic", "Hold 90%+ accuracy and complete each flick's acceleration and deceleration"),
+        ("static_positioning", "Practice the full accelerate→decelerate arc and commit to the brake near the target"),
+        ("static_positioning", "Hold 90%+ accuracy and complete each flick's acceleration and deceleration"),
     ),
     "decel_frac low": (
-        ("pasu", "Practice even deceleration and treat the braking phase as its own action"),
+        ("static_positioning", "Practice even deceleration and treat the braking phase as its own action"),
     ),
     "linearity high": (
-        ("pasu", "Drill the deceleration phase into a clean, continuous brake"),
-        ("1w4ts 30% larger", "Deceleration-phase precision work"),
+        ("static_positioning", "Drill the deceleration phase into a clean, continuous brake"),
+        ("micro_adjust", "Deceleration-phase precision work"),
     ),
     "sparc low": (
-        ("pasu", "clean lines — let deceleration speed fall continuously instead of hard-stopping"),
-        ("1w4ts 30% larger", "Deceleration-phase precision work"),
+        ("static_positioning", "clean lines — let deceleration speed fall continuously instead of hard-stopping"),
+        ("micro_adjust", "Deceleration-phase precision work"),
     ),
     "reverse_ratio high": (
-        ("pasu", "Fold corrections into the deceleration instead of stopping and re-correcting"),
-        ("Multiclick", "Landing precision with fewer second corrections"),
+        ("static_positioning", "Fold corrections into the deceleration instead of stopping and re-correcting"),
+        ("micro_adjust", "Landing precision with fewer second corrections"),
     ),
     "submovement two-stage": (
-        ("pasu", "Keep the primary movement and the finishing correction connected instead of pausing between them"),
-        ("Multiclick", "Landing precision with fewer second corrections"),
+        ("static_positioning", "Keep the primary movement and the finishing correction connected instead of pausing between them"),
+        ("micro_adjust", "Landing precision with fewer second corrections"),
     ),
     "peak_position low": (
-        ("pasu", "Balance acceleration and deceleration and move the peak toward the middle"),
+        ("static_positioning", "Balance acceleration and deceleration and move the peak toward the middle"),
     ),
     "peak_position high": (
-        ("Tile Frenzy", "Practice committing to acceleration and building speed"),
+        ("static_positioning", "Practice committing to acceleration and building speed"),
     ),
     "path_efficiency low": (
-        ("linetrace", "Practice straight flicks along the shortest path"),
-        ("clean lines", "Intent: the flick travels a straight line, not an arc"),
+        ("static_positioning", "Practice straight flicks along the shortest path"),
+        ("static_positioning", "Intent: the flick travels a straight line, not an arc"),
     ),
     "peak_speed below reference": (
-        ("Tile Frenzy", "Raise dynamic speed step by step under controllable accuracy"),
-        ("speed scenarios", "Accelerate boldly — chase speed first, then reclaim accuracy"),
+        ("static_positioning", "Raise dynamic speed step by step under controllable accuracy"),
+        ("static_positioning", "Accelerate boldly — chase speed first, then reclaim accuracy"),
     ),
     "throughput below reference": (
-        ("Tile Frenzy", "Raise dynamic speed step by step under controllable accuracy"),
-        ("speed scenarios", "Chase speed first, then reclaim accuracy"),
+        ("static_positioning", "Raise dynamic speed step by step under controllable accuracy"),
+        ("static_positioning", "Chase speed first, then reclaim accuracy"),
     ),
     "sensitivity high": (
         ("lower sens 5-10% (cm/360 ↑)", "Braking-assist experiment; re-test whether linearity/reverse drop, and revert if not"),
+    ),
+}
+
+# Capability-domain id -> display name (capability-vocabulary nine domains;
+# sce_reading.training.domains uses the same vocabulary subset).
+CAPABILITY_DOMAINS = {
+    "reactive_change": "Reactive Change (D1)",
+    "smooth_tracking": "Smooth Tracking (D2)",
+    "static_positioning": "Static Positioning (D3)",
+    "micro_adjust": "Micro Adjust (D4)",
+    "confirm_timing": "Confirm Timing (D5)",
+    "reset_management": "Reset Management (D6)",
+    "target_switching": "Target Switching (D7)",
+    "target_reading": "Target Reading (D8)",
+    "pressure_pacing": "Pressure & Pacing (D9)",
+}
+
+# Construction order ⑤ speed-throughput reading scope
+# (reading_scope=speed_throughput) rewrites for reverse_ratio. Sources:
+# registry.v14 community.aimwiki.metronome-pacing-method + this file's
+# existing same-direction prescriptions ("commit to acceleration"); in this
+# scope settle-class wording is absent.
+SPEED_PLAIN_MEANINGS = {
+    "reverse_ratio high": (
+        "Small end-stage reverse corrections on a speed-throughput scenario are "
+        "mostly the pacing cost of fast-but-controlled flicks"
+    ),
+}
+SPEED_FINDING_DIAGNOSES = {
+    "reverse_ratio high": (
+        "{reverse_pct:.0f}% of deceleration-phase frames re-accelerate in the "
+        "opposite direction; on a throughput-first scenario with a high hit "
+        "rate, small end-stage corrections are mostly the pacing cost of "
+        "fast-but-controlled flicks, not an under-control pathology."
+    ),
+}
+SPEED_FINDING_PRESCRIPTIONS = {
+    "reverse_ratio high": (
+        (
+            "pressure_pacing",
+            "Metronome pacing: measure your real rhythm first (BPM = kills per "
+            "second × 60), adjust ±5-10 by hit rate; the beat is a reference, "
+            "not a trigger — use it to cut the extra micro-adjustment stuffed "
+            "into the confirmation segment",
+        ),
+        (
+            "static_positioning",
+            "Practice committing to acceleration and fold corrections into the deceleration",
+        ),
     ),
 }
 
@@ -200,32 +256,36 @@ TRACKING_PER_LOSS = ", {per_loss:.2f}s per return"
 TRACKING_RATIO_CTX = " ({ratio:.0%} of target width)"
 TRACKING_ABS_CTX = " (no ball_w; using the current uncalibrated absolute reference)"
 
+# Construction order ⑥ two-layer split: same as FINDING_PRESCRIPTIONS — only
+# the "signal -> capability-domain prescription" layer remains; the
+# named-scenario list is removed (scenario selection goes through the
+# standard_anchors relay).
 TRACKING_PRESCRIPTIONS = {
     "accuracy low": (
-        ("pasu", "Keep following the target's speed instead of chasing from behind it"),
-        ("VT Multiclick 30% larger", "Prioritize a stable point of aim, then watch the on-target share"),
+        ("smooth_tracking", "Keep following the target's speed instead of chasing from behind it"),
+        ("confirm_timing", "Prioritize a stable point of aim, then watch the on-target share"),
     ),
     "loss count high": (
-        ("VT reactive tracking", "Keep continuous follow through direction changes; don't pre-guess the next direction"),
-        ("Clover Raw Control", "Return with one continuous correction instead of oscillating compensation"),
+        ("reactive_change", "Keep continuous follow through direction changes; don't pre-guess the next direction"),
+        ("smooth_tracking", "Return with one continuous correction instead of oscillating compensation"),
     ),
     "off target long": (
-        ("VT evasive tracking", "Return with one continuous movement instead of repeated stop-restart"),
-        ("Clover Raw Control", "Recover continuous contact first, then raise speed"),
+        ("reactive_change", "Return with one continuous movement instead of repeated stop-restart"),
+        ("smooth_tracking", "Recover continuous contact first, then raise speed"),
     ),
     "avg error high": (
-        ("VT precise tracking", "Anchor on the target center and shrink the sustained offset first"),
-        ("focus on crosshair gap", "Watch the crosshair-to-center gap and stop drifting to one side"),
+        ("micro_adjust", "Anchor on the target center and shrink the sustained offset first"),
+        ("micro_adjust", "Watch the crosshair-to-center gap and stop drifting to one side"),
     ),
     "speed mismatch high": (
-        ("VT control tracking", "Follow the target's speed changes instead of sudden chases"),
-        ("Clover Raw Control", "Stay glued with continuous movement instead of stop-then-accelerate"),
+        ("smooth_tracking", "Follow the target's speed changes instead of sudden chases"),
+        ("smooth_tracking", "Stay glued with continuous movement instead of stop-then-accelerate"),
     ),
     "accel mismatch high": (
-        ("VT reactive tracking", "Keep continuous follow through direction changes; don't pre-guess the next direction"),
+        ("reactive_change", "Keep continuous follow through direction changes; don't pre-guess the next direction"),
     ),
     "ptc high": (
-        ("exposure therapy: high sens + low FOV precise tracking", "Reduce continuous back-and-forth compensation; treat PTC changes as an exploratory signal only"),
+        ("pressure_pacing", "Exposure therapy: high sens + low FOV precise tracking; reduce continuous back-and-forth compensation and treat PTC changes as an exploratory signal only"),
     ),
 }
 

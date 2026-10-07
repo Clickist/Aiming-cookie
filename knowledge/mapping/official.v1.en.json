@@ -24,13 +24,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Practice the full accelerate→decelerate arc and commit to the brake near the target",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "1w4ts Voltaic",
+     "scenario": "static_positioning",
      "reason": "Hold 90%+ accuracy and complete each flick's acceleration and deceleration",
      "target_metrics": [],
      "expected_direction": []
@@ -60,7 +60,7 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Practice even deceleration and treat the braking phase as its own action",
      "target_metrics": [],
      "expected_direction": []
@@ -90,13 +90,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Drill the deceleration phase into a clean, continuous brake",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "1w4ts 30% larger",
+     "scenario": "micro_adjust",
      "reason": "Deceleration-phase precision work",
      "target_metrics": [],
      "expected_direction": []
@@ -136,13 +136,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "clean lines — let deceleration speed fall continuously instead of hard-stopping",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "1w4ts 30% larger",
+     "scenario": "micro_adjust",
      "reason": "Deceleration-phase precision work",
      "target_metrics": [],
      "expected_direction": []
@@ -173,13 +173,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Fold corrections into the deceleration instead of stopping and re-correcting",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "Multiclick",
+     "scenario": "micro_adjust",
      "reason": "Landing precision with fewer second corrections",
      "target_metrics": [],
      "expected_direction": []
@@ -210,13 +210,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Keep the primary movement and the finishing correction connected instead of pausing between them",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "Multiclick",
+     "scenario": "micro_adjust",
      "reason": "Landing precision with fewer second corrections",
      "target_metrics": [],
      "expected_direction": []
@@ -249,7 +249,7 @@
    ],
    "prescriptions": [
     {
-     "scenario": "pasu",
+     "scenario": "static_positioning",
      "reason": "Balance acceleration and deceleration and move the peak toward the middle",
      "target_metrics": [],
      "expected_direction": []
@@ -282,7 +282,7 @@
    ],
    "prescriptions": [
     {
-     "scenario": "Tile Frenzy",
+     "scenario": "static_positioning",
      "reason": "Practice committing to acceleration and building speed",
      "target_metrics": [],
      "expected_direction": []
@@ -312,13 +312,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "linetrace",
+     "scenario": "static_positioning",
      "reason": "Practice straight flicks along the shortest path",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "clean lines",
+     "scenario": "static_positioning",
      "reason": "Intent: the flick travels a straight line, not an arc",
      "target_metrics": [],
      "expected_direction": []
@@ -348,13 +348,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "Tile Frenzy",
+     "scenario": "static_positioning",
      "reason": "Raise dynamic speed step by step under controllable accuracy",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "speed scenarios",
+     "scenario": "static_positioning",
      "reason": "Accelerate boldly — chase speed first, then reclaim accuracy",
      "target_metrics": [],
      "expected_direction": []
@@ -384,13 +384,13 @@
    ],
    "prescriptions": [
     {
-     "scenario": "Tile Frenzy",
+     "scenario": "static_positioning",
      "reason": "Raise dynamic speed step by step under controllable accuracy",
      "target_metrics": [],
      "expected_direction": []
     },
     {
-     "scenario": "speed scenarios",
+     "scenario": "static_positioning",
      "reason": "Chase speed first, then reclaim accuracy",
      "target_metrics": [],
      "expected_direction": []

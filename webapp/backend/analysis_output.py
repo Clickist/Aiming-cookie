@@ -28,21 +28,24 @@ def write_progressive_disclosure(
     session_id: int,
     result: dict,
     stats_path: str | None = None,
+    locale: str = "zh-CN",
 ) -> None:
     """输出渐进式披露 JSON 文档到 analyses/{session_id}/ 目录。
 
     Writes overview.json, metrics.json, events.json, evidence.json, and
     stats.txt.  Best-effort: file output failures log a warning but never
     raise, so the analysis result (already committed via mark_done) is not
-    affected.
+    affected.  ``locale`` picks the scenario-reading summary wording
+    (fail-open to zh-CN).
     """
     try:
         analyses_dir = Path(data_root) / "analyses" / str(session_id)
         analyses_dir.mkdir(parents=True, exist_ok=True)
 
-        _write_json(analyses_dir / "overview.json", _build_overview(session_id, result))
+        _write_json(analyses_dir / "overview.json", _build_overview(session_id, result, locale=locale))
         _write_json(analyses_dir / "metrics.json", _build_metrics(result))
         _write_json(analyses_dir / "events.json", _build_events(result))
+        _write_scenario_reading(analyses_dir, result)
         _write_evidence(analyses_dir, session_id, result)
         if stats_path:
             _write_stats(analyses_dir, stats_path)
@@ -118,7 +121,16 @@ def _build_data_quality(result: dict) -> dict:
     }
 
 
-def _build_overview(session_id: int, result: dict) -> dict:
+def _scenario_reading_descriptor(result: dict) -> dict | None:
+    """读取分析输入快照里的诊断读图语境描述符（fail-open：缺/坏即 None）。"""
+    snapshot = result.get("input_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    descriptor = snapshot.get("scenario_reading_descriptor")
+    return descriptor if isinstance(descriptor, dict) else None
+
+
+def _build_overview(session_id: int, result: dict, locale: str = "zh-CN") -> dict:
     deterministic = result.get("deterministic") or {}
     diagnosis = deterministic.get("diagnosis") or {}
     metrics = deterministic.get("metrics") or {}
@@ -159,7 +171,7 @@ def _build_overview(session_id: int, result: dict) -> dict:
             if isinstance(reason, str) and reason:
                 video_evidence["reason"] = reason
 
-    return {
+    overview: dict[str, object] = {
         "analysis_ref": result.get("analysis_id") or f"analysis:{session_id}",
         "scenario": snapshot.get("scenario"),
         "analysis_type": result.get("analysis_type"),
@@ -205,6 +217,40 @@ def _build_overview(session_id: int, result: dict) -> dict:
             "limitations": list(deterministic.get("limitations") or []),
         },
     }
+    # 施工单④：诊断读图语境摘要（"这张图练什么"）接进 Coach 主读取面。
+    # 只透精炼摘要（3-5 行 + 结构化语义键）；全量描述符在 scenario_reading.json
+    # 按需展开。语境只读、绝不参与判型（sce_reading 既有红线）。fail-open：
+    # 描述符缺失/损坏时整个键缺席，不影响 overview 产出。
+    descriptor = _scenario_reading_descriptor(result)
+    if descriptor is not None:
+        try:
+            from kovaak_tracker.sce_reading import scenario_reading_summary
+
+            overview["scenario_reading"] = scenario_reading_summary(
+                descriptor, locale=locale,
+            )
+        except Exception:
+            log.warning(
+                "scenario reading summary projection failed session=%s",
+                session_id,
+                exc_info=True,
+            )
+    return overview
+
+
+def _write_scenario_reading(analyses_dir: Path, result: dict) -> None:
+    """施工单④：全量读图描述符落为独立详单（按需展开面）。
+
+    仅 availability=available 时写文件；unavailable 事实已在 overview 的
+    scenario_reading 摘要里（含 reason）。失败只告警，不阻塞披露输出。
+    """
+    descriptor = _scenario_reading_descriptor(result)
+    if not isinstance(descriptor, dict) or descriptor.get("availability") != "available":
+        return
+    try:
+        _write_json(analyses_dir / "scenario_reading.json", descriptor)
+    except Exception:
+        log.warning("scenario_reading.json output failed", exc_info=True)
 
 
 def _time_anchors_for_issue(

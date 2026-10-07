@@ -403,8 +403,24 @@ def _tracking_knowledge_refs(
 
 def build_tracking_candidate_advice(
     analysis: Mapping[str, Any],
+    scenario_reading: dict | None = None,
 ) -> list[dict[str, Any]]:
-    """Return comparison-only candidate observations from tracking_analysis.v1."""
+    """Return comparison-only candidate observations from tracking_analysis.v1.
+
+    ``scenario_reading`` is the optional scenario reading descriptor; when its
+    scope is speed_throughput, the correction-direction-reversal candidate
+    ("correction burden high") is withheld — 施工单⑤与 advice.advise 的
+    reverse_ratio 分支同一原则：速度吞吐语义下小幅反向修正属快中带控的
+    节奏代价，不作为欠控证据触发处方候选。
+    """
+    from .sce_reading import (
+        READING_SCOPE_SPEED_THROUGHPUT,
+        reading_scope as _scope_of,
+    )
+
+    speed_throughput = (
+        _scope_of(scenario_reading) == READING_SCOPE_SPEED_THROUGHPUT
+    )
     comparison = analysis.get("comparison")
     if not isinstance(comparison, Mapping) or comparison.get("comparable") is not True:
         return []
@@ -439,6 +455,12 @@ def build_tracking_candidate_advice(
             "continuous_tracking.correction_direction_reversal_count",
             "continuous_tracking.sparc",
         } and not _tracking_control_guardrails_hold(metrics, baseline):
+            continue
+        if (
+            speed_throughput
+            and metric_key
+            == "continuous_tracking.correction_direction_reversal_count"
+        ):
             continue
         registry_version, knowledge_entry_refs = _tracking_knowledge_refs(
             signal,

@@ -3,6 +3,10 @@
 catalog 成员（两侧必须同名同键集，测试锁定）：
 - PLAIN_MEANINGS / FINDING_DIAGNOSES / FINDING_PRESCRIPTIONS：advice.py 静态
   回退 Finding 的 plain_language_meaning、diagnosis 模板与处方。
+  FINDING_PRESCRIPTIONS 自施工单⑥起只保留"信号→能力域处方"层（不指向图名）。
+- CAPABILITY_DOMAINS：能力域 id → 展示名（capability-vocabulary 九域）。
+- SPEED_PLAIN_MEANINGS / SPEED_FINDING_DIAGNOSES / SPEED_FINDING_PRESCRIPTIONS：
+  施工单⑤速度吞吐判读档下 reverse_ratio 的改写文案。
 - TRACKING_*：advice_tracking.py 回退 Finding 同上（含条件片段模板）。
 - VERIFICATION：_finalize 填充的可比条件/复测/停止规则（不直接上屏，随
   issue/prescription 落盘进 overview 语料）。

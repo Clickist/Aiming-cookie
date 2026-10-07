@@ -794,11 +794,25 @@ def _build_timeline(extras: dict, locale: str = "zh-CN") -> list[dict]:
     return events
 
 
-def run_report(summary: dict, locale: str = "zh-CN") -> dict:
-    """Build the deterministic local report without invoking a Provider."""
+def run_report(
+    summary: dict,
+    locale: str = "zh-CN",
+    *,
+    scenario_reading: dict | None = None,
+    install_dir: str | None = None,
+) -> dict:
+    """Build the deterministic local report without invoking a Provider.
+
+    ``scenario_reading``（读图语境描述符）驱动 advice 判读档分支（施工单⑤）；
+    ``install_dir`` 供标准答案锚点三路接力探测本机已装状态（施工单⑥）。
+    """
     from dataclasses import asdict, is_dataclass
     from kovaak_tracker.coach.report import build_report
-    report = build_report(summary, meta={"locale": locale})
+    report = build_report(summary, meta={
+        "locale": locale,
+        **({"scenario_reading": scenario_reading} if scenario_reading else {}),
+        **({"install_dir": install_dir} if install_dir else {}),
+    })
     d = asdict(report) if is_dataclass(report) else {"_raw": str(report)}
     # plotly Figure 不可 JSON 序列化 → 转 dict
     figures = d.get("figures")
@@ -987,6 +1001,7 @@ def _native_deterministic_v2(
     *,
     input_mode: str | None = None,
     locale: str = "zh-CN",
+    scenario_reading: Mapping[str, object] | None = None,
 ) -> dict:
     """Adapt the native payload to v2's path-safe public contract."""
     deterministic = native_result.get("deterministic") or {}
@@ -1012,6 +1027,7 @@ def _native_deterministic_v2(
         input_mode=input_mode or native_result.get("input_mode") or "input_native",
         quality=quality,
         locale=locale,
+        scenario_reading=scenario_reading,
     )
     return {
         "status": native_result.get("status", "unavailable"),
@@ -1127,6 +1143,7 @@ def _native_diagnosis(
     input_mode: str = "input_native",
     quality: Mapping[str, object] | None = None,
     locale: str = "zh-CN",
+    scenario_reading: Mapping[str, object] | None = None,
 ) -> dict:
     """Build deterministic Coach issues from available native distributions."""
     from dataclasses import asdict
@@ -1157,7 +1174,9 @@ def _native_diagnosis(
             "metric_version": metric.get("metric_version"),
         }
 
-    findings = mapping_rules.dispatch_static(summary, locale=locale)
+    findings = mapping_rules.dispatch_static(
+        summary, locale=locale, scenario_reading=dict(scenario_reading) if scenario_reading else None,
+    )
     for finding in findings:
         event_refs: list[str] = []
         for metric_key in finding.metric_refs:
@@ -2274,8 +2293,17 @@ def _build_native_result_v2(
     owner_id, local_profile = _result_owner(job)
     run_ref = f"run:{run_id}"
     input_mode = _execution_input_mode(job.get("input_mode"), default="input_native")
+    # 施工单⑤：诊断读图语境描述符只作 advice 判读档分支的输入（fail-open），
+    # 绝不参与判型（sce_reading 既有红线）。
+    reading_descriptor = snapshot.get("scenario_reading_descriptor")
     deterministic = _native_deterministic_v2(
-        native_result, input_mode=input_mode, locale=_job_locale(job),
+        native_result,
+        input_mode=input_mode,
+        locale=_job_locale(job),
+        scenario_reading=(
+            dict(reading_descriptor)
+            if isinstance(reading_descriptor, Mapping) else None
+        ),
     )
     resolution = snapshot.get("scenario_resolution")
     # [2026-10-04] reviewed 档案层退役：native static 支持状态映射对所有
@@ -3979,7 +4007,22 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 }
             job_locale = _job_locale(job)
             timeline_events = _build_timeline(extras, job_locale)
-            report_dict = await asyncio.to_thread(run_report, summary, job_locale)
+            # 施工单⑤⑥：读图语境分支 + 锚点三路接力探测本机已装（fail-open）。
+            from .config import resolve_kovaak_install_dir as _resolve_install
+
+            video_reading = (job.get("input_snapshot") or {}).get(
+                "scenario_reading_descriptor",
+            )
+            report_dict = await asyncio.to_thread(
+                run_report,
+                summary,
+                job_locale,
+                scenario_reading=(
+                    dict(video_reading)
+                    if isinstance(video_reading, dict) else None
+                ),
+                install_dir=_resolve_install(),
+            )
             cost = 0.0
 
             result = _build_video_fallback_result_v2(
@@ -4060,6 +4103,7 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     sid,
                     result,
                     stats_source_path,
+                    _job_locale(job),
                 )
             except Exception:
                 log.warning(

@@ -975,7 +975,12 @@ async def test_process_one_without_selected_provider_keeps_v2_narration_null():
 
 @pytest.mark.asyncio
 async def test_process_one_calls_local_report_without_backend():
-    """The deterministic report has no Provider/backend argument."""
+    """The deterministic report has no Provider/backend argument.
+
+    施工单⑤⑥ golden 更新：run_report 新增只读 kwargs——scenario_reading
+    （读图语境描述符，判读档分支输入）与 install_dir（锚点三路接力探测）；
+    两者都不是 Provider/backend 参数，无 Provider 调用语义不变。
+    """
     sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     fake_report_no_llm = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
 
@@ -995,7 +1000,9 @@ async def test_process_one_calls_local_report_without_backend():
     assert s["result"]["narration"]["status"] == "not_requested"
     assert mock_report.call_args.args
     assert len(mock_report.call_args.args) == 2  # (summary, locale)
-    assert mock_report.call_args.kwargs == {}
+    # 施工单⑤⑥：新增 kwargs 只为读图语境与锚点探测；该 job 无读图描述符。
+    assert set(mock_report.call_args.kwargs) == {"scenario_reading", "install_dir"}
+    assert mock_report.call_args.kwargs["scenario_reading"] is None
 
 
 @pytest.mark.asyncio
@@ -2096,7 +2103,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-10-04.v14"
+    assert issue["knowledge_registry_version"] == "2026-10-07.v15"
     # 09-10 撤销冻结期前缀过滤后恢复匹配器 top-3（与 test_diagnosis 同口径）。
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@3",
@@ -3413,7 +3420,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-10-04.v14"
+        assert issue["knowledge_registry_version"] == "2026-10-07.v15"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@3"
         ]
