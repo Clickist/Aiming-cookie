@@ -8,10 +8,16 @@ import test from "node:test";
 const dataRoot = mkdtempSync(join(tmpdir(), "aiming-cookie-busy-retry-test-"));
 process.env.DATA_ROOT = dataRoot;
 
-const { isStorageBusyFileError, retryOnBusyFile } = await import("../src/session-repo.ts");
+const { BUSY_RETRY_FS_METHODS, isStorageBusyFileError, retryOnBusyFile } = await import("../src/session-repo.ts");
 
 test.after(() => {
   rmSync(dataRoot, { recursive: true, force: true });
+});
+
+// 注入 pi 的 fs 上被包重试的方法合同：写侧两条 + 读侧两条（读侧=验收走查
+// 抓到的第二暴露面：锁窗口内 open session/list 读 header 同样炸轮）。
+test("BUSY_RETRY_FS_METHODS covers read and write surfaces", () => {
+  assert.deepEqual([...BUSY_RETRY_FS_METHODS].sort(), ["appendFile", "readTextFile", "readTextLines", "writeFile"]);
 });
 
 // 用例共享同一 DATA_ROOT：每个用例前清掉 coach-error.log，防前序 recovered 行污染断言。

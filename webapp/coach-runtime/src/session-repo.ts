@@ -138,9 +138,21 @@ export async function retryOnBusyFile(
   return result;
 }
 
+/** 注入 pi 前需要包 EBUSY 重试的 fs 方法：写侧 appendFile（条目追加/叶子）+
+ * writeFile（create 首写 header）；读侧 readTextFile/readTextLines——open 会话
+ * 与 repo.list 都要读文件 header，验收实机实测锁窗口内读同样一次失败炸整轮
+ * turn（1008 修复发版走查用例 A 抓到），比写侧暴露面更广（锁任意一个会话
+ * 文件，所有新对话的会话列表扫描都会撞）。 */
+export const BUSY_RETRY_FS_METHODS = [
+  "appendFile",
+  "writeFile",
+  "readTextFile",
+  "readTextLines",
+] as const;
+
 function wrapWithBusyRetry(
   env: Record<string, unknown>,
-  method: "appendFile" | "writeFile",
+  method: (typeof BUSY_RETRY_FS_METHODS)[number],
 ): void {
   const orig = (env[method] as (...args: unknown[]) => Promise<StorageResult>).bind(env);
   env[method] = (...args: unknown[]) => retryOnBusyFile(() => orig(...args));
@@ -157,8 +169,9 @@ export async function getSessionRepo(): Promise<JsonlRepoLike> {
       // 仅覆写本函数独占新建的实例（闭包绑 orig 防自引用递归）；turn.ts 的
       // env 是另一个实例，不经此路径。createDir/listDir/remove 是目录级操作，
       // 不在会话文件锁病灶上，不包。
-      wrapWithBusyRetry(envRecord, "appendFile");
-      wrapWithBusyRetry(envRecord, "writeFile");
+      for (const method of BUSY_RETRY_FS_METHODS) {
+        wrapWithBusyRetry(envRecord, method);
+      }
       return new (JsonlSessionRepo as new (opts: { fs: unknown; sessionsRoot: string }) => JsonlRepoLike)({
         fs: env,
         sessionsRoot: getConversationsDir(),
