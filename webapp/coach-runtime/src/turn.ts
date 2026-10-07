@@ -835,7 +835,16 @@ function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
  * 稳定 code 透传前端（api.error.* 字典键），不再把网络/额度/鉴权全部折叠成
  * turn_failed。判据顺序＝先特定后一般：quota/鉴权在前，防止被网络类宽
  * pattern 吞掉。retryable 与此同源（service_overloaded 可手动重试）。 */
-function classifyCoachFailureCode(error: unknown): string {
+/** retryable 与 code 同源：quota/鉴权分类明确的失败重试无意义必须禁止；
+ * service_overloaded/network_transient/local_storage_busy 是瞬态，标成不可
+ * 重试会把一次抖动变成死局。 */
+export function isRetryableFailureCode(failureCode: string): boolean {
+  return failureCode === "service_overloaded"
+    || failureCode === "network_transient"
+    || failureCode === "local_storage_busy";
+}
+
+export function classifyCoachFailureCode(error: unknown): string {
   if (error instanceof ProviderProfileError) return error.code;
   const message = error instanceof Error ? error.message : String(error ?? "");
   // 额度类：new-api 网关 403 透传（中转/BYOK 链路）、accounts 网关稳定 type
@@ -847,6 +856,9 @@ function classifyCoachFailureCode(error: unknown): string {
   if (/rate.?limit|too many requests|overloaded|service.?unavailable|internal.?error|\b429\b|\b50[0234]\b/i.test(message)) return "service_overloaded";
   // 网络瞬断（TUN/VPN 切节点、链路抖动）：isTransientProviderError 同判据。
   if (isTransientProviderError(error)) return "network_transient";
+  // 本地会话文件被外部进程加锁（同步盘/杀软；session-repo 已退避重试 3 次）。
+  // 瞬态锁，用户关掉占用方或稍后重试即可，同网络瞬断待遇必须可重试。
+  if (/EBUSY|resource busy or locked/i.test(message)) return "local_storage_busy";
   return "turn_failed";
 }
 
@@ -1570,8 +1582,7 @@ export async function runCoachTurn(
         code: failureCode,
         message: userFacingErrorMessage(error, stopped),
         retryable: stopped
-          || failureCode === "service_overloaded"
-          || failureCode === "network_transient"
+          || isRetryableFailureCode(failureCode)
           || (error instanceof EmptyAssistantReplyError && !deterministicFailure),
       }),
       [],

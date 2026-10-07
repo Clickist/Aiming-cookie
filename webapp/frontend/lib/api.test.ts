@@ -1144,6 +1144,11 @@ test("presentErrorV1Message maps error.v1 codes to dictionary copy with message 
       presentErrorV1Message({ code: "source_unavailable", message: "分析输入源已不可用或已变更，请重新提交分析。" }),
       translate("en-US", "api.error.sourceUnavailable"),
     );
+    // Coach 会话文件锁（1008 报障包）：local_storage_busy → localStorageBusy。
+    assert.equal(
+      presentErrorV1Message({ code: "local_storage_busy", message: "raw backend copy" }),
+      translate("en-US", "api.error.localStorageBusy"),
+    );
     // 缺码：回落后端 message 原文（过渡期双保险）。
     assert.equal(
       presentErrorV1Message({ code: "unmapped_code", message: "raw backend copy" }),

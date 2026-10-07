@@ -688,6 +688,7 @@ export const task6Zh = {
   "api.error.serviceOverloaded": "服务繁忙（当前使用人数较多），已自动重试仍未成功，请稍后再试。",
   "api.error.quotaExhausted": "本期额度已用完。可在账号中心购买加油包（永不过期）或续期订阅。",
   "api.error.providerAuthInvalid": "模型服务认证失败：API key 无效或已过期，请在 设置 → 模型服务 中检查。",
+  "api.error.localStorageBusy": "会话记录文件正被其他程序占用（常见于同步盘或杀毒软件扫描），已自动重试仍未成功。可点「重试」再试一次，或将数据目录加入占用程序的白名单。",
 
   // ── SettingsWorkspace.tsx —— 性能屏（录像编码路径只读展示）─────────────
   "settings.nav.performance": "性能",

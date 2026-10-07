@@ -12,7 +12,7 @@
  * session on first access.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ensureAppDataDirs, getConversationsDir, getDataRoot } from "./app-data.ts";
@@ -90,6 +90,62 @@ type JsonlRepoLike = {
 
 let repoPromise: Promise<JsonlRepoLike> | null = null;
 
+// ── EBUSY 感知重试（1008 报障包）─────────────────────────────────────────
+// 用户数据目录在同步盘/杀软视野内时（野外样本：D:\集锦\kvk），会话 jsonl 的
+// appendFile/writeFile 会撞上外部进程的排他锁（EBUSY: resource busy or
+// locked）。pi 的 NodeFileSystem 单次尝试零重试，一次瞬态锁就炸掉整轮
+// Coach turn。这里在注入 pi 的 fs 边界上包退避重试；「跳过持久化继续回
+// 复」不可行——pi 会话是 parent 指针树，缺条目=下次 open 直接 invalid_session。
+
+/** pi 的 FileError("unknown") 原样透传 node 文本（toFileError 无 EBUSY 分支），
+ * 双判据：消息文本 + cause.code，不 import pi 的类型（pi 是动态加载的）。 */
+export function isStorageBusyFileError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === "string" && /EBUSY|resource busy or locked/i.test(message)) return true;
+  const cause = (error as { cause?: unknown }).cause;
+  return Boolean(cause && (cause as { code?: unknown }).code === "EBUSY");
+}
+
+export type StorageResult = { ok: true; value?: unknown } | { ok: false; error: unknown };
+
+/** EBUSY 退避重试：至多重试 delays.length 次（默认 150/300/600ms，总尝试 ≤4）；
+ * 非 EBUSY 原样返回零重试。重试成功后向 coach-error.log 记一行 recovered，
+ * 供野外观测锁家族频率（best-effort，日志失败绝不掩盖原结果）。 */
+export async function retryOnBusyFile(
+  op: () => Promise<StorageResult>,
+  options: { delays?: number[] } = {},
+): Promise<StorageResult> {
+  const delays = options.delays ?? [150, 300, 600];
+  let result = await op();
+  let retries = 0;
+  while (!result.ok && isStorageBusyFileError(result.error) && retries < delays.length) {
+    await new Promise((resolve) => setTimeout(resolve, delays[retries]!));
+    retries += 1;
+    result = await op();
+  }
+  if (retries > 0 && result.ok) {
+    try {
+      appendFileSync(
+        join(getDataRoot(), "coach-error.log"),
+        `${new Date().toISOString()} [session-repo] storage-busy recovered retries=${retries}\n`,
+        "utf8",
+      );
+    } catch {
+      // best-effort
+    }
+  }
+  return result;
+}
+
+function wrapWithBusyRetry(
+  env: Record<string, unknown>,
+  method: "appendFile" | "writeFile",
+): void {
+  const orig = (env[method] as (...args: unknown[]) => Promise<StorageResult>).bind(env);
+  env[method] = (...args: unknown[]) => retryOnBusyFile(() => orig(...args));
+}
+
 export async function getSessionRepo(): Promise<JsonlRepoLike> {
   if (!repoPromise) {
     repoPromise = (async () => {
@@ -97,6 +153,12 @@ export async function getSessionRepo(): Promise<JsonlRepoLike> {
       const { NodeExecutionEnv } = (await loadPiNodeEnv()) as Record<string, unknown>;
       ensureAppDataDirs();
       const env = new (NodeExecutionEnv as new (opts: { cwd: string }) => unknown)({ cwd: getDataRoot() });
+      const envRecord = env as Record<string, unknown>;
+      // 仅覆写本函数独占新建的实例（闭包绑 orig 防自引用递归）；turn.ts 的
+      // env 是另一个实例，不经此路径。createDir/listDir/remove 是目录级操作，
+      // 不在会话文件锁病灶上，不包。
+      wrapWithBusyRetry(envRecord, "appendFile");
+      wrapWithBusyRetry(envRecord, "writeFile");
       return new (JsonlSessionRepo as new (opts: { fs: unknown; sessionsRoot: string }) => JsonlRepoLike)({
         fs: env,
         sessionsRoot: getConversationsDir(),

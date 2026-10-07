@@ -686,6 +686,7 @@ export const task6En = {
   "api.error.serviceOverloaded": "The service is busy right now. Auto-retry did not recover it — please try again shortly.",
   "api.error.quotaExhausted": "Your quota for this period is used up. Buy a booster pack (never expires) or renew your subscription in the account center.",
   "api.error.providerAuthInvalid": "Model service authentication failed: the API key is invalid or expired. Check Settings → Model service.",
+  "api.error.localStorageBusy": "The session log file is locked by another program (often cloud sync or antivirus scanning). Auto-retry did not recover it — press Retry, or whitelist the data folder in that program.",
 
   // ── SettingsWorkspace.tsx —— performance screen (read-only recording encoder path) ──
   "settings.nav.performance": "Performance",

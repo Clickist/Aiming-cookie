@@ -443,7 +443,11 @@ async function runAgentTurn(
               || error.code === "network_transient"
               || error.code === "service_overloaded"
               ? "network"
-              : "model",
+              : error.code === "local_storage_busy"
+                // 本地会话文件锁（session-repo EBUSY 重试耗尽）不是模型问题，
+                // 归 model 会让前端标题误显「模型生成失败」。
+                ? "coach_runtime"
+                : "model",
             code: error.code,
             message: error.message,
             retryable: error.retryable,
