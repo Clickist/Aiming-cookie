@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.4.6",
+      "date": "2026-10-08",
+      "items": [
+        {
+          "type": "new",
+          "zh": "教练现在会先读懂你这张训练图的设计——练的是什么、怎么计分、目标怎么分布，建议更贴合这张图：速度型图给节奏建议，精瞄型图才讲停稳确认",
+          "en": "The coach now reads each scenario first - what it trains, how it scores, how targets spread - so advice fits the map: pacing advice on speed scenarios, settle-and-confirm only on precision ones"
+        },
+        {
+          "type": "new",
+          "zh": "训练推荐更聪明：优先推荐你本机已装的经典标准图，没装才建议订阅，或按你的弱点对症推荐",
+          "en": "Smarter practice picks: classic standard maps you already have installed come first, then subscription suggestions, or a targeted pick for your weak spot"
+        },
+        {
+          "type": "new",
+          "zh": "分析里新增这张图的小档案：练什么能力、计分规则、目标分布一目了然",
+          "en": "Analyses now include a short scenario profile: the skill it trains, its scoring rules, and target layout at a glance"
+        },
+        {
+          "type": "fix",
+          "zh": "知识库校订：修正个别场景参数的引用错误，教练引用的知识均为核对过的版本",
+          "en": "Knowledge base revision: a few cited scenario values corrected - what the coach cites is now the verified version"
+        }
+      ]
+    },
+    {
       "version": "1.4.5",
       "date": "2026-10-07",
       "items": [
