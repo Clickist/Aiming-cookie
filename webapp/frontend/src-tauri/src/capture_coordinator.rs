@@ -1952,10 +1952,11 @@ fn write_control_response(
             return false;
         }
     };
-    // [fix 2026-10-07 W2] 每请求的响应行降噪为慢请求守卫：超 1s 才记一行
-    // （慢响应是诊断信号），常规请求零日志。
+    // [fix 2026-10-07 W2] 每请求的响应行降噪为慢请求守卫：超 10s 才记一行
+    // （真卡死才现形）。阈值 10s 而非 1s——1.4.5 实机走查发现 status 轮询
+    // 响应常态 1-2s（0.5s 轮询间隔下的排队延迟），1s 阈值会刷屏。
     let elapsed_ms = started.elapsed().as_millis();
-    if elapsed_ms > 1000 {
+    if elapsed_ms > 10000 {
         crate::dlog!(
             "[capture-export] conn: slow response type={} ok={} bytes={} elapsed_ms={}",
             response
