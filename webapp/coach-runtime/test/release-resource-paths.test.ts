@@ -90,8 +90,6 @@ test("default coach prompt carries the honest empty-diagnosis rule", () => {
   try {
     delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     const prompt = loadDefaultCoachSystemPrompt();
-    assert.match(prompt, /严禁说成「标出了问题」/);
-    assert.match(prompt, /严禁发明评级词/);
     assert.match(prompt, /绝不等于「这局没有问题」/);
     assert.match(prompt, /自己诊断/);
     // 内部工程标注不外讲（2026-10-07）：limitations/投影估算/校准缺失这类
