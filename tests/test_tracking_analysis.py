@@ -494,15 +494,15 @@ def _multi_target_entries(**kwargs) -> list[dict]:
     return entries
 
 
-def test_multi_target_aggregate_uses_union_ratio_and_weighted_error():
+def test_multi_target_aggregate_omits_time_in_radius_and_keeps_weighted_error():
     aggregate = aggregate_continuous_tracking_multi_target_v1(_multi_target_entries())
 
     assert aggregate["schema_version"] == "continuous_tracking_analysis.v1"
     assert aggregate["support_status"] == "supported"
-    ratio = aggregate["metrics"]["continuous_tracking.time_in_radius_ratio"]
-    assert ratio["value"] == pytest.approx(1.0)
-    assert ratio["population"]["sample_count"] == 4
-    assert "multi_target_union_time_in_radius" in ratio["limitations"]
+    # 多目标局不产出在靶率（产品拍板 2026-10-07）：顶层无该指标，聚合结果
+    # 标注 limitation；逐轨数值保留在 per_target。
+    assert "continuous_tracking.time_in_radius_ratio" not in aggregate["metrics"]
+    assert "time_in_radius_requires_single_target" in aggregate["limitations"]
     error = aggregate["metrics"]["continuous_tracking.target_relative_error_px"]
     assert error["value"] == pytest.approx(50.0)
     assert "multi_target_time_weighted_average" in error["limitations"]
@@ -515,14 +515,13 @@ def test_multi_target_aggregate_uses_union_ratio_and_weighted_error():
     assert "multi_target_union_of_target_tracks" in aggregate["limitations"]
 
 
-def test_multi_target_aggregate_union_fails_closed_without_radius():
+def test_multi_target_aggregate_without_radius_still_keeps_weighted_error():
     aggregate = aggregate_continuous_tracking_multi_target_v1(
         _multi_target_entries(radius=None),
     )
 
-    ratio = aggregate["metrics"]["continuous_tracking.time_in_radius_ratio"]
-    assert ratio["availability"] == "unavailable"
-    assert ratio["value"] is None
+    assert "continuous_tracking.time_in_radius_ratio" not in aggregate["metrics"]
+    assert "time_in_radius_requires_single_target" in aggregate["limitations"]
     error = aggregate["metrics"]["continuous_tracking.target_relative_error_px"]
     assert error["availability"] == "available"
     assert error["value"] == pytest.approx(50.0)
@@ -543,7 +542,7 @@ def test_multi_target_aggregate_round_trips_through_evidence_extension():
     extended = extend_analysis_evidence_with_continuous_tracking_v1(artifact, aggregate)
 
     keys = [metric["metric_key"] for metric in extended["metric_records"]]
-    assert keys.count("continuous_tracking.time_in_radius_ratio") == 1
+    assert "continuous_tracking.time_in_radius_ratio" not in keys
     assert keys.count("continuous_tracking.target_relative_error_px") == 1
 
 

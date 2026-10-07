@@ -237,6 +237,7 @@
     "temporal_tracker_gap_rejected",
     "temporal_tracker_unavailable",
     "threshold_requires_product_calibration",
+    "time_in_radius_requires_single_target",
     "transition_geometry_unavailable",
     "visual_event_budget_exceeded",
     "visual_frame_boundary_gap",

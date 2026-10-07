@@ -3180,8 +3180,10 @@ def test_tracking_worker_adapter_aggregates_multi_target_tracks():
     assert result["per_target"][0]["result"]["processed_rows"][0][
         "target_track_ref"
     ] == "analysis:441:target-track:1"
-    ratio = result["metrics"]["continuous_tracking.time_in_radius_ratio"]
-    assert ratio["value"] == pytest.approx(1.0)
+    # 多目标局不产出在靶率（产品拍板 2026-10-07）：顶层无该指标，聚合结果
+    # 标注 limitation。
+    assert "continuous_tracking.time_in_radius_ratio" not in result["metrics"]
+    assert "time_in_radius_requires_single_target" in result["limitations"]
     error = result["metrics"]["continuous_tracking.target_relative_error_px"]
     assert error["value"] == pytest.approx(25.0)
     assert "multi_target_union_of_target_tracks" in result["limitations"]

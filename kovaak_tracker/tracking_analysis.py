@@ -1201,11 +1201,13 @@ def aggregate_continuous_tracking_multi_target_v1(
 
     Aggregation semantics (v1, deterministic, no mechanism inference):
 
-    - ``continuous_tracking.time_in_radius_ratio`` is the union of target
-      tracks: a canonical sample counts as on-target when ANY analyzed track is
-      determinately on-target there, over the union of samples where at least
-      one track has a determinate answer.  Per-track values stay in
-      ``per_target``.
+    - ``continuous_tracking.time_in_radius_ratio`` is NOT produced: with
+      several targets on screen the implied "aimed target" (nearest-distance
+      attribution) drifts with the crosshair, so the ratio's semantics are not
+      honest (product decision 2026-10-07).  The ratio stays a single-target
+      sustained-tracking metric; the aggregate records the
+      ``time_in_radius_requires_single_target`` limitation instead, and
+      per-track values stay in ``per_target``.
     - ``continuous_tracking.target_relative_error_px`` is the duration-weighted
       mean of the available per-track values; each track's weight is the time
       span of its error-determinate samples (minimum 1 ms).  ``distribution``
@@ -1278,9 +1280,11 @@ def aggregate_continuous_tracking_multi_target_v1(
         analyses.append((track_ref, inputs, analysis, series))
 
     # 聚合语义 v1（确定性，不推断玩家机制）：
-    # - 时间占比类（time_in_radius_ratio）：union 口径——任一被分析轨道在某
-    #   规范时刻确定贴合即算贴合；分母是"至少一条轨道可判定"的时刻并集。
-    #   逐轨道明细保留在 per_target。
+    # - 在靶率（time_in_radius_ratio）不在多目标局产出（产品拍板
+    #   2026-10-07）：多靶同屏时"所瞄靶"按最近距离判定会随准星漂移切换，
+    #   比值不诚实；在靶率保留给单目标持续跟枪，聚合结果标注
+    #   time_in_radius_requires_single_target，逐轨数值保留在 per_target。
+    #   逐轨在靶可判定时刻的并集只用于划定 evidence segment 的时间跨度。
     # - 误差/距离类（target_relative_error_px）：按时间加权平均，权重=各轨道
     #   可判定误差样本的时间跨度（至少 1ms）。
     # - 其余指标中，运动学 7 项（relative lag / 频域三项 / 修正反转 / 平滑度
@@ -1291,17 +1295,12 @@ def aggregate_continuous_tracking_multi_target_v1(
     #   合并，任一 unavailable 则顶层 unavailable。逐轨明细保留在 per_target。
     #   loss/reacquisition/change response 仍是 target-relative 事实，只保留
     #   逐轨道明细；continuous tracking v1 没有击杀关联指标。
-    union_on_target: dict[int, bool] = {}
-    for _track_ref, _inputs, _analysis, series in analyses:
-        for sample in series:
-            if sample["on_target"] is None:
-                continue
-            time_ms = int(sample["time_ms"])
-            union_on_target[time_ms] = (
-                union_on_target.get(time_ms, False) or bool(sample["on_target"])
-            )
-    union_times = sorted(union_on_target)
-    union_values = [1.0 if union_on_target[time_ms] else 0.0 for time_ms in union_times]
+    tracked_times = sorted({
+        int(sample["time_ms"])
+        for _track_ref, _inputs, _analysis, series in analyses
+        for sample in series
+        if sample["on_target"] is not None
+    })
 
     error_values: list[float] = []
     error_weights: list[float] = []
@@ -1347,6 +1346,7 @@ def aggregate_continuous_tracking_multi_target_v1(
     )
     limitations = sorted({
         "multi_target_union_of_target_tracks",
+        "time_in_radius_requires_single_target",
         *(
             limitation
             for _track_ref, _inputs, analysis, _series in analyses
@@ -1355,22 +1355,6 @@ def aggregate_continuous_tracking_multi_target_v1(
     })
     segment_id = f"{analysis_ref}:segment:tracking:multi_target:1"
     min_confidence = min(track_confidences) if track_confidences else 0.0
-
-    ratio_record = _metric(
-        "continuous_tracking.time_in_radius_ratio",
-        union_values,
-        unit="ratio",
-        event_refs=[],
-        analysis_ref=analysis_ref,
-        segment_refs=[segment_id],
-        condition_refs=condition_refs,
-        limitations=[*limitations, "multi_target_union_time_in_radius"],
-        confidence=min_confidence,
-        use_mean=True,
-    )
-    ratio_record["coverage"] = min(
-        float(ratio_record["coverage"]), float(ratio_record["confidence"]),
-    )
 
     weighted_error = None
     weighted_confidence = 0.0
@@ -1406,7 +1390,6 @@ def aggregate_continuous_tracking_multi_target_v1(
     )
 
     metrics: dict[str, Any] = {
-        "continuous_tracking.time_in_radius_ratio": ratio_record,
         "continuous_tracking.target_relative_error_px": error_record,
     }
     alignment_record = (analyses[0][2].get("metrics") or {}).get(
@@ -1501,9 +1484,9 @@ def aggregate_continuous_tracking_multi_target_v1(
         else []
     )
     evidence_segments: list[dict[str, Any]] = []
-    if union_times:
-        segment_start = union_times[0]
-        segment_end = min(int(window["end_ms"]), union_times[-1] + 1)
+    if tracked_times:
+        segment_start = tracked_times[0]
+        segment_end = min(int(window["end_ms"]), tracked_times[-1] + 1)
         evidence_segments.append(validate_evidence_segment_v1({
             "schema_version": "evidence_segment.v1",
             "segment_id": segment_id,
