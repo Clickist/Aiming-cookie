@@ -194,6 +194,7 @@
     "low_confidence_or_occluded_samples_excluded",
     "missing_frame_pts",
     "motion_predictability_evidence_unavailable",
+    "multi_target_union_motion_kinematics",
     "multi_target_union_of_target_tracks",
     "multiple_targets_visible",
     "next_target_identity_ambiguous",

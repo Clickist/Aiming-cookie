@@ -758,3 +758,178 @@ def test_invalid_player_motion_samples_fail_closed():
         payload["player_motion_samples"] = bad
         with pytest.raises(TrackingAnalysisError):
             analyze_continuous_tracking_v1(payload)
+
+
+# ---------------------------------------------------------------------------
+# 多目标聚合的运动学指标合并浮面（样本量加权，gated 门控 fail-closed）
+# ---------------------------------------------------------------------------
+
+
+_MOTION_KINEMATIC_KEYS = (
+    "continuous_tracking.relative_lag_ms",
+    "continuous_tracking.phase_lag_ms",
+    "continuous_tracking.velocity_gain",
+    "continuous_tracking.coherence",
+    "continuous_tracking.correction_direction_reversal_count",
+    "continuous_tracking.smoothness_acceleration_rms",
+    "continuous_tracking.sparc",
+)
+_GATED_MOTION_KINEMATIC_KEYS = (
+    "continuous_tracking.relative_lag_ms",
+    "continuous_tracking.phase_lag_ms",
+    "continuous_tracking.velocity_gain",
+    "continuous_tracking.coherence",
+)
+
+
+def _fused_motion_multi_target_entries():
+    """2 轨各带 player_motion_samples 的多目标聚合入口。
+
+    两轨共用 analysis_ref 与 canonical window；跟随滞后不同（100ms vs 0ms），
+    第二轨目标在末段驻留一个样本（该样本 lag 不可判定），保证自由合并项的
+    "仅 available 轨计入" 语义有真实分轨差异。
+    """
+    entries = []
+    for track_id, motion_lag_ms in (("1", 100), ("2", 0)):
+        payload = _fused_motion_payload(motion_lag_ms=motion_lag_ms)
+        payload["analysis_ref"] = "analysis:multi:motion:1"
+        payload["target_track"]["track_ref"] = (
+            f"analysis:multi:motion:1:target-track:{track_id}"
+        )
+        if track_id == "2":
+            stationary = payload["target_track"]["samples"][5]
+            stationary["x"] = payload["target_track"]["samples"][4]["x"]
+        entries.append({
+            "track_ref": payload["target_track"]["track_ref"],
+            "payload": payload,
+            "analysis": analyze_continuous_tracking_v1(payload),
+        })
+    return entries
+
+
+def _linear_motion_track_payload(track_id: str, *, offset_px: float, hold_last: bool) -> dict:
+    """线性目标 + 同步运动样本的钉死准星 payload（lag 可手算：t + offset/slope）。"""
+    payload = _payload(radius=200.0)
+    payload["analysis_ref"] = "analysis:multi:linear:1"
+    payload["player_motion_status"] = "unavailable_fixed_viewport_center"
+    samples = [
+        {"canonical_time_ms": time_ms, "x": offset_px + 0.5 * time_ms, "y": 0.0,
+         "radius": 200.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+    if hold_last:
+        samples[3]["x"] = samples[2]["x"]
+    payload["target_track"] = {
+        "track_ref": f"analysis:multi:linear:1:target-track:{track_id}",
+        "samples": samples,
+    }
+    payload["crosshair_samples"] = [
+        {"canonical_time_ms": time_ms, "x": 0.0, "y": 0.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200, 300)
+    ]
+    payload["player_motion_samples"] = [
+        {"canonical_time_ms": sample["canonical_time_ms"], "x": sample["x"], "y": 0.0}
+        for sample in samples
+    ]
+    return payload
+
+
+def test_multi_target_aggregate_merges_motion_kinematics_to_top_level():
+    # 手算口径：lag = t + offset/slope。轨 A（offset 0）→ 有效 lag
+    # {100,200,300}（t=0 无前序运动）median 200、valid_count 3；轨 B
+    # （offset 50、末样本驻留）→ 有效 lag {200,300}（t=0 与驻留样本不可
+    # 判定）median 250、valid_count 2。
+    entry_a = {
+        "track_ref": "analysis:multi:linear:1:target-track:1",
+        "payload": _linear_motion_track_payload("1", offset_px=0.0, hold_last=False),
+    }
+    entry_b = {
+        "track_ref": "analysis:multi:linear:1:target-track:2",
+        "payload": _linear_motion_track_payload("2", offset_px=50.0, hold_last=True),
+    }
+    for entry in (entry_a, entry_b):
+        entry["analysis"] = analyze_continuous_tracking_v1(entry["payload"])
+    aggregate = aggregate_continuous_tracking_multi_target_v1([entry_a, entry_b])
+
+    # 样本量加权合并浮面：value = (200*3 + 250*2) / 5 = 220（≠ 简单均值
+    # 225），limitation 码在。
+    merged = aggregate["metrics"]["continuous_tracking.relative_lag_ms"]
+    assert merged["availability"] == "available"
+    assert merged["value"] == pytest.approx(220.0)
+    assert merged["value"] != pytest.approx(225.0)
+    assert "multi_target_union_motion_kinematics" in merged["limitations"]
+    assert merged["distribution"]["min"] == pytest.approx(200.0)
+    assert merged["distribution"]["max"] == pytest.approx(250.0)
+
+    # 门控项（频域）：两轨均不可判定（样本过短）→ 顶层 unavailable。
+    for metric_key in (
+        "continuous_tracking.phase_lag_ms",
+        "continuous_tracking.velocity_gain",
+        "continuous_tracking.coherence",
+    ):
+        merged = aggregate["metrics"][metric_key]
+        assert merged["availability"] == "unavailable", metric_key
+        assert "multi_target_union_motion_kinematics" in merged["limitations"]
+
+    # 自由合并项：匀速运动 → 反转 0、rms 为两轨均值；两轨 sparc 均不可判定
+    # （样本过短）→ 顶层 unavailable（全 unavailable → unavailable）。
+    reversal = aggregate["metrics"]["continuous_tracking.correction_direction_reversal_count"]
+    assert reversal["availability"] == "available"
+    assert reversal["value"] == 0.0
+    rms = aggregate["metrics"]["continuous_tracking.smoothness_acceleration_rms"]
+    assert rms["availability"] == "available"
+    track_rms = [
+        entry["analysis"]["metrics"]["continuous_tracking.smoothness_acceleration_rms"]["value"]
+        for entry in (entry_a, entry_b)
+    ]
+    assert rms["value"] == pytest.approx(sum(track_rms) / 2)
+    sparc = aggregate["metrics"]["continuous_tracking.sparc"]
+    assert sparc["availability"] == "unavailable"
+    assert sparc["value"] is None
+    assert "multi_target_union_motion_kinematics" in sparc["limitations"]
+
+    # 逐轨明细保留：per_target 各自携带运动学 record（B 的逐轨 lag=250）。
+    assert len(aggregate["per_target"]) == 2
+    assert aggregate["per_target"][1]["result"]["metrics"][
+        "continuous_tracking.relative_lag_ms"
+    ]["value"] == pytest.approx(250.0)
+
+
+def test_multi_target_aggregate_kinematics_fail_closed_when_any_track_unavailable():
+    entries = _fused_motion_multi_target_entries()
+    entries[1]["payload"].pop("player_motion_samples")
+    entries[1]["analysis"] = analyze_continuous_tracking_v1(entries[1]["payload"])
+
+    aggregate = aggregate_continuous_tracking_multi_target_v1(entries)
+
+    # 门控项：任一轨 unavailable → 顶层 unavailable（fail-closed）。
+    for metric_key in _GATED_MOTION_KINEMATIC_KEYS:
+        merged = aggregate["metrics"][metric_key]
+        assert merged["availability"] == "unavailable", metric_key
+        assert merged["value"] is None, metric_key
+        assert "multi_target_union_motion_kinematics" in merged["limitations"]
+
+    # 自由合并项：仅 available 轨计入权重，值 = 该轨值。
+    for metric_key in (
+        "continuous_tracking.correction_direction_reversal_count",
+        "continuous_tracking.smoothness_acceleration_rms",
+        "continuous_tracking.sparc",
+    ):
+        merged = aggregate["metrics"][metric_key]
+        assert merged["availability"] == "available", metric_key
+        assert merged["value"] == pytest.approx(
+            entries[0]["analysis"]["metrics"][metric_key]["value"],
+        ), metric_key
+
+
+def test_single_target_kinematics_records_are_untouched_by_multi_target_merge():
+    result = analyze_continuous_tracking_v1(_fused_motion_payload(motion_lag_ms=100))
+
+    assert "per_target" not in result
+    for metric_key in _MOTION_KINEMATIC_KEYS:
+        record = result["metrics"][metric_key]
+        assert record["availability"] == "available", metric_key
+        assert "multi_target_union_motion_kinematics" not in record["limitations"]
+    assert result["metrics"]["continuous_tracking.relative_lag_ms"][
+        "population"
+    ]["sample_count"] == 256

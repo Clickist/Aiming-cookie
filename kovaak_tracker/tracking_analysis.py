@@ -1174,6 +1174,21 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+# 多目标聚合的运动学指标合并规格：(metric_key, unit, gated)。gated=True 的项
+# （relative_lag_ms 带方向门、频域三项带模型/均匀采样门）只有全部轨道
+# available 才加权合并，任一 unavailable 则顶层 unavailable；gated=False 的项
+# 按 available 轨道加权合并（None 轨不计入权重）。逐轨明细保留在 per_target。
+_MOTION_KINEMATIC_METRIC_SPECS = (
+    ("continuous_tracking.relative_lag_ms", "ms", True),
+    ("continuous_tracking.phase_lag_ms", "ms", True),
+    ("continuous_tracking.velocity_gain", "ratio", True),
+    ("continuous_tracking.coherence", "ratio", True),
+    ("continuous_tracking.correction_direction_reversal_count", "count", False),
+    ("continuous_tracking.smoothness_acceleration_rms", "px_per_ms2", False),
+    ("continuous_tracking.sparc", "dimensionless", False),
+)
+
+
 def aggregate_continuous_tracking_multi_target_v1(
     track_entries: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -1197,9 +1212,20 @@ def aggregate_continuous_tracking_multi_target_v1(
       still describes the per-track values; ``value`` is the weighted mean.
     - ``continuous_tracking.alignment_latency_ms`` is capture-level and
       identical for every track; it is passed through.
-    - Everything else (losses, reacquisitions, spectral, sparc, change
-      response) is target-relative and stays per track.  Kill association does
-      not exist in continuous tracking v1 and is never merged across tracks.
+    - Motion kinematics (relative lag, the spectral triple, correction
+      direction reversals, smoothness acceleration rms, sparc) are merged from
+      the per-track records into top-level metric records: the merged value is
+      the sample-weighted mean with each track weighted by its record's
+      ``population.valid_count``, and an unavailable track contributes no
+      weight.  The gated items (``relative_lag_ms`` and the spectral triple,
+      which carry direction/model gates) merge only when every track is
+      available; if any track is unavailable the top-level record stays
+      unavailable.  Merged records carry the
+      ``multi_target_union_motion_kinematics`` limitation; per-track detail
+      stays in ``per_target``.
+    - Losses, reacquisitions and change response stay per track.  Kill
+      association does not exist in continuous tracking v1 and is never merged
+      across tracks.
 
     The result keeps the ``continuous_tracking_analysis.v1`` top-level shape so
     existing consumers (Coach advice, baseline matching, evidence extension)
@@ -1257,9 +1283,14 @@ def aggregate_continuous_tracking_multi_target_v1(
     #   逐轨道明细保留在 per_target。
     # - 误差/距离类（target_relative_error_px）：按时间加权平均，权重=各轨道
     #   可判定误差样本的时间跨度（至少 1ms）。
-    # - 其余指标（loss/reacquisition/spectral/sparc/change response）是
-    #   target-relative 事实，只保留逐轨道明细，不跨轨合并；continuous
-    #   tracking v1 没有击杀关联指标。
+    # - 其余指标中，运动学 7 项（relative lag / 频域三项 / 修正反转 / 平滑度
+    #   rms / sparc）按各轨 valid 样本数（record population.valid_count）加权
+    #   合并成顶层 record：全 unavailable → unavailable；部分 available →
+    #   available 且标注 multi_target_union_motion_kinematics。门控项
+    #   （relative_lag_ms 与频域三项，带方向/模型门）从简：全部 available 才
+    #   合并，任一 unavailable 则顶层 unavailable。逐轨明细保留在 per_target。
+    #   loss/reacquisition/change response 仍是 target-relative 事实，只保留
+    #   逐轨道明细；continuous tracking v1 没有击杀关联指标。
     union_on_target: dict[int, bool] = {}
     for _track_ref, _inputs, _analysis, series in analyses:
         for sample in series:
@@ -1385,6 +1416,70 @@ def aggregate_continuous_tracking_multi_target_v1(
         passthrough = deepcopy(dict(alignment_record))
         passthrough["evidence_segment_refs"] = [segment_id]
         metrics["continuous_tracking.alignment_latency_ms"] = passthrough
+
+    # 运动学 7 项：逐轨 record 按各轨 valid 样本数（population.valid_count，
+    # 下限 1）加权合并成顶层 record；distribution 描述逐轨值，value 是加权
+    # 均值。gated 项任一轨 unavailable 即顶层 unavailable（fail-closed，不做
+    # 跨轨统计花样）；None 轨不计入权重。
+    motion_kinematics_limitation = "multi_target_union_motion_kinematics"
+    for metric_key, unit, gated in _MOTION_KINEMATIC_METRIC_SPECS:
+        track_records = [
+            (analysis.get("metrics") or {}).get(metric_key)
+            for _track_ref, _inputs, analysis, _series in analyses
+        ]
+        available_records = [
+            record
+            for record in track_records
+            if isinstance(record, Mapping)
+            and record.get("availability") == "available"
+            and record.get("value") is not None
+        ]
+        merged_records = (
+            available_records
+            if not gated or len(available_records) == len(track_records)
+            else []
+        )
+        merged_values: list[float] = []
+        merged_weights: list[float] = []
+        merged_confidences: list[float] = []
+        for record in merged_records:
+            population = record.get("population") or {}
+            weight = max(float(population.get("valid_count") or 0.0), 1.0)
+            merged_values.append(float(record["value"]))
+            merged_weights.append(weight)
+            merged_confidences.append(
+                float(record["confidence"])
+                if record.get("confidence") is not None else 0.0,
+            )
+        total_weight = sum(merged_weights)
+        kinematics_record = _metric(
+            metric_key,
+            merged_values,
+            unit=unit,
+            event_refs=[],
+            analysis_ref=analysis_ref,
+            segment_refs=[segment_id],
+            condition_refs=condition_refs,
+            limitations=[*limitations, motion_kinematics_limitation],
+            confidence=(
+                sum(
+                    confidence * weight
+                    for confidence, weight in zip(merged_confidences, merged_weights)
+                )
+                / total_weight
+                if total_weight else 0.0
+            ),
+            use_mean=True,
+        )
+        if merged_values:
+            kinematics_record["value"] = sum(
+                value * weight
+                for value, weight in zip(merged_values, merged_weights)
+            ) / total_weight
+        kinematics_record["coverage"] = min(
+            float(kinematics_record["coverage"]), float(kinematics_record["confidence"]),
+        )
+        metrics[metric_key] = kinematics_record
 
     from .analysis_evidence import (
         validate_evidence_segment_v1,
