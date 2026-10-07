@@ -144,6 +144,7 @@ def _write_single_target_sidecars(
     world: tuple[float, float, float],
     *,
     radius_cm: float = 60.0,
+    with_bb: bool = True,
 ) -> None:
     """单目标旁车：目标全程固定在 world（cm），相机在原点、yaw/pitch=0，
     ~60Hz 0.5s（32 view 帧）；身份走 frozen meta，不读任何 rounds_index。"""
@@ -165,11 +166,12 @@ def _write_single_target_sidecars(
     (round_dir / "round.jsonl").write_bytes(frames)
     (round_dir / "views_01.jsonl").write_bytes(views)
     (round_dir / "inputs_01.jsonl").write_bytes(b"")
-    (round_dir / "bb.json").write_bytes(
-        b'{"challenges": [{"window_t": [0.0, 1.0], "bots": '
-        + json.dumps([{"character": {"bb": {"radius": radius_cm}}}]).encode("utf-8")
-        + b'}]}\n'
-    )
+    if with_bb:
+        (round_dir / "bb.json").write_bytes(
+            b'{"challenges": [{"window_t": [0.0, 1.0], "bots": '
+            + json.dumps([{"character": {"bb": {"radius": radius_cm}}}]).encode("utf-8")
+            + b'}]}\n'
+        )
 
 
 
@@ -270,6 +272,82 @@ def test_frustum_keeps_target_grazing_frustum_edge(tmp_path):
     result_out = _frustum_build(round_dir_out)
     assert result_out["local_samples"]["target.0.position"] == []
     assert "target_outside_frustum_skipped" in result_out["limitations"]
+
+
+# ---------- 靶半径测量域/通道域分离：bb 兜底常数不可作几何依据（纯本地，永远运行） ----------
+#
+# bb.json 缺失或 bb 窗未覆盖帧时，producer 原先把 30cm 兜底常数当成测量值写进
+# local_samples 的 visible_radius，静默流进 tracking on_target 与 dynamic_clicking
+# 归一误差（AGENTS.md 禁止静默降级）。两域分离后：测量域样本记 None（分析器随行
+# 降级），通道域（sample_sets 点值必须有限数）仍发兜底常数并显式标注。
+
+
+def _radius_sample_set(result: dict) -> dict:
+    return next(
+        sample_set for sample_set in result["sample_sets"]
+        if sample_set["channel_key"] == "target.0.visible_radius"
+    )
+
+
+def _radius_channel(result: dict) -> dict:
+    return next(
+        channel for channel in result["signal_bundle"]["channels"]
+        if channel["channel_key"] == "target.0.visible_radius"
+    )
+
+
+def test_missing_bb_keeps_measurement_none_and_channel_fallback(tmp_path):
+    """bb 缺失：测量域 visible_radius=None + 双 limitation 码；通道域仍发兜底
+    常数（有限数，schema 硬约束）并带 visible_radius_fallback_constant 标注。"""
+    round_dir = tmp_path / "ext-radius-bb-missing"
+    _write_single_target_sidecars(round_dir, (4000.0, 10.0, 0.0), with_bb=False)
+    result = _frustum_build(round_dir)
+
+    # 测量域：样本半径全部 None（不可作几何依据），绝不冒充测量值。
+    samples = result["local_samples"]["target.0.position"]
+    assert len(samples) == 30
+    assert all(sample["visible_radius"] is None for sample in samples)
+    # run 级：既有 bb_missing_default_radius + 新 target_radius_measurement_unavailable。
+    assert "bb_missing_default_radius" in result["limitations"]
+    assert "target_radius_measurement_unavailable" in result["limitations"]
+    assert result["quality"]["status"] == "limited"
+    # 通道域：点值有限正数（兜底常数 30cm 的投影半径），通道与 track summary
+    # 都带 fallback 标注；signal_bundle 校验通过（_finite_number 不拒）。
+    radius_points = _radius_sample_set(result)["points"]
+    assert len(radius_points) == 30
+    assert all(
+        isinstance(point[1], float) and math.isfinite(point[1]) and point[1] > 0.0
+        for point in radius_points
+    )
+    assert "visible_radius_fallback_constant" in _radius_channel(result)["limitations"]
+    summary = result["track_summaries"][0]
+    assert summary["visible_radius_px"] > 0.0
+    assert "visible_radius_fallback_constant" in summary["limitations"]
+    validate_signal_bundle_v1(result["signal_bundle"])
+
+
+def test_bb_window_covering_keeps_measured_radius_without_new_limitations(tmp_path):
+    """bb 在窗内：一切照旧——样本半径有值，不出现任何新 limitation 码。"""
+    round_dir = tmp_path / "ext-radius-bb-covered"
+    _write_single_target_sidecars(round_dir, (4000.0, 10.0, 0.0), radius_cm=60.0)
+    result = _frustum_build(round_dir)
+
+    samples = result["local_samples"]["target.0.position"]
+    assert samples
+    assert all(
+        isinstance(sample["visible_radius"], float)
+        and math.isfinite(sample["visible_radius"])
+        and sample["visible_radius"] > 0.0
+        for sample in samples
+    )
+    assert "bb_missing_default_radius" not in result["limitations"]
+    assert "target_radius_measurement_unavailable" not in result["limitations"]
+    assert "visible_radius_fallback_constant" not in (
+        _radius_channel(result)["limitations"]
+    )
+    assert "visible_radius_fallback_constant" not in (
+        result["track_summaries"][0]["limitations"]
+    )
 
 
 def test_telemetry_profile_has_no_retired_cv_disclosure():
@@ -394,7 +472,8 @@ def test_visual_result_shape_and_evidence_validation(built_results):
                     "canonical_time_ms", "x", "y", "visible_radius", "confidence",
                 } <= set(sample)
                 assert math.isfinite(sample["x"]) and math.isfinite(sample["y"])
-                assert sample["visible_radius"] > 0.0
+                # bb 缺失/窗外时测量域半径为 None（兜底常数只进通道域）。
+                assert sample["visible_radius"] is None or sample["visible_radius"] > 0.0
         # quality 合同：status / enabled_metric_families / limitations。
         # CV 降级披露退役后 limitation 只剩单局数据问题，允许为空。
         quality = result["quality"]

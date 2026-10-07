@@ -419,11 +419,15 @@ def _build_radius_lookup(
     return windows, fallback, limitations
 
 
-def _radius_at(windows: Sequence[tuple[float, float, float]], fallback: float, t: float) -> float:
+def _radius_at(
+    windows: Sequence[tuple[float, float, float]], fallback: float, t: float,
+) -> tuple[float, bool]:
+    """(radius, measured)。measured=False 表示 t 未被任何 bb 窗覆盖，radius 是
+    兜底常数——只可用于通道域发射，不可作为测量域几何依据。"""
     for lo, hi, radius in windows:
         if lo <= t <= hi:
-            return radius
-    return fallback
+            return radius, True
+    return fallback, False
 
 
 def _interpolate_in_life(
@@ -608,7 +612,9 @@ def build_telemetry_visual_result(
             "confidence": 1.0,
         })
         # fov 用全轮稳健值（中位，撕裂帧不逐帧跟随）：同一轮内像素尺度必须一致。
-        radius_cm = _radius_at(radius_windows, fallback_radius, frame_t)
+        # bb 窗未覆盖该帧时 radius 是兜底常数：测量域样本记 None（不可作几何
+        # 依据），通道域发射时才回填兜底值（schema 硬约束点值必须有限）。
+        radius_cm, radius_measured = _radius_at(radius_windows, fallback_radius, frame_t)
         for tid in sorted(targets):
             target = targets[tid]
             world = None
@@ -653,10 +659,14 @@ def build_telemetry_visual_result(
                 "canonical_time_ms": canonical_ms,
                 "x": px_x,
                 "y": px_y,
-                "visible_radius": px_radius,
+                "visible_radius": px_radius if radius_measured else None,
                 "confidence": 1.0,
                 "measurement_source": "telemetry_world_projection",
             })
+            if not radius_measured:
+                # 兜底半径流进了任何需要 px 半径的几何判定（tracking on_target、
+                # dynamic_clicking 归一误差），必须显式披露而非静默降级。
+                add_limitation("target_radius_measurement_unavailable")
     if view_sample_count == 0:
         raise ValueError("telemetry sidecar views fall outside the canonical window")
 
@@ -735,7 +745,12 @@ def build_telemetry_visual_result(
     sample_sets: list[dict] = []
     channels: list[dict] = []
 
-    def add_channel(channel_key: str, points: list[list[float]], coverage: float) -> None:
+    def add_channel(
+        channel_key: str,
+        points: list[list[float]],
+        coverage: float,
+        extra_limitations: Sequence[str] = (),
+    ) -> None:
         sample_ref = f"{analysis_ref}:samples:{channel_key.replace('.', '-')}"
         sample_sets.append({
             "sample_set_id": sample_ref,
@@ -753,7 +768,7 @@ def build_telemetry_visual_result(
             "coverage": min(1.0, coverage),
             "confidence_summary": 1.0,
             "transform_version": TELEMETRY_PRODUCER_VERSION,
-            "limitations": list(quality["limitations"]),
+            "limitations": [*quality["limitations"], *extra_limitations],
         })
 
     add_channel(
@@ -780,22 +795,41 @@ def build_telemetry_visual_result(
             [[s["canonical_time_ms"], s["y"]] for s in samples],
             len(samples) / view_sample_count,
         )
+        # 通道域（signal_bundle）：sample_sets 点值必须有限数（schema 硬约束，
+        # analysis_evidence._finite_number 拒 None），测量域的 None 在这里回填
+        # 兜底常数并显式标注——outcome 交叉校验强制 visible_radius 通道在场。
+        radius_fallback_used = any(s["visible_radius"] is None for s in samples)
         add_channel(
             f"target.{tid}.visible_radius",
-            [[s["canonical_time_ms"], s["visible_radius"]] for s in samples],
+            [
+                [
+                    s["canonical_time_ms"],
+                    s["visible_radius"] if s["visible_radius"] is not None else fallback_radius,
+                ]
+                for s in samples
+            ],
             len(samples) / view_sample_count,
+            extra_limitations=(
+                ["visible_radius_fallback_constant"] if radius_fallback_used else []
+            ),
         )
         track_summaries.append({
             "track_ref": f"{analysis_ref}:target-track:{tid}",
             "identity_source": "telemetry_addr_identity",
             "visible_radius_px": (
-                float(statistics.median(s["visible_radius"] for s in samples))
+                float(statistics.median(
+                    s["visible_radius"] if s["visible_radius"] is not None else fallback_radius
+                    for s in samples
+                ))
                 if samples
                 else 0.0
             ),
             "sample_count": len(samples),
             "coverage": min(1.0, len(samples) / view_sample_count),
-            "limitations": list(bb_limitations),
+            "limitations": [
+                *bb_limitations,
+                *(["visible_radius_fallback_constant"] if radius_fallback_used else []),
+            ],
         })
 
     signal_bundle = {

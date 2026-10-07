@@ -71,7 +71,11 @@ def _points(raw: Any, field: str, *, radius: bool = False) -> list[dict[str, flo
             "confidence": _ratio(item.get("confidence", 1.0), f"{field}[{index}].confidence"),
         }
         if radius:
-            point["radius"] = _number(item.get("radius"), f"{field}[{index}].radius", minimum=0.01)
+            # radius=None（遥测 bb 缺失时的兜底语义：测量不可用）→ 不写 radius
+            # 键，随行降级；非法非 None 值仍 fail-closed。
+            radius_value = item.get("radius")
+            if radius_value is not None:
+                point["radius"] = _number(radius_value, f"{field}[{index}].radius", minimum=0.01)
         points.append(point)
         previous = int(time_ms)
     return points
@@ -190,7 +194,12 @@ def _acquisition_time_ms(
         sample_time = int(sample["canonical_time_ms"])
         if not start_ms <= sample_time <= click_time_ms:
             continue
-        if hypot(float(sample["x"]) - aim_point[0], float(sample["y"]) - aim_point[1]) <= float(sample["radius"]):
+        # 半径缺测（遥测 bb 兜底 → None）的帧无法证明"准星在目标内"，跳过；
+        # 后续有半径帧仍可证明 acquisition，全缺测则落 not_observed limitation。
+        radius = sample.get("radius")
+        if radius is None:
+            continue
+        if hypot(float(sample["x"]) - aim_point[0], float(sample["y"]) - aim_point[1]) <= float(radius):
             return start_ms, sample_time - start_ms, None
     return start_ms, None, "acquisition_not_observed_before_click"
 
@@ -228,6 +237,11 @@ def _target_at_observation_frame(
         if sample_time < observation_time_ms:
             return None
         if sample_time == observation_time_ms:
+            # 半径缺测（遥测 bb 兜底 → None / 键缺省）的帧不作为几何关联候选：
+            # 返回 None 让行落 target_click_association_unavailable，_aim_is_
+            # inside_target 随之不可达（不拿兜底常数硬算几何）。
+            if point.get("radius") is None:
+                return None
             return {
                 key: float(point[key])
                 for key in ("x", "y", "confidence", "radius")

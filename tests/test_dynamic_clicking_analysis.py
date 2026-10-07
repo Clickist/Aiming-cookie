@@ -521,6 +521,44 @@ def test_ambiguous_target_identity_keeps_click_row_but_withholds_target_relative
     assert metric["coverage"] == 0.0
 
 
+def test_unmeasured_radius_frame_is_not_a_geometric_candidate():
+    """遥测 bb 兜底 → 样本 radius=None：该帧不作为几何关联候选（不 crash、
+    不拿兜底常数硬算几何），行落 target_click_association_unavailable 并降级。"""
+    payload = _payload()
+    payload["visual_event_bundle"]["outcome_associations"] = []
+    payload["target_tracks"][0]["samples"][-1]["radius"] = None
+
+    result = analyze_dynamic_clicking_v1(payload)
+
+    row = result["processed_rows"][0]
+    assert row["target_track_ref"] is None
+    assert row["target_association_basis"] == "unavailable"
+    assert row["normalized_click_error"] is None
+    assert row["target_radius"] is None
+    assert "target_click_association_unavailable" in row["limitations"]
+    assert result["support_status"] == "partial"
+    assert result["metrics"]["dynamic_clicking.normalized_click_error"][
+        "availability"
+    ] == "unavailable"
+
+
+def test_mixed_measured_and_unmeasured_radius_keeps_click_geometry_and_acquisition():
+    """混合半径轨（中间帧缺测、点击帧在测）：点击帧几何照旧，acquisition 扫描
+    跳过缺测帧（不 KeyError）且仍由在测点击帧证明——不 crash、不放大降级。"""
+    payload = _payload()
+    payload["target_tracks"][0]["samples"][1]["radius"] = None
+
+    result = analyze_dynamic_clicking_v1(payload)
+
+    row = result["processed_rows"][0]
+    assert row["normalized_click_error"] == pytest.approx(0.9)
+    assert row["target_radius"] == pytest.approx(10.0)
+    assert row["outcome_available"] is True
+    assert row["acquisition_time_ms"] == 200
+    assert "acquisition_not_observed_before_click" not in row["limitations"]
+    assert result["support_status"] == "supported"
+
+
 def test_click_relative_error_survives_missing_outcome_association_but_accuracy_does_not():
     payload = _payload()
     payload["visual_event_bundle"]["outcome_associations"][0].update({
