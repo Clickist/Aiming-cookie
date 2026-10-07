@@ -79,3 +79,56 @@ test("default coach prompt carries the sensitivity scenario-attribution rule", (
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
   }
 });
+
+test("default coach prompt carries the honest empty-diagnosis rule", () => {
+  // Prompt 硬规矩合同：问题列表为空时必须明说没有标出问题，严禁把空
+  // 字段编成有内容或发明评级词。生产案例：空 issues 被讲成「分析标出
+  // 典型问题，属于基线档」。
+  const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
+  try {
+    delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    const prompt = loadDefaultCoachSystemPrompt();
+    assert.match(prompt, /问题列表（diagnosis\.issues）为空时，必须明说「这一局没有标出典型问题」/);
+    assert.match(prompt, /严禁说成「标出了问题」/);
+    assert.match(prompt, /严禁发明评级词/);
+  } finally {
+    if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
+  }
+});
+
+test("default coach prompt carries the real-names-only scenario recommendation rule", () => {
+  // Prompt 硬规矩合同：具名场景推荐必须来自检索结果原文；检索结果里
+  // 没有的具名场景（尤其带人名前缀、Easy/Very Easy 档位后缀）严禁说
+  // 出口。生产案例：凭记忆说出知识库里不存在的「WHJ SmoothStrafeSphere
+  // 的 Very Easy 和 Easy 两档」。
+  const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
+  try {
+    delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    const prompt = loadDefaultCoachSystemPrompt();
+    assert.match(prompt, /场景名与档位必须来自实际检索结果原文/);
+    assert.match(prompt, /严禁说出口，改用泛化描述/);
+    assert.match(prompt, /不得凭记忆编造场景名或档位/);
+  } finally {
+    if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
+  }
+});
+
+test("default coach prompt carries the internal-stats expression rule", () => {
+  // Prompt 硬规矩合同：coverage/置信度是分析器内部口径，不得对用户讲
+  // 成「数据覆盖率/证据覆盖率」或暗示数据丢失。生产案例：coverage
+  // 0.539 被讲成「证据覆盖率只有五成多」。
+  const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
+  try {
+    delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    const prompt = loadDefaultCoachSystemPrompt();
+    assert.match(prompt, /内部统计不外讲/);
+    assert.match(prompt, /不对用户表述为「数据覆盖率」「证据覆盖率」/);
+    assert.match(prompt, /「分析器可用的采样比例」/);
+    assert.match(prompt, /不得暗示数据丢失/);
+  } finally {
+    if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
+  }
+});
