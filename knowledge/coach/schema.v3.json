@@ -76,6 +76,7 @@
         "signals": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
         "metric_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
         "family_scope": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"enum": ["static_clicking", "dynamic_clicking", "predictable_tracking", "reactive_tracking", "control_tracking", "target_switching", "movement_aiming"]}},
+        "reading_scope": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["speed_throughput", "precision_terminal", "dynamic_clicking", "continuous_tracking"]}},
         "observation_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
         "quality_prerequisites": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
         "definition": {"$ref": "#/$defs/section"},

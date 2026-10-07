@@ -326,7 +326,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-10-04.v14"
+    assert result["registry_version"] == "2026-10-07.v15"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -962,7 +962,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-10-04.v14"
+    assert registry.load_registry()["registry_version"] == "2026-10-07.v15"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1342,7 +1342,7 @@ _V12_PRESCRIPTION_COUNT = 60
 def test_v12_corpus_prescriptions_are_the_default_registry():
     root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
     schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
-    packaged = json.loads((root / "registry.v14.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v15.json").read_text(encoding="utf-8"))
 
     Draft202012Validator.check_schema(schema)
     errors = sorted(
@@ -1352,7 +1352,7 @@ def test_v12_corpus_prescriptions_are_the_default_registry():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry()
     assert loaded == registry.validate_registry(packaged)
-    assert loaded["registry_version"] == "2026-10-04.v14"
+    assert loaded["registry_version"] == "2026-10-07.v15"
     assert loaded["schema_version"] == "coach_knowledge_registry.v3"
     assert len(loaded["entries"]) == 118
     assert len(loaded["sources"]) == 135
@@ -1370,7 +1370,8 @@ def test_v12_corpus_prescriptions_are_the_default_registry():
         (Path(__file__).resolve().parents[2] / "knowledge" / "coach" / "migrations" / "2026-10-04-v13-to-v14-audit.json").read_text(encoding="utf-8")
     )
     amended = set(audit["amended_entry_ids"])
-    by_id = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    v14_loaded = registry.load_registry(registry_version="2026-10-04.v14")
+    by_id = {entry["entry_id"]: entry for entry in v14_loaded["entries"]}
     assert set(by_id) == {entry["entry_id"] for entry in v13["entries"]}
     assert loaded["signal_aliases"] == v13["signal_aliases"]
     for old in v13["entries"]:
@@ -1472,3 +1473,69 @@ def test_v12_corpus_prescriptions_are_the_default_registry():
     assert registry.load_registry(
         registry_version="2026-09-10.v11"
     )["registry_version"] == "2026-09-10.v11"
+
+
+def test_v15_adds_reading_scope_subaxis_and_carries_v14_over():
+    """v15 = Tile Frenzy 停稳错配审计施工单 #1：可选 reading_scope 图语义子轴。
+
+    白名单语义（缺席=不限读图）；打标 8 条停稳类 + metronome 节拍条目
+    （migrations/2026-10-07-v14-to-v15-audit.json）。entry_version 全部不动
+    ——诊断引用面钉着 knowledge:static.flicking-terminal-control@3。
+    """
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    audit = json.loads(
+        (root / "migrations" / "2026-10-07-v14-to-v15-audit.json").read_text(encoding="utf-8")
+    )
+    amended = set(audit["amended_entry_ids"])
+    loaded = registry.load_registry()
+    v14 = registry.load_registry(registry_version="2026-10-04.v14")
+
+    assert loaded["registry_version"] == "2026-10-07.v15"
+    assert len(loaded["entries"]) == len(v14["entries"]) == 118
+    assert len(loaded["sources"]) == len(v14["sources"]) == 135
+
+    # Audited set 之外逐字节承自 v14（含 v14 当日已冻结的 Pokey Bowl/标注修订）。
+    v14_by_id = {entry["entry_id"]: entry for entry in v14["entries"]}
+    by_id = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    for entry_id, old in v14_by_id.items():
+        if entry_id not in amended:
+            assert by_id[entry_id] == old, entry_id
+
+    # Amended entries: 只新增 reading_scope + scope 文本声明，其余字段与
+    # entry_version 逐字节保留。
+    for entry_id in amended:
+        old = v14_by_id[entry_id]
+        new = by_id[entry_id]
+        assert new["entry_version"] == old["entry_version"], entry_id
+        for key, value in old.items():
+            if key == "scope":
+                continue
+            assert new[key] == value, (entry_id, key)
+        assert new["reading_scope"] == audit["reading_scope_assignment"][entry_id], entry_id
+        assert new["scope"]["text"].startswith(old["scope"]["text"]), entry_id
+
+    # 仲裁锚点：停稳派 cue 只在精瞄读图出场；节拍配速法带速度吞吐优先。
+    assert by_id["community.continuous-braking-cue"]["reading_scope"] == ["precision_terminal"]
+    metronome = by_id["community.aimwiki.metronome-pacing-method"]
+    assert metronome["reading_scope"] == ["speed_throughput", "precision_terminal"]
+    assert "速度吞吐型读图优先教案" in metronome["scope"]["text"]
+
+    # 张力自查条目经评估不打标：不是收尾确认教学法，速度吞吐图上仍要可用。
+    tension_id = "community.aimwiki.tension-screen-signs-and-drills"
+    assert "reading_scope" not in by_id[tension_id]
+    assert audit["evaluated_not_amended_entry_ids"] == [tension_id]
+
+    # 校验器拒绝词汇表之外的 reading_scope 值（与 TS validateEntryV3 同口径）。
+    malformed = json.loads((root / "registry.v14.json").read_text(encoding="utf-8"))
+    target = next(
+        entry for entry in malformed["entries"]
+        if entry["entry_id"] == "static.flicking-terminal-control"
+    )
+    target["reading_scope"] = ["throughput_only"]
+    with pytest.raises(registry.KnowledgeRegistryError, match="reading_scope is invalid"):
+        registry.validate_registry(malformed)
+
+    # v14 stays loadable as history after v15 is packaged.
+    assert registry.load_registry(
+        registry_version="2026-10-04.v14"
+    )["registry_version"] == "2026-10-04.v14"

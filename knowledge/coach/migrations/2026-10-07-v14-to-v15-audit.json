@@ -1,0 +1,40 @@
+{
+ "schema_version": "coach_knowledge_migration_audit.v3",
+ "source_registry_version": "2026-10-04.v14",
+ "target_registry_version": "2026-10-07.v15",
+ "generated_at": "2026-10-07",
+ "migration_kind": "coach_knowledge_reading_scope_subaxis",
+ "summary": "Coach 链条审计施工单 #1（只读审计：.zcode/route-mining/coach-chain-audit-tilefrenzy.md 第四节/第二节C/D，Tile Frenzy'停稳再点'教学错配）。Schema 级新增可选条目字段 reading_scope（图语义子轴，family_scope 之外的第二个作用域维度），词汇表四值：speed_throughput（速度吞吐型，Tile Frenzy/Gridshot 类大靶高节奏）/ precision_terminal（精瞄终端控制型，小靶收尾确认）/ dynamic_clicking（动态点击读图，含转火）/ continuous_tracking（持续跟枪读图）——后两值与 scenario_reading_descriptor.training.semantics 的 dynamic_clicking/continuous_tracking 对齐，static_clicking 精化为前两值。语义=白名单限定：字段缺席=不限图语义；在场=条目教学法只适用于所列读图，速度吞吐读图下该条目不出场。9 条停稳/节奏类条目打标（8 条 settle 类 + metronome 加'速度吞吐优先'）；community.aimwiki.tension-screen-signs-and-drills 经评估不打标（张力自查不是收尾确认教学法，限制它会错禁速度图上的张力觉察）。无条目增删，118 条目与 135 来源保持，entry_version 全部不变；仅 9 条目新增 reading_scope 字段并在 scope.text 追加一句图语义作用域声明，其余逐字节承自 v14（含 v14 当日的 Pokey Bowl/标注修订）。词汇依据：capability-vocabulary.md v1.3 九域（域1静态定位/域4微调/域5确认时机的教学含义）。",
+ "reading_scope_vocabulary": {
+  "speed_throughput": "速度吞吐型读图：大靶、高节奏、高命中高吞吐（Tile Frenzy/Gridshot 类），教案=节奏/扫掠效率/节拍配速，禁停稳类收尾话术",
+  "precision_terminal": "精瞄终端控制型读图：小靶静态、收尾确认/欠甩修正优先，停稳确认类话术适用",
+  "dynamic_clicking": "动态点击读图（含转火衔接）：移动靶点击/转火，与 scenario_reading_descriptor.training.semantics 的 dynamic_clicking 对齐",
+  "continuous_tracking": "持续跟枪读图：停稳服务持续跟踪，与 scenario_reading_descriptor.training.semantics 的 continuous_tracking 对齐"
+ },
+ "reading_scope_assignment": {
+  "static.flicking-terminal-control": ["precision_terminal"],
+  "community.qiluno.confirmation-timing-schools": ["precision_terminal"],
+  "community.continuous-braking-cue": ["precision_terminal"],
+  "switching.transition-and-arrival": ["dynamic_clicking", "precision_terminal"],
+  "prescription.p011.target-switching-transition": ["dynamic_clicking", "precision_terminal"],
+  "prescription.p013.target-switching-transition": ["dynamic_clicking", "precision_terminal"],
+  "prescription.p015.continuous-tracking-control": ["continuous_tracking", "dynamic_clicking"],
+  "prescription.p030.static-clicking-terminal-control": ["precision_terminal"],
+  "community.aimwiki.metronome-pacing-method": ["speed_throughput", "precision_terminal"]
+ },
+ "amended_entry_ids": [
+  "static.flicking-terminal-control",
+  "community.qiluno.confirmation-timing-schools",
+  "community.continuous-braking-cue",
+  "switching.transition-and-arrival",
+  "prescription.p011.target-switching-transition",
+  "prescription.p013.target-switching-transition",
+  "prescription.p015.continuous-tracking-control",
+  "prescription.p030.static-clicking-terminal-control",
+  "community.aimwiki.metronome-pacing-method"
+ ],
+ "evaluated_not_amended_entry_ids": [
+  "community.aimwiki.tension-screen-signs-and-drills"
+ ],
+ "two_school_arbitration": "registry 停稳派 cue（static.flicking-terminal-control / community.continuous-braking-cue）与静态处方连续制动派（zh.py FINDING_PRESCRIPTIONS'把修正并入减速过程，避免停住后再二次修正'）的并存矛盾按图语义仲裁：速度吞吐读图两派收尾话术都退后、只谈节奏配速（metronome 优先）；精瞄读图两派并存、按用户现象选派（community.qiluno 条目'两种流派各有道理'口径）。仲裁执行面：coach-system.md 图语义映射节（施工单 #3）+ 知识索引透出 family_scope/reading_scope（施工单 #2）。"
+}

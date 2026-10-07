@@ -37,7 +37,8 @@ REGISTRY_PATH_V11 = _REGISTRY_ROOT / "registry.v11.json"
 REGISTRY_PATH_V12 = _REGISTRY_ROOT / "registry.v12.json"
 REGISTRY_PATH_V13 = _REGISTRY_ROOT / "registry.v13.json"
 REGISTRY_PATH_V14 = _REGISTRY_ROOT / "registry.v14.json"
-REGISTRY_PATH = REGISTRY_PATH_V14
+REGISTRY_PATH_V15 = _REGISTRY_ROOT / "registry.v15.json"
+REGISTRY_PATH = REGISTRY_PATH_V15
 _PACKAGED_REGISTRIES = {
     "2026-07-14.v1": REGISTRY_PATH_V1,
     "2026-07-22.v2": REGISTRY_PATH_V2,
@@ -53,6 +54,7 @@ _PACKAGED_REGISTRIES = {
     "2026-09-12.v12": REGISTRY_PATH_V12,
     "2026-09-20.v13": REGISTRY_PATH_V13,
     "2026-10-04.v14": REGISTRY_PATH_V14,
+    "2026-10-07.v15": REGISTRY_PATH_V15,
 }
 # [2026-10-05] 处方场景 ref 的"活跃性"校验只跟随最新打包版本：历史版本是被
 # 冻结的当年数据（其场景指向在发布时有效），场景 registry 的后续演进
@@ -149,6 +151,14 @@ _CATEGORIES_V2 = {
 _FAMILIES_V2 = {
     "static_clicking", "dynamic_clicking", "predictable_tracking",
     "reactive_tracking", "control_tracking", "target_switching", "movement_aiming",
+}
+# v15 图语义子轴（reading_scope，可选）：family_scope 之外的第二个作用域维度。
+# 语义=白名单限定：缺席=不限图语义；在场=条目只适用于所列读图（速度吞吐读图
+# 下停稳类条目不出场）。词汇与 scenario_reading_descriptor.training.semantics
+# 对齐（static_clicking 精化为 speed_throughput / precision_terminal 两值）。
+_READING_SCOPES = {
+    "speed_throughput", "precision_terminal", "dynamic_clicking",
+    "continuous_tracking",
 }
 _DIRECTIONS_V2 = {
     "lower_better", "higher_better", "target_band", "descriptive_only",
@@ -657,8 +667,20 @@ def _normalize_entry_v3(
         "stop_adjust_rule", _SCENARIO_PRESCRIPTION_FIELD,
     }
     base_fields = set(_ENTRY_FIELDS_V2) - optional_fields
-    if not isinstance(raw, Mapping) or not base_fields <= set(raw) or set(raw) - base_fields - optional_fields:
+    if not isinstance(raw, Mapping) or not base_fields <= set(raw) or set(raw) - base_fields - optional_fields - {"reading_scope"}:
         raise KnowledgeRegistryError(f"{field} fields are invalid")
+    # reading_scope（v15 可选子轴）在 v2 字段集之外：先校验再摘出，交给 v2
+    # 归一化后原样挂回，保持历史 v2 注册表的冻结校验不受影响。
+    reading_scope: list[str] | None = None
+    if "reading_scope" in raw:
+        reading_scope = _string_list(
+            raw["reading_scope"], f"{field}.reading_scope", allow_empty=False
+        )
+        if set(reading_scope) - _READING_SCOPES:
+            raise KnowledgeRegistryError(f"{field}.reading_scope is invalid")
+    normalized_input = {
+        key: value for key, value in raw.items() if key != "reading_scope"
+    }
     supported_uses = _string_list(
         raw["supported_uses"], f"{field}.supported_uses", allow_empty=False,
     )
@@ -684,7 +706,6 @@ def _normalize_entry_v3(
         if not raw.get("observation_refs") or not raw.get("quality_prerequisites"):
             raise KnowledgeRegistryError(f"{field} diagnosis_support context is required")
 
-    normalized_input = dict(raw)
     for name in optional_fields:
         normalized_input.setdefault(name, "not_applicable")
     normalized = _normalize_entry_v2(
@@ -699,6 +720,8 @@ def _normalize_entry_v3(
     )
     for name in forbidden_fields:
         normalized.pop(name, None)
+    if reading_scope is not None:
+        normalized["reading_scope"] = reading_scope
     return normalized
 
 
@@ -992,7 +1015,8 @@ __all__ = [
     "KnowledgeRegistryError", "REGISTRY_PATH", "REGISTRY_PATH_V1", "REGISTRY_PATH_V2",
     "REGISTRY_PATH_V3", "REGISTRY_PATH_V4", "REGISTRY_PATH_V5", "REGISTRY_PATH_V6",
     "REGISTRY_PATH_V7", "REGISTRY_PATH_V8", "REGISTRY_PATH_V9", "REGISTRY_PATH_V10",
-    "REGISTRY_PATH_V11", "REGISTRY_PATH_V12", "REGISTRY_PATH_V13", "REGISTRY_PATH_V14", "REGISTRY_SCHEMA_VERSION",
+    "REGISTRY_PATH_V11", "REGISTRY_PATH_V12", "REGISTRY_PATH_V13", "REGISTRY_PATH_V14",
+    "REGISTRY_PATH_V15", "REGISTRY_SCHEMA_VERSION",
     "REGISTRY_SCHEMA_VERSION_V1", "REGISTRY_SCHEMA_VERSION_V2", "REGISTRY_SCHEMA_VERSION_V3",
     "MAX_RESULTS", "claim_ref", "entry_ref", "load_registry", "query_registry",
     "resolve_entry", "validate_registry", "PRESCRIPTION_ENTRY_PREFIX",

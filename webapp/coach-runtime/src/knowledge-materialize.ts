@@ -32,8 +32,12 @@ import {
   type KnowledgeRegistry,
 } from "./knowledge-registry.ts";
 
-const INDEX_SCHEMA_VERSION = "coach_knowledge_index.v1";
-const PRESCRIPTION_INDEX_SCHEMA_VERSION = "coach_prescription_index.v1";
+// v2: index entries carry family_scope (+ reading_scope when the entry has
+// the v15 sub-axis) so the Coach sees an entry's scope at the index layer —
+// the Tile Frenzy audit found scope text invisible unless the full entry was
+// read, which is how precision-settle cues leaked onto speed-throughput maps.
+const INDEX_SCHEMA_VERSION = "coach_knowledge_index.v2";
+const PRESCRIPTION_INDEX_SCHEMA_VERSION = "coach_prescription_index.v2";
 const ENTRY_SCHEMA_VERSION = "coach_knowledge_entry.v1";
 const SUMMARY_MAX_CHARS = 160;
 const PRESCRIPTION_PREFIX = "prescription.";
@@ -50,6 +54,8 @@ type KnowledgeIndex = {
     topics: string[];
     signals: string[];
     metric_refs: string[];
+    family_scope?: string[];
+    reading_scope?: string[];
   }>;
 };
 
@@ -64,6 +70,7 @@ type KnowledgePrescriptionIndex = {
     topics: string[];
     signals: string[];
     metric_refs: string[];
+    reading_scope?: string[];
     recommendation: string;
     scenario_availability: string;
   }>;
@@ -90,6 +97,32 @@ function entryFileName(entry: KnowledgeEntry): string {
   return `${ref.replace(/[^A-Za-z0-9._@-]/g, "_")}.json`;
 }
 
+/** Scope fields for index visibility (v1 entries have no family_scope). */
+function entryScopeFields(entry: KnowledgeEntry): {
+  family_scope?: string[];
+  reading_scope?: string[];
+} {
+  if (!("family_scope" in entry)) return {};
+  const v2 = entry as KnowledgeEntryV2;
+  return {
+    family_scope: v2.family_scope,
+    ...(v2.reading_scope === undefined ? {} : { reading_scope: v2.reading_scope }),
+  };
+}
+
+/**
+ * Prescription-index variant: reading_scope only. The prescription sub-index
+ * sits within ~200 bytes of the Coach read tool's 50KB single-read ceiling
+ * (family_scope costs ~7.7KB across 60 entries), and the Tile Frenzy audit
+ * showed family granularity cannot gate prescriptions anyway — Tile Frenzy
+ * shares static_clicking with precision maps. reading_scope is the actionable
+ * semantic gate at the recommendation surface; family_scope stays visible in
+ * the main index and the full entry files.
+ */
+function prescriptionScopeFields(entry: KnowledgeEntryV2): { reading_scope?: string[] } {
+  return entry.reading_scope === undefined ? {} : { reading_scope: entry.reading_scope };
+}
+
 function buildIndex(registry: KnowledgeRegistry, packDisplayName?: string): KnowledgeIndex {
   return {
     schema_version: INDEX_SCHEMA_VERSION,
@@ -103,6 +136,7 @@ function buildIndex(registry: KnowledgeRegistry, packDisplayName?: string): Know
       topics: entry.topics,
       signals: entry.signals,
       metric_refs: entry.metric_refs,
+      ...entryScopeFields(entry),
     })),
   };
 }
@@ -165,6 +199,7 @@ export function buildPrescriptionIndex(
         topics: entry.topics,
         signals: entry.signals,
         metric_refs: entry.metric_refs,
+        ...prescriptionScopeFields(entry),
         recommendation: prescriptionRecommendation(entry),
         scenario_availability: prescriptionScenarioAvailability(entry),
       })),

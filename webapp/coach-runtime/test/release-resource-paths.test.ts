@@ -24,7 +24,7 @@ test("release resource root overrides source prompt, Pi metadata, and knowledge 
 
     process.env.AIMING_COOKIE_RESOURCE_ROOT = repoRoot;
     assert.equal(piSourceRoot(), join(repoRoot, "pi"));
-    assert.equal(loadKnowledgeRegistry().registry_version, "2026-10-04.v14");
+    assert.equal(loadKnowledgeRegistry().registry_version, "2026-10-07.v15");
     assert.ok(activeScenarioProfileRefs().has("scenario:static.1wall_6targets_small@1"));
 
     // Packaged mapping resources: the Python coach engine resolves
@@ -134,6 +134,65 @@ test("default coach prompt carries the internal-stats expression rule", () => {
     assert.match(prompt, /某项指标不可用时直接跳过不提/);
     assert.match(prompt, /不得展开工程细节/);
     assert.match(prompt, /不要告诉用户「我们只有XX」/);
+  } finally {
+    if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;
+  }
+});
+
+test("default coach prompt carries the reading-semantics teaching gate", () => {
+  // Prompt 硬规矩合同：讲解/建议前先判图语义；速度吞吐型（Tile Frenzy/
+  // Gridshot 类高命中高吞吐）的教学法只围绕节奏和扫掠效率展开，停稳确认
+  // 类要求属于精瞄小目标图的教案；精瞄型停稳确认话术照常适用——拦截按
+  // 图语义条件化，不是把停稳话术全局封禁（回归判据：同一局形态在精瞄图
+  // 语义下仍可给"到位后停稳再点"）。
+  // 生产案例（2026-10-07 Coach 链条审计）：Tile Frenzy 局（95.5% 命中、
+  // 约 0.29s/杀）被教"到位了先停稳再点"，并被推荐 Wide Wall 10 Extra
+  // Small 精瞄图。依据：.zcode/route-mining/coach-chain-audit-tilefrenzy.md
+  // 第五节验收用例 + capability-vocabulary.md v1.3 九域教学含义。
+  // 2026-10-07 用户返工：逐词禁令会让教练说话僵化、封不完变体，禁词表
+  // 降级为原则句——用意图说明（为什么不该说）替代词表（不许说哪些词），
+  // 模型按语义自行推出整族收尾确认话术不适用；词表词只保留在本测试里作
+  // 探测词，防止逐词清单回潜进 prompt。
+  // registry 数据面由 v15 reading_scope 子轴承载（knowledge/coach/
+  // migrations/2026-10-07-v14-to-v15-audit.json），索引面由 knowledge-
+  // materialize 透出 family_scope/reading_scope。
+  const previous = process.env.AIMING_COOKIE_RESOURCE_ROOT;
+  try {
+    delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
+    const prompt = loadDefaultCoachSystemPrompt();
+    assert.match(prompt, /## 图语义与教学法/);
+    assert.match(prompt, /scenario_reading_descriptor 的 training 字段/);
+    // 映射规则：速度吞吐 → 节奏配速（metronome 口径）；原则句替代逐词禁令。
+    assert.match(prompt, /节拍配速法条目（metronome-pacing-method）/);
+    assert.match(prompt, /BPM=每秒击杀数×60/);
+    assert.match(prompt, /速度吞吐型图的教学法只围绕节奏和扫掠效率展开/);
+    assert.match(prompt, /停稳确认类要求属于精瞄小目标图的教案，不适用这类图/);
+    assert.match(prompt, /当"收尾修正"的练习处方推出去/);
+    // 行为级断言：原则句所在节内不得再出现逐词禁令清单——速度吞吐语义的
+    // 出口是"整族停稳确认话术不适用"的语义判断，不是可被绕过的封闭词表。
+    const section = prompt.slice(
+      prompt.indexOf("## 图语义与教学法"),
+      prompt.indexOf("## 术语与话术"),
+    );
+    assert.ok(section.length > 0);
+    for (const banned of [
+      "停稳了再点/先停稳",
+      "到位了先停稳",
+      "刹住（急停）再点",
+      "落定后确认",
+      "（双重/二次）确认再点",
+    ]) {
+      assert.ok(!section.includes(banned), `禁词表已降级为原则句，逐词清单不得回潜：${banned}`);
+    }
+    // 两派仲裁与回归判据：精瞄域停稳确认照常适用，两派并存按用户现象选派。
+    assert.match(prompt, /"到位后停稳再点"这类停稳确认话术适用/);
+    assert.match(prompt, /两种练法并存/);
+    assert.match(prompt, /速度吞吐图上两派收尾话术都退后，只谈节奏/);
+    // 索引作用域面：family_scope / reading_scope 进检索索引（施工单 #2）。
+    assert.match(prompt, /reading_scope/);
+    // 既有术语映射不被破坏（审计 A.1/A.2 保留，靠本节语义门条件化）。
+    assert.match(prompt, /settle→停稳/);
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previous;

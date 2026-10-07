@@ -36,6 +36,7 @@ function registryFiles(): Map<string, string> {
     ["2026-09-12.v12", join(registry, "registry.v12.json")],
     ["2026-09-20.v13", join(registry, "registry.v13.json")],
     ["2026-10-04.v14", join(registry, "registry.v14.json")],
+    ["2026-10-07.v15", join(registry, "registry.v15.json")],
   ]);
 }
 // v12 adds 60 corpus prescription entries; the packaged registry now exceeds
@@ -170,6 +171,13 @@ const FAMILIES_V2 = new Set([
   "static_clicking", "dynamic_clicking", "predictable_tracking",
   "reactive_tracking", "control_tracking", "target_switching", "movement_aiming",
 ]);
+// v15 图语义子轴（reading_scope，可选）：family_scope 之外的第二个作用域维度。
+// 语义=白名单限定：缺席=不限图语义；在场=条目只适用于所列读图（速度吞吐读图
+// 下停稳类条目不出场）。词汇与 scenario_reading_descriptor.training.semantics
+// 对齐（static_clicking 精化为 speed_throughput / precision_terminal 两值）。
+const READING_SCOPES = new Set([
+  "speed_throughput", "precision_terminal", "dynamic_clicking", "continuous_tracking",
+]);
 const DIRECTIONS_V2 = new Set([
   "lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only",
 ]);
@@ -227,6 +235,8 @@ export type KnowledgeEntryV2 = {
   signals: string[];
   metric_refs: string[];
   family_scope: string[];
+  /** v15 图语义子轴：缺席=不限读图；在场=条目只适用于所列读图（白名单）。 */
+  reading_scope?: string[];
   observation_refs: string[];
   quality_prerequisites: string[];
   definition: KnowledgeSectionV2;
@@ -644,8 +654,17 @@ function validateEntryV3(
   ]);
   const baseFields = new Set([...ENTRY_FIELDS_V2].filter((field) => !optionalFields.has(field)));
   if (!isRecord(raw) || ![...baseFields].every((field) => field in raw)
-    || Object.keys(raw).some((field) => !baseFields.has(field) && !optionalFields.has(field))) {
+    || Object.keys(raw).some((field) => !baseFields.has(field) && !optionalFields.has(field) && field !== "reading_scope")) {
     throw new KnowledgeRegistryError(`entry[${index}] fields are invalid`);
+  }
+  // reading_scope（v15 可选子轴）在 v2 字段集之外：先校验再摘出，交给 v2
+  // 校验后原样挂回，保持历史 v2 注册表的冻结校验不受影响。Parity: Python
+  // `_normalize_entry_v3` 的 reading_scope 处理。
+  const readingScope = "reading_scope" in raw
+    ? stringList(raw.reading_scope, "reading_scope", false)
+    : undefined;
+  if (readingScope !== undefined && readingScope.some((item) => !READING_SCOPES.has(item))) {
+    throw new KnowledgeRegistryError("reading_scope is invalid");
   }
   const supportedUses = stringList(raw.supported_uses, "supported_uses", false);
   const validPrefix = CAPABILITY_PREFIXES_V3.some((prefix) => (
@@ -678,6 +697,7 @@ function validateEntryV3(
     throw new KnowledgeRegistryError("diagnosis_support context is required");
   }
   const normalized: Record<string, unknown> = { ...raw };
+  delete normalized.reading_scope;
   for (const field of optionalFields) {
     if (!(field in normalized)) normalized[field] = "not_applicable";
   }
@@ -694,6 +714,7 @@ function validateEntryV3(
   for (const field of optionalFields) {
     if (!requiredFields.has(field)) delete (result as unknown as Record<string, unknown>)[field];
   }
+  if (readingScope !== undefined) (result as unknown as Record<string, unknown>).reading_scope = readingScope;
   return result;
 }
 
@@ -821,7 +842,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-10-04.v14"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-10-07.v15"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);

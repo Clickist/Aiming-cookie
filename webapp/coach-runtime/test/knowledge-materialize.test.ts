@@ -26,9 +26,10 @@ test("materialized directory mirrors the non-prescription registry entries", () 
     entries: Array<{
       entry_ref: string; entry_file: string; status: string; summary: string;
       topics: string[]; signals: string[]; metric_refs: string[];
+      family_scope?: string[]; reading_scope?: string[];
     }>;
   };
-  assert.equal(index.schema_version, "coach_knowledge_index.v1");
+  assert.equal(index.schema_version, "coach_knowledge_index.v2");
   assert.equal(index.registry_version, registry.registry_version);
   assert.equal(index.entries.length, mainEntries.length);
   // prescription.* has its own index; it must not appear in the main index.
@@ -37,9 +38,9 @@ test("materialized directory mirrors the non-prescription registry entries", () 
   const prescriptions = JSON.parse(readFileSync(join(knowledgeDir, "prescriptions.json"), "utf-8")) as {
     schema_version: string;
     registry_version: string;
-    entries: Array<{ entry_ref: string; entry_file: string; recommendation: string; scenario_availability: string }>;
+    entries: Array<{ entry_ref: string; entry_file: string; recommendation: string; scenario_availability: string; reading_scope?: string[] }>;
   };
-  assert.equal(prescriptions.schema_version, "coach_prescription_index.v1");
+  assert.equal(prescriptions.schema_version, "coach_prescription_index.v2");
   assert.equal(prescriptions.registry_version, registry.registry_version);
   assert.equal(prescriptions.entries.length, prescriptionEntries.length);
 
@@ -62,6 +63,24 @@ test("materialized directory mirrors the non-prescription registry entries", () 
     assert.deepEqual(line.metric_refs, entry.metric_refs);
     assert.ok(typeof line.summary === "string" && line.summary.length > 0);
   }
+
+  // v2 index: scope fields are visible at the index layer (Tile Frenzy audit
+  // 施工单 #2 — scope used to be invisible until the full entry was read).
+  // The precision-settle cue carries the precision-only reading sub-axis; the
+  // metronome entry carries speed_throughput priority; untagged entries omit
+  // reading_scope entirely (absent = unrestricted, never an empty list).
+  const settleIndex = index.entries.find((line) =>
+    line.entry_ref.includes("static.flicking-terminal-control"));
+  assert.ok(settleIndex);
+  assert.deepEqual(settleIndex.family_scope, ["static_clicking"]);
+  assert.deepEqual(settleIndex.reading_scope, ["precision_terminal"]);
+  const metronomeIndex = index.entries.find((line) =>
+    line.entry_ref.includes("metronome-pacing-method"));
+  assert.ok(metronomeIndex);
+  assert.deepEqual(metronomeIndex.reading_scope, ["speed_throughput", "precision_terminal"]);
+  const untagged = index.entries.find((line) => line.entry_ref.includes("static.path-directness"));
+  assert.ok(untagged);
+  assert.ok(!("reading_scope" in untagged));
 
   for (const line of [...index.entries, ...prescriptions.entries]) {
     const file = JSON.parse(readFileSync(join(knowledgeDir, "entries", line.entry_file), "utf-8")) as {
@@ -185,7 +204,7 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
     registry_version: string;
     entries: Array<{ entry_file: string; topics: string[]; signals: string[]; metric_refs: string[] }>;
   };
-  assert.equal(index.registry_version, "2026-10-04.v14");
+  assert.equal(index.registry_version, "2026-10-07.v15");
   assert.ok(!index.entries.some((entry) => entry.entry_file.startsWith("prescription.")));
   assert.equal(index.entries.length, 58);
   assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 118);
@@ -202,7 +221,7 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
   // The corpus prescription entries reach the Coach by weakness so it can
   // match topics/signals before reading the full entry.
   const prescriptions = JSON.parse(readFileSync(prescriptionPath, "utf-8")) as {
-    entries: Array<{ entry_ref: string; topics: string[]; signals: string[]; metric_refs: string[]; recommendation: string; scenario_availability: string }>;
+    entries: Array<{ entry_ref: string; topics: string[]; signals: string[]; metric_refs: string[]; reading_scope?: string[]; recommendation: string; scenario_availability: string }>;
   };
   assert.equal(prescriptions.entries.length, 60);
   const overflick = prescriptions.entries.find((entry) =>
@@ -213,6 +232,12 @@ test("the v12 registry splits prescriptions into a sub-50KB index", () => {
   assert.ok(overflick.metric_refs.includes("metric:reverse_ratio"));
   assert.match(overflick.scenario_availability, /local/);
   assert.ok(overflick.recommendation.length > 0);
+  // v15: the settle-teaching prescription is scoped to precision readings at
+  // the index layer, so a speed-throughput map never surfaces it as a fix.
+  // (The prescription sub-index carries reading_scope only — family_scope
+  // would blow the 50KB single-read budget and cannot gate prescriptions
+  // anyway; Tile Frenzy shares static_clicking with precision maps.)
+  assert.deepEqual(overflick.reading_scope, ["precision_terminal"]);
 });
 
 /** Minimal valid v3-shaped third-party pack registry (inline fixture). */

@@ -589,7 +589,7 @@ test("v11 closes the signal gaps when loaded as history", () => {
 });
 
 test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () => {
-  const registry = loadKnowledgeRegistry();
+  const registry = loadKnowledgeRegistry("2026-10-04.v14");
   assert.equal(registry.registry_version, "2026-10-04.v14");
   assert.equal(registry.schema_version, "coach_knowledge_registry.v3");
   assert.equal(registry.entries.length, 118);
@@ -673,6 +673,83 @@ test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () 
 
   // v11 stays loadable as history after v12 is packaged.
   assert.equal(loadKnowledgeRegistry("2026-09-10.v11").registry_version, "2026-09-10.v11");
+});
+
+test("v15 adds the reading_scope sub-axis; everything else carries over from v14", () => {
+  // v15 是 Tile Frenzy 停稳错配审计的施工单 #1：可选 reading_scope 图语义
+  // 子轴（白名单语义，缺席=不限读图），打标 8 条停稳类 + metronome 节拍条目
+  // （migrations/2026-10-07-v14-to-v15-audit.json）。entry_version 全部不动
+  // ——诊断引用面钉着 knowledge:static.flicking-terminal-control@3。
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-10-07.v15");
+  assert.equal(registry.schema_version, "coach_knowledge_registry.v3");
+  assert.equal(registry.entries.length, 118);
+  const v14 = loadKnowledgeRegistry("2026-10-04.v14");
+  const audit = JSON.parse(
+    readFileSync(
+      new URL("../../../knowledge/coach/migrations/2026-10-07-v14-to-v15-audit.json", import.meta.url),
+      "utf8",
+    ),
+  ) as {
+    amended_entry_ids: string[];
+    reading_scope_assignment: Record<string, string[]>;
+    evaluated_not_amended_entry_ids: string[];
+  };
+  const amended = new Set(audit.amended_entry_ids);
+
+  // Audited set 之外逐字节承自 v14（含 v14 当日已冻结的 Pokey Bowl/标注修订）。
+  for (const old of v14.entries) {
+    const fresh = registry.entries.find((entry) => entry.entry_id === old.entry_id);
+    assert.ok(fresh, old.entry_id);
+    if (!amended.has(old.entry_id)) assert.deepEqual(fresh, old, old.entry_id);
+  }
+
+  // Amended entries: only reading_scope (+ its scope-text declaration) moves;
+  // no other field and no entry_version bump.
+  for (const old of v14.entries) {
+    if (!amended.has(old.entry_id)) continue;
+    const fresh = registry.entries.find((entry) => entry.entry_id === old.entry_id)!;
+    assert.equal(fresh.entry_version, old.entry_version, old.entry_id);
+    for (const key of Object.keys(old)) {
+      if (key === "scope") continue;
+      assert.deepEqual(
+        fresh[key as keyof typeof fresh],
+        old[key as keyof typeof old],
+        `${old.entry_id}.${key}`,
+      );
+    }
+    assert.deepEqual(fresh.reading_scope, audit.reading_scope_assignment[old.entry_id], old.entry_id);
+    assert.ok(fresh.scope.text.startsWith(old.scope.text), old.entry_id);
+  }
+
+  // 仲裁锚点：停稳派 cue 只在精瞄读图出场；节拍配速法带速度吞吐优先。
+  const braking = registry.entries.find((entry) =>
+    entry.entry_id === "community.continuous-braking-cue");
+  assert.ok(braking && braking.reading_scope);
+  assert.deepEqual(braking.reading_scope, ["precision_terminal"]);
+  const metronome = registry.entries.find((entry) =>
+    entry.entry_id === "community.aimwiki.metronome-pacing-method");
+  assert.ok(metronome && metronome.reading_scope);
+  assert.deepEqual(metronome.reading_scope, ["speed_throughput", "precision_terminal"]);
+  assert.match(metronome.scope.text, /速度吞吐型读图优先教案/);
+
+  // 张力自查条目经评估不打标：不是收尾确认教学法，速度吞吐图上仍要可用。
+  const tension = registry.entries.find((entry) =>
+    entry.entry_id === "community.aimwiki.tension-screen-signs-and-drills");
+  assert.ok(tension);
+  assert.ok(!("reading_scope" in tension));
+  assert.deepEqual(audit.evaluated_not_amended_entry_ids, [tension.entry_id]);
+
+  // v14 stays loadable as history after v15 is packaged.
+  assert.equal(loadKnowledgeRegistry("2026-10-04.v14").registry_version, "2026-10-04.v14");
+});
+
+test("v15 validator rejects unknown reading_scope values", () => {
+  const malformed = structuredClone(loadKnowledgeRegistry("2026-10-04.v14"));
+  const target = malformed.entries.find((item) => item.entry_id === "static.flicking-terminal-control");
+  assert.ok(target);
+  (target as Record<string, unknown>).reading_scope = ["throughput_only"];
+  assert.throws(() => validateKnowledgeRegistry(malformed), /reading_scope is invalid/);
 });
 
 /** Minimal valid v3-shaped third-party pack registry (inline fixture). */
