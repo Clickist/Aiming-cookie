@@ -1,0 +1,6467 @@
+{
+ "entries": {
+  "1w1t static microadjusts": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp",
+     "profile": "target",
+     "radius_cm": 54.0
+    }
+   ],
+   "sce_file": "1w1t static microadjusts.sce",
+   "scenario": "1w1t static microadjusts",
+   "sources": [
+    "workshop:SteamLibrary/3325630164:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3325630164\\1w1t static microadjusts.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1w2ts pasu cluster": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "1w2ts Pasu Cluster.sce",
+   "scenario": "1w2ts Pasu Cluster",
+   "sources": [
+    "workshop:SteamLibrary/3812493088:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3812493088\\1w2ts Pasu Cluster.sce"
+   ],
+   "timescale": 0.9
+  },
+  "1w2ts reload": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1w2ts reload.sce",
+   "scenario": "1w2ts reload",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1w2ts reload.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1w2ts reload.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1w5t pasu smooth": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react2",
+     "profile": "test2",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react2",
+     "profile": "test2",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react2",
+     "profile": "test2",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1w5t pasu smooth.sce",
+   "scenario": "1w5t pasu smooth",
+   "sources": [
+    "workshop:SteamLibrary/2232037119:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2232037119\\1w5t pasu smooth.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1w6ts reload": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1w6ts reload.sce",
+   "scenario": "1w6ts reload",
+   "sources": [
+    "workshop:SteamLibrary/1700302825:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1700302825\\1w6ts reload.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1w6ts_trustechain raspberry": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetj",
+     "profile": "targetj",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeti",
+     "profile": "targeti",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targeth",
+     "profile": "targeth",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetg",
+     "profile": "targetg",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetf",
+     "profile": "targetf",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targete",
+     "profile": "targete",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1w6ts_trustechain Raspberry.sce",
+   "scenario": "1w6ts_trustechain Raspberry",
+   "sources": [
+    "workshop:SteamLibrary/2521162864:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2521162864\\1w6ts_trustechain Raspberry.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1wall 6targets extra small": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 8.0
+    }
+   ],
+   "sce_file": "1wall 6targets extra small.sce",
+   "scenario": "1wall 6targets extra small",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall 6targets extra small.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall 6targets extra small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1wall 6targets small": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1wall 6targets small.sce",
+   "scenario": "1wall 6targets small",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall 6targets small.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall 6targets small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1wall5targets_pasu": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1wall5targets_pasu.sce",
+   "scenario": "1wall5targets_pasu",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall5targets_pasu.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall5targets_pasu.sce"
+   ],
+   "timescale": 0.7
+  },
+  "1wall6targets small nevermiss": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1wall6targets small NeverMiss.sce",
+   "scenario": "1wall6targets small NeverMiss",
+   "sources": [
+    "workshop:SteamLibrary/1681783805:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1681783805\\1wall6targets small NeverMiss.sce"
+   ],
+   "timescale": 1.0
+  },
+  "1wall6targets te": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "1wall6targets TE.sce",
+   "scenario": "1wall6targets TE",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall6targets TE.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\1wall6targets TE.sce"
+   ],
+   "timescale": 1.0
+  },
+  "2t chain mc": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target1",
+     "profile": "target1",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target2",
+     "profile": "target2",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target3",
+     "profile": "target3",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target4",
+     "profile": "target4",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target5",
+     "profile": "target5",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target6",
+     "profile": "target6",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target7",
+     "profile": "target7",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target8",
+     "profile": "target8",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target9",
+     "profile": "target9",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target10",
+     "profile": "target10",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target11",
+     "profile": "target11",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target12",
+     "profile": "target12",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target13",
+     "profile": "target13",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target14",
+     "profile": "target14",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target15",
+     "profile": "target15",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target16",
+     "profile": "target16",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target1",
+     "profile": "target1",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target2",
+     "profile": "target2",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target3",
+     "profile": "target3",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target4",
+     "profile": "target4",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target5",
+     "profile": "target5",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target6",
+     "profile": "target6",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target7",
+     "profile": "target7",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target8",
+     "profile": "target8",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target9",
+     "profile": "target9",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target10",
+     "profile": "target10",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target11",
+     "profile": "target11",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target12",
+     "profile": "target12",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target13",
+     "profile": "target13",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target14",
+     "profile": "target14",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target15",
+     "profile": "target15",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target16",
+     "profile": "target16",
+     "radius_cm": 40.0
+    }
+   ],
+   "sce_file": "2t Chain Mc.sce",
+   "scenario": "2t Chain Mc",
+   "sources": [
+    "workshop:SteamLibrary/3376315733:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3376315733\\2t Chain Mc.sce"
+   ],
+   "timescale": 1.0
+  },
+  "6 sphere hipfire voltaic": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Sphere",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 45.0
+    }
+   ],
+   "sce_file": "6 Sphere Hipfire Voltaic.sce",
+   "scenario": "6 Sphere Hipfire Voltaic",
+   "sources": [
+    "workshop:SteamLibrary/2506841455:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2506841455\\6 Sphere Hipfire Voltaic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "6 tile jumbo frenzy": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 150.0
+    }
+   ],
+   "sce_file": "6 Tile Jumbo Frenzy.sce",
+   "scenario": "6 Tile Jumbo Frenzy",
+   "sources": [
+    "workshop:SteamLibrary/1617906555:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1617906555\\6 Tile Jumbo Frenzy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "aimerz+ precisetrack normal": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "precisebottesting",
+     "profile": "test of the test",
+     "radius_cm": 33.0
+    }
+   ],
+   "sce_file": "aimerz+ PreciseTrack Normal.sce",
+   "scenario": "aimerz+ PreciseTrack Normal",
+   "sources": [
+    "workshop:SteamLibrary/2934243256:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2934243256\\aimerz+ PreciseTrack Normal.sce"
+   ],
+   "timescale": 0.9
+  },
+  "aimerz+ week #7 - suavetrack": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 17.0
+    }
+   ],
+   "sce_file": "Aimerz+ Week #7 - Suavetrack.sce",
+   "scenario": "Aimerz+ Week #7 - Suavetrack",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Aimerz+ Week #7 - Suavetrack.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Aimerz+ Week #7 - Suavetrack.sce"
+   ],
+   "timescale": 1.05
+  },
+  "air angelic 4 voltaic": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Air Angelic 4 Voltaic.sce",
+   "scenario": "Air Angelic 4 Voltaic",
+   "sources": [
+    "workshop:SteamLibrary/2507136912:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2507136912\\Air Angelic 4 Voltaic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "air no ufo no skybots": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_close_long",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_long",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air_close_short",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_long",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_long",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_short",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_short",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Air no UFO no SKYBOTS.sce",
+   "scenario": "Air no UFO no SKYBOTS",
+   "sources": [
+    "workshop:SteamLibrary/1742165122:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1742165122\\Air no UFO no SKYBOTS.sce"
+   ],
+   "timescale": 1.0
+  },
+  "air voltaic": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_long",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_long",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_short 7",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_long",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air_close_short",
+     "radius_cm": 76.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_short",
+     "radius_cm": 76.0
+    }
+   ],
+   "sce_file": "Air Voltaic.sce",
+   "scenario": "Air Voltaic",
+   "sources": [
+    "workshop:SteamLibrary/2506783016:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2506783016\\Air Voltaic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "ak recoil test": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "AK recoil test.sce",
+   "scenario": "AK recoil test",
+   "sources": [
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\AK recoil test.sce"
+   ],
+   "timescale": 1.0
+  },
+  "amare garfmicrots": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 24.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 24.0
+    }
+   ],
+   "sce_file": "Amare GarfMicroTS.sce",
+   "scenario": "Amare GarfMicroTS",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Amare GarfMicroTS.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Amare GarfMicroTS.sce",
+    "workshop:SteamLibrary/3170767863:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3170767863\\Amare GarfMicroTS.sce"
+   ],
+   "timescale": 1.0
+  },
+  "amare microcluster horizontal": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target11",
+     "radius_cm": 9.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target21",
+     "radius_cm": 9.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target31",
+     "radius_cm": 9.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target2",
+     "profile": "target2",
+     "radius_cm": 9.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target12",
+     "radius_cm": 9.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target22",
+     "radius_cm": 9.0
+    }
+   ],
+   "sce_file": "Amare Microcluster Horizontal.sce",
+   "scenario": "Amare Microcluster Horizontal",
+   "sources": [
+    "workshop:SteamLibrary/3160353701:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3160353701\\Amare Microcluster Horizontal.sce"
+   ],
+   "timescale": 1.0
+  },
+  "angletrack novice": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Angle Smooth",
+     "profile": "Angle Smooth",
+     "radius_cm": 70.0
+    }
+   ],
+   "sce_file": "AngleTrack Novice.sce",
+   "scenario": "AngleTrack Novice",
+   "sources": [
+    "workshop:SteamLibrary/3513453009:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3513453009\\AngleTrack Novice.sce"
+   ],
+   "timescale": 1.0
+  },
+  "beanclick": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "beanClick.sce",
+   "scenario": "beanClick",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\beanClick.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\beanClick.sce"
+   ],
+   "timescale": 1.0
+  },
+  "beanclick valorant": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes L",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes R",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "beanClick Valorant.sce",
+   "scenario": "beanClick Valorant",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\beanClick Valorant.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\beanClick Valorant.sce"
+   ],
+   "timescale": 1.0
+  },
+  "blink track": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_VSS_All",
+     "radius_cm": 57.0
+    }
+   ],
+   "sce_file": "blink track.sce",
+   "scenario": "blink track",
+   "sources": [
+    "workshop:SteamLibrary/2923231937:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2923231937\\blink track.sce"
+   ],
+   "timescale": 1.0
+  },
+  "book club advanced blink": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "air1",
+     "profile": "air1_far_long",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "book club advanced blink.sce",
+   "scenario": "book club advanced blink",
+   "sources": [
+    "workshop:SteamLibrary/3496376098:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3496376098\\book club advanced blink.sce"
+   ],
+   "timescale": 1.0
+  },
+  "bounce 180": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 45.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 45.0
+    }
+   ],
+   "sce_file": "Bounce 180.sce",
+   "scenario": "Bounce 180",
+   "sources": [
+    "workshop:SteamLibrary/1609257773:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1609257773\\Bounce 180.sce"
+   ],
+   "timescale": 0.85
+  },
+  "ca x-axis micro": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1",
+     "profile": "Bot 1",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1",
+     "profile": "Bot 1",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1",
+     "profile": "Bot 1",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1",
+     "profile": "Bot 1",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1R",
+     "profile": "Bot 1R",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1R",
+     "profile": "Bot 1R",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1R",
+     "profile": "Bot 1R",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bot 1R",
+     "profile": "Bot 1R",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "cA x-axis Micro.sce",
+   "scenario": "cA x-axis Micro",
+   "sources": [
+    "workshop:SteamLibrary/3812514591:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3812514591\\cA x-axis Micro.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cata ic fast strafes": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "Cata IC Fast Strafes.sce",
+   "scenario": "Cata IC Fast Strafes",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Fast Strafes.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Fast Strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cata ic long strafes": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "Cata IC Long Strafes.sce",
+   "scenario": "Cata IC Long Strafes",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Long Strafes.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Long Strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cata ic pizz plz lighthawkfps": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "Cata IC Pizz Plz LighthawkFPS.sce",
+   "scenario": "Cata IC Pizz Plz LighthawkFPS",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Pizz Plz LighthawkFPS.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata IC Pizz Plz LighthawkFPS.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cata orb fast strafes": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Watcher",
+     "profile": "Watcher Bot Fast Strafes",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Cata Orb Fast Strafes.sce",
+   "scenario": "Cata Orb Fast Strafes",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata Orb Fast Strafes.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata Orb Fast Strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cata orb long strafes": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Watcher",
+     "profile": "Watcher Bot Long Strafes",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Cata Orb Long Strafes.sce",
+   "scenario": "Cata Orb Long Strafes",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata Orb Long Strafes.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cata Orb Long Strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "centering i 180": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 10.0
+    }
+   ],
+   "sce_file": "Centering I 180.sce",
+   "scenario": "Centering I 180",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Centering I 180.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Centering I 180.sce",
+    "workshop:SteamLibrary/2194471278:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2194471278\\Centering I 180.sce"
+   ],
+   "timescale": 1.0
+  },
+  "centering i 180 no strafes": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 10.0
+    }
+   ],
+   "sce_file": "Centering I 180 no strafes.sce",
+   "scenario": "Centering I 180 no strafes",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Centering I 180 no strafes.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Centering I 180 no strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cloverrawcontrol": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 15.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher",
+     "profile": "Launcher",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher2",
+     "profile": "Launcher2",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher3",
+     "profile": "Launcher3",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher4",
+     "profile": "Launcher4",
+     "radius_cm": 0.1
+    }
+   ],
+   "sce_file": "cloverRawControl.sce",
+   "scenario": "cloverRawControl",
+   "sources": [
+    "workshop:SteamLibrary/3054371722:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3054371722\\cloverRawControl.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cloverrc easy 10%": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 32.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher",
+     "profile": "Launcher",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher2",
+     "profile": "Launcher2",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher3",
+     "profile": "Launcher3",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher4",
+     "profile": "Launcher4",
+     "radius_cm": 0.1
+    }
+   ],
+   "sce_file": "cloverRC Easy 10%.sce",
+   "scenario": "cloverRC Easy 10%",
+   "sources": [
+    "workshop:SteamLibrary/3812503746:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3812503746\\cloverRC Easy 10%.sce"
+   ],
+   "timescale": 1.0
+  },
+  "cockroach simulator [with easter eggs]": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "main egg1",
+     "profile": "egg10",
+     "radius_cm": 19.0
+    }
+   ],
+   "sce_file": "Cockroach Simulator [with easter eggs].sce",
+   "scenario": "Cockroach Simulator [with easter eggs]",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cockroach Simulator [with easter eggs].sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Cockroach Simulator [with easter eggs].sce"
+   ],
+   "timescale": 1.0
+  },
+  "controlsphere": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "Controlsphere.sce",
+   "scenario": "Controlsphere",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Controlsphere.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Controlsphere.sce"
+   ],
+   "timescale": 1.0
+  },
+  "controlsphere easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Controlsphere Easy.sce",
+   "scenario": "Controlsphere Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Controlsphere Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Controlsphere Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "deceptive tracking xyz": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "VASfarrng",
+     "profile": "VASfarrng",
+     "radius_cm": 33.0
+    }
+   ],
+   "sce_file": "Deceptive Tracking XYZ.sce",
+   "scenario": "Deceptive Tracking XYZ",
+   "sources": [
+    "workshop:SteamLibrary/3184193517:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3184193517\\Deceptive Tracking XYZ.sce"
+   ],
+   "timescale": 0.9
+  },
+  "domiswitch easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 27.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 27.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 27.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 27.5
+    }
+   ],
+   "sce_file": "domiSwitch Easy.sce",
+   "scenario": "domiSwitch Easy",
+   "sources": [
+    "workshop:SteamLibrary/3193181922:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3193181922\\domiSwitch Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "dotts": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "DotTS.sce",
+   "scenario": "DotTS",
+   "sources": [
+    "workshop:SteamLibrary/3119077724:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3119077724\\DotTS.sce"
+   ],
+   "timescale": 1.0
+  },
+  "eth dclick": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp",
+     "profile": "target",
+     "radius_cm": 63.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp 2",
+     "profile": "target 2",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp 3",
+     "profile": "target 3",
+     "radius_cm": 33.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp L",
+     "profile": "target L1",
+     "radius_cm": 63.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp L2",
+     "profile": "target L2",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "trustechain_rsp L3",
+     "profile": "target L3",
+     "radius_cm": 33.0
+    }
+   ],
+   "sce_file": "eth Dclick.sce",
+   "scenario": "eth Dclick",
+   "sources": [
+    "workshop:SteamLibrary/3287747732:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3287747732\\eth Dclick.sce"
+   ],
+   "timescale": 1.0
+  },
+  "eth didy - s": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 95.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 95.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 95.0
+    }
+   ],
+   "sce_file": "eth Didy - S.sce",
+   "scenario": "eth Didy - S",
+   "sources": [
+    "workshop:SteamLibrary/3162369011:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3162369011\\eth Didy - S.sce"
+   ],
+   "timescale": 1.2
+  },
+  "far angle smoothness easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "various120_char",
+     "profile": "various120_target",
+     "radius_cm": 28.0
+    }
+   ],
+   "sce_file": "Far Angle Smoothness Easy .sce",
+   "scenario": "Far Angle Smoothness Easy",
+   "sources": [
+    "workshop:SteamLibrary/3056255238:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3056255238\\Far Angle Smoothness Easy .sce"
+   ],
+   "timescale": 2.0
+  },
+  "fisher simulator": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #1",
+     "profile": "Fish #1",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #2",
+     "profile": "Fish #2",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #3",
+     "profile": "Fish #3",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #1",
+     "profile": "Fish #1",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #2",
+     "profile": "Fish #2",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #3",
+     "profile": "Fish #3",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #1",
+     "profile": "Fish #1",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #2",
+     "profile": "Fish #2",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fish #3",
+     "profile": "Fish #3",
+     "radius_cm": 40.0
+    }
+   ],
+   "sce_file": "Fisher Simulator.sce",
+   "scenario": "Fisher Simulator",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Fisher Simulator.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Fisher Simulator.sce"
+   ],
+   "timescale": 0.85
+  },
+  "flip off flick random": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "LR_enemy_char",
+     "profile": "LR_enemy",
+     "radius_cm": 110.0
+    }
+   ],
+   "sce_file": "Flip off Flick Random.sce",
+   "scenario": "Flip off Flick Random",
+   "sources": [
+    "workshop:SteamLibrary/2205868097:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2205868097\\Flip off Flick Random.sce"
+   ],
+   "timescale": 1.0
+  },
+  "floating heads timing 400%": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "Floating Heads Timing 400%.sce",
+   "scenario": "Floating Heads Timing 400%",
+   "sources": [
+    "workshop:SteamLibrary/2087415759:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2087415759\\Floating Heads Timing 400%.sce"
+   ],
+   "timescale": 1.0
+  },
+  "floatts angelic": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 35.0
+    }
+   ],
+   "sce_file": "FloatTS Angelic.sce",
+   "scenario": "FloatTS Angelic",
+   "sources": [
+    "workshop:SteamLibrary/2840661844:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2840661844\\FloatTS Angelic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "flower": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "micro",
+     "profile": "micro",
+     "radius_cm": 19.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher",
+     "profile": "Launcher",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher2",
+     "profile": "Launcher2",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher3",
+     "profile": "Launcher3",
+     "radius_cm": 0.1
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Launcher4",
+     "profile": "Launcher4",
+     "radius_cm": 0.1
+    }
+   ],
+   "sce_file": "Flower.sce",
+   "scenario": "Flower",
+   "sources": [
+    "workshop:SteamLibrary/3712430970:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3712430970\\Flower.sce"
+   ],
+   "timescale": 1.0
+  },
+  "frog simulator - @wa11p1per": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Angry Mosquito",
+     "profile": "Angry Mosquito",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "Jump",
+     "profile": "Jump",
+     "radius_cm": 1e-05
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "Jump",
+     "profile": "Jump",
+     "radius_cm": 1e-05
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Angry Mosquito",
+     "profile": "Angry Mosquito",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Angry Mosquito",
+     "profile": "Angry Mosquito",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Angry Mosquito",
+     "profile": "Angry Mosquito",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Angry Mosquito",
+     "profile": "Angry Mosquito",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "Frog Simulator - @wa11p1per.sce",
+   "scenario": "Frog Simulator - @wa11p1per",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Frog Simulator - @wa11p1per.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Frog Simulator - @wa11p1per.sce"
+   ],
+   "timescale": 1.0
+  },
+  "frogclick": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 78.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 78.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 78.0
+    }
+   ],
+   "sce_file": "frogClick.sce",
+   "scenario": "frogClick",
+   "sources": [
+    "workshop:SteamLibrary/3039600139:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3039600139\\frogClick.sce"
+   ],
+   "timescale": 1.0
+  },
+  "fuglaapressure": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "fuglaaPressure.sce",
+   "scenario": "fuglaaPressure",
+   "sources": [
+    "workshop:SteamLibrary/1836716316:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1836716316\\fuglaaPressure.sce"
+   ],
+   "timescale": 2.0
+  },
+  "fuglaaxyz voltaic": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 90.0
+    }
+   ],
+   "sce_file": "FuglaaXYZ Voltaic.sce",
+   "scenario": "FuglaaXYZ Voltaic",
+   "sources": [
+    "workshop:SteamLibrary/2506840921:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2506840921\\FuglaaXYZ Voltaic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "godball": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "ego death",
+     "profile": "godball",
+     "radius_cm": 40.0
+    }
+   ],
+   "sce_file": "Godball.sce",
+   "scenario": "Godball",
+   "sources": [
+    "workshop:SteamLibrary/3731727413:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3731727413\\Godball.sce"
+   ],
+   "timescale": 1.0
+  },
+  "gridshot": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    }
+   ],
+   "sce_file": "Gridshot.sce",
+   "scenario": "Gridshot",
+   "sources": [
+    "workshop:SteamLibrary/2239082175:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2239082175\\Gridshot.sce"
+   ],
+   "timescale": 1.0
+  },
+  "ground plaza": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_close_long",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_long",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air_close_short",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air ufo nonF",
+     "profile": "Bot Profile",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_long",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_long",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_short",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_short",
+     "radius_cm": 83.75
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_UFO",
+     "profile": "air1_UFO",
+     "radius_cm": 83.75
+    }
+   ],
+   "sce_file": "Ground Plaza.sce",
+   "scenario": "Ground Plaza",
+   "sources": [
+    "workshop:SteamLibrary/1541094512:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1541094512\\Ground Plaza.sce"
+   ],
+   "timescale": 1.0
+  },
+  "ground plaza voltaic easy 90ащfov": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_dash",
+     "profile": "air1_mixed_short_dash",
+     "radius_cm": 73.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air_close_short",
+     "radius_cm": 73.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 73.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_close_short",
+     "radius_cm": 73.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1_fast",
+     "profile": "air1F_far_short",
+     "radius_cm": 73.0
+    }
+   ],
+   "sce_file": " Ground Plaza Voltaic Easy 90ащFOV.sce",
+   "scenario": "Ground Plaza Voltaic Easy 90ащFOV",
+   "sources": [
+    "workshop:SteamLibrary/2880187699:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2880187699\\ Ground Plaza Voltaic Easy 90ащFOV.sce"
+   ],
+   "timescale": 1.0
+  },
+  "humanoid strafe": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 01",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 02",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 03",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 04",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 05",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 06",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 07",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 08",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 09",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 10",
+     "radius_cm": 37.0
+    }
+   ],
+   "sce_file": "Humanoid Strafe.sce",
+   "scenario": "Humanoid Strafe",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Humanoid Strafe.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Humanoid Strafe.sce"
+   ],
+   "timescale": 1.0
+  },
+  "humanoid strafe flat": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 01",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 02",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 03",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 04",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 05",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 06",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 07",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 08",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 09",
+     "radius_cm": 37.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "enemy",
+     "profile": "ABSD Target T 10",
+     "radius_cm": 37.0
+    }
+   ],
+   "sce_file": "Humanoid Strafe Flat.sce",
+   "scenario": "Humanoid Strafe Flat",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Humanoid Strafe Flat.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Humanoid Strafe Flat.sce"
+   ],
+   "timescale": 1.0
+  },
+  "kin ts bottom invincible": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "quaker 400",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "kin ts bottom invincible .sce",
+   "scenario": "kin ts bottom invincible",
+   "sources": [
+    "workshop:SteamLibrary/2574617955:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2574617955\\kin ts bottom invincible .sce"
+   ],
+   "timescale": 1.0
+  },
+  "kovaaks sandbox intro scenario": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target_high",
+     "profile": "target_high",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target_low",
+     "profile": "target_low",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target_high",
+     "profile": "target_high",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target_low",
+     "profile": "target_low",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "KovaaKs Sandbox Intro Scenario.sce",
+   "scenario": "KovaaKs Sandbox Intro Scenario",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\KovaaKs Sandbox Intro Scenario.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\KovaaKs Sandbox Intro Scenario.sce"
+   ],
+   "timescale": 1.0
+  },
+  "lddh": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "whwlddh",
+     "profile": "WHW",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "LDDH.sce",
+   "scenario": "LDDH",
+   "sources": [
+    "workshop:SteamLibrary/1403989817:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1403989817\\LDDH.sce"
+   ],
+   "timescale": 1.0
+  },
+  "leapstrafes control phantasy": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "leaptest1",
+     "radius_cm": 35.0
+    }
+   ],
+   "sce_file": "Leapstrafes Control Phantasy.sce",
+   "scenario": "Leapstrafes Control Phantasy",
+   "sources": [
+    "workshop:SteamLibrary/2949552777:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2949552777\\Leapstrafes Control Phantasy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "leaptrack": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Leap 1",
+     "profile": "Leap 1",
+     "radius_cm": 27.5
+    }
+   ],
+   "sce_file": "LeapTrack.sce",
+   "scenario": "LeapTrack",
+   "sources": [
+    "workshop:SteamLibrary/3782043582:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3782043582\\LeapTrack.sce"
+   ],
+   "timescale": 1.0
+  },
+  "lgc3 reborn varied easy meso": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS M",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS C",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0306",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker MS 0407",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SMS 02507",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker MS SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SMS VSS",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0306 VSS",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "lgc3 Reborn Varied Easy Meso.sce",
+   "scenario": "lgc3 Reborn Varied Easy Meso",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\lgc3 Reborn Varied Easy Meso.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\lgc3 Reborn Varied Easy Meso.sce"
+   ],
+   "timescale": 1.0
+  },
+  "mccoyfrozentrack": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "MovingTarget",
+     "profile": "MovingTarget",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "MovingTarget",
+     "profile": "MovingTarget",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "MovingTarget",
+     "profile": "MovingTarget",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "MovingTarget",
+     "profile": "MovingTarget",
+     "radius_cm": 35.0
+    }
+   ],
+   "sce_file": "mccoyfrozentrack.sce",
+   "scenario": "mccoyfrozentrack",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\mccoyfrozentrack.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\mccoyfrozentrack.sce"
+   ],
+   "timescale": 1.0
+  },
+  "midair mix": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 55.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 55.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 55.0
+    }
+   ],
+   "sce_file": "Midair Mix.sce",
+   "scenario": "Midair Mix",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Midair Mix.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Midair Mix.sce"
+   ],
+   "timescale": 1.0
+  },
+  "narrow strafe": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "narrow_char",
+     "profile": "narrow_bot",
+     "radius_cm": 65.0
+    }
+   ],
+   "sce_file": "Narrow Strafe.sce",
+   "scenario": "Narrow Strafe",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Narrow Strafe.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Narrow Strafe.sce"
+   ],
+   "timescale": 1.0
+  },
+  "night lantern - @wa11p1per": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "Night Lantern - @wa11p1per.sce",
+   "scenario": "Night Lantern - @wa11p1per",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Night Lantern - @wa11p1per.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Night Lantern - @wa11p1per.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pasu small reload": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "pasu small reload.sce",
+   "scenario": "pasu small reload",
+   "sources": [
+    "workshop:SteamLibrary/1701254068:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1701254068\\pasu small reload.sce"
+   ],
+   "timescale": 0.7
+  },
+  "pasu superbaim easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 56.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 56.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 56.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 56.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 56.0
+    }
+   ],
+   "sce_file": "Pasu SuperbAim Easy.sce",
+   "scenario": "Pasu SuperbAim Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pasu SuperbAim Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pasu SuperbAim Easy.sce"
+   ],
+   "timescale": 0.94
+  },
+  "pasu track evo (rct)": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "air1",
+     "profile": "air1_far_short",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Pasu Track Evo (RCT).sce",
+   "scenario": "Pasu Track Evo (RCT)",
+   "sources": [
+    "workshop:SteamLibrary/3328341476:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3328341476\\Pasu Track Evo (RCT).sce"
+   ],
+   "timescale": 1.0
+  },
+  "patts voltaic": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 0.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 0.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 0.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 0.5
+    }
+   ],
+   "sce_file": "patTS Voltaic.sce",
+   "scenario": "patTS Voltaic",
+   "sources": [
+    "workshop:SteamLibrary/2506869222:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2506869222\\patTS Voltaic.sce"
+   ],
+   "timescale": 1.0
+  },
+  "piano tiles i 50% slow": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "falling bot without movement",
+     "profile": "bot profile for PIANO TILES",
+     "radius_cm": 52.5
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "falling bot without movement",
+     "profile": "bot profile for PIANO TILES",
+     "radius_cm": 52.5
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "falling bot without movement",
+     "profile": "bot profile for PIANO TILES",
+     "radius_cm": 52.5
+    }
+   ],
+   "sce_file": "Piano Tiles I 50% SLOW.sce",
+   "scenario": "Piano Tiles I 50% SLOW",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Piano Tiles I 50% SLOW.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Piano Tiles I 50% SLOW.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pokeball 5 sphere hipfire extra small": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "TileFrenzy Sphere",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Pokeball 5 Sphere Hipfire Extra Small.sce",
+   "scenario": "Pokeball 5 Sphere Hipfire Extra Small",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pokeball 5 Sphere Hipfire Extra Small.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pokeball 5 Sphere Hipfire Extra Small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pokeball auto ww6t": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "Pokeball Auto ww6t.sce",
+   "scenario": "Pokeball Auto ww6t",
+   "sources": [
+    "workshop:SteamLibrary/2253682798:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2253682798\\Pokeball Auto ww6t.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pokeball frenzy auto small": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Pokeball Frenzy Auto Small.sce",
+   "scenario": "Pokeball Frenzy Auto Small",
+   "sources": [
+    "workshop:SteamLibrary/1614233702:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1614233702\\Pokeball Frenzy Auto Small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "popcorn": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon",
+     "profile": "Pigeon",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon2",
+     "profile": "Pigeon2",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon3",
+     "profile": "Pigeon3",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon4",
+     "profile": "Pigeon4",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon5",
+     "profile": "Pigeon5",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "POPCORN.sce",
+   "scenario": "POPCORN",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\POPCORN.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\POPCORN.sce"
+   ],
+   "timescale": 1.0
+  },
+  "precisesphere": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 36.0
+    }
+   ],
+   "sce_file": "PreciseSphere.sce",
+   "scenario": "PreciseSphere",
+   "sources": [
+    "workshop:SteamLibrary/2824567838:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2824567838\\PreciseSphere.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pressure aiming - 10 targets": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Pressure Aiming - 10 Targets.sce",
+   "scenario": "Pressure Aiming - 10 Targets",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pressure Aiming - 10 Targets.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pressure Aiming - 10 Targets.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pressure aiming - 7 targets": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Pressure Aiming - 7 Targets.sce",
+   "scenario": "Pressure Aiming - 7 Targets",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pressure Aiming - 7 Targets.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Pressure Aiming - 7 Targets.sce"
+   ],
+   "timescale": 1.0
+  },
+  "pressure aiming 7 shortened": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Pressure Aiming 7 Shortened.sce",
+   "scenario": "Pressure Aiming 7 Shortened",
+   "sources": [
+    "workshop:SteamLibrary/2187675357:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2187675357\\Pressure Aiming 7 Shortened.sce"
+   ],
+   "timescale": 1.0
+  },
+  "ra s4 strafetrack easy": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "glidertrack",
+     "profile": "glidertrack",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "rA S4 STRAFETRACK EASY.sce",
+   "scenario": "rA S4 STRAFETRACK EASY",
+   "sources": [
+    "workshop:SteamLibrary/3333645247:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3333645247\\rA S4 STRAFETRACK EASY.sce"
+   ],
+   "timescale": 1.0
+  },
+  "ra snapclick easy sya": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "pipeClicktesttt",
+     "profile": "purrClick test",
+     "radius_cm": 200.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "pipeClicktesttt",
+     "profile": "purrClick test",
+     "radius_cm": 200.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "pipeClicktesttt",
+     "profile": "purrClick test",
+     "radius_cm": 200.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "pipeClicktesttt",
+     "profile": "purrClick test",
+     "radius_cm": 200.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "pipeClicktesttt",
+     "profile": "purrClick test",
+     "radius_cm": 200.0
+    }
+   ],
+   "sce_file": "rA Snapclick Easy SYA.sce",
+   "scenario": "rA Snapclick Easy SYA",
+   "sources": [
+    "workshop:SteamLibrary/3563429368:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3563429368\\rA Snapclick Easy SYA.sce"
+   ],
+   "timescale": 1.5
+  },
+  "reactive flick": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "RF Target U",
+     "profile": "RF Target U",
+     "radius_cm": 5.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RF Target UL UR",
+     "profile": "RF Target UL UR",
+     "radius_cm": 5.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RF Target L R",
+     "profile": "RF Target L R",
+     "radius_cm": 5.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RF Target BL BR",
+     "profile": "RF Target BL BR",
+     "radius_cm": 5.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RF Target B",
+     "profile": "RF Target B",
+     "radius_cm": 5.0
+    }
+   ],
+   "sce_file": "Reactive Flick.sce",
+   "scenario": "Reactive Flick",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reactive Flick.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reactive Flick.sce"
+   ],
+   "timescale": 1.0
+  },
+  "reactsphere widewall easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "dot",
+     "profile": "regen_dot",
+     "radius_cm": 150.0
+    }
+   ],
+   "sce_file": "ReactSphere Widewall Easy.sce",
+   "scenario": "ReactSphere Widewall Easy",
+   "sources": [
+    "workshop:SteamLibrary/2779117923:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2779117923\\ReactSphere Widewall Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "reflex flick - easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target_decay",
+     "profile": "target_decay",
+     "radius_cm": 200.0
+    }
+   ],
+   "sce_file": "Reflex Flick - Easy.sce",
+   "scenario": "Reflex Flick - Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "reflex flick - fair": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target_decay",
+     "profile": "target_decay",
+     "radius_cm": 150.0
+    }
+   ],
+   "sce_file": "Reflex Flick - Fair.sce",
+   "scenario": "Reflex Flick - Fair",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Fair.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Fair.sce"
+   ],
+   "timescale": 1.0
+  },
+  "reflex flick - hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target_decay",
+     "profile": "target_decay",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Reflex Flick - Hard.sce",
+   "scenario": "Reflex Flick - Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Reflex Flick - Hard.sce"
+   ],
+   "timescale": 1.0
+  },
+  "revolving tracking": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "RT Target",
+     "profile": "RT Static Target",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "RT Target",
+     "profile": "RT Static Target",
+     "radius_cm": 16.0
+    }
+   ],
+   "sce_file": "Revolving Tracking.sce",
+   "scenario": "Revolving Tracking",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Revolving Tracking.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Revolving Tracking.sce"
+   ],
+   "timescale": 1.0
+  },
+  "rx 1w6ts varied pokeball": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "ww_0",
+     "profile": "ww_0 Bot",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "ww_0",
+     "profile": "ww_0 Bot",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "ww_1",
+     "profile": "ww_1 Bot",
+     "radius_cm": 40.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "ww_1",
+     "profile": "ww_1 Bot",
+     "radius_cm": 40.0
+    }
+   ],
+   "sce_file": "rx 1w6ts Varied Pokeball.sce",
+   "scenario": "rx 1w6ts Varied Pokeball",
+   "sources": [
+    "workshop:SteamLibrary/2853721640:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2853721640\\rx 1w6ts Varied Pokeball.sce"
+   ],
+   "timescale": 1.0
+  },
+  "rx multiclick pokeball": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 22.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 22.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetb",
+     "profile": "targetb",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetc",
+     "profile": "targetc",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 17.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "targetd",
+     "profile": "targetd",
+     "radius_cm": 17.0
+    }
+   ],
+   "sce_file": "rx Multiclick Pokeball.sce",
+   "scenario": "rx Multiclick Pokeball",
+   "sources": [
+    "workshop:SteamLibrary/2891827035:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2891827035\\rx Multiclick Pokeball.sce"
+   ],
+   "timescale": 1.0
+  },
+  "sixshot ultimate": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Sixshot Ultimate.sce",
+   "scenario": "Sixshot Ultimate",
+   "sources": [
+    "workshop:SteamLibrary/2818643665:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2818643665\\Sixshot Ultimate.sce"
+   ],
+   "timescale": 1.0
+  },
+  "skeet tracking": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Skeet Target",
+     "profile": "Skeet Target",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Skeet Target",
+     "profile": "Skeet Target",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Skeet Target",
+     "profile": "Skeet Target",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Skeet Target",
+     "profile": "Skeet Target",
+     "radius_cm": 16.0
+    }
+   ],
+   "sce_file": "Skeet Tracking.sce",
+   "scenario": "Skeet Tracking",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Skeet Tracking.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Skeet Tracking.sce"
+   ],
+   "timescale": 1.0
+  },
+  "smooth sphere strafe v2": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Thin",
+     "profile": "Thin short strafe",
+     "radius_cm": 0.1
+    }
+   ],
+   "sce_file": "Smooth Sphere Strafe v2.sce",
+   "scenario": "Smooth Sphere Strafe v2",
+   "sources": [
+    "workshop:SteamLibrary/3040946764:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3040946764\\Smooth Sphere Strafe v2.sce"
+   ],
+   "timescale": 1.0
+  },
+  "smooth thin strafe always right": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin Right",
+     "profile": "Thin Right",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "Smooth Thin Strafe Always Right.sce",
+   "scenario": "Smooth Thin Strafe Always Right",
+   "sources": [
+    "workshop:SteamLibrary/2816737380:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2816737380\\Smooth Thin Strafe Always Right.sce"
+   ],
+   "timescale": 1.0
+  },
+  "smooth your vertical": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "enemy",
+     "profile": "enemy",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Smooth Your Vertical.sce",
+   "scenario": "Smooth Your Vertical",
+   "sources": [
+    "workshop:SteamLibrary/2813567321:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2813567321\\Smooth Your Vertical.sce"
+   ],
+   "timescale": 1.0
+  },
+  "smoothbot": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "SmoothBot",
+     "profile": "SmoothBot",
+     "radius_cm": 72.0
+    }
+   ],
+   "sce_file": "SmoothBot.sce",
+   "scenario": "SmoothBot",
+   "sources": [
+    "workshop:SteamLibrary/1384299061:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1384299061\\SmoothBot.sce"
+   ],
+   "timescale": 1.0
+  },
+  "snake track": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Snake",
+     "profile": "Snake",
+     "radius_cm": 19.0
+    }
+   ],
+   "sce_file": "Snake Track.sce",
+   "scenario": "Snake Track",
+   "sources": [
+    "workshop:SteamLibrary/3230047561:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3230047561\\Snake Track.sce"
+   ],
+   "timescale": 1.0
+  },
+  "sparky comp 44 - pts dodge 360": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Sparky Comp 44 - PTS Dodge 360.sce",
+   "scenario": "Sparky Comp 44 - PTS Dodge 360",
+   "sources": [
+    "workshop:SteamLibrary/2043676911:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2043676911\\Sparky Comp 44 - PTS Dodge 360.sce"
+   ],
+   "timescale": 1.0
+  },
+  "surge tags training clicking": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "close_strafe_char",
+     "profile": "FN BOT RNG MOV",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "GLIDER PROF FN",
+     "profile": "GLIDERBOT FN",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "close_strafe_char",
+     "profile": "FN BOT RNG MOV",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "GLIDER PROF FN",
+     "profile": "GLIDERBOT FN",
+     "radius_cm": 65.0
+    }
+   ],
+   "sce_file": "Surge Tags Training Clicking.sce",
+   "scenario": "Surge Tags Training Clicking",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Surge Tags Training Clicking.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Surge Tags Training Clicking.sce"
+   ],
+   "timescale": 1.0
+  },
+  "swaptrack": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker_Weak",
+     "profile": "Quaker_Weak Bot",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "SwapTrack.sce",
+   "scenario": "SwapTrack",
+   "sources": [
+    "workshop:SteamLibrary/2982202591:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2982202591\\SwapTrack.sce"
+   ],
+   "timescale": 1.0
+  },
+  "syw (smooth your wrist)": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin very long strafe",
+     "radius_cm": 15.0
+    }
+   ],
+   "sce_file": "SYW (Smooth Your Wrist).sce",
+   "scenario": "SYW (Smooth Your Wrist)",
+   "sources": [
+    "workshop:SteamLibrary/1822039332:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1822039332\\SYW (Smooth Your Wrist).sce"
+   ],
+   "timescale": 1.0
+  },
+  "syw (smooth your wrist) fixed": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin very long strafe",
+     "radius_cm": 15.0
+    }
+   ],
+   "sce_file": "SYW (Smooth Your Wrist) FIXED.sce",
+   "scenario": "SYW (Smooth Your Wrist) FIXED",
+   "sources": [
+    "workshop:SteamLibrary/2054954669:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2054954669\\SYW (Smooth Your Wrist) FIXED.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tamspeed 60%": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu Semi Dodge",
+     "profile": "Pasu Semi Dodge",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu Semi Dodge",
+     "profile": "Pasu Semi Dodge",
+     "radius_cm": 140.0
+    }
+   ],
+   "sce_file": "Tamspeed 60%.sce",
+   "scenario": "Tamspeed 60%",
+   "sources": [
+    "workshop:SteamLibrary/3806146963:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3806146963\\Tamspeed 60%.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tayden's reflex micro flick 250ms small": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target_decay",
+     "profile": "target_decay",
+     "radius_cm": 37.5
+    }
+   ],
+   "sce_file": "Tayden's Reflex Micro Flick 250ms Small.sce",
+   "scenario": "Tayden's Reflex Micro Flick 250ms Small",
+   "sources": [
+    "workshop:SteamLibrary/2830673812:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2830673812\\Tayden's Reflex Micro Flick 250ms Small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "thin gauntlet": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_slow",
+     "profile": "smooth_1",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_slow2",
+     "profile": "smooth_2",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_med",
+     "profile": "smooth_3",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_slow3",
+     "profile": "smooth_4",
+     "radius_cm": 15.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_med2",
+     "profile": "smooth_5",
+     "radius_cm": 12.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_final",
+     "profile": "smooth_6",
+     "radius_cm": 20.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_slowish",
+     "profile": "smooth_7",
+     "radius_cm": 8.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "smooth_hard",
+     "profile": "smooth_8",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "Thin Gauntlet.sce",
+   "scenario": "Thin Gauntlet",
+   "sources": [
+    "workshop:SteamLibrary/1684087633:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1684087633\\Thin Gauntlet.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tile frenzy": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Tile Frenzy.sce",
+   "scenario": "Tile Frenzy",
+   "sources": [
+    "workshop:SteamLibrary/1352676992:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1352676992\\Tile Frenzy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tile frenzy 180 strafing 200 percent tracking": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    }
+   ],
+   "sce_file": "Tile Frenzy 180 Strafing 200 Percent Tracking.sce",
+   "scenario": "Tile Frenzy 180 Strafing 200 Percent Tracking",
+   "sources": [
+    "workshop:SteamLibrary/1622704051:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1622704051\\Tile Frenzy 180 Strafing 200 Percent Tracking.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tile frenzy 180 strafing tracking": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "TileFrenzyStrafing Cube",
+     "profile": "TileFrenzyStrafing Cube",
+     "radius_cm": 124.0
+    }
+   ],
+   "sce_file": "Tile Frenzy 180 Strafing Tracking.sce",
+   "scenario": "Tile Frenzy 180 Strafing Tracking",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Tile Frenzy 180 Strafing Tracking.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Tile Frenzy 180 Strafing Tracking.sce",
+    "workshop:SteamLibrary/1622707102:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1622707102\\Tile Frenzy 180 Strafing Tracking.sce"
+   ],
+   "timescale": 1.0
+  },
+  "tile frenzy mini": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Tile Frenzy Mini.sce",
+   "scenario": "Tile Frenzy Mini",
+   "sources": [
+    "workshop:SteamLibrary/1521448699:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1521448699\\Tile Frenzy Mini.sce"
+   ],
+   "timescale": 1.0
+  },
+  "trippez smooth switching regen slow+": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "various120_char",
+     "profile": "various120_target",
+     "radius_cm": 22.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various121_char",
+     "profile": "various121_char",
+     "radius_cm": 24.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various122_char",
+     "profile": "various122_char",
+     "radius_cm": 26.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various123_char",
+     "profile": "various123_char",
+     "radius_cm": 29.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various124_char",
+     "profile": "various124_char",
+     "radius_cm": 29.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various125_char",
+     "profile": "various125_char",
+     "radius_cm": 32.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various126_char",
+     "profile": "various126_char",
+     "radius_cm": 34.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various127_char",
+     "profile": "various127_char",
+     "radius_cm": 35.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various128_char",
+     "profile": "various128_char",
+     "radius_cm": 37.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various129_char",
+     "profile": "various129_char",
+     "radius_cm": 39.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various120_char",
+     "profile": "various120_target",
+     "radius_cm": 22.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various121_char",
+     "profile": "various121_char",
+     "radius_cm": 24.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various122_char",
+     "profile": "various122_char",
+     "radius_cm": 26.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various123_char",
+     "profile": "various123_char",
+     "radius_cm": 29.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various124_char",
+     "profile": "various124_char",
+     "radius_cm": 29.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various125_char",
+     "profile": "various125_char",
+     "radius_cm": 32.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various126_char",
+     "profile": "various126_char",
+     "radius_cm": 34.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various127_char",
+     "profile": "various127_char",
+     "radius_cm": 35.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various128_char",
+     "profile": "various128_char",
+     "radius_cm": 37.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various129_char",
+     "profile": "various129_char",
+     "radius_cm": 39.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various120_char",
+     "profile": "various120_target",
+     "radius_cm": 22.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various121_char",
+     "profile": "various121_char",
+     "radius_cm": 24.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various122_char",
+     "profile": "various122_char",
+     "radius_cm": 26.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various123_char",
+     "profile": "various123_char",
+     "radius_cm": 29.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various124_char",
+     "profile": "various124_char",
+     "radius_cm": 29.75
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various125_char",
+     "profile": "various125_char",
+     "radius_cm": 32.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various126_char",
+     "profile": "various126_char",
+     "radius_cm": 34.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various127_char",
+     "profile": "various127_char",
+     "radius_cm": 35.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various128_char",
+     "profile": "various128_char",
+     "radius_cm": 37.25
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "various129_char",
+     "profile": "various129_char",
+     "radius_cm": 39.0
+    }
+   ],
+   "sce_file": "Trippez Smooth Switching Regen Slow+.sce",
+   "scenario": "Trippez Smooth Switching Regen Slow+",
+   "sources": [
+    "workshop:SteamLibrary/3320302736:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3320302736\\Trippez Smooth Switching Regen Slow+.sce"
+   ],
+   "timescale": 2.0
+  },
+  "tsk - st60 thick": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin very long strafe",
+     "radius_cm": 11.0
+    }
+   ],
+   "sce_file": "TSK - ST60 Thick.sce",
+   "scenario": "TSK - ST60 Thick",
+   "sources": [
+    "workshop:SteamLibrary/3479509476:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3479509476\\TSK - ST60 Thick.sce"
+   ],
+   "timescale": 1.0
+  },
+  "uv vbr micro 2ts": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 16.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 16.0
+    }
+   ],
+   "sce_file": "uv VBR Micro 2ts.sce",
+   "scenario": "uv VBR Micro 2ts",
+   "sources": [
+    "workshop:SteamLibrary/2985757083:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2985757083\\uv VBR Micro 2ts.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vai 3 te": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "VAI 3",
+     "profile": "VAI 3",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "VAI 3 TE.sce",
+   "scenario": "VAI 3 TE",
+   "sources": [
+    "workshop:SteamLibrary/2883396395:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2883396395\\VAI 3 TE.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant 360 aim training": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT1",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT2",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT3",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT1",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT2",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT3",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT4",
+     "radius_cm": 35.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "VALORANTER",
+     "profile": "VALORANT3",
+     "radius_cm": 35.0
+    }
+   ],
+   "sce_file": "VALORANT 360 AIM TRAINING.sce",
+   "scenario": "VALORANT 360 AIM TRAINING",
+   "sources": [
+    "workshop:SteamLibrary/2070303138:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2070303138\\VALORANT 360 AIM TRAINING.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant fireworks flick horizontal": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "ValoBot",
+     "profile": "ValoBots",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "ValoBot",
+     "profile": "ValoBots",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Valorant Fireworks Flick Horizontal.sce",
+   "scenario": "Valorant Fireworks Flick Horizontal",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Fireworks Flick Horizontal.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Fireworks Flick Horizontal.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant fireworks flick horizontal - far": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "ValoBot",
+     "profile": "ValoBots",
+     "radius_cm": 30.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "ValoBot",
+     "profile": "ValoBots",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Valorant Fireworks Flick Horizontal - Far.sce",
+   "scenario": "Valorant Fireworks Flick Horizontal - Far",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Fireworks Flick Horizontal - Far.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Fireworks Flick Horizontal - Far.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant one taps": {
+   "bots": [
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Cuboid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Valorant One Taps.sce",
+   "scenario": "Valorant One Taps",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant One Taps.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant One Taps.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant reflex microflick strafing": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "ValoBot",
+     "profile": "ValoBots",
+     "radius_cm": 30.0
+    }
+   ],
+   "sce_file": "Valorant Reflex Microflick Strafing.sce",
+   "scenario": "Valorant Reflex Microflick Strafing",
+   "sources": [
+    "workshop:SteamLibrary/3039792226:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3039792226\\Valorant Reflex Microflick Strafing.sce"
+   ],
+   "timescale": 1.0
+  },
+  "valorant small flicks": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji small",
+     "profile": "Shinji small Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji small",
+     "profile": "Shinji small Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji small",
+     "profile": "Shinji small Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji small",
+     "profile": "Shinji small Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji",
+     "profile": "Shinji Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji",
+     "profile": "Shinji Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji",
+     "profile": "Shinji Bot",
+     "radius_cm": 1.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Shinji",
+     "profile": "Shinji Bot",
+     "radius_cm": 1.0
+    }
+   ],
+   "sce_file": "Valorant Small Flicks.sce",
+   "scenario": "Valorant Small Flicks",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Small Flicks.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Valorant Small Flicks.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vertical long strafes": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 55.0
+    }
+   ],
+   "sce_file": "Vertical Long Strafes.sce",
+   "scenario": "Vertical Long Strafes",
+   "sources": [
+    "workshop:SteamLibrary/1619877968:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\1619877968\\Vertical Long Strafes.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vertical long strafes smoother": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Fast Strafes",
+     "radius_cm": 55.0
+    }
+   ],
+   "sce_file": "Vertical Long Strafes Smoother.sce",
+   "scenario": "Vertical Long Strafes Smoother",
+   "sources": [
+    "workshop:SteamLibrary/3724401311:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3724401311\\Vertical Long Strafes Smoother.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vertical smoothness training popcorn": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon3",
+     "profile": "Pigeon3",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "vertical smoothness training popcorn.sce",
+   "scenario": "vertical smoothness training popcorn",
+   "sources": [
+    "workshop:SteamLibrary/2094076797:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2094076797\\vertical smoothness training popcorn.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vertical smoothness training very easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeon3",
+     "profile": "Pigeon3",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "Vertical Smoothness Training Very Easy.sce",
+   "scenario": "Vertical Smoothness Training Very Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Vertical Smoothness Training Very Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Vertical Smoothness Training Very Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt aether novice s5": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Aether 1",
+     "profile": "Aether 1 Bot",
+     "radius_cm": 57.5
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Aether 2",
+     "profile": "Aether 2 Bot",
+     "radius_cm": 79.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Aether 3",
+     "profile": "Aether 3 Bot",
+     "radius_cm": 70.0
+    }
+   ],
+   "sce_file": "VT Aether Novice S5.sce",
+   "scenario": "VT Aether Novice S5",
+   "sources": [
+    "workshop:SteamLibrary/3351168781:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3351168781\\VT Aether Novice S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt flyts intermediate s5": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot 2",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot 2",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot 2",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot",
+     "radius_cm": 48.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Fly",
+     "profile": "Fly Bot 2",
+     "radius_cm": 48.0
+    }
+   ],
+   "sce_file": "VT FlyTS Intermediate S5.sce",
+   "scenario": "VT FlyTS Intermediate S5",
+   "sources": [
+    "workshop:SteamLibrary/3376931932:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3376931932\\VT FlyTS Intermediate S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt gridshot aimlabs 60sec": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "TileFrenzy Cube",
+     "profile": "TileFrenzy Cube",
+     "radius_cm": 140.0
+    }
+   ],
+   "sce_file": "VT Gridshot aimlabs 60sec.sce",
+   "scenario": "VT Gridshot aimlabs 60sec",
+   "sources": [
+    "workshop:SteamLibrary/3507792616:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3507792616\\VT Gridshot aimlabs 60sec.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt ground novice s5": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Ground 1",
+     "profile": "Ground 1 Bot",
+     "radius_cm": 49.400002
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Ground 2",
+     "profile": "Ground 2 Bot",
+     "radius_cm": 56.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Ground 3",
+     "profile": "Ground 3 Bot",
+     "radius_cm": 47.599998
+    }
+   ],
+   "sce_file": "VT Ground Novice S5.sce",
+   "scenario": "VT Ground Novice S5",
+   "sources": [
+    "workshop:SteamLibrary/3350071047:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3350071047\\VT Ground Novice S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt minitrack advanced": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Clay Pigeontest",
+     "profile": "minitrack",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "VT Minitrack Advanced.sce",
+   "scenario": "VT Minitrack Advanced",
+   "sources": [
+    "workshop:SteamLibrary/2847532536:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2847532536\\VT Minitrack Advanced.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt multiclick 120 intermediate": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    }
+   ],
+   "sce_file": "VT Multiclick 120 Intermediate.sce",
+   "scenario": "VT Multiclick 120 Intermediate",
+   "sources": [
+    "workshop:SteamLibrary/2780094181:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2780094181\\VT Multiclick 120 Intermediate.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt multiclick 120 intermediate pokeball": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 18.0
+    }
+   ],
+   "sce_file": "VT Multiclick 120 Intermediate Pokeball.sce",
+   "scenario": "VT Multiclick 120 Intermediate Pokeball",
+   "sources": [
+    "workshop:SteamLibrary/2782692341:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2782692341\\VT Multiclick 120 Intermediate Pokeball.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt multiclick 120 intermediate speed focus lg56": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.200001
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.200001
+    }
+   ],
+   "sce_file": "VT Multiclick 120 Intermediate Speed Focus LG56.sce",
+   "scenario": "VT Multiclick 120 Intermediate Speed Focus LG56",
+   "sources": [
+    "workshop:SteamLibrary/2844329919:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2844329919\\VT Multiclick 120 Intermediate Speed Focus LG56.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt multiclick 120 novice": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react_verysmall",
+     "profile": "test_verysmall",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "VT Multiclick 120 Novice.sce",
+   "scenario": "VT Multiclick 120 Novice",
+   "sources": [
+    "workshop:SteamLibrary/2780121047:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2780121047\\VT Multiclick 120 Novice.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt pasu novice s5": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu Bot",
+     "radius_cm": 88.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu Bot",
+     "radius_cm": 88.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu Bot",
+     "radius_cm": 88.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 1",
+     "profile": "Knocker 1",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 1",
+     "profile": "Knocker 1",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 1",
+     "profile": "Knocker 1",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 1",
+     "profile": "Knocker 1",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 2a",
+     "profile": "knocker 2a",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 2b",
+     "profile": "knocker 2b",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 3a",
+     "profile": "knocker 3a",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Knocker 3b",
+     "profile": "knocker 3b",
+     "radius_cm": 4.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu Bot",
+     "radius_cm": 88.0
+    }
+   ],
+   "sce_file": "VT Pasu Novice S5.sce",
+   "scenario": "VT Pasu Novice S5",
+   "sources": [
+    "workshop:SteamLibrary/3333090140:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3333090140\\VT Pasu Novice S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt patstrafe advanced": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS M",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS C",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0306",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker MS 0407",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SMS 02507",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker MS SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker LS SS 0205",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SMS VSS",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0306 VSS",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker SS 0306 VSS",
+     "radius_cm": 58.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "Quaker",
+     "profile": "Quaker MS SS 0205",
+     "radius_cm": 58.0
+    }
+   ],
+   "sce_file": "VT PatStrafe Advanced.sce",
+   "scenario": "VT PatStrafe Advanced",
+   "sources": [
+    "workshop:SteamLibrary/2790508791:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2790508791\\VT PatStrafe Advanced.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt pentashot intermediate s5": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Bouncer",
+     "profile": "Bouncer Bot",
+     "radius_cm": 15.6
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bouncer",
+     "profile": "Bouncer Bot",
+     "radius_cm": 15.6
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bouncer",
+     "profile": "Bouncer Bot",
+     "radius_cm": 15.6
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bouncer",
+     "profile": "Bouncer Bot",
+     "radius_cm": 15.6
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bouncer",
+     "profile": "Bouncer Bot",
+     "radius_cm": 15.6
+    }
+   ],
+   "sce_file": "VT Pentashot Intermediate S5.sce",
+   "scenario": "VT Pentashot Intermediate S5",
+   "sources": [
+    "workshop:SteamLibrary/3401477136:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3401477136\\VT Pentashot Intermediate S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt pgt novice s5": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Bounce 1",
+     "profile": "Bounce 1 Bot",
+     "radius_cm": 32.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Bounce 2",
+     "profile": "Bounce 2 Bot",
+     "radius_cm": 36.799999
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Float 3",
+     "profile": "Float 3 Bot",
+     "radius_cm": 45.0
+    }
+   ],
+   "sce_file": "VT PGT Novice S5.sce",
+   "scenario": "VT PGT Novice S5",
+   "sources": [
+    "workshop:SteamLibrary/3333089969:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3333089969\\VT PGT Novice S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt pilltrack advanced": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "ground1",
+     "profile": "ground1",
+     "radius_cm": 44.0
+    }
+   ],
+   "sce_file": "VT Pilltrack Advanced.sce",
+   "scenario": "VT Pilltrack Advanced",
+   "sources": [
+    "workshop:SteamLibrary/3199028696:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3199028696\\VT Pilltrack Advanced.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt pulseshot valorant": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "VT PulseShot Valorant.sce",
+   "scenario": "VT PulseShot Valorant",
+   "sources": [
+    "workshop:SteamLibrary/3061482783:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3061482783\\VT PulseShot Valorant.sce"
+   ],
+   "timescale": 2.0
+  },
+  "vt skyts novice": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 169.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 169.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 169.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Quaker",
+     "profile": "Quaker Bot Long Strafes",
+     "radius_cm": 169.0
+    }
+   ],
+   "sce_file": "VT skyTS Novice.sce",
+   "scenario": "VT skyTS Novice",
+   "sources": [
+    "workshop:SteamLibrary/2780121565:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2780121565\\VT skyTS Novice.sce"
+   ],
+   "timescale": 0.9
+  },
+  "vt snake track intermediate s5": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Snake",
+     "profile": "Snake",
+     "radius_cm": 22.0
+    }
+   ],
+   "sce_file": "VT Snake Track Intermediate S5.sce",
+   "scenario": "VT Snake Track Intermediate S5",
+   "sources": [
+    "workshop:SteamLibrary/3333089842:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3333089842\\VT Snake Track Intermediate S5.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt verttrack intermediate": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Verttrack",
+     "profile": "Vertsphere",
+     "radius_cm": 43.75
+    }
+   ],
+   "sce_file": "VT Verttrack Intermediate.sce",
+   "scenario": "VT Verttrack Intermediate",
+   "sources": [
+    "workshop:SteamLibrary/3523383304:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3523383304\\VT Verttrack Intermediate.sce"
+   ],
+   "timescale": 1.0
+  },
+  "vt wide angle tracking intermediate": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "L2R",
+     "profile": "L2R",
+     "radius_cm": 37.5
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "R2L",
+     "profile": "R2L",
+     "radius_cm": 37.5
+    }
+   ],
+   "sce_file": "VT Wide Angle Tracking Intermediate.sce",
+   "scenario": "VT Wide Angle Tracking Intermediate",
+   "sources": [
+    "workshop:SteamLibrary/3420035610:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3420035610\\VT Wide Angle Tracking Intermediate.sce"
+   ],
+   "timescale": 1.0
+  },
+  "wavy micros cartoon edition": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "wave #25",
+     "profile": "wave #25",
+     "radius_cm": 105.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "wave #25",
+     "profile": "wave #25",
+     "radius_cm": 105.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "wave #25",
+     "profile": "wave #25",
+     "radius_cm": 105.0
+    }
+   ],
+   "sce_file": "wavy micros cartoon edition.sce",
+   "scenario": "wavy micros cartoon edition",
+   "sources": [
+    "workshop:SteamLibrary/3157577904:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3157577904\\wavy micros cartoon edition.sce"
+   ],
+   "timescale": 0.86
+  },
+  "wheirdsphere": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 72.0
+    }
+   ],
+   "sce_file": "Wheirdsphere.sce",
+   "scenario": "Wheirdsphere",
+   "sources": [
+    "workshop:SteamLibrary/3463063916:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\3463063916\\Wheirdsphere.sce"
+   ],
+   "timescale": 1.05
+  },
+  "whisphere": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "test",
+     "radius_cm": 80.0
+    }
+   ],
+   "sce_file": "Whisphere.sce",
+   "scenario": "Whisphere",
+   "sources": [
+    "workshop:SteamLibrary/2825896734:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2825896734\\Whisphere.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj 1w2ts smallflicks hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "WHJ 1w2ts Smallflicks Hard.sce",
+   "scenario": "WHJ 1w2ts Smallflicks Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 1w2ts Smallflicks Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 1w2ts Smallflicks Hard.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj 1w4ts clusters easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "WHJ 1w4ts Clusters Easy.sce",
+   "scenario": "WHJ 1w4ts Clusters Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 1w4ts Clusters Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 1w4ts Clusters Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj 3t wide hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    }
+   ],
+   "sce_file": "WHJ 3t Wide Hard.sce",
+   "scenario": "WHJ 3t Wide Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 3t Wide Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 3t Wide Hard.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj 5 sphere hipfire hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 65.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 65.0
+    }
+   ],
+   "sce_file": "WHJ 5 Sphere Hipfire Hard.sce",
+   "scenario": "WHJ 5 Sphere Hipfire Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 5 Sphere Hipfire Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 5 Sphere Hipfire Hard.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj 5 sphere hipfire pokeball easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "WHJ 5 Sphere Hipfire Pokeball Easy.sce",
+   "scenario": "WHJ 5 Sphere Hipfire Pokeball Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 5 Sphere Hipfire Pokeball Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ 5 Sphere Hipfire Pokeball Easy.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj [2 minute rest break]": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "WHJ [2 MINUTE REST BREAK].sce",
+   "scenario": "WHJ [2 MINUTE REST BREAK]",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ [2 MINUTE REST BREAK].sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ [2 MINUTE REST BREAK].sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj adjusttrack easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "nuTS",
+     "profile": "nuTS",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "WHJ AdjustTrack Easy.sce",
+   "scenario": "WHJ AdjustTrack Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ AdjustTrack Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ AdjustTrack Easy.sce"
+   ],
+   "timescale": 0.675
+  },
+  "whj adjusttrack hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "nuTS",
+     "profile": "nuTS",
+     "radius_cm": 15.0
+    }
+   ],
+   "sce_file": "WHJ AdjustTrack Hard.sce",
+   "scenario": "WHJ AdjustTrack Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ AdjustTrack Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ AdjustTrack Hard.sce"
+   ],
+   "timescale": 0.7
+  },
+  "whj angle3shot easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "nuTS",
+     "profile": "nuTS",
+     "radius_cm": 65.0
+    }
+   ],
+   "sce_file": "WHJ Angle3shot Easy.sce",
+   "scenario": "WHJ Angle3shot Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ Angle3shot Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ Angle3shot Easy.sce"
+   ],
+   "timescale": 0.5
+  },
+  "whj dynamicrfx hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "nuTS",
+     "profile": "nuTS",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "WHJ DynamicRFX Hard.sce",
+   "scenario": "WHJ DynamicRFX Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ DynamicRFX Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ DynamicRFX Hard.sce"
+   ],
+   "timescale": 0.75
+  },
+  "whj smoothstrafesphere easy": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin short strafe",
+     "radius_cm": 20.0
+    }
+   ],
+   "sce_file": "WHJ SmoothStrafeSphere Easy.sce",
+   "scenario": "WHJ SmoothStrafeSphere Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Easy.sce"
+   ],
+   "timescale": 0.9
+  },
+  "whj smoothstrafesphere hard": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin short strafe",
+     "radius_cm": 15.0
+    }
+   ],
+   "sce_file": "WHJ SmoothStrafeSphere Hard.sce",
+   "scenario": "WHJ SmoothStrafeSphere Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Hard.sce"
+   ],
+   "timescale": 1.0
+  },
+  "whj smoothstrafesphere very easy": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "Thin",
+     "profile": "Thin short strafe",
+     "radius_cm": 35.0
+    }
+   ],
+   "sce_file": "WHJ SmoothStrafeSphere Very Easy.sce",
+   "scenario": "WHJ SmoothStrafeSphere Very Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Very Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SmoothStrafeSphere Very Easy.sce"
+   ],
+   "timescale": 0.9
+  },
+  "whj speedclick hard": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "RIGHT BERRY",
+     "profile": "RIGHT BERRY",
+     "radius_cm": 80.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RIGHT BERRY",
+     "profile": "RIGHT BERRY",
+     "radius_cm": 80.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RIGHT BERRY",
+     "profile": "RIGHT BERRY",
+     "radius_cm": 80.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "RIGHT BERRY",
+     "profile": "RIGHT BERRY",
+     "radius_cm": 80.0
+    }
+   ],
+   "sce_file": "WHJ SpeedClick Hard.sce",
+   "scenario": "WHJ SpeedClick Hard",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SpeedClick Hard.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ SpeedClick Hard.sce"
+   ],
+   "timescale": 0.9
+  },
+  "whj twoshot pressure easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Balloon",
+     "profile": "Balloon",
+     "radius_cm": 100.0
+    }
+   ],
+   "sce_file": "WHJ TwoShot Pressure Easy.sce",
+   "scenario": "WHJ TwoShot Pressure Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ TwoShot Pressure Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ TwoShot Pressure Easy.sce"
+   ],
+   "timescale": 2.0
+  },
+  "whj ww4t pokeball easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Regenerating Pokeball",
+     "profile": "Regenerating Pokeball",
+     "radius_cm": 75.0
+    }
+   ],
+   "sce_file": "WHJ ww4t Pokeball Easy.sce",
+   "scenario": "WHJ ww4t Pokeball Easy",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ ww4t Pokeball Easy.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\WHJ ww4t Pokeball Easy.sce"
+   ],
+   "timescale": 0.8
+  },
+  "wide wall 10 extra small": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "Extra small",
+     "radius_cm": 50.0
+    }
+   ],
+   "sce_file": "Wide Wall 10 Extra Small.sce",
+   "scenario": "Wide Wall 10 Extra Small",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 10 Extra Small.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 10 Extra Small.sce"
+   ],
+   "timescale": 1.0
+  },
+  "wide wall 3 targets": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 120.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 120.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 120.0
+    }
+   ],
+   "sce_file": "Wide Wall 3 Targets.sce",
+   "scenario": "Wide Wall 3 Targets",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 3 Targets.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 3 Targets.sce"
+   ],
+   "timescale": 1.0
+  },
+  "wide wall 6targets pasu reload": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "react",
+     "profile": "target",
+     "radius_cm": 60.0
+    }
+   ],
+   "sce_file": "Wide Wall 6Targets Pasu Reload.sce",
+   "scenario": "Wide Wall 6Targets Pasu Reload",
+   "sources": [
+    "local_scenarios:E:\\SteamLibrary\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 6Targets Pasu Reload.sce",
+    "research_local:C:\\Users\\袜子\\Desktop\\FPSAimTrainer\\FPSAimTrainer\\Saved\\SaveGames\\Scenarios\\Wide Wall 6Targets Pasu Reload.sce"
+   ],
+   "timescale": 0.7
+  },
+  "wide wall pasu a+ easy": {
+   "bots": [
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu",
+     "radius_cm": 140.0
+    },
+    {
+     "bb_type": "Spheroid",
+     "character": "Pasu",
+     "profile": "Pasu",
+     "radius_cm": 140.0
+    }
+   ],
+   "sce_file": "Wide Wall Pasu a+ Easy.sce",
+   "scenario": "Wide Wall Pasu a+ Easy",
+   "sources": [
+    "workshop:SteamLibrary/2792078409:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2792078409\\Wide Wall Pasu a+ Easy.sce"
+   ],
+   "timescale": 0.85
+  },
+  "ww3t 50% smaller": {
+   "bots": [
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    },
+    {
+     "bb_type": "Cylindrical",
+     "character": "target",
+     "profile": "target",
+     "radius_cm": 25.0
+    }
+   ],
+   "sce_file": "ww3t 50% Smaller.sce",
+   "scenario": "ww3t 50% Smaller",
+   "sources": [
+    "workshop:SteamLibrary/2514981215:E:\\SteamLibrary\\steamapps\\workshop\\content\\824270\\2514981215\\ww3t 50% Smaller.sce"
+   ],
+   "timescale": 1.0
+  }
+ },
+ "generated_at": "2026-10-07T20:51:21",
+ "generator": "scripts/export_bb_radius_table.py (kovaak_tracker.sce_reading)",
+ "name_key": "casefolded whitespace-normalized scenario name (sce_reading._norm_name)",
+ "schema_version": "bb_radius_table.v1",
+ "stats": {
+  "files": 241,
+  "parsed": 241,
+  "with_radius": 241
+ }
+}

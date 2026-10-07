@@ -1432,6 +1432,56 @@ def _external_telemetry_source(job: dict) -> dict | None:
     return None
 
 
+def _ensure_round_bb_for_external_run(
+    snapshot: dict,
+    external_id: str,
+    round_dir: Path,
+    round_number: int,
+    meta: dict,
+) -> None:
+    """分析前懒生成旁车 bb.json（内置半径表 → 本机 .sce，见 kovaak_tracker.bb_fill）。
+
+    缺 bb 时现场生成并缓存进旁车目录，让几何指标用真值半径；失败（表与
+    .sce 双 miss、无安装、写盘失败等）只记日志，保持现行诚实降级行为
+    （几何指标 unavailable），绝不阻塞分析主流程。已有 bb.json（含研究期
+    验证产物）绝不覆盖。
+    """
+    from .config import resolve_kovaak_install_dir
+    from kovaak_tracker import bb_fill
+
+    try:
+        time_meta = meta.get("time") if isinstance(meta.get("time"), dict) else {}
+        outcome = bb_fill.ensure_round_bb(
+            round_dir,
+            snapshot.get("scenario"),
+            install_dir=resolve_kovaak_install_dir(),
+            round_number=round_number,
+            window_t=(time_meta.get("t_start"), time_meta.get("t_end")),
+        )
+    except Exception:  # noqa: BLE001 - bb 懒生成绝不阻塞分析
+        log.warning(
+            "external bb lazy fill crashed external=%s", external_id, exc_info=True,
+        )
+        return
+    status = outcome.get("status")
+    if status == "written":
+        log.info(
+            "external bb generated external=%s scenario=%s source=%s radii=%s sce=%s",
+            external_id,
+            outcome.get("scenario"),
+            outcome.get("source"),
+            outcome.get("radii_cm"),
+            outcome.get("sce_path") or outcome.get("sce_file"),
+        )
+    elif status in ("unavailable", "write_failed"):
+        log.warning(
+            "external bb unavailable external=%s scenario=%s reason=%s",
+            external_id,
+            snapshot.get("scenario"),
+            outcome.get("reason"),
+        )
+
+
 def _build_external_telemetry_visual_result(job: dict) -> dict:
     """外部遥测冻结副本 -> 与 CV 同形的 visual_result（本进程投影，不 import cv2）。
 
@@ -1532,11 +1582,17 @@ def _build_external_telemetry_visual_result(job: dict) -> dict:
     if isinstance(anchor_epoch, (int, float)) and not isinstance(anchor_epoch, bool) \
             and math.isfinite(float(anchor_epoch)):
         frozen_round_meta["origin_t"] = start_ms / 1000.0 - float(anchor_epoch)
+    # bb 缺失就现场生成缓存（内置表→本机 .sce）；失败降级不崩，bb 仍缺时
+    # producer 按现行语义给几何指标 unavailable + 兜底标注。
+    round_dir = Path(frames_path).parent
+    _ensure_round_bb_for_external_run(
+        snapshot, external_id, round_dir, round_number, meta,
+    )
     try:
         from kovaak_tracker.telemetry_signals import build_telemetry_visual_result
 
         visual_result = build_telemetry_visual_result(
-            Path(frames_path).parent,
+            round_dir,
             round_number,
             canonical_window=(start_ms, end_ms),
             analysis_ref=f"analysis:{job['id']}",

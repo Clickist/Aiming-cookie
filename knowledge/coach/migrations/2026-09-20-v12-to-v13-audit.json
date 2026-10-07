@@ -1,0 +1,71 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-09-12.v12",
+  "target_registry_version": "2026-09-20.v13",
+  "generated_at": "2026-10-07",
+  "migration_kind": "retroactive_ledger_backfill",
+  "summary": "补记账页（原缺口：aim wiki 系 7 条 2026-09-20 入库时只有 commit 无 migration 账页，2026-10-07 溯源审计列为账缺口后由 git 考古回填）。v12→v13 为纯扩条：新增 7 条（aim wiki 中文改写 3 条 + 由此派生的工效/练习 4 条），无删除、无既有条目修订；sources 122→135（+13）。同 commit 注册加载器 v13（Python REGISTRY_PATH_V13 + TS registryFiles/默认版本）并对齐测试断言。条目文本由构建脚本 .zcode/kb-aimwiki-2026-09-20/build_v13.py 内嵌生成（该脚本在 .zcode，无版本控制）。",
+  "published_in": {
+    "commit": "9de949eb4e3632d8e6a84885aa9ed214bd89a13c",
+    "date": "2026-09-20",
+    "message": "feat(knowledge): registry v13——aim wiki 改写条目入库",
+    "note": "孪生 commit f6f52e7d 在其他分支，两 commit 的 registry.v13.json 经 git diff 逐字节核对为零差异。commit 正文自述：新增 7 条条目；sources 122→135；加载器注册 v13；test_worker 与 release-resource-paths 的 registry 版本断言对齐 v13。"
+  },
+  "added_entries": [
+    {
+      "entry_ref": "knowledge:community.aimwiki.metronome-pacing-method@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki.metronome"]
+    },
+    {
+      "entry_ref": "knowledge:community.aimwiki.myth-corrections@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki", "community.voltaic.muscle-memory-post", "community.aimlabs.cm360-article"]
+    },
+    {
+      "entry_ref": "knowledge:community.aimwiki.tension-screen-signs-and-drills@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki", "community.viscose.youtube.tension-management"]
+    },
+    {
+      "entry_ref": "knowledge:ergonomics.eye-rest-and-sleep@1",
+      "supported_uses": ["explanation_only"],
+      "sources": ["community.aimwiki", "community.aimlabs.body-care-article", "community.voltaic.lifestyle-guide"]
+    },
+    {
+      "entry_ref": "knowledge:practice.benchmark-trend-reading@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki", "community.revosect.benchmarks-guide", "community.voltaic.s5-benchmarks"]
+    },
+    {
+      "entry_ref": "knowledge:practice.plateau-fatigue-and-rest@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki", "research.motor-skill-plateau", "research.overtraining-syndrome-review", "research.motor-learning-stages", "community.voltaic.muscle-memory-post"]
+    },
+    {
+      "entry_ref": "knowledge:practice.session-structure-and-review@1",
+      "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+      "sources": ["community.aimwiki", "community.aimlabs.playlist-article", "research.distributed-practice"]
+    }
+  ],
+  "added_sources": [
+    "community.aimlabs.body-care-article",
+    "community.aimlabs.cm360-article",
+    "community.aimlabs.playlist-article",
+    "community.aimwiki",
+    "community.aimwiki.metronome",
+    "community.revosect.benchmarks-guide",
+    "community.voltaic.lifestyle-guide",
+    "community.voltaic.muscle-memory-post",
+    "community.voltaic.s5-benchmarks",
+    "research.distributed-practice",
+    "research.motor-learning-stages",
+    "research.motor-skill-plateau",
+    "research.overtraining-syndrome-review"
+  ],
+  "removed_entries": [],
+  "amended_entries": [],
+  "unamended_entry_count": 111,
+  "build_script_ref": ".zcode/kb-aimwiki-2026-09-20/build_v13.py（.zcode/ 整体在版本控制外，脚本仅存于工作区）",
+  "provenance_caveat": "aim wiki（Bassel-Bakr/aim）本地克隆已散失，仅 sources locator 内的 GitHub commit pin f265b73 可在线复核；条目中文文本由 build_v13.py 内嵌英译中改写生成，无中间对照稿留痕。原料侧此段历史在本地不可考，线上可按 pin 复核。"
+}

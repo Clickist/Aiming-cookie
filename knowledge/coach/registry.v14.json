@@ -12587,7 +12587,7 @@
     "source_refs": [
      "community.xen2.bilibili.flick-speed-training"
     ],
-    "text": "甩枪训练 playlist：Micros（先放慢、≥85% 命中率下推节奏（口头经验标尺，非校准阈值））、Reflex 场景（逼第一下大甩极限速度）、Pokoy Bowl（有控制的落点）、WW3T 50% smaller、Multiclick speed、Fuglaa Pressure。"
+    "text": "甩枪训练 playlist：Micros（先放慢、≥85% 命中率下推节奏（口头经验标尺，非校准阈值））、Reflex 场景（逼第一下大甩极限速度）、Pokey Bowl（有控制的落点；ASR 原文为 Pokey Bowl，2026-10-07 订正）、WW3T 50% smaller、Multiclick speed、Fuglaa Pressure。"
    },
    "scope": {
     "section_ref": "prescription.p025.static-clicking-speed.scope",
@@ -12595,7 +12595,7 @@
     "source_refs": [
      "community.xen2.bilibili.flick-speed-training"
     ],
-    "text": "问题：实战甩枪慢、第一甩与微调衔接差；标签：static-clicking-speed、dynamic-clicking-acquisition、static-clicking-terminal-control。场景可用性：官方库：ww3t 50% Smaller（原文 WW3T 50% smaller）（leaderboard_id=9822）、Fuglaa Pressure Easy（原文 Fuglaa Pressure）（leaderboard_id=4116）；未解析：Micros、Reflex 场景、Pokoy Bowl、Multiclick speed（转写存疑，未对应到官方场景）。"
+    "text": "问题：实战甩枪慢、第一甩与微调衔接差；标签：static-clicking-speed、dynamic-clicking-acquisition、static-clicking-terminal-control。场景可用性：官方库：ww3t 50% Smaller（原文 WW3T 50% smaller）（leaderboard_id=9822）、Fuglaa Pressure Easy（原文 Fuglaa Pressure）（leaderboard_id=4116）；未解析：Micros、Reflex 场景、Pokey Bowl（ASR 原文为 Pokey Bowl，2026-10-07 订正）、Multiclick speed（转写存疑，未对应到官方场景）。"
    },
    "expected_direction": {
     "section_ref": "prescription.p025.static-clicking-speed.direction",
@@ -12634,7 +12634,7 @@
     "source_refs": [
      "community.xen2.bilibili.flick-speed-training"
     ],
-    "text": "来源做法（scenario；单来源经验，候选实验）：甩枪训练 playlist：Micros（先放慢、≥85% 命中率下推节奏（口头经验标尺，非校准阈值））、Reflex 场景（逼第一下大甩极限速度）、Pokoy Bowl（有控制的落点）、WW3T 50% smaller、Multiclick speed、Fuglaa Pressure。"
+    "text": "来源做法（scenario；单来源经验，候选实验）：甩枪训练 playlist：Micros（先放慢、≥85% 命中率下推节奏（口头经验标尺，非校准阈值））、Reflex 场景（逼第一下大甩极限速度）、Pokey Bowl（有控制的落点；ASR 原文为 Pokey Bowl，2026-10-07 订正）、WW3T 50% smaller、Multiclick speed、Fuglaa Pressure。"
    },
    "dose_guardrail": [
     {
@@ -13208,7 +13208,7 @@
     "source_refs": [
      "community.prescription.bv1ffnazkezn"
     ],
-    "text": "来源做法·欠甩派（社区对欠甩/过甩/到位后微修并无共识，此为一派的候选实验）：步骤 2：用测得距离瞄“目标后方空间”制造欠甩；调整期以 pokeball 类场景为主：距离练习用 Pegboard Frenzy Order Small / 1w6ts Small / 1w4ts Small；跨靶径一致性练习用 RX 1w6ts More Varied Pokeball、RX Multiclick Pokeball、VT Multiclick 120 Intermediate Pokeball。"
+    "text": "来源做法·欠甩派（社区对欠甩/过甩/到位后微修并无共识，此为一派的候选实验）：步骤 2：用测得距离瞄“目标后方空间”制造欠甩；调整期以 pokeball 类场景为主：距离练习用 Pegboard Frenzy Order Small / 1w6ts Small / 1w4ts Small（ASR 推断名）；跨靶径一致性练习用 RX 1w6ts More Varied Pokeball、RX Multiclick Pokeball、VT Multiclick 120 Intermediate Pokeball（ASR 推断名）。"
    },
    "scope": {
     "section_ref": "prescription.p030.static-clicking-terminal-control.scope",
@@ -13255,7 +13255,7 @@
     "source_refs": [
      "community.prescription.bv1ffnazkezn"
     ],
-    "text": "来源做法（scenario；单来源经验，候选实验）：来源做法·欠甩派（社区对欠甩/过甩/到位后微修并无共识，此为一派的候选实验）：步骤 2：用测得距离瞄“目标后方空间”制造欠甩；调整期以 pokeball 类场景为主：距离练习用 Pegboard Frenzy Order Small / 1w6ts Small / 1w4ts Small；跨靶径一致性练习用 RX 1w6ts More Varied Pokeball、RX Multiclick Pokeball、VT Multiclick 120 Intermediate Pokeball。"
+    "text": "来源做法（scenario；单来源经验，候选实验）：来源做法·欠甩派（社区对欠甩/过甩/到位后微修并无共识，此为一派的候选实验）：步骤 2：用测得距离瞄“目标后方空间”制造欠甩；调整期以 pokeball 类场景为主：距离练习用 Pegboard Frenzy Order Small / 1w6ts Small / 1w4ts Small（ASR 推断名）；跨靶径一致性练习用 RX 1w6ts More Varied Pokeball、RX Multiclick Pokeball、VT Multiclick 120 Intermediate Pokeball（ASR 推断名）。"
    },
    "dose_guardrail": [
     {
@@ -15903,7 +15903,7 @@
     "source_refs": [
      "community.mattyow.bilibili.break-plateau"
     ],
-    "text": "每周排期表：日 static 点击 / 一 speed 切换 / 二 evasive 切换 / 三 dynamic 点击 / 四 precise 跟踪 / 五 reactive 跟踪 / 六 休息；换场景规则（作者示例排期，非普适铁律）：同一子类内上周玩过的场景本周不再重复。"
+    "text": "每周排期表：日 static 点击 / 一 speed 切换 / 二 evasive 切换 / 三 dynamic 点击 / 四 precise 跟踪 / 五 reactive 跟踪 / 六 休息或自由玩（顺序可自定，保持相近子类相邻）；换场景规则（作者示例排期，非普适铁律）：同一子类内上周玩过的场景本周不再重复。"
    },
    "scope": {
     "section_ref": "prescription.p052.practice-plateau.scope",
@@ -15949,7 +15949,7 @@
     "source_refs": [
      "community.mattyow.bilibili.break-plateau"
     ],
-    "text": "来源做法（method；单来源经验，候选实验）：每周排期表：日 static 点击 / 一 speed 切换 / 二 evasive 切换 / 三 dynamic 点击 / 四 precise 跟踪 / 五 reactive 跟踪 / 六 休息；换场景规则（作者示例排期，非普适铁律）：同一子类内上周玩过的场景本周不再重复。"
+    "text": "来源做法（method；单来源经验，候选实验）：每周排期表：日 static 点击 / 一 speed 切换 / 二 evasive 切换 / 三 dynamic 点击 / 四 precise 跟踪 / 五 reactive 跟踪 / 六 休息或自由玩（顺序可自定，保持相近子类相邻）；换场景规则（作者示例排期，非普适铁律）：同一子类内上周玩过的场景本周不再重复。"
    },
    "dose_guardrail": [
     {

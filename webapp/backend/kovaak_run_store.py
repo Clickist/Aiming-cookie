@@ -494,6 +494,27 @@ def _local_scenario_behavior_descriptor(
     return parse_local_scenario_behavior_descriptor(data, expected_display_name=scenario)
 
 
+def _local_scenario_reading(scenario: object) -> dict[str, object]:
+    """诊断读图语境层（fail-open）：读本机 .sce 生成"这张图练什么"描述符。
+
+    与 v1 behavior_descriptor（判型输入）互不影响：本键只做语境透出，绝不
+    参与 resolve_scenario_profile 判型。unavailable 也以描述符形态入快照
+    （availability + reason），让 Coach 能区分"没装 KovaaK / 没这张图 /
+    解析失败"，与 video source 的 availability 模式一致。
+    """
+    from .config import resolve_kovaak_install_dir
+    from kovaak_tracker.sce_reading import (
+        read_scenario_reading_from_dirs,
+        reading_unavailable,
+    )
+
+    display_name = scenario if isinstance(scenario, str) else ""
+    install = resolve_kovaak_install_dir()
+    if install is None:
+        return reading_unavailable(display_name, "install_unavailable")
+    return read_scenario_reading_from_dirs(scenario, install_dir=install)
+
+
 def _ext_epoch_window_ms(meta: dict) -> tuple[float, float] | None:
     """ext meta 的绝对纪元窗（ms）：time.t_start/t_end + epoch anchor 换算。
 
@@ -790,6 +811,8 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     from kovaak_tracker.scenario_profiles import resolve_scenario_profile
 
     behavior_descriptor = _local_scenario_behavior_descriptor(run.get("scenario"))
+    # 诊断读图语境层：独立新键，绝不喂给 resolve_scenario_profile（判型零改动）
+    scenario_reading = _local_scenario_reading(run.get("scenario"))
     scenario_resolution = resolve_scenario_profile(
         observed_scenario_hash if isinstance(observed_scenario_hash, str) else None,
         run.get("scenario") if isinstance(run.get("scenario"), str) else None,
@@ -802,6 +825,7 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
         "scenario_identity_version": SCENARIO_IDENTITY_VERSION,
         "scenario_resolution": scenario_resolution,
         "scenario_behavior_descriptor": behavior_descriptor,
+        "scenario_reading_descriptor": scenario_reading,
         "sources": sources,
         "trace": trace,
         "canonical_time_window": canonical_time_window,
@@ -1441,6 +1465,33 @@ async def set_run_finalization_state(
     run["updated_at"] = _utc_now()
     _save_run(run)
     return run
+
+
+def set_run_telemetry_cut_state_sync(
+    run_id: int,
+    user_id: str,
+    state: str,
+    error: str | None = None,
+) -> None:
+    """[fix 2026-10-07 W4] run 级遥测切窗状态回执（切窗线程同步回写）。
+
+    按局增量切窗（telemetry_capture_service.request_run_cut）被守卫拒绝 /
+    受理 / 完成时回写 run meta，让 Coach 与诊断层能对单局回答「动作层为何
+    缺失」，而不是只看到聚合计数。error=守卫 reason 码（no_session_outputs
+    等）或失败摘要；调用方须吞掉本函数异常，不让回写影响切窗主链路。
+    并发说明：切窗线程内已有 _persist_diagnostics 写会话诊断文件的先例；
+    本函数只追加 telemetry_cut_state/telemetry_cut_error 两键，_save_run
+    整文件落盘无部分写，与其他写方的交错最坏是键级覆盖顺序。
+    """
+    if state not in {"rejected", "accepted", "ok", "failed"}:
+        raise ValueError("telemetry cut state is invalid")
+    run = _load_run(run_id)
+    if run is None or run.get("user_id") != user_id:
+        return
+    run["telemetry_cut_state"] = state
+    run["telemetry_cut_error"] = error
+    run["updated_at"] = _utc_now()
+    _save_run(run)
 
 
 # 僵尸条目兜底（20260914 远程诊断包实证）：pending + waiting_for_sources 的 run

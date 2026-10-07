@@ -1,0 +1,131 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-07-29.v4",
+  "target_registry_version": "2026-08-06.v6",
+  "generated_at": "2026-10-07",
+  "migration_kind": "retroactive_ledger_backfill",
+  "summary": "补记账页（原缺口：v4→v5→v6 两跳在同一次 commit 中发布， migrations/ 无对应页，2026-10-07 溯源审计列为账缺口后由 git 考古回填）。两跳均为 schema coach_knowledge_registry.v3 内的扩条：v4→v5 新增 2 条 hypothesis 差分摄入条目；v5→v6 新增 6 条社区条目（viscose×3 + qiluno×3）并给 6 条既有条目追加社区/qiluno 机制节与来源。无删除、无降版。条目内容与来源清单均由 git 对象逐字段比对得出（git show main:knowledge/coach/registry.v{4,5,6}.json）。",
+  "published_in": {
+    "commit": "7e0130d7034f7d3f32bc8502d93d716a33e45986",
+    "date": "2026-08-07",
+    "message": "chore(coach-knowledge): publish v5 and v6 registry",
+    "note": "v5 与 v6 在 main 分支一次 commit 同时发布（registry.v5.json、registry.v6.json 均为该 commit 新增文件，无逐版提交，发布理由未留痕）；孪生 commit c0dda0a9 在分支 hotfix/1.3.10-analysis-type，两 commit 的 registry 内容经 git diff 逐字节核对为零差异。"
+  },
+  "steps": [
+    {
+      "source_registry_version": "2026-07-29.v4",
+      "target_registry_version": "2026-08-06.v5",
+      "entry_count": "19 → 21",
+      "source_count": "27 → 30",
+      "added_entries": [
+        {
+          "entry_ref": "knowledge:hypothesis.input-latency-differential-intake@1",
+          "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+          "sources": ["product.problem-hypothesis-spec", "research.cursor-latency-tracking"]
+        },
+        {
+          "entry_ref": "knowledge:hypothesis.mouse-fit-differential-intake@1",
+          "supported_uses": ["explanation_only", "diagnosis_support", "candidate_experiment"],
+          "sources": ["product.problem-hypothesis-spec", "research.mouse-shape-ergonomics"]
+        }
+      ],
+      "added_sources": [
+        "product.problem-hypothesis-spec",
+        "research.cursor-latency-tracking",
+        "research.mouse-shape-ergonomics"
+      ],
+      "removed_entries": [],
+      "amended_entries": []
+    },
+    {
+      "source_registry_version": "2026-08-06.v5",
+      "target_registry_version": "2026-08-06.v6",
+      "entry_count": "21 → 27",
+      "source_count": "30 → 46",
+      "added_entries": [
+        {
+          "entry_ref": "knowledge:community.aim-efficiency-framework@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.viscose.youtube.perfect-aim"]
+        },
+        {
+          "entry_ref": "knowledge:community.difficulty-refinement-and-stress-test@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.viscose.youtube.fastest-improve", "community.viscose.youtube.training-mistakes"]
+        },
+        {
+          "entry_ref": "knowledge:community.practice-intent-and-autopilot@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.viscose.youtube.fastest-improve", "community.viscose.youtube.training-mistakes", "community.qiluno.bilibili.training-goals", "community.qiluno.bilibili.self-correction"]
+        },
+        {
+          "entry_ref": "knowledge:community.qiluno.confirmation-timing-schools@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.qiluno.bilibili.static-guide", "community.qiluno.bilibili.confirmation-attention", "community.qiluno.bilibili.speed-qa"]
+        },
+        {
+          "entry_ref": "knowledge:community.qiluno.distance-adaptive-click-tempo@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.qiluno.bilibili.static-guide", "community.qiluno.bilibili.fixed-rhythm"]
+        },
+        {
+          "entry_ref": "knowledge:community.qiluno.reset-as-continuity@1",
+          "supported_uses": ["explanation_only"],
+          "sources": ["community.qiluno.bilibili.hand-use", "community.qiluno.bilibili.aim-concept"]
+        }
+      ],
+      "added_sources": [
+        "community.qiluno.bilibili.aim-concept",
+        "community.qiluno.bilibili.aim-transfer",
+        "community.qiluno.bilibili.confirmation-attention",
+        "community.qiluno.bilibili.dynamic-guide",
+        "community.qiluno.bilibili.fixed-rhythm",
+        "community.qiluno.bilibili.hand-use",
+        "community.qiluno.bilibili.self-correction",
+        "community.qiluno.bilibili.smooth-tracking",
+        "community.qiluno.bilibili.speed-qa",
+        "community.qiluno.bilibili.static-guide",
+        "community.qiluno.bilibili.tracking-guide",
+        "community.qiluno.bilibili.training-goals",
+        "community.viscose.youtube.fastest-improve",
+        "community.viscose.youtube.perfect-aim",
+        "community.viscose.youtube.tension-management",
+        "community.viscose.youtube.training-mistakes"
+      ],
+      "removed_entries": [],
+      "amended_entries": [
+        {
+          "entry_ref": "knowledge:community.aim-trainer-transfer@1",
+          "entry_version_unchanged": true,
+          "change": "追加机制节 community.aim-trainer-transfer.mechanism.qiluno-game-layer；sources 追加 community.qiluno.bilibili.aim-transfer"
+        },
+        {
+          "entry_ref": "knowledge:dynamic.speed-matching-and-reading@2",
+          "entry_version_unchanged": true,
+          "change": "追加机制节 dynamic.speed-matching-and-reading.mechanism.qiluno-current-motion；sources 追加 community.qiluno.bilibili.dynamic-guide"
+        },
+        {
+          "entry_ref": "knowledge:hypothesis.tension-management@2→@3",
+          "entry_version_bumped": true,
+          "change": "entry_version 2→3；追加机制节 hypothesis.tension-management.viscose-model；sources 追加 community.viscose.youtube.tension-management"
+        },
+        {
+          "entry_ref": "knowledge:tracking.control-smoothness@2",
+          "entry_version_unchanged": true,
+          "change": "追加机制节 tracking.control-smoothness.mechanism.qiluno-reading；sources 追加 community.qiluno.bilibili.dynamic-guide/tracking-guide/smooth-tracking"
+        },
+        {
+          "entry_ref": "knowledge:tracking.predictable-speed-matching@2",
+          "entry_version_unchanged": true,
+          "change": "追加机制节 tracking.predictable-speed-matching.mechanism.qiluno-continuous-reading；sources 追加 community.qiluno.bilibili.tracking-guide/smooth-tracking"
+        },
+        {
+          "entry_ref": "knowledge:tracking.reactive-change-response@2",
+          "entry_version_unchanged": true,
+          "change": "追加机制节 tracking.reactive-change-response.mechanism.qiluno-reentry；scope.text 追加 early-turn 判据句；sources 追加 community.qiluno.bilibili.tracking-guide"
+        }
+      ]
+    }
+  ],
+  "provenance_caveat": "此账页只记录 git 对象可考证的版本间差异。v5/v6（尤其 qiluno 系）的入库底稿、翻译或改写中间稿在仓库与 .zcode 中均不存在，qiluno 十个 BV 的本地转写已散失（kb-provenance-audit-1007 判为原料断层）；为何 v5 与 v6 同 commit 发布亦无留痕。上述不可考部分如实记为：此段历史不可考。"
+}

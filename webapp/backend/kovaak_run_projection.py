@@ -665,6 +665,11 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
         public_snapshot["scenario_behavior_descriptor"] = _sanitize_public_value(
             snapshot.get("scenario_behavior_descriptor")
         )
+    if "scenario_reading_descriptor" in snapshot:
+        # 诊断读图语境层（"这张图练什么"）：与 v1 判型输入并列透出
+        public_snapshot["scenario_reading_descriptor"] = _sanitize_public_value(
+            snapshot.get("scenario_reading_descriptor")
+        )
     if "scenario_challenge_shape" in snapshot:
         public_snapshot["scenario_challenge_shape"] = _sanitize_public_value(
             snapshot.get("scenario_challenge_shape")
