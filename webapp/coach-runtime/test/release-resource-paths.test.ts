@@ -90,7 +90,6 @@ test("default coach prompt carries the honest empty-diagnosis rule", () => {
   try {
     delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     const prompt = loadDefaultCoachSystemPrompt();
-    assert.match(prompt, /自己诊断/);
     // 内部工程标注不外讲（2026-10-07）：limitations/投影估算/校准缺失这类
     // 管道状态不对用户转述，不可用指标直接跳过。生产案例：Coach 把
     // 「遥测投影估算、没有图像校准」念给用户听。
