@@ -12,7 +12,7 @@ import socket
 import sys
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -3983,6 +3983,8 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
         if not marked_done:
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
         else:
+            code_fp, _code_manifest = _analysis_code_fingerprint()
+            log.info("[code-fingerprint] session=%s fingerprint=%s", sid, code_fp)
             try:
                 await _record_profile_contribution(job, result)
             except Exception as error:
@@ -4107,8 +4109,61 @@ async def _run_loop_async() -> None:
             await asyncio.sleep(2)
 
 
+# 分析链关键源文件（仓库相对路径）：代码指纹覆盖范围。用于「旧进程
+# 算新单」的事后归因——结果日志带上指纹即可判断是哪版代码算的。
+ANALYSIS_CODE_FINGERPRINT_FILES = (
+    "kovaak_tracker/tracking_analysis.py",
+    "kovaak_tracker/telemetry_signals.py",
+    "kovaak_tracker/dynamic_clicking_analysis.py",
+    "webapp/backend/worker_family_analysis.py",
+)
+
+_analysis_code_fingerprint_cache: tuple[str, list[str]] | None = None
+
+
+def analysis_code_fingerprint(
+    entries: Iterable[tuple[str, Path | str]],
+) -> tuple[str, list[str]]:
+    """对 (name, path) 列表计算 (mtime, size) 代码指纹。
+
+    返回 (digest, manifest)：digest 为各文件 ``name:mtime:size`` 拼接后
+    sha256 前 12 位；manifest 为同样的原始条目列表，便于人工比对。
+    文件缺失（stat 失败）时跳过该文件不报错，指纹只覆盖存在的文件。
+    """
+    parts: list[str] = []
+    for name, path in entries:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        parts.append(f"{name}:{int(stat.st_mtime)}:{stat.st_size}")
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+    return digest, list(parts)
+
+
+def _analysis_code_fingerprint() -> tuple[str, list[str]]:
+    """当前进程的分析代码指纹，进程生命周期内缓存一次。
+
+    启动时取一次（对应进程实际加载的代码版本），之后 job 完成日志
+    复用同值：同 hash 即同代码，跨结果对账才有意义。
+    """
+    global _analysis_code_fingerprint_cache
+    if _analysis_code_fingerprint_cache is None:
+        repo_root = Path(__file__).resolve().parents[2]
+        _analysis_code_fingerprint_cache = analysis_code_fingerprint(
+            (rel, repo_root / rel) for rel in ANALYSIS_CODE_FINGERPRINT_FILES
+        )
+    return _analysis_code_fingerprint_cache
+
+
 def run_loop() -> None:
     """阻塞消费循环入口(worker 进程 main)。"""
+    fingerprint, manifest = _analysis_code_fingerprint()
+    log.info(
+        "[code-fingerprint] worker starting, analysis-code fingerprint=%s files=%s",
+        fingerprint,
+        manifest,
+    )
     asyncio.run(_run_loop_async())
 
 
