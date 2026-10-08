@@ -259,7 +259,10 @@ class KovaaKCaptureFinalizer:
                 raise
         timings["ingest"] = (time.monotonic() - ingest_started) * 1000.0
 
-        if not run.get("stats_path") or not run.get("performance_path"):
+        if not run.get("stats_path"):
+            # stats 缺失=真的没有源，继续等；performance 缺失不再阻塞：
+            # 2026-10-08 起 finalize 走 CSV-only 对齐（kovaak_run_store），
+            # KovaaK 不产 .perf 的机器由此放行（waiting_for_sources 永久卡死病灶）。
             if (
                 run.get("finalization_state") != "pending"
                 or run.get("finalization_error") != "waiting_for_sources"

@@ -136,6 +136,93 @@ def resolve_time_alignment(*args, **kwargs) -> TimeWindow:
     return resolve_time_window(*args, **kwargs)
 
 
+def resolve_time_window_stats_only(
+    *,
+    stats_challenge_start: datetime | str,
+    filename_time: datetime | str | None = None,
+    stats_event_times_seconds: Iterable[float] = (),
+    time_limit_seconds: float | None = None,
+    time_remaining_seconds: float | None = None,
+    pause_count: int | float | str | None = None,
+    pause_duration_seconds: float = 0.0,
+    local_timezone: tzinfo | None = None,
+) -> TimeWindow:
+    """CSV-only window rebuild for machines whose KovaaK never writes .perf.
+
+    Validated against 183 paired CSV+perf local runs (2026-10-08): the
+    filename-day + Challenge-Start start anchor matched the perf anchor on
+    183/183 runs (max 1.0s, 81 overnight-boundary runs included); the full-timer
+    anchor ``time_limit - Time_Remaining`` matched on 119/119 non-pause timed
+    runs. Pause runs diverge irrecoverably (3.5s..1505s), so the existing v1
+    pause fail-closed semantics are reused unchanged. Terminal semantics mirror
+    the production resolver exactly: stats event end first, full-timer anchor
+    (``time_limit - Time_Remaining``) only as the zero-kill fallback — so a run
+    resolves to the same window whether or not the .perf file exists.
+    """
+    reject_pause_evidence(None, pause_duration_seconds, pause_count=pause_count)
+
+    parsed = _parse_challenge_start_value(stats_challenge_start)
+    if parsed is None:
+        raise TimeAlignmentError(
+            f"anchor_conflict: invalid Stats Challenge Start {stats_challenge_start!r}"
+        )
+    if parsed.tzinfo is not None:
+        start_ms = _round_ms(parsed.timestamp() * 1000)
+    else:
+        filename_dt = _parse_filename_time(filename_time)
+        if filename_dt is None:
+            raise TimeAlignmentError(
+                "anchor_timezone_unmapped: CSV-only start needs the filename date"
+            )
+        # 跨午夜规则（81 局实证）：Challenge Start 晚于词干时刻 ⇒ 挑战始于前一天。
+        day = filename_dt.date()
+        if parsed.time() > filename_dt.time():
+            day = day - timedelta(days=1)
+        tz = local_timezone or datetime.now().astimezone().tzinfo
+        start_dt = datetime.combine(day, parsed.time()).replace(tzinfo=tz)
+        start_ms = _round_ms(start_dt.timestamp() * 1000)
+
+    events = _valid_event_seconds(stats_event_times_seconds)
+    if events:
+        # production 同语义：stats 事件终点优先（含 pasu 杀敌加时超 nominal
+        # time_limit 的局——窗口必须跟随游戏时钟，不得被 nominal 满窗截断）。
+        duration_ms = _round_ms(max(events) * 1000)
+        end_source = "stats_event"
+    else:
+        # 0 杀（tracking 类）局：满窗锚 tl−TR 兜底，对应 production 的
+        # timer_profile 位。tl 来源不可用时 fail-closed（duration_missing）。
+        remaining = (
+            float(time_remaining_seconds)
+            if time_remaining_seconds is not None
+            else 0.0
+        )
+        if time_limit_seconds is None or float(time_limit_seconds) <= 0:
+            raise TimeAlignmentError("duration_missing: no CSV-only duration evidence")
+        duration_seconds = float(time_limit_seconds) - remaining
+        if duration_seconds <= 0:
+            raise TimeAlignmentError("duration_missing: CSV-only full-timer not positive")
+        duration_ms = _round_ms(duration_seconds * 1000)
+        end_source = "csv_timer_profile"
+
+    warnings: list[str] = []
+    filename_hint_ms = _filename_hint_ms(filename_time, start_ms, local_timezone)
+    if filename_hint_ms is not None:
+        warnings.append("filename_time_is_coarse_hint")
+
+    return TimeWindow(
+        start_ms=start_ms,
+        end_ms=start_ms + duration_ms,
+        duration_ms=duration_ms,
+        start_source="stats_challenge_start_csv_only",
+        end_source=end_source,
+        filename_end_hint_ms=filename_hint_ms,
+        warnings=tuple(dict.fromkeys(warnings)),
+        stats_anchor_status="explicit_timezone_argument",
+        stats_time_of_day_ms=start_ms % 86_400_000,
+        stats_local_to_utc_mapping=None,
+    )
+
+
 def _resolve_start(
     perf_start_ms: int,
     *,
@@ -382,10 +469,41 @@ def _round_ms(value: float) -> int:
     return int(math.floor(value + 0.5)) if value >= 0 else int(math.ceil(value - 0.5))
 
 
+def _parse_challenge_start_value(value: datetime | str) -> datetime | None:
+    """Parse a Stats ``Challenge Start`` value (naive local time-of-day or full)."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S.%f", "%H:%M:%S.%f"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_filename_time(value: datetime | str | None) -> datetime | None:
+    """Parse the KovaaK filename stem timestamp (``YYYY.MM.DD-HH.MM.SS``), naive."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is None else None
+    if isinstance(value, str):
+        match = _FILENAME_RE.search(value)
+        if not match:
+            return None
+        return datetime.strptime(
+            f"{match.group('date')}-{match.group('time')}", "%Y.%m.%d-%H.%M.%S"
+        )
+    return None
+
+
 __all__ = [
     "TimeAlignmentError",
     "TimeWindow",
     "reject_pause_evidence",
     "resolve_time_alignment",
     "resolve_time_window",
+    "resolve_time_window_stats_only",
 ]

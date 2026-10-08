@@ -178,6 +178,40 @@ def test_frozen_canonical_window_overrides_drifting_performance_anchor():
     assert [item["timestamp_ms"] for item in aligned["points"]] == [1_000, 1_100]
 
 
+def test_stats_only_run_aligns_via_frozen_window_without_performance():
+    frozen_window = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_000,
+        "end_ms": 1_200,
+        "duration_ms": 200,
+        "start_source": "stats_challenge_start_csv_only",
+        "end_source": "stats_event",
+        "warnings": [],
+    }
+
+    result = analyze_native_flicking(
+        [point(1_000, 1, 0), point(1_100, 1, 0), point(1_200, 0, 0)],
+        None,
+        stats={"summary": {}},
+        canonical_window=frozen_window,
+    )
+
+    # CSV-only run（KovaaK 不产 .perf）：对齐走冻结 canonical 窗口，分析照常
+    # 出完整 kinematics/flick 指标；performance 源以 availability=missing 诚实
+    # 呈现，事件时间线缺席进 limitations，绝不冒充 available。
+    assert result["status"] == "available"
+    assert result["evidence"]["sources"]["performance"]["availability"] == "missing"
+    assert "performance_events_unavailable" in result["limitations"]
+    assert result["evidence"]["alignment"]["challenge_start_epoch_ms"] == 1_000
+    assert result["evidence"]["alignment"]["challenge_end_epoch_ms"] == 1_200
+    assert not [
+        event
+        for event in result["deterministic"]["timeline"]
+        if event.get("source") == "performance"
+    ]
+
+
 def test_frozen_millisecond_window_keeps_118_clicks_matching_stats_shots():
     start_ms = 1_699_897_600_797
     end_ms = start_ms + 60_000

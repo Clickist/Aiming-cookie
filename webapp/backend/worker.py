@@ -363,7 +363,9 @@ def _maybe_commit_analysis_evidence(
     sources = snapshot.get("sources") or {}
     stats_source = sources.get("stats") if isinstance(sources, dict) else None
     performance_source = sources.get("performance") if isinstance(sources, dict) else None
-    if not isinstance(stats_source, dict) or not isinstance(performance_source, dict):
+    # CSV-only run 没有 performance 源：evidence 照样提交（stats-only
+    # artifact），不能因为缺 .perf 静默跳过整个 evidence 投影。
+    if not isinstance(stats_source, dict):
         return result
     try:
         from kovaak_tracker.analysis_evidence import (
@@ -380,8 +382,12 @@ def _maybe_commit_analysis_evidence(
                 _read_frozen_source_bytes("stats", stats_source),
                 file_name=str(stats_source.get("basename") or "stats.csv"),
             )
-        performance = parse_performance_bytes(
-            _read_frozen_source_bytes("performance", performance_source),
+        performance = (
+            parse_performance_bytes(
+                _read_frozen_source_bytes("performance", performance_source),
+            )
+            if isinstance(performance_source, dict)
+            else None
         )
         artifact = build_analysis_evidence_artifact_v1(
             analysis_ref=analysis_id,
@@ -390,9 +396,20 @@ def _maybe_commit_analysis_evidence(
             stats=parsed_stats,
             performance=performance,
             stats_source_ref=stats_source.get("artifact_ref"),
-            performance_source_ref=performance_source.get("artifact_ref"),
+            performance_source_ref=(
+                performance_source.get("artifact_ref")
+                if isinstance(performance_source, dict)
+                else None
+            ),
             stats_parser_version=str(stats_source.get("parser_version") or "kovaak_stats.v1"),
-            performance_parser_version=str(performance_source.get("parser_version") or "kovaak_performance.v1"),
+            performance_parser_version=str(
+                (
+                    performance_source.get("parser_version")
+                    if isinstance(performance_source, dict)
+                    else None
+                )
+                or "kovaak_performance.v1"
+            ),
         )
         resolution = snapshot.get("scenario_resolution")
         active_static = (
@@ -563,7 +580,13 @@ def _maybe_commit_analysis_evidence(
         evidence_store.analysis_evidence_manifest_entry(
             safe_ref,
             derived_from=[
-                ref for ref in (stats_source.get("artifact_ref"), performance_source.get("artifact_ref"))
+                ref
+                for ref in (
+                    stats_source.get("artifact_ref"),
+                    performance_source.get("artifact_ref")
+                    if isinstance(performance_source, dict)
+                    else None,
+                )
                 if ref in external_ids
             ],
         )
@@ -872,8 +895,8 @@ def run_native_analysis(
     stats_path = (sources.get("stats") or {}).get("path")
     performance_path = (sources.get("performance") or {}).get("path")
     trace_path = trace.get("path")
-    if not isinstance(stats_path, str) or not isinstance(performance_path, str):
-        raise ValueError("native analysis requires stats and performance sources")
+    if not isinstance(stats_path, str):
+        raise ValueError("native analysis requires stats source")
     canonical_window = snapshot.get("canonical_time_window")
     if snapshot.get("schema_version") in {
         "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
@@ -881,8 +904,10 @@ def run_native_analysis(
         raise ValueError("source_unavailable: canonical time window missing")
 
     stats_bytes = _read_frozen_source_bytes("stats", sources.get("stats"))
-    performance_bytes = _read_frozen_source_bytes(
-        "performance", sources.get("performance"),
+    performance_bytes = (
+        _read_frozen_source_bytes("performance", sources.get("performance"))
+        if isinstance(performance_path, str)
+        else None
     )
     # Raw input trace 的冻结指纹校验必须先于任何 parse：坏 stats CSV 会让
     # parse_stats_bytes 先抛 ValueError，raw_input 的 SourceSnapshotChangedError
@@ -929,7 +954,14 @@ def run_native_analysis(
         from .telemetry_input_adapter import telemetry_mouse_trace_points
 
         trace_points, telemetry_limitations = telemetry_mouse_trace_points(snapshot)
-    performance = parse_performance_bytes(performance_bytes)
+    # CSV-only run（KovaaK 不产 .perf）：performance=None 下传，对齐走快照的
+    # 冻结 canonical 窗口（v2/v3 已强制在场）；analyze 把 performance 源标为
+    # missing、事件时间线缺席进 limitations——诚实降级，不冒充 available。
+    performance = (
+        parse_performance_bytes(performance_bytes)
+        if performance_bytes is not None
+        else None
+    )
     result = analyze_native_flicking(
         trace_points,
         performance,
@@ -1077,9 +1109,12 @@ def _native_quality_projection(native_result: Mapping[str, object]) -> dict:
     quality_limitations = list(dict.fromkeys(limitations)) if not complete else []
     # 遥测合成轨迹的来源标注（mouse_trajectory_*）是 provenance，不是质量
     # 告警：完整结果也必须保留，下游才能区分遥测轨迹与原生 Raw Input 轨迹。
+    # performance_events_unavailable 同理——CSV-only 局的 .perf 缺席是事实
+    # 标注（事件时间线只剩点击派生 flick），完整结果也不许吞掉。
     quality_limitations = list(dict.fromkeys([
         *quality_limitations,
         *(item for item in limitations if item.startswith("mouse_trajectory_")),
+        *(item for item in limitations if item == "performance_events_unavailable"),
     ]))
     return {
         "status": "available" if complete else "limited",
@@ -1309,7 +1344,16 @@ def _native_source_contract(
                 version = "raw_input_unavailable.v1"
     else:
         snapshot_source = (snapshot.get("sources") or {}).get(kind) or {}
-        version = _source_parser_version(kind, snapshot_source)
+        if not snapshot_source.get("artifact_ref") and kind == "performance":
+            # CSV-only run：.perf 源缺席——evidence 合同要求每个 source 都有
+            # 稳定 ref，占位指向 run 的 performance 槽位（与 raw_input 缺失
+            # 占位同构）；缺席事实由 availability=missing 诚实呈现。
+            snapshot_source = {
+                "artifact_ref": f"run:{snapshot.get('run_id')}:performance",
+            }
+            version = "performance_unavailable.v1"
+        else:
+            version = _source_parser_version(kind, snapshot_source)
     out = dict(source)
     out["artifact_ref"] = snapshot_source.get("artifact_ref")
     out["parser_or_format_version"] = version

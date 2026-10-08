@@ -25,7 +25,11 @@ from uuid import uuid4
 
 from kovaak_tracker.csv_parser import parse_stats_csv
 from kovaak_tracker.performance_parser import parse_performance_file
-from kovaak_tracker.time_alignment import TimeAlignmentError, resolve_time_window
+from kovaak_tracker.time_alignment import (
+    TimeAlignmentError,
+    resolve_time_window,
+    resolve_time_window_stats_only,
+)
 
 from . import file_store
 from .kovaak_ingest import (
@@ -385,6 +389,94 @@ def _stats_time_mapping_for_performance(start_epoch_ms: int) -> dict[str, object
         "source": "system_timezone_at_performance_anchor",
         "utc_offset_minutes": offset_minutes,
     }
+
+
+# ---------------------------------------------------------------------------
+# CSV-only 兼容（2026-10-08）：KovaaK 不产 .perf 机器的窗口重建。
+# 验证与本机 183 局 CSV+perf 配对对账见 resolve_time_window_stats_only docstring；
+# 暂停局沿用 v1 pause fail-closed，0 杀局依赖场景 Timelimit（多源查找，缺源
+# fail-closed 不许猜）。
+
+_CSV_ONLY_SCE_CACHE: dict[str, Optional[float]] = {}
+_CSV_ONLY_SCE_CACHE_LOCK = threading.Lock()
+_KOVAAK_STEAM_APP_ID = "824270"
+
+
+def _summary_float(stats_summary: object, key: str) -> Optional[float]:
+    if not isinstance(stats_summary, dict):
+        return None
+    summary = stats_summary.get("summary")
+    if not isinstance(summary, dict):
+        return None
+    try:
+        return float(summary.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _csv_only_sce_search_dirs() -> list[tuple[Path, str]]:
+    """(目录, glob 模式) 列表：本地 Scenarios 平铺 + workshop `<id>/<name>.sce`。"""
+    dirs: list[tuple[Path, str]] = []
+    try:
+        from . import config
+
+        install = config.resolve_kovaak_install_dir()
+    except Exception:  # pragma: no cover - config 分层兜底，任何失败都只降级查找
+        install = None
+    if install is not None:
+        install = Path(install)
+        dirs.append((
+            install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios",
+            "*.sce",
+        ))
+        # Steam library 根：.../<library>/steamapps/common/<install_root>
+        library_root = install.parent.parent.parent
+        dirs.append((
+            library_root / "steamapps" / "workshop" / "content" / _KOVAAK_STEAM_APP_ID,
+            "*/*.sce",
+        ))
+    return [(d, p) for d, p in dirs if d.is_dir()]
+
+
+def _csv_only_time_limit_seconds(scenario: Optional[str]) -> Optional[float]:
+    """场景 Timelimit 多源查找（本地 Scenarios → workshop 平铺 .sce）。
+
+    结果按场景名缓存（.sce 是静态内容）；查不到返回 None（由调用方决定
+    fail-closed 或事件终点兜底）。
+    """
+    if not scenario:
+        return None
+    key = scenario.casefold()
+    with _CSV_ONLY_SCE_CACHE_LOCK:
+        if key in _CSV_ONLY_SCE_CACHE:
+            return _CSV_ONLY_SCE_CACHE[key]
+    result: Optional[float] = None
+    for directory, pattern in _csv_only_sce_search_dirs():
+        try:
+            candidates = list(directory.glob(pattern))
+        except OSError:
+            continue
+        for path in candidates:
+            if path.stem.casefold() != key:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            match = re.search(r"^Timelimit\s*=\s*([\d.]+)", text, re.MULTILINE)
+            if match:
+                try:
+                    value = float(match.group(1))
+                except ValueError:
+                    continue
+                if value > 0:
+                    result = value
+                    break
+        if result is not None:
+            break
+    with _CSV_ONLY_SCE_CACHE_LOCK:
+        _CSV_ONLY_SCE_CACHE[key] = result
+    return result
 
 
 def _json(value: object | None) -> str | None:
@@ -808,6 +900,13 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
         if isinstance(performance_header, dict)
         else None
     )
+    if not isinstance(observed_scenario_hash, str) or not observed_scenario_hash:
+        # CSV-only run：Stats CSV 的 Hash 与 .perf scenario_hash 同源同值。
+        stats_summary = run.get("stats_summary")
+        if isinstance(stats_summary, dict):
+            candidate = stats_summary.get("scenario_hash")
+            if isinstance(candidate, str) and candidate:
+                observed_scenario_hash = candidate
     from kovaak_tracker.scenario_profiles import resolve_scenario_profile
 
     behavior_descriptor = _local_scenario_behavior_descriptor(run.get("scenario"))
@@ -1196,6 +1295,9 @@ async def ingest_discovery(
                 getattr(stats, "field_presence", {}) or {}
             ),
             "source": stats_source,
+            # CSV Hash 与 .perf header.scenario_hash 同源同值（本机对账逐字节
+            # 相等）；.perf 缺失时判型复判链从这里取 hash。
+            "scenario_hash": stats.summary.get("Hash") or None,
         }
         stats_pause_count = stats.summary.get("Pause Count")
     if discovery.performance_path is not None:
@@ -1233,6 +1335,19 @@ async def ingest_discovery(
                 for value in stats.kills["time_s"].tolist()
                 if value == value and float(value) >= 0
             ]
+    if (
+        performance is None
+        and stats is not None
+        and "time_s" in stats.kills
+        and not stats_event_times_seconds
+    ):
+        # CSV-only：没有 .perf 的 challenge_profile 可判定终止类别，事件终点
+        # 是 stats-only 窗口的主锚（production stats_event 同语义），无条件带出。
+        stats_event_times_seconds = [
+            float(value)
+            for value in stats.kills["time_s"].tolist()
+            if value == value and float(value) >= 0
+        ]
     source_key = discovery.stem or normalize_kovaak_stem(discovery.paths[0])
     existing = None
     for run in _all_runs(user_id):
@@ -1307,8 +1422,8 @@ async def ingest_discovery(
     )
     alignment_window = None
     alignment_error: str | None = None
+    stats_start = None
     if performance is not None and has_alignment_window:
-        stats_start = None
         if isinstance(stats_summary, dict):
             summary = stats_summary.get("summary")
             if isinstance(summary, dict):
@@ -1326,12 +1441,38 @@ async def ingest_discovery(
         except TimeAlignmentError as error:
             alignment_error = str(error)
             alignment_window = None
+    if alignment_window is None and performance is None and stats is not None:
+        # CSV-only 对齐（2026-10-08）：KovaaK 不产 .perf 机器的窗口重建。
+        # 起点锚=词干日期+Challenge Start（183 局对账 166/166 ≤1s，含跨午夜）；
+        # 终点=stats 事件终点优先、0 杀局用场景 Timelimit−Time Remaining 兜底；
+        # 暂停局走既有 pause_unsupported fail-closed（对账证明公式不可恢复）。
+        # tl 缺源（.sce/场景表都没有）时 fail-closed duration_missing，不许猜。
+        try:
+            alignment_window = resolve_time_window_stats_only(
+                stats_challenge_start=(
+                    stats_summary.get("summary", {}).get("Challenge Start")
+                    if isinstance(stats_summary, dict)
+                    else None
+                ),
+                filename_time=source_key,
+                stats_event_times_seconds=stats_event_times_seconds,
+                time_limit_seconds=_csv_only_time_limit_seconds(stats_scenario),
+                time_remaining_seconds=_summary_float(stats_summary, "Time Remaining"),
+                pause_count=stats_pause_count,
+                pause_duration_seconds=_summary_float(stats_summary, "Pause Duration") or 0.0,
+            )
+        except TimeAlignmentError as error:
+            alignment_error = str(error)
+            alignment_window = None
     if alignment_window is not None:
+        summary = asdict(alignment_window)
+        if performance is None:
+            summary["csv_only_alignment"] = True
         run = await set_run_alignment(
             run["id"],
             user_id,
             state="resolved",
-            summary=asdict(alignment_window),
+            summary=summary,
             start_epoch_ms=alignment_window.start_ms,
             end_epoch_ms=alignment_window.end_ms,
         ) or run
@@ -1355,7 +1496,11 @@ async def ingest_discovery(
             source_key,
             error_code,
             stats_start,
-            performance.header.challenge_start_utc,
+            (
+                performance.header.challenge_start_utc
+                if performance is not None
+                else None
+            ),
         )
         run = await set_run_alignment(
             run["id"],
@@ -1367,6 +1512,8 @@ async def ingest_discovery(
                 "stats_challenge_start": stats_start,
                 "performance_challenge_start_utc": (
                     performance.header.challenge_start_utc
+                    if performance is not None
+                    else None
                 ),
             },
         ) or run

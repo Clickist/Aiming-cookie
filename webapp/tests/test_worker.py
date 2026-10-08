@@ -171,6 +171,90 @@ def test_worker_attaches_committed_evidence_before_terminal_result(
     ]
 
 
+def test_worker_commits_stats_only_evidence_for_csv_only_runs(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    analysis_ref = "analysis:78"
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    job = {
+        "id": 78,
+        "user_id": "owner:1",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "sources": {
+                "stats": {
+                    "artifact_ref": "run:1:stats",
+                    "parser_version": "kovaak_stats.v1",
+                },
+            },
+        },
+    }
+    result = {
+        "evidence": {},
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [
+                {"id": "run:1:stats"},
+            ],
+            "owned_outputs": [{"id": analysis_ref}],
+        },
+    }
+    with patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"fixture",
+    ), patch(
+        "kovaak_tracker.csv_parser.parse_stats_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.performance_parser.parse_performance_bytes",
+    ) as parse_perf, patch(
+        "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+        return_value=artifact,
+    ) as build:
+        updated = worker._maybe_commit_analysis_evidence(job, result)
+
+    # CSV-only：performance 缺席时 evidence 投影照样提交（stats-only artifact），
+    # performance 侧输入保持 None，绝不静默跳过整个 evidence。
+    parse_perf.assert_not_called()
+    assert build.call_args.kwargs["performance"] is None
+    assert build.call_args.kwargs["performance_source_ref"] is None
+
+    safe_ref = updated["evidence"]["derived_artifact"]
+    assert evidence_store._artifact_file(
+        78, safe_ref["evidence_revision"],
+    ).is_file()
+    evidence_entry = updated["artifact_manifest"]["owned_outputs"][-1]
+    assert evidence_entry["kind"] == "analysis_evidence"
+    assert evidence_entry["id"] == safe_ref["artifact_ref"]
+    assert evidence_entry["derived_from"] == [
+        "run:1:stats",
+    ]
+
+
 def test_worker_commits_validated_visual_signals_into_local_evidence(
     monkeypatch, tmp_path,
 ):
@@ -2614,6 +2698,59 @@ def test_legacy_flat_values_do_not_override_explicit_manual_calibration(mode: st
         }
         assert analyze.call_args.kwargs["stats"]["cm_per_360"] == 40.0
         assert analyze.call_args.kwargs["stats"]["fov"] == 100.0
+
+
+def test_run_native_analysis_stats_only_snapshot_passes_performance_none():
+    """CSV-only run（无 .perf 源）不再 raise，performance 以 None 下传。"""
+    snapshot = _native_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["canonical_time_window"] = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_000,
+        "end_ms": 61_000,
+        "duration_ms": 60_000,
+        "start_source": "stats_challenge_start_csv_only",
+        "end_source": "stats_event",
+        "warnings": [],
+        "window_semantics": "half_open",
+    }
+    del snapshot["sources"]["performance"]
+    stats = MagicMock(cm_per_360=None, fov=None)
+    with patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"fixture",
+    ), patch(
+        "webapp.backend.kovaak_run_store.decode_mouse_snapshot_bytes",
+        return_value=[],
+    ), patch(
+        "kovaak_tracker.csv_parser.parse_stats_bytes",
+        return_value=stats,
+    ), patch(
+        "kovaak_tracker.performance_parser.parse_performance_bytes",
+    ) as parse_perf, patch(
+        "kovaak_tracker.native_flicking_analysis.analyze_native_flicking",
+        return_value={},
+    ) as analyze:
+        result = worker.run_native_analysis(snapshot)
+
+    assert set(result) == {"calibration"}
+    parse_perf.assert_not_called()
+    assert analyze.call_args.args[1] is None
+
+
+def test_native_source_contract_placeholders_missing_performance_ref():
+    """CSV-only：performance 源缺席时 evidence 合同仍拿到稳定 ref。"""
+    snapshot = {"run_id": 42, "sources": {"stats": {"artifact_ref": "run:42:stats"}}}
+    contract = worker._native_source_contract(
+        "performance",
+        {"source": "performance", "availability": "missing"},
+        snapshot,
+    )
+
+    assert contract["artifact_ref"] == "run:42:performance"
+    assert contract["parser_or_format_version"] == "performance_unavailable.v1"
+    assert contract["availability"] == "missing"
 
 
 @pytest.mark.asyncio

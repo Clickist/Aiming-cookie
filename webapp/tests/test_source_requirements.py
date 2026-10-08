@@ -49,6 +49,43 @@ def _complete_snapshot() -> dict:
     }
 
 
+def test_csv_only_bundle_without_performance_still_reaches_native_tiers():
+    """CSV-only run（无 .perf）：stats+raw_input+时间窗即可选到 input_native。"""
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v3",
+        "sources": {"stats": _source(kind="stats")},
+        "trace": _source(kind="raw_input"),
+        "canonical_time_window": _window(),
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["ready"] is True
+    assert result["selected_mode"] == "input_native"
+    assert result["missing"] == [
+        MISSING_EXTERNAL_TELEMETRY,
+        MISSING_PERFORMANCE,
+        MISSING_VIDEO,
+    ]
+
+
+def test_csv_only_bundle_with_video_selects_multimodal():
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v3",
+        "sources": {
+            "stats": _source(kind="stats"),
+            "video": _source(kind="video"),
+        },
+        "trace": _source(kind="raw_input"),
+        "canonical_time_window": _window(),
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["ready"] is True
+    assert result["selected_mode"] == "multimodal"
+
+
 def test_complete_bundle_is_ready_and_has_bounded_public_summary():
     result = validate_source_requirements(_complete_snapshot())
 
@@ -101,8 +138,9 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
     assert result["missing"] == [MISSING_EXTERNAL_TELEMETRY, code]
     assert result["summary"] == {
         "mode": (
-            "input_native" if field == "video"
-            else "video_fallback" if field in {"performance", "trace", "canonical_time_window"}
+            "multimodal" if field == "performance"
+            else "input_native" if field == "video"
+            else "video_fallback" if field in {"trace", "canonical_time_window"}
             else None
         ),
         "source_count": 5,
@@ -114,6 +152,7 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
     ("missing_fields", "expected_modes", "selected_mode"),
     [
         ((), ["multimodal", "input_native", "video_fallback"], "multimodal"),
+        (("performance",), ["multimodal", "input_native", "video_fallback"], "multimodal"),
         (("video",), ["input_native"], "input_native"),
         (("performance", "trace", "canonical_time_window"), ["video_fallback"], "video_fallback"),
         (("stats",), [], None),

@@ -780,6 +780,13 @@ async def _run_may_be_reclassified(owner_id: str, run_id: int) -> bool:
         else None
     )
     scenario_hash = header.get("scenario_hash") if isinstance(header, Mapping) else None
+    if not isinstance(scenario_hash, str) or not scenario_hash:
+        # CSV-only run（KovaaK 不产 .perf）：hash 从 Stats CSV 的 Hash 键带出
+        # （与 .perf 同源同值，本机对账实证）。
+        stats_summary = run.get("stats_summary")
+        if isinstance(stats_summary, Mapping):
+            candidate = stats_summary.get("scenario_hash")
+            scenario_hash = candidate if isinstance(candidate, str) else None
     return (
         isinstance(scenario_hash, str)
         and scenario_hash in _load_scenario_overrides()

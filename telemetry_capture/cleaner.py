@@ -1024,9 +1024,31 @@ def clean_file(path, outdir, cfg):
                 "slots": slots,
             }
             src_meta["deaths_total"] = total   # 便捷别名（= deaths_summary.total）
-    print("[ok] %s → %d 轮, %s" % (name, len(index_rounds),
-          ", ".join("R%d:%d目标[%.1f~%.1fs]" % (r["round"], r["n_targets"], r["t_start"], r["t_end"])
-                    for r in index_rounds) or "无轮次"))
+    if index_rounds:
+        detail = ", ".join(
+            "R%d:%d目标[%.1f~%.1fs]" % (r["round"], r["n_targets"], r["t_start"], r["t_end"])
+            for r in index_rounds)
+    else:
+        # 0 轮区分性摘要（2026-10-08 报障分诊盲区修复）：这一行走进
+        # finalize.log → 诊断包 finalizeLogTail，远程即可区分
+        # 「没采到帧/帧里没目标/目标被幽灵门杀/缺 clock 锚」，不再靠猜。
+        detail = (
+            "无轮次[frames=%d with_targets=%d malformed=%d garbage=%d "
+            "phantom=%d origin_ghost=%d static_ghost=%d low_valid=%d "
+            "clock_map=%s]"
+            % (
+                len(frames),
+                n_frames_with_targets,
+                discarded["malformed_records"],
+                discarded["garbage_points"],
+                len(discarded["phantom_tracks"]),
+                len(discarded["origin_ghost_tracks"]),
+                len(discarded["static_ghost_tracks"]),
+                len(discarded["low_valid_tracks"]),
+                "yes" if t0_map is not None else "missing",
+            )
+        )
+    print("[ok] %s → %d 轮, %s" % (name, len(index_rounds), detail))
     return src_meta
 
 

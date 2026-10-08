@@ -207,6 +207,10 @@ def analyze_native_flicking(
 
     status = "available" if alignment["status"] == "aligned" else "partial"
     limitations = ["target_relative_facts_unavailable"]
+    if performance is None:
+        # CSV-only run：kill 事件时间线（.perf events）缺席，时间线只剩点击派
+        # 生的 flick——诚实声明，不冒充完整。
+        limitations.append("performance_events_unavailable")
     if status == "partial":
         limitations.append("alignment_partial")
     if not click_anchors:

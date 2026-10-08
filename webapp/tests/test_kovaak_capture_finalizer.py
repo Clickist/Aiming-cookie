@@ -454,8 +454,17 @@ async def test_stats_and_performance_orders_converge_on_one_idempotent_video_run
         performance_path=performance if first_kind == "stats" else None,
     )
 
-    with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
-        await finalizer.finalize(first)
+    # 2026-10-08 CSV-only 兼容：stats-only 不再 waiting_for_sources（.perf 永不
+    # 出现的机器曾因此永久 pending）。CSV 信息不足（stub 无 Challenge Start）时
+    # 诚实落终态 alignment unavailable；.perf 到场后同一 run 收敛到完整终局。
+    # performance-only 仍是 waiting_for_sources（没有任何 stats 源可重建）。
+    if first_kind == "stats":
+        partial = await finalizer.finalize(first)
+        assert partial["finalization_state"] == "finalized"
+        assert partial["video_state"] == "unavailable"
+    else:
+        with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
+            await finalizer.finalize(first)
     run = await finalizer.finalize(second)
     duplicate = await finalizer.finalize(second)
 
@@ -506,7 +515,13 @@ async def test_watcher_consumes_missing_source_once_then_finalizes_counterpart_o
     assert len(watcher.scan_once()) == 1
     first_result = await asyncio.gather(tasks[-1], return_exceptions=True)
     await asyncio.sleep(0)
-    assert isinstance(first_result[0], NonRetryableIngestionError)
+    # 2026-10-08 CSV-only：stats-only 首次发现落劣质终局（stub 无 Challenge
+    # Start → alignment unavailable）而非 waiting 异常；performance-only 仍
+    # waiting。两种首源 watcher 都不重发。
+    if first_kind == "stats":
+        assert not isinstance(first_result[0], NonRetryableIngestionError)
+    else:
+        assert isinstance(first_result[0], NonRetryableIngestionError)
     runs_before = len(await kovaak_run_store.list_kovaak_runs("u1"))
 
     assert watcher.scan_once() == []
@@ -797,8 +812,10 @@ async def test_raw_snapshot_barrier_skips_missing_pause_and_attached_duplicate(
     client = FakeNativeCaptureClient(tmp_path / "data")
     finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
 
-    with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
-        await finalizer.finalize(KovaaKFileDiscovery(stem="missing", stats_path=stats))
+    # 2026-10-08 CSV-only：stats-only 不再 waiting，因 stub 无 Challenge Start
+    # 诚实落终态（alignment unavailable），且不触发 raw barrier flush。
+    orphan = await finalizer.finalize(KovaaKFileDiscovery(stem="missing", stats_path=stats))
+    assert orphan["alignment_state"] == "unavailable"
     assert client.flush_calls == []
 
     _configure_parsers(monkeypatch, pause_count="1", time_limit=1.0)
@@ -1198,11 +1215,13 @@ async def test_conflicting_same_path_source_revision_remains_pairing_conflict(
     client = FakeNativeCaptureClient(tmp_path / "data")
     finalizer = _finalizer(tmp_path, client)
 
-    with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
-        await finalizer.finalize(KovaaKFileDiscovery(
-            stem="revision-conflict",
-            stats_path=stats,
-        ))
+    # 2026-10-08 CSV-only：stats-only 首次 finalize 落劣质终局（stub 无
+    # Challenge Start）；随后 performance-only 收尾经 merge 合并双源，stats
+    # revision 已被替换 → source identity 冲突继续 fail-closed。
+    await finalizer.finalize(KovaaKFileDiscovery(
+        stem="revision-conflict",
+        stats_path=stats,
+    ))
     stats.write_bytes(b"conflicting-second-stats-revision")
 
     with pytest.raises(kovaak_run_store.NonRetryableIngestionError):
@@ -1496,10 +1515,11 @@ async def test_finalize_fires_telemetry_cut_hook_with_challenge_window(
     run = await boom_finalizer.finalize(discovery)
     assert run["finalization_state"] == "finalized"
 
-    # 源不齐的收尾重试不触发；窗口校验通过后带着挑战窗触发一次
-    # （跨多次 finalize 的幂等去重由服务侧负责，finalizer 只负责派发）。
-    # 换独立 stem：boom 阶段已把同 stem 的 run 收尾完成，waiting_for_sources
-    # 的重试路径需要一个未成形的 run。
+    # 源不齐的收尾重试不触发（2026-10-08 CSV-only：stats-only 走 CSV 对齐，
+    # stub 无 Challenge Start → alignment unavailable，仍不触发钩子）；
+    # 窗口校验通过后带着挑战窗触发一次（跨多次 finalize 的幂等去重由服务侧
+    # 负责，finalizer 只负责派发）。换独立 stem：boom 阶段已把同 stem 的 run
+    # 收尾完成，重试路径需要一个未成形的 run。
     stats2 = tmp_path / "Scenario2 Stats.csv"
     performance2 = tmp_path / "Scenario2 Performance.perf"
     stats2.write_bytes(b"stable-stats")
@@ -1511,10 +1531,10 @@ async def test_finalize_fires_telemetry_cut_hook_with_challenge_window(
         user_id="u1",
         telemetry_cut_hook=lambda *args: cuts.append(args),
     )
-    with pytest.raises(NonRetryableIngestionError, match="waiting_for_sources"):
-        await finalizer.finalize(KovaaKFileDiscovery(
-            stem="scenario2", stats_path=stats2, performance_path=None,
-        ))
+    orphan = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="scenario2", stats_path=stats2, performance_path=None,
+    ))
+    assert orphan["alignment_state"] == "unavailable"
     assert cuts == []
 
     run = await finalizer.finalize(KovaaKFileDiscovery(

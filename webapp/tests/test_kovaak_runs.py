@@ -4037,3 +4037,75 @@ async def test_trace_zero_points_before_window_tail_keeps_waiting_with_echo(
         "window_start_epoch_ms": 1_000,
         "window_end_epoch_ms": 2_000,
     }
+
+
+@pytest.mark.asyncio
+async def test_stats_only_ingest_resolves_csv_only_alignment_window():
+    """2026-10-08 CSV-only 兼容：无 .perf 的局用词干日期+Challenge Start 建窗。
+
+    真实 fixture CSV（Challenge Start=23:43:51.211，词干=2026.06.23-23.44.51，
+    114 杀最后一击≈59.5s）。终点=stats 事件终点（production 同语义）；CSV Hash
+    与 .perf scenario_hash 同源同值，判型复判链由此取 hash。
+    """
+    fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(
+            stem="1wall 6targets small - Challenge - 2026.06.23-23.44.51",
+            stats_path=fixture,
+        ),
+    )
+    assert run["alignment_state"] == "resolved"
+    assert run["alignment_summary"]["csv_only_alignment"] is True
+    assert run["alignment_summary"]["end_source"] == "stats_event"
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime.fromtimestamp(
+        run["window_start_epoch_ms"] / 1000, tz=timezone(timedelta(hours=8)),
+    )
+    assert start.strftime("%Y-%m-%d %H:%M:%S.%f") == "2026-06-23 23:43:51.211000"
+    assert run["window_end_epoch_ms"] > run["window_start_epoch_ms"]
+    assert (
+        run["stats_summary"]["scenario_hash"]
+        == "7378a811f430b6072d052a75896afb98"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stats_only_ingest_pause_run_fails_closed_csv_only(
+    tmp_path: Path, monkeypatch,
+):
+    """CSV-only 暂停局沿用 v1 pause fail-closed（对账证明公式不可恢复）。"""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    stats_path = tmp_path / "paused-only Stats.csv"
+    stats_path.write_text("stats", encoding="utf-8")
+    stats = SimpleNamespace(
+        file_name=stats_path.name,
+        scenario="Scenario",
+        summary={
+            "Scenario": "Scenario",
+            "Challenge Start": "01:46:40.321",
+            "Pause Count": "1",
+            "Pause Duration": "0",
+            "Time Remaining": "0.0",
+        },
+        config={},
+        kills=pd.DataFrame({"time_s": [5.0]}),
+        cm_per_360=None,
+        field_presence={},
+        weapon_aggregates=(),
+    )
+    monkeypatch.setattr(kovaak_run_store, "parse_stats_csv", lambda _p: stats)
+    monkeypatch.setattr(
+        kovaak_run_store, "_csv_only_time_limit_seconds", lambda _s: 60.0,
+    )
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="2026.10.08-10.00.00 paused-only", stats_path=stats_path),
+        user_id="u1",
+    )
+    assert run["alignment_state"] == "unavailable"
+    assert run["alignment_summary"]["error_code"] == "pause_unsupported"

@@ -105,14 +105,19 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
         mode
         for mode, required in (
             # telemetry_multimodal 排最前：外部遥测是首选数据源，CV 视频降为
-            # fallback；遥测档只要求遥测 + KovaaK stats + 性能事件 + 时间窗，
-            # 原生输入与视频都不参与（遥测 producer 是本进程真值投影，不依赖
-            # trace/cv2——dev 应用离线期间的无视频 run 也必须能选到档）。
+            # fallback；遥测档只要求遥测 + KovaaK stats + 时间窗，原生输入与
+            # 视频都不参与（遥测 producer 是本进程真值投影，不依赖 trace/cv2
+            # ——dev 应用离线期间的无视频 run 也必须能选到档）。
+            # performance 已全面退出硬门（2026-10-08 CSV-only 兼容）：KovaaK
+            # 不产 .perf 的机器靠 stats 对齐放行（执行层 performance=None 走
+            # 冻结 canonical 窗口，limitations 带 performance_events_unavailable）；
+            # perf 数据只进 best-effort evidence 投影（缺失自动跳过，结果可读），
+            # 缺席以 availability 诚实呈现。
             ("telemetry_multimodal", (
-                "external_telemetry", "stats", "performance", "canonical_window",
+                "external_telemetry", "stats", "canonical_window",
             )),
-            ("multimodal", ("stats", "performance", "raw_input", "video", "canonical_window")),
-            ("input_native", ("stats", "performance", "raw_input", "canonical_window")),
+            ("multimodal", ("stats", "raw_input", "video", "canonical_window")),
+            ("input_native", ("stats", "raw_input", "canonical_window")),
             ("video_fallback", ("stats", "video")),
         )
         if available(*required)

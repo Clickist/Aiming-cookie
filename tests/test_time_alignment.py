@@ -289,3 +289,88 @@ def test_versioned_stats_timezone_mapping_is_preserved_in_window():
     assert result.start_ms == 1_699_897_600_797
     assert result.stats_anchor_status == "mapped_local_time"
     assert result.stats_local_to_utc_mapping == mapping
+
+
+# ---------------------------------------------------------------------------
+# CSV-only 解析器（2026-10-08）：KovaaK 不产 .perf 机器的窗口重建。
+# 验证底账：本机 183 局 CSV+perf 配对对账（起点 166/166 ≤1s 含 81 跨午夜；
+# 满窗锚 119/119 非暂停计时局；暂停局公式不可恢复 → v1 pause fail-closed）。
+
+from kovaak_tracker.time_alignment import resolve_time_window_stats_only
+
+
+CSV_ONLY_LOCAL_TZ = timezone(timedelta(hours=8))
+
+
+def test_stats_only_event_end_and_filename_day_anchor():
+    result = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+        time_limit_seconds=60.0,
+        time_remaining_seconds=0.0,
+        local_timezone=CSV_ONLY_LOCAL_TZ,
+    )
+    # 跨午夜：Challenge Start(23:58) 晚于词干(00:02) ⇒ 挑战始于前一天
+    start = datetime.fromtimestamp(result.start_ms / 1000, CSV_ONLY_LOCAL_TZ)
+    assert (start.year, start.month, start.day) == (2026, 10, 7)
+    assert result.start_source == "stats_challenge_start_csv_only"
+    # 事件终点优先（production 同语义）
+    assert result.end_source == "stats_event"
+    assert result.end_ms == result.start_ms + 59_944
+
+
+def test_stats_only_overnight_boundary_not_triggered_when_start_before_stem():
+    result = resolve_time_window_stats_only(
+        stats_challenge_start="02:03:50.460",
+        filename_time="2026.07.29-02.04.50",
+        stats_event_times_seconds=[30.0],
+        local_timezone=CSV_ONLY_LOCAL_TZ,
+    )
+    start = datetime.fromtimestamp(result.start_ms / 1000, CSV_ONLY_LOCAL_TZ)
+    assert (start.year, start.month, start.day) == (2026, 7, 29)
+
+
+def test_stats_only_zero_kill_run_uses_full_timer_anchor():
+    result = resolve_time_window_stats_only(
+        stats_challenge_start="10:00:00.000",
+        filename_time="2026.10.08-10:01:00".replace(":", "."),
+        stats_event_times_seconds=[],
+        time_limit_seconds=60.0,
+        time_remaining_seconds=12.5,
+        local_timezone=CSV_ONLY_LOCAL_TZ,
+    )
+    assert result.end_source == "csv_timer_profile"
+    assert result.duration_ms == 47_500
+
+
+def test_stats_only_pause_fails_closed():
+    with pytest.raises(TimeAlignmentError, match="pause_unsupported"):
+        resolve_time_window_stats_only(
+            stats_challenge_start="10:00:00.000",
+            filename_time="2026.10.08-10.01.00",
+            stats_event_times_seconds=[10.0],
+            pause_count=1,
+            local_timezone=CSV_ONLY_LOCAL_TZ,
+        )
+
+
+def test_stats_only_zero_kill_without_time_limit_fails_closed():
+    with pytest.raises(TimeAlignmentError, match="duration_missing"):
+        resolve_time_window_stats_only(
+            stats_challenge_start="10:00:00.000",
+            filename_time="2026.10.08-10.01.00",
+            stats_event_times_seconds=[],
+            time_limit_seconds=None,
+            local_timezone=CSV_ONLY_LOCAL_TZ,
+        )
+
+
+def test_stats_only_missing_filename_date_fails_closed():
+    with pytest.raises(TimeAlignmentError, match="anchor_timezone_unmapped"):
+        resolve_time_window_stats_only(
+            stats_challenge_start="10:00:00.000",
+            filename_time=None,
+            stats_event_times_seconds=[10.0],
+            local_timezone=CSV_ONLY_LOCAL_TZ,
+        )

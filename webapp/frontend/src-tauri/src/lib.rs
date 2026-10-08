@@ -83,6 +83,10 @@ struct CaptureDiagnosticsBundle {
     // 环已拿到的 GetDesc1：名称/LUID/vendor/VRAM/软件标志；成功路径零额外
     // DXGI 调用，无启动失败时为 null）。
     dxgi_adapters: Option<Vec<window_capture::WgcAdapterDescriptor>>,
+    // v11（2026-10-08 报障分诊盲区修复）：external-capture/cleaned/rounds_index.json
+    // 的逐源摘要（frames_total/frames_with_targets/discarded 各门计数/时钟锚）——
+    // 0 轮空采的区分性证据此前只存在于用户磁盘，远程分诊只能靠猜。
+    external_rounds_index_summary: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -281,6 +285,81 @@ fn run_id_from_dir_name(name: &str) -> Option<u64> {
     name.parse::<u64>().ok().filter(|id| *id > 0)
 }
 
+/// 读 `external-capture/cleaned/rounds_index.json`，只保留逐源的分诊摘要
+/// （frames_total / frames_with_targets / t0_epoch / deaths_source /
+/// discarded 各门计数 / flag_reflection），丢弃 rounds 帧数组与 per-addr
+/// 明细——远程区分「没采到帧 / 帧里没目标 / 目标被幽灵门杀」的最小证据集。
+/// 解析失败/文件缺失返回 None，不阻塞导出。
+fn collect_rounds_index_summary(data_root: &Path) -> Option<serde_json::Value> {
+    let path = data_root
+        .join("external-capture")
+        .join("cleaned")
+        .join("rounds_index.json");
+    let Ok(bytes) = fs::read(&path) else {
+        return None;
+    };
+    let Ok(serde_json::Value::Object(index)) = serde_json::from_slice(&bytes) else {
+        return None;
+    };
+    let Some(serde_json::Value::Array(sources)) = index.get("sources") else {
+        return None;
+    };
+    const SUMMARY_KEYS: &[&str] = &[
+        "source",
+        "frames_total",
+        "frames_with_targets",
+        "first_frame_target_count",
+        "t_min",
+        "t_max",
+        "t0_epoch",
+        "n_rounds",
+        "deaths_source",
+        "flag_reflection",
+        "deaths_total",
+    ];
+    const DISCARDED_KEYS: &[&str] = &[
+        "malformed_records",
+        "garbage_points",
+        "noise_segments",
+        "short_segments",
+    ];
+    let summarized: Vec<serde_json::Value> = sources
+        .iter()
+        .filter_map(|source| {
+            let obj = source.as_object()?;
+            let mut out = serde_json::Map::new();
+            for key in SUMMARY_KEYS {
+                if let Some(value) = obj.get(*key) {
+                    out.insert((*key).to_string(), value.clone());
+                }
+            }
+            if let Some(serde_json::Value::Object(discarded)) = obj.get("discarded") {
+                let mut counts = serde_json::Map::new();
+                for key in DISCARDED_KEYS {
+                    if let Some(value) = discarded.get(*key) {
+                        counts.insert((*key).to_string(), value.clone());
+                    }
+                }
+                for (gate, value) in discarded.iter() {
+                    if let serde_json::Value::Object(entries) = value {
+                        // 幽灵门（phantom/origin/static/low_valid）计数字段
+                        counts.insert(
+                            gate.to_string(),
+                            serde_json::json!({ "tracks": entries.len() }),
+                        );
+                    }
+                }
+                out.insert("discarded".to_string(), serde_json::Value::Object(counts));
+            }
+            Some(serde_json::Value::Object(out))
+        })
+        .collect();
+    if summarized.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "sources": summarized }))
+}
+
 /// 按_run id 降序枚举 `runs/*/meta.json`，返回白名单摘要。
 fn collect_recent_runs(data_root: &Path, limit: usize) -> Vec<serde_json::Value> {
     let mut run_ids: Vec<u64> = fs::read_dir(data_root.join("runs"))
@@ -311,6 +390,23 @@ fn collect_recent_runs(data_root: &Path, limit: usize) -> Vec<serde_json::Value>
         for field in RUN_META_FIELDS {
             if let Some(value) = meta.get(*field) {
                 summary.insert((*field).to_string(), value.clone());
+            }
+        }
+        // v11 黑匣子：从 stats_summary 提取两个标量诊断键（KovaaK 版本号、
+        // 场景 Hash——后者与 .perf scenario_hash 同源），用于远程定罪
+        // 「KovaaK 版本差异 vs 目录被删」与判型链核查。stats_summary 本体
+        // 含路径，不整块带出。
+        if let Some(serde_json::Value::Object(stats_summary)) = meta.get("stats_summary") {
+            if let Some(serde_json::Value::Object(kv)) = stats_summary.get("summary") {
+                for key in ["Game Version", "Hash"] {
+                    if let Some(value) = kv.get(key) {
+                        let name = format!(
+                            "stats_{}",
+                            key.to_lowercase().replace(' ', "_")
+                        );
+                        summary.insert(name, value.clone());
+                    }
+                }
             }
         }
         summaries.push(serde_json::Value::Object(summary));
@@ -772,7 +868,7 @@ fn build_capture_diagnostics_bundle(
     window_status.gpu_driver_suspect =
         window_capture::gpu_driver_suspect(&gpu_names, last_start_failure.as_ref());
     Ok(CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v10",
+        schema_version: "capture_diagnostics.v11",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -820,6 +916,7 @@ fn build_capture_diagnostics_bundle(
             DIAG_LOG_TAIL_BYTES,
         ),
         dxgi_adapters: last_start_failure.map(|failure| failure.dxgi_adapters),
+        external_rounds_index_summary: collect_rounds_index_summary(&data_root),
     })
 }
 
