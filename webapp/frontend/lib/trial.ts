@@ -160,7 +160,7 @@ export function planTrialEvent(
 }
 
 /** 会话内重试退避（1004 死锁 C）：上报失败若只等"下次启动"补报，用户跑完一局
- *  马上去订阅会被 /pay 验证闸挡住（verified_at 未落）——大陆直连 CF 抖动是实况。
+ *  马上查看订阅页时 verified_at 迟迟未落，/me 试用态显示滞后——大陆直连 CF 抖动是实况。
  *  30s/60s/120s/300s 共 4 次会话内重试，之后仍失败才交给下次启动的 flush。 */
 const TRIAL_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
 
