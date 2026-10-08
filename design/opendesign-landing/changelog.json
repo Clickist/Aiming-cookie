@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.4.8",
+      "date": "2026-10-08",
+      "items": [
+        {
+          "type": "new",
+          "zh": "教练连接更稳：网络环境不佳时会自动改用备用线路重新连接，无需你做任何设置",
+          "en": "The coach now reconnects over a backup route automatically when the network is uncooperative - no setup needed on your side"
+        },
+        {
+          "type": "fix",
+          "zh": "修复网络类失败被误报为「模型生成失败」的问题：现在会明确提示是网络原因，并支持一键重试",
+          "en": "Fixed network failures being misreported as model errors: the app now clearly points to the network and offers one-tap retry"
+        }
+      ]
+    },
+    {
       "version": "1.4.7",
       "date": "2026-10-08",
       "items": [
