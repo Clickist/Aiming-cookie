@@ -29,6 +29,7 @@ import {
 import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
+import { wrapModelsWithResilientFetch } from "./net-resilience.ts";
 import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
 import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
@@ -867,7 +868,10 @@ export function classifyCoachFailureCode(error: unknown): string {
 // 死局。
 function isTransientProviderError(error: unknown): boolean {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error ?? "").toLowerCase();
-  return /terminated|fetch failed|econnreset|econnrefused|socket hang up|etimedout|timeout|network/.test(message);
+  // "connection error"（OpenAI SDK APIConnectionError 固定文案）与 "unable to
+  // connect"（Bun 原生）此前都不命中——野外用户网络全灭被呈现成"模型错误"
+  // 且不可重试（2026-10-08 "涛"案 26 连败），补上连接级文案族。
+  return /terminated|fetch failed|econnreset|econnrefused|socket hang up|etimedout|timeout|network|connection error|unable to connect|connection refused|connection reset|connection closed/.test(message);
 }
 
 const STOPPED_USER_MESSAGE = "已停止生成。";
@@ -1091,11 +1095,13 @@ export async function runCoachTurn(
     // Allow a test-injected stream to stand in for the resolved provider
     // stream. The wrapper keeps every other Models method working while
     // overriding streamSimple, so the harness streams through the fake.
+    // 无 streamFn 的生产路径包一层韧性 fetch（首选连接级失败时强制 IPv4
+    // 重发 + [netprobe] 诊断落 coach-error.log；2026-10-08 "涛"案）。
     const harnessModels: PiModels = options.streamFn
       ? Object.assign(Object.create(resolved.models), {
           streamSimple: options.streamFn as PiModels["streamSimple"],
         })
-      : resolved.models;
+      : wrapModelsWithResilientFetch(resolved.models);
 
     // Create AgentHarness. Provider 请求启用 Pi 内建重试（OpenAI SDK 的
     // 连接/5xx 预流式重试）：代理与上游网络抖动是流中断的常见来源，
