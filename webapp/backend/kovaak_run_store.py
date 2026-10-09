@@ -1968,6 +1968,35 @@ async def mark_run_video_unavailable(
     return run
 
 
+async def mark_run_video_evidence_missing(
+    run_id: int,
+    user_id: str,
+) -> Optional[dict]:
+    """[fix 2026-10-09] 僵尸 attached 降级（video 侧）。
+
+    mark_run_video_unavailable 的 attached 保护挡的是补跑误清（不可绕）；
+    本函数是启动对账的专用降级：证据文件已不在场的历史事故记录（如 storage
+    迁移漏改路径）不得继续冒充可用数据。仅 reconcile 应调用。
+    """
+    run = _load_run(run_id)
+    if run is None or run.get("user_id") != user_id:
+        return None
+    if run.get("video_state") != "attached":
+        return run
+    run["video_path"] = None
+    run["video_state"] = "unavailable"
+    run["pending_video_path"] = None
+    run["video_receipt"] = None
+    run["video_summary"] = None
+    run["video_error"] = "video_evidence_missing"
+    run["updated_at"] = _utc_now()
+    _save_run(run)
+    log.warning(
+        "run %s video attached evidence missing on disk, demoted", run_id,
+    )
+    return run
+
+
 async def invalidate_run_for_video_coverage_gap(
     run_id: int,
     user_id: str,
@@ -2785,6 +2814,18 @@ async def reconcile_run_videos(data_root: str | Path) -> dict[str, int]:
     quarantine_root = runs_root / "orphans"
     outcome = {"attached": 0, "retryable": 0, "unavailable": 0, "quarantined": 0}
 
+    # [fix 2026-10-09] 僵尸 attached 守卫（video 侧）：证据文件已不在场的
+    # attached 记录诚实降级带 cause 码。video 不进孤儿仓（清扫只收 *.bin），
+    # 无回配可试，直接降级。
+    for run in _all_runs():
+        if run.get("video_state") != "attached":
+            continue
+        video_path = run.get("video_path")
+        if video_path and Path(video_path).is_file():
+            continue
+        await mark_run_video_evidence_missing(run["id"], run["user_id"])
+        outcome["unavailable"] += 1
+
     for run in _all_runs():
         if run.get("video_state") != "pending":
             continue
@@ -2987,8 +3028,21 @@ def _mouse_snapshot_span(path: Path) -> Optional[tuple[int, int]]:
     return min(timestamps), max(timestamps)
 
 
-def _match_orphan_trace(
+def _load_orphan_spans(
     orphans_dir: Path,
+) -> list[tuple[Path, tuple[int, int]]]:
+    if not orphans_dir.is_dir():
+        return []
+    spans: list[tuple[Path, tuple[int, int]]] = []
+    for candidate in sorted(orphans_dir.glob("*.bin")):
+        span = _mouse_snapshot_span(candidate)
+        if span is not None:
+            spans.append((candidate, span))
+    return spans
+
+
+def _match_orphan_span(
+    spans: list[tuple[Path, tuple[int, int]]],
     start_ms: int,
     end_ms: int,
     run_id: int,
@@ -3000,15 +3054,10 @@ def _match_orphan_trace(
     的点带 epoch 时间戳，可用局窗口回配。命中不唯一（孤儿多候选或其他局窗口
     同样命中）即放弃，宁可留孤儿也不冒险认领错数据。
     """
-    if not orphans_dir.is_dir():
-        return None
     low = start_ms - _ORPHAN_MATCH_TOLERANCE_MS
     high = end_ms + _ORPHAN_MATCH_TOLERANCE_MS
     hits: list[tuple[Path, tuple[int, int]]] = []
-    for candidate in sorted(orphans_dir.glob("*.bin")):
-        span = _mouse_snapshot_span(candidate)
-        if span is None:
-            continue
+    for candidate, span in spans:
         if span[0] >= low and span[1] <= high:
             hits.append((candidate, span))
     if len(hits) != 1:
@@ -3028,6 +3077,18 @@ def _match_orphan_trace(
         ):
             return None
     return candidate
+
+
+def _match_orphan_trace(
+    orphans_dir: Path,
+    start_ms: int,
+    end_ms: int,
+    run_id: int,
+    user_id: str,
+) -> Optional[Path]:
+    return _match_orphan_span(
+        _load_orphan_spans(orphans_dir), start_ms, end_ms, run_id, user_id,
+    )
 
 
 async def reattach_mouse_trace_from_disk(
@@ -3137,6 +3198,55 @@ async def reconcile_mouse_traces(data_root: str | Path) -> dict[str, int]:
             outcome["unavailable"] += 1
         else:
             outcome["attached"] += 1
+
+    # [fix 2026-10-09] 僵尸 attached 守卫：storage 迁移等历史事故会留下
+    # trace_state=attached 但证据文件已不在场的记录（分析时才暴雷）。启动
+    # 对账先尝试孤儿仓按窗口唯一回配认领（同补跑自愈语义），救不回则诚实
+    # 降级带 cause 码，不让假 attached 冒充可用数据。
+    orphan_spans = _load_orphan_spans(runs_root / "orphans")
+    for run in _all_runs():
+        if run.get("trace_state") != "attached":
+            continue
+        trace_path = run.get("mouse_trace_path")
+        if trace_path and Path(trace_path).is_file():
+            continue
+        start_ms = run.get("window_start_epoch_ms")
+        end_ms = run.get("window_end_epoch_ms")
+        has_window = (
+            isinstance(start_ms, int)
+            and not isinstance(start_ms, bool)
+            and isinstance(end_ms, int)
+            and not isinstance(end_ms, bool)
+            and end_ms > start_ms
+        )
+        orphan_hit = None
+        if has_window:
+            orphan_hit = _match_orphan_span(
+                orphan_spans, start_ms, end_ms, run["id"], run["user_id"],
+            )
+        recovered = False
+        if orphan_hit is not None:
+            target = runs_root / str(run["id"]) / f"trace-{uuid4().hex}.bin"
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(orphan_hit, target)
+            except OSError:
+                pass
+            else:
+                try:
+                    await attach_mouse_trace(
+                        run["id"], run["user_id"], str(target),
+                    )
+                except (OSError, ValueError):
+                    target.unlink(missing_ok=True)
+                else:
+                    outcome["attached"] += 1
+                    recovered = True
+        if not recovered:
+            await mark_mouse_trace_unavailable(
+                run["id"], run["user_id"], "trace_evidence_missing",
+            )
+            outcome["unavailable"] += 1
 
     if not runs_root.is_dir():
         return outcome

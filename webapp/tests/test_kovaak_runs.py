@@ -1837,6 +1837,153 @@ async def test_reconcile_quarantines_unreferenced_managed_trace(tmp_path: Path):
     assert list((data_root / "runs" / "orphans").glob("trace-orphan*.bin"))
 
 
+@pytest.mark.asyncio
+async def test_reconcile_recovers_attached_trace_missing_evidence_from_orphan(
+    tmp_path: Path,
+):
+    """[fix 2026-10-09] 僵尸 attached 守卫：证据文件不在场但孤儿仓有窗口唯一
+    匹配的切片 → 认领拷回恢复，不降级（storage 迁移丢指针的形态）。"""
+    data_root = tmp_path / "data"
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="zombie-recover",
+    )
+    start, end = 1_000_000, 1_060_000
+    await kovaak_run_store.set_run_alignment(
+        run["id"], "u1",
+        state="resolved", summary={"start_ms": start, "end_ms": end},
+        start_epoch_ms=start, end_epoch_ms=end,
+    )
+    real = data_root / "runs" / str(run["id"]) / "trace-real.bin"
+    kovaak_run_store.write_mouse_snapshot(real, [
+        {"timestamp_ms": start + 30_000, "dx": 1, "dy": 1, "buttons": 0},
+    ])
+    await kovaak_run_store.attach_mouse_trace(run["id"], "u1", str(real))
+    real.unlink()  # 迁移类事故：文件没了，attached 指针成僵尸
+
+    orphans = data_root / "runs" / "orphans"
+    orphans.mkdir(parents=True, exist_ok=True)
+    orphan = orphans / "trace-lost.bin"
+    kovaak_run_store.write_mouse_snapshot(orphan, [
+        {"timestamp_ms": start + 30_000, "dx": 2, "dy": 2, "buttons": 0},
+    ])
+
+    outcome = await kovaak_run_store.reconcile_mouse_traces(data_root)
+    recovered = await kovaak_run_store.get_kovaak_run(run["id"], "u1")
+
+    assert outcome == {"attached": 1, "unavailable": 0, "quarantined": 0}
+    assert recovered["trace_state"] == "attached"
+    assert recovered["trace_error"] is None
+    healed = Path(recovered["mouse_trace_path"])
+    assert healed.is_file()
+    assert orphans not in healed.parents
+    assert orphan.exists()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_demotes_attached_trace_missing_evidence_without_claim(
+    tmp_path: Path,
+):
+    """[fix 2026-10-09] 僵尸 attached 守卫：无孤儿可认领时诚实降级带
+    cause 码，不让假 attached 冒充可用数据。"""
+    data_root = tmp_path / "data"
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="zombie-demote",
+    )
+    start, end = 2_000_000, 2_060_000
+    await kovaak_run_store.set_run_alignment(
+        run["id"], "u1",
+        state="resolved", summary={"start_ms": start, "end_ms": end},
+        start_epoch_ms=start, end_epoch_ms=end,
+    )
+    real = data_root / "runs" / str(run["id"]) / "trace-real.bin"
+    kovaak_run_store.write_mouse_snapshot(real, [
+        {"timestamp_ms": start + 30_000, "dx": 1, "dy": 1, "buttons": 0},
+    ])
+    await kovaak_run_store.attach_mouse_trace(run["id"], "u1", str(real))
+    real.unlink()
+
+    outcome = await kovaak_run_store.reconcile_mouse_traces(data_root)
+    demoted = await kovaak_run_store.get_kovaak_run(run["id"], "u1")
+
+    assert outcome == {"attached": 0, "unavailable": 1, "quarantined": 0}
+    assert demoted["trace_state"] == "unavailable"
+    assert demoted["trace_error"] == "trace_evidence_missing"
+    assert demoted["mouse_trace_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_demotes_attached_video_missing_evidence(tmp_path: Path):
+    """[fix 2026-10-09] 僵尸 attached 守卫（video 侧）：文件不在场的
+    attached 视频诚实降级；在场的不受影响。"""
+    data_root = tmp_path / "data"
+
+    healthy = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="video-healthy",
+    )
+    healthy_video = (
+        data_root / "runs" / str(healthy["id"]) / "video-request-1.mp4"
+    )
+    await kovaak_run_store.begin_run_video_attach(
+        healthy["id"], "u1",
+        pending_video_path=healthy_video,
+        request_digest="a" * 64,
+        capture_session_id="session-1",
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+        data_root=data_root,
+    )
+    _write_capture_video_bundle(healthy_video, run_id=healthy["id"])
+    await kovaak_run_store.attach_run_video(
+        healthy["id"], "u1", healthy_video,
+        expected_pending_video_path=healthy_video,
+        expected_request_digest="a" * 64,
+        data_root=data_root,
+    )
+
+    zombie = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="video-zombie",
+    )
+    zombie_video = (
+        data_root / "runs" / str(zombie["id"]) / "video-request-2.mp4"
+    )
+    await kovaak_run_store.begin_run_video_attach(
+        zombie["id"], "u1",
+        pending_video_path=zombie_video,
+        request_digest="b" * 64,
+        capture_session_id="session-2",
+        start_epoch_ms=2_000,
+        end_epoch_ms=3_000,
+        data_root=data_root,
+    )
+    _write_capture_video_bundle(
+        zombie_video,
+        run_id=zombie["id"],
+        request_id="request-2",
+        request_digest="b" * 64,
+        capture_session_id="session-2",
+        start_epoch_ms=2_000,
+        end_epoch_ms=3_000,
+    )
+    await kovaak_run_store.attach_run_video(
+        zombie["id"], "u1", zombie_video,
+        expected_pending_video_path=zombie_video,
+        expected_request_digest="b" * 64,
+        data_root=data_root,
+    )
+    zombie_video.unlink()  # 迁移类事故：attached 后文件丢失
+
+    outcome = await kovaak_run_store.reconcile_run_videos(data_root)
+
+    assert outcome["unavailable"] == 1
+    still = await kovaak_run_store.get_kovaak_run(healthy["id"], "u1")
+    demoted = await kovaak_run_store.get_kovaak_run(zombie["id"], "u1")
+    assert still["video_state"] == "attached"
+    assert still["video_error"] is None
+    assert demoted["video_state"] == "unavailable"
+    assert demoted["video_error"] == "video_evidence_missing"
+    assert demoted["video_path"] is None
+
+
 
 @pytest.mark.asyncio
 async def test_ingest_snapshot_failure_clears_stale_trace_attachment(
