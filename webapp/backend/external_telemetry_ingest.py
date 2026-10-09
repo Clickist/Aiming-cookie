@@ -687,6 +687,11 @@ class ExternalTelemetryWatcher:
         if (isinstance(source_survivor_check, dict)
                 and source_survivor_check.get("status") == "collapsed"):
             known_issues.append("cleaner_life_starvation")
+        # [fix 2026-10-09] 盲窗缺记（capture_blind_window）：跳变残差>0 = 采集
+        # 端失明窗内死亡个体时刻不可回溯（如实记损，fail-open 不拦数据）。
+        if (isinstance(source_survivor_check, dict)
+                and source_survivor_check.get("cause") == "capture_blind_window"):
+            known_issues.append("capture_blind_window")
         if not index_targets:
             known_issues.append("missing_rounds_index")
         if frame_stats["unsupported_events"]:

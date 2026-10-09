@@ -597,7 +597,8 @@ def test_orphan_rescan_does_not_duplicate_content_already_imported_via_index(
 
 # ------------------------------------------------------------- D7 quality gates
 
-def _write_reorg_index(index_path: Path, reorg_audit: object) -> None:
+def _write_reorg_index(index_path: Path, reorg_audit: object,
+                       survivor_check: object = None) -> None:
     """带源级 reorg_audit 字段的 index（cleaner [lives 2026-10-05d] 产出）。"""
     index_path.parent.mkdir(parents=True, exist_ok=True)
     source = {
@@ -609,6 +610,8 @@ def _write_reorg_index(index_path: Path, reorg_audit: object) -> None:
     }
     if reorg_audit is not None:
         source["reorg_audit"] = reorg_audit
+    if survivor_check is not None:
+        source["survivor_check"] = survivor_check
     index_path.write_text(json.dumps({
         "format_version": 1,
         "generator": "cleaner.py",
@@ -617,12 +620,17 @@ def _write_reorg_index(index_path: Path, reorg_audit: object) -> None:
     }, ensure_ascii=False), encoding="utf-8")
 
 
-def _reorg_tree(tmp_path: Path, reorg_audit: object) -> Path:
-    root = tmp_path / ("cleaned_%s" % id(reorg_audit))
+_REORG_SEQ = iter(range(100000))
+
+
+def _reorg_tree(tmp_path: Path, reorg_audit: object,
+                survivor_check: object = None) -> Path:
+    root = tmp_path / ("cleaned_%d" % next(_REORG_SEQ))
     source_dir = root / "reorg" / "target_poll_out_0103_040506"
     source_dir.mkdir(parents=True)
     (source_dir / "round_01.jsonl").write_bytes(_round_payload())
-    _write_reorg_index(root / "reorg" / "rounds_index.json", reorg_audit)
+    _write_reorg_index(root / "reorg" / "rounds_index.json", reorg_audit,
+                       survivor_check)
     return root
 
 
@@ -651,6 +659,35 @@ def test_short_respawn_merge_issue_follows_reorg_audit(
     root = _reorg_tree(tmp_path, None)   # 旧 cleaner 产的 index：无 reorg_audit
     assert _watcher(root).scan_once()["imported"] == 1
     assert "cleaner_short_respawn_merge" in _meta_for(key)["quality"]["known_issues"]
+
+
+def test_capture_blind_window_issue_passthrough(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """[fix 2026-10-09] survivor_check.cause=capture_blind_window → known_issues
+    挂新枚举值 + quality.survivor_check 透传；无该键的旧 index 不挂也不写。"""
+    key = "target_poll_out_0103_040506.jsonl|1|reorg"
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data_blind")
+    root = _reorg_tree(
+        tmp_path, {"mode": "window", "carryover_rule": 2, "spawn_wave": 10.0,
+                   "addrs": 6, "violations": [], "ok": True},
+        survivor_check={"status": "ok", "cause": "capture_blind_window",
+                        "ledger_deaths": 10, "death_event_lives": 7,
+                        "deaths_unresolved_jump": 3})
+    assert _watcher(root).scan_once()["imported"] == 1
+    meta = _meta_for(key)
+    assert "capture_blind_window" in meta["quality"]["known_issues"]
+    assert meta["quality"]["survivor_check"]["deaths_unresolved_jump"] == 3
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data_plain")
+    root = _reorg_tree(tmp_path, {"mode": "window", "carryover_rule": 2,
+                                  "spawn_wave": None, "addrs": 6,
+                                  "violations": [], "ok": True})
+    assert _watcher(root).scan_once()["imported"] == 1
+    meta = _meta_for(key)
+    assert "capture_blind_window" not in meta["quality"]["known_issues"]
+    assert "survivor_check" not in meta["quality"]
 
 
 def test_unsupported_format_version_is_fail_closed(

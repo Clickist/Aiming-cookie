@@ -56,6 +56,19 @@ HP_MAX = 1e6
 # [fix 2026-08-30b] 周期语义不变；执行移至后台线程，不再阻塞采样循环
 RESCAN_SECS = 20.0
 
+# [fix 2026-10-09] 盲窗防线（54109 案：serial 读失败误摘 + diff 对池化复用失明
+# → 20.8s 盲窗丢 3 死）：
+SERIAL_NONE_STREAK = 3         # serial 读失败容忍帧数（200Hz 下 15ms）：None 与真
+                               # 变化同等提案会把瞬态 RPM 读失败的目标误摘出发现层；
+                               # 连续超限才允许进入移除提案（提案仍走既有复核）
+SERIAL_NONE_HARD_DROP_S = 15.0  # serial 连续读失败强制摘除阈（对齐 dead_streak 15s
+                               # 熔断语义）：防提案被复核屡次挡回后僵尸槽位
+                               # 每帧 3 次无效 RPM 永久空转
+BLIND_STALE_S = 2.0            # 盲窗看门狗判失明阈：flag 目标 hp/dc 双 None 连续
+                               # 该时长（serial 在册）→ 触发带外重扫。判别性：真死
+                               # 尸体 hp=0 可读、垂死停更坐标冻结但旗标可读，均不触发
+BLIND_RESCAN_COOLDOWN_S = 2.0  # 看门狗触发重扫限频（恢复上界 ≈ 2.0s 检测+~2.1s 扫描）
+
 # [spd 2026-10-04] Windows 默认定时器分辨率 15.625ms：time.sleep(5ms) 会睡成 ~15.6ms、
 # sleep(20ms) 落在 2 个 tick=31.25ms —— 这是旧版"名义 50Hz 实测 31Hz"的根因。采样期间
 # 把本进程定时器分辨率提到 1ms（winmm，进程级；run() finally 归还），配合绝对节拍 +
@@ -424,6 +437,10 @@ def run(p, cal, hz, scale=False, out_dir=None):
     # 变更一律收进 st_lock；sets 单写者（后台线程），读侧靠 GIL 原子取值
     st_lock = threading.Lock()
     stop = threading.Event()
+    # [fix 2026-10-09] 盲窗看门狗 → 带外重扫请求：flag 目标 hp/dc 双 None 连续
+    # BLIND_STALE_S（serial 在册=目标应可读）判「疑似失明」，置位请求重扫线程
+    # 立即全量重扫（恢复上界 2.0s 检测 + ~2.1s 扫描 ≈ 4s，替代 20s 盲等）
+    rescan_req = threading.Event()
     # [flags 2026-10-05] 标志位偏移与死亡边沿状态（与 serials 同生命周期：
     # 发现时解析、摘除时清理）：
     #   flg    idx -> (hp_off, dc_off)，None 分量=该类无标志（回退坐标推导）
@@ -463,6 +480,12 @@ def run(p, cal, hz, scale=False, out_dir=None):
     # 做活性探测（[spd 2026-10-04] 起为时间门控，原为每 25 帧搭差分周期），
     # 连续 >15s 失败即中断本段交由 main 重附着。
     dead_streak = 0
+    # [fix 2026-10-09] serial 读失败容忍 + 盲窗看门狗状态（idx 键，随摘除清理）
+    none_streak = {}     # idx -> 连续 serial None 帧数
+    none_since = {}      # idx -> 首个 None 帧的 now（硬摘除计时）
+    blind_since = {}     # idx -> 首个 hp/dc 双 None 帧的 now
+    blind_suspect = set()  # 已判疑似失明并触发过重扫的 idx
+    last_blind_rescan = 0.0
 
     def read_num():
         return (p.i32(p.base + t.RVA_GUOBJECTARRAY + 0x24),
@@ -614,7 +637,18 @@ def run(p, cal, hz, scale=False, out_dir=None):
             return
         due = 0.0
         fails = 0
-        while not stop.wait(max(0.0, due - (time.time() - t0))):
+        while not stop.is_set():
+            # [fix 2026-10-09] 等待条件 = 周期到 OR 盲窗看门狗触发（0.2s 粒度
+            # 轮询）。触发式重扫不追补不重置周期锚：due 推进公式保持绝对节拍。
+            triggered = rescan_req.is_set()
+            if triggered:
+                rescan_req.clear()
+            wait_s = 0.0 if triggered else max(
+                0.0, min(due - (time.time() - t0), 0.2))
+            if stop.wait(wait_s):
+                break
+            if not triggered and (time.time() - t0) < due:
+                continue
             tc = time.time()
             try:
                 nume, numc = read_num()
@@ -784,9 +818,31 @@ def run(p, cal, hz, scale=False, out_dir=None):
             dead = []
             death_rows = []   # [flags 2026-10-05] 本帧死亡事件行（随帧落盘）
             flag_rows = []    # [flags 2026-10-05b] 坐标缺席帧的 flag 观测行（dc 减法口径用）
+            blind_rows = []   # [fix 2026-10-09] 盲窗看门狗旁线行（suspect/rescan/recovered）
             for i, owner in tg:
                 ia = item_addr(i)
                 sn = p.u32(ia + 0x10)
+                if sn is None:
+                    # [fix 2026-10-09] serial 读失败（RPM 瞬态）≠ 槽位复用：
+                    # None 与真变化同等提案会把瞬态读失败的目标误摘出发现层
+                    # （54109 盲窗根因：483.23 一帧 hp/dc/serial 多路读失败即
+                    # 误摘，0.5s diff 对池化复用结构性失明，恢复只能等 20s
+                    # 重扫）。容忍 SERIAL_NONE_STREAK 帧后允许提案（走既有
+                    # 复核）；停摆超 SERIAL_NONE_HARD_DROP_S 强制摘除防僵尸
+                    # 槽位空转。真变化（int 且 != 期望）照旧立即提案。
+                    streak = none_streak.get(i, 0) + 1
+                    none_streak[i] = streak
+                    first = none_since.setdefault(i, now)
+                    if streak == SERIAL_NONE_STREAK or (
+                            streak > SERIAL_NONE_STREAK
+                            and now - first >= SERIAL_NONE_HARD_DROP_S):
+                        dead.append(i)
+                        if streak > SERIAL_NONE_STREAK:
+                            none_streak.pop(i, None)
+                            none_since.pop(i, None)
+                    continue
+                if none_streak.pop(i, None) is not None:
+                    none_since.pop(i, None)   # 读恢复，容忍计数清零
                 if sn != ser.get(i):
                     dead.append(i)   # 槽位被复用 = 原对象已销毁
                     continue
@@ -819,6 +875,36 @@ def run(p, cal, hz, scale=False, out_dir=None):
                             dc = struct.unpack("<i", d)[0]
                     hp, dc = sanitize_flags(hp, dc)
                 hp, dc, died = update_flag_state(fstate, i, hp, dc)
+                # [fix 2026-10-09] 盲窗看门狗：flag 目标（dc 分量在册）hp/dc 双
+                # None 连续 BLIND_STALE_S 且 serial 在册 → 判「疑似失明」，触发
+                # 带外重扫（恢复上界 ~4s 替代 20s 盲等）。判别性：真死亡尸体
+                # hp=0 可读、垂死停更坐标冻结但旗标可读，均不触发；只对「注册
+                # 在表但完全读不到」的目标触发。旁线行进 jsonl（cleaner 对非
+                # frame 行跳过，零下游破坏）。
+                blind = (fo is not None and fo[1] is not None
+                         and hp is None and dc is None)
+                if blind:
+                    first = blind_since.setdefault(i, now)
+                    if now - first >= BLIND_STALE_S and i not in blind_suspect:
+                        blind_suspect.add(i)
+                        blind_rows.append({"ev": "blind_watch",
+                                           "t": round(now, 4), "addr": owner,
+                                           "phase": "suspect"})
+                        if (now - last_blind_rescan
+                                >= BLIND_RESCAN_COOLDOWN_S):
+                            last_blind_rescan = now
+                            rescan_req.set()
+                            blind_rows.append({"ev": "blind_watch",
+                                               "t": round(now, 4),
+                                               "addr": owner,
+                                               "phase": "rescan"})
+                elif i in blind_since:
+                    blind_since.pop(i, None)
+                    if i in blind_suspect:
+                        blind_suspect.discard(i)
+                        blind_rows.append({"ev": "blind_watch",
+                                           "t": round(now, 4), "addr": owner,
+                                           "phase": "recovered"})
                 if coord_ok:
                     arr.append([owner, px, py, pz, hp, dc])
                 elif fo is not None and (hp is not None or dc is not None):
@@ -846,11 +932,18 @@ def run(p, cal, hz, scale=False, out_dir=None):
                             del targets[i]
                             flg.pop(i, None)        # [flags] 摘除同步清理
                             fstate.pop(i, None)
+                            # [fix 2026-10-09] 容忍/看门狗状态随摘除清理
+                            none_streak.pop(i, None)
+                            none_since.pop(i, None)
+                            blind_since.pop(i, None)
+                            blind_suspect.discard(i)
             f.write(json.dumps({"ev": "frame", "t": round(now, 4), "targets": arr}) + "\n")
             for drow in death_rows:   # [flags 2026-10-05] 死亡事件行（cleaner 消费）
                 f.write(json.dumps(drow) + "\n")
             for frow in flag_rows:    # [flags 2026-10-05b] 坐标缺席帧的 dc 观测行
                 f.write(json.dumps(frow) + "\n")
+            for brow in blind_rows:   # [fix 2026-10-09] 盲窗看门狗旁线行
+                f.write(json.dumps(brow) + "\n")
             for srow in scale_rows:   # [v2.1] scale 旁线（cleaner 跳过）
                 f.write(json.dumps(srow) + "\n")
             n += 1

@@ -470,9 +470,15 @@ spawn_wave, addrs, violations[], ok}`——**spawn_wave v2 语义 = carryover �
 （窗 lo = 锚 − 前垫 `carryover_pre_margin` 秒），锚后关账的死亡无论身份段何时开启
 都是本局生命边界；全文件模式无锚不甄别。ingest 只读 `ok`。`deaths_summary /
 deaths_total`（dc 减法账本）与 `survivor_check{status: ok|collapsed, cause,
-ledger_deaths, death_event_lives}`（[carryover v2] 幸存者 sanity floor：D≥10 且
-L<0.5D 判 `collapsed`+cause=`cleaner_life_starvation`，fail-open 只标注；ingest 把
-collapsed 透传 meta.quality.known_issues 并存 `quality.survivor_check`）。
+ledger_deaths, death_event_lives, deaths_unresolved_jump}`（[carryover v2] 幸存者
+sanity floor：D≥10 且 L<0.5D 判 `collapsed`+cause=`cleaner_life_starvation`；
+[fix 2026-10-09] 跳变残差>0 时 cause=`capture_blind_window`（采集端失明窗内死亡
+个体时刻不可回溯，如实记损不铸造边界，优先于塌缩语义）；fail-open 只标注；
+ingest 把 cause 透传 meta.quality.known_issues 并存 `quality.survivor_check`）。
+`n_deaths_unresolved_jump`（源级聚合）与 per_addr `deaths_unresolved_jump`：跳变
+承载但未能落成生命边界的死亡数。采集端旁线行 `blind_watch`（suspect/rescan/
+recovered）：[fix 2026-10-09] 盲窗看门狗（serial 在册但 hp/dc 双 None 连续 2s →
+触发带外重扫，恢复上界 ~4s），cleaner 跳过不消费。
 
 ### 6.3 边界情况：重生跳 vs 野值
 

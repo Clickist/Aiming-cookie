@@ -844,6 +844,71 @@ def test_survivor_check_floor():
     assert src["survivor_check"]["death_event_lives"] == 28
 
 
+def test_blind_window_unresolved_jump_audit():
+    """[fix 2026-10-09] 盲窗如实记损：重同步跳变承载多死、行只命中 1 条 →
+    unresolved=权重−命中数，cause=capture_blind_window；不铸造边界（lives 只
+    含行支持的边界）。"""
+    A, X = 0x7FF600000001, 0x7FF600000002
+    # A：+1@2.0 → 掉 0@4.0（重绑，盲窗开始：dc 静默）→ 恢复首帧 @6.0 直接读到
+    # dc=3（跳变 0→3 权重 3 = 盲窗期 3 死累积）→ +1 游程触发重同步；行只有
+    # 1 条 (6.0, A, 3) 命中跳变步。X：驱动 flag_path（有行有账本）。
+    frames = []
+    t = 0.0
+    while t <= 8.0 + 1e-9:
+        dc_a = 0
+        if 2.0 <= t < 4.0:
+            dc_a = 1
+        elif t >= 6.0 - 1e-9:
+            dc_a = 3 + round((t - 6.0) / DT)   # 跳变后 +1 游程（重同步前置）
+        ents = [[A, 100.0 + 300.0 * t, 500.0, 100.0, 54.0, dc_a]]
+        ents.append([X, 3000.0 + 300.0 * t, 700.0, 100.0, 54.0,
+                     1 if t >= 3.0 else 0])
+        frames.append((round(t, 6), ents))
+        t = round(t + DT, 6)
+    deaths = [(2.0, A, 1), (6.0, A, 3), (3.0, X, 1)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_bw_"), frames, deaths,
+                    epoch_window=(T0 - 7.0, T0 + 7.0))   # 锚 = 3.0
+    stA = src["per_addr_cut_stats"]["0x%x" % A]
+    assert stA["deaths_unresolved_jump"] == 2, stA   # 跳变权重 3 − 命中行 1
+    assert src["n_deaths_unresolved_jump"] == 2
+    check = src["survivor_check"]
+    assert check["cause"] == "capture_blind_window", check
+    assert check["deaths_unresolved_jump"] == 2
+    tmA = _tm_of(src, A)
+    de = sum(1 for lv in tmA["lives"] if lv["death_event"] is True)
+    assert de == 2                                   # 只落行支持的边界，不造假
+
+
+def test_survivor_blind_window_priority_over_collapse():
+    """跳变残差与塌缩同时在场 → cause 取 capture_blind_window（优先级）。"""
+    A, X = 0x7FF600000001, 0x7FF600000002
+    # A：爬升 24 步后 @5.0 盲窗（dc 静默 0），@6.0 恢复读 0→27（跳变权重 27，
+    # 行只命中跳变 1 条）→ +1 游程重同步；D≫L 且残差>0 → collapsed+盲窗优先。
+    frames = []
+    t = 0.0
+    step = 0.2
+    while t <= 7.0 + 1e-9:
+        dc_a = 0
+        if 5.0 <= t < 6.0 - 1e-9:
+            dc_a = 0                       # 盲窗：dc 静默
+        elif t >= 6.0 - 1e-9:
+            dc_a = 27 + round((t - 6.0) / DT)
+        else:
+            dc_a = int(round((t - 0.2) / step)) if t >= step else 0
+        ents = [[A, 100.0 + 300.0 * t, 500.0, 100.0, 54.0, dc_a]]
+        ents.append([X, 3000.0 + 300.0 * t, 700.0, 100.0, 54.0,
+                     1 if t >= 3.0 else 0])
+        frames.append((round(t, 6), ents))
+        t = round(t + DT, 6)
+    rows = [(0.2, A, 1), (0.4, A, 2), (6.0, A, 27), (3.0, X, 1)]
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_bp_"), frames, rows,
+                    epoch_window=(T0 - 7.0, T0 + 7.0))
+    check = src["survivor_check"]
+    assert check["status"] == "collapsed"
+    assert check["cause"] == "capture_blind_window"
+    assert check["deaths_unresolved_jump"] > 0
+
+
 def main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

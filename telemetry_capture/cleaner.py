@@ -377,9 +377,11 @@ def _dc_walk(series, resync_run=RESYNC_MIN_RUN):
     返回 dict：
       deaths/trusted/untrusted_from/start_dc/end_dc/first_t/last_t/n_obs —— 与
       dc_slot_deaths 同义（untrusted_from 未取整，格式化在 dc_slot_deaths）；
-      steps: [(t_step, dc_after, ctx_clean_end)] —— 每个计入的死亡步（干净 +1
+      steps: [(t_step, dc_after, ctx_clean_end, weight)] —— 每个计入的死亡步（干净 +1
         与重同步跳变，跳变按坏步观测时刻记一次、deaths 记跳变差值），
-        ctx_clean_end = 该步所属身份段的干净账目关账时刻；
+        ctx_clean_end = 该步所属身份段的干净账目关账时刻；weight = 该步承载的
+        死亡数（+1 步=1；[fix 2026-10-09] 跳变步>1：盲窗期个体死亡时刻采集端
+        未观测，权重仅入账不可回溯为边界）；
       contexts: [{t0, clean_end, trusted_close, tainted, deaths}] —— 身份段：
         相邻成功重同步坏步之间的观测区间；前瞻失败的坏步同样关账（trusted_close
         =False，其后冻结区不换身份，直至下一个成功重同步）；末段 clean_end=
@@ -404,7 +406,9 @@ def _dc_walk(series, resync_run=RESYNC_MIN_RUN):
         # weight: 干净 +1 步=1；重同步跳变=跳变差值（一条步目承载多死）
         nonlocal deaths
         deaths += weight
-        steps.append((t, dc, None))       # ctx_clean_end 关账时回填
+        # [fix 2026-10-09] 第 4 元 weight：盲窗如实记损（重同步跳变步的权重
+        # >1，个体死亡时刻采集端未观测、不可回溯重建，消费方据此区分）
+        steps.append((t, dc, None, weight))       # ctx_clean_end 关账时回填
         ctx["deaths"] += weight
         ctx["n_step_entries"] += 1
 
@@ -468,7 +472,7 @@ def _dc_walk(series, resync_run=RESYNC_MIN_RUN):
     pos = 0
     for c in contexts:
         for k in range(pos, pos + c["n_step_entries"]):
-            steps[k] = (steps[k][0], steps[k][1], c["clean_end"])
+            steps[k] = (steps[k][0], steps[k][1], c["clean_end"], steps[k][3])
         pos += c["n_step_entries"]
     return {"deaths": deaths, "trusted": trusted, "untrusted_from": cut,
             "start_dc": d0, "end_dc": series[-1][1],
@@ -572,12 +576,17 @@ def _reorganize_addr(lives, rows, series, cfg, anchor):
     {边界数, 边界数+1}（局末存活 0/1 条）——供 ingest known_issues 语义与
     per-addr 审计消费。"""
     audit = {"death_rows": len(rows), "bound": 0, "unbacked": 0, "carryover": 0,
-             "unpaired": 0}
+             "unpaired": 0, "deaths_unresolved_jump": 0}
     resync_run = int(cfg.get("resync_min_run", RESYNC_MIN_RUN))
     tol = float(cfg.get("death_row_tol", DEATH_ROW_TOL))
     walk = _dc_walk(series, resync_run) if series else None
     steps = walk["steps"] if walk else []
     accepted = []
+    # [fix 2026-10-09] 盲窗如实记损：重同步跳变步权重>1 = 跳变承载多死（个体
+    # 死亡时刻采集端未观测、不可回溯重建）。锚后跳变权重和 − 命中该类步的
+    # 行数 = 未能落成生命边界的死亡数（审计键，不铸造边界）。
+    jump_weight_total = 0
+    matched_jump_rows = 0
     for t, dc in rows:
         if walk is not None:
             hit = next((s for s in steps if s[1] == dc and abs(s[0] - t) <= tol), None)
@@ -587,6 +596,9 @@ def _reorganize_addr(lives, rows, series, cfg, anchor):
             if anchor is not None and hit[2] < anchor:
                 audit["carryover"] += 1
                 continue
+            if hit[3] > 1:
+                jump_weight_total += hit[3]
+                matched_jump_rows += 1
         accepted.append(t)   # 无账本（旧式 flag 文件）：信任行，退化为旧行配对
     if walk is None and not rows:
         audit["fallback"] = True              # 无死亡证据 → 坐标切分回退
@@ -596,6 +608,7 @@ def _reorganize_addr(lives, rows, series, cfg, anchor):
         pair_after=float(cfg.get("death_pair_after", DEATH_PAIR_AFTER)))
     audit["unpaired"] = unpaired
     audit["bound"] = len(accepted) - unpaired
+    audit["deaths_unresolved_jump"] = max(0, jump_weight_total - matched_jump_rows)
     audit["ledger_deaths"] = (sum(1 for s in steps if anchor is None or s[2] >= anchor)
                               if walk is not None else None)
     audit["lives"] = len(new_lives)
@@ -781,7 +794,8 @@ def clean_file(path, outdir, cfg):
     per_addr_stats = {}
     n_death_unpaired = 0
     boundaries_by_addr = {}   # [lives] addr -> 甄别后的权威边界（death_event 判据）
-    reorg_totals = {"unbacked": 0, "carryover": 0, "addrs": 0, "violations": []}
+    reorg_totals = {"unbacked": 0, "carryover": 0, "addrs": 0, "violations": [],
+                    "unresolved_jump": 0}
     for a, pts in tracks.items():
         lives, st = split_track(pts, cfg)
         st["split_segments"] = len(lives)   # [lives] 重组前段数（门3"段数多"口径）
@@ -804,9 +818,12 @@ def clean_file(path, outdir, cfg):
             st["death_events_unpaired"] = aud["unpaired"]
             st["death_rows_rejected_unbacked"] = aud["unbacked"]
             st["death_rows_rejected_carryover"] = aud["carryover"]
+            # [fix 2026-10-09] 盲窗如实记损：跳变承载但未能落成生命边界的死亡数
+            st["deaths_unresolved_jump"] = aud["deaths_unresolved_jump"]
             n_death_unpaired += aud["unpaired"]
             reorg_totals["unbacked"] += aud["unbacked"]
             reorg_totals["carryover"] += aud["carryover"]
+            reorg_totals["unresolved_jump"] += aud["deaths_unresolved_jump"]
             if aud.get("fallback"):
                 st["reorg_fallback"] = True
             else:
@@ -994,6 +1011,9 @@ def clean_file(path, outdir, cfg):
             # 不影响 ok——它们本来就不是本局生命边界。
             src_meta["n_death_rows_rejected_unbacked"] = reorg_totals["unbacked"]
             src_meta["n_death_rows_rejected_carryover"] = reorg_totals["carryover"]
+            # [fix 2026-10-09] 盲窗如实记损聚合：跳变承载但个体时刻不可回溯的
+            # 死亡数（采集端失明窗的痕；不铸造边界，只入审计）
+            src_meta["n_deaths_unresolved_jump"] = reorg_totals["unresolved_jump"]
             # [carryover v2 2026-10-09] carryover_rule=2（stats 锚判据）；保留
             # spawn_wave 键名（消费侧兼容），v2 语义 = stats 锚在源相对 t 域的
             # 时刻（不再是"出生波估计"）。ingest 只读 reorg_audit.ok，无风险。
@@ -1046,11 +1066,22 @@ def clean_file(path, outdir, cfg):
                 for lv in tm.get("lives", ())
                 if lv.get("death_event") is True)
             collapsed = total >= 10 and death_event_lives < 0.5 * total
+            # [fix 2026-10-09] cause 枚举扩展：跳变残差>0 = 采集端盲窗缺观测
+            # （capture_blind_window），优先于甄别塌缩语义（cleaner_life_starvation）；
+            # status 仍 fail-open 只标注不拦数据。
+            unresolved = reorg_totals.get("unresolved_jump", 0)
+            if unresolved > 0:
+                cause = "capture_blind_window"
+            elif collapsed:
+                cause = "cleaner_life_starvation"
+            else:
+                cause = ""
             src_meta["survivor_check"] = {
                 "status": "collapsed" if collapsed else "ok",
-                "cause": "cleaner_life_starvation" if collapsed else "",
+                "cause": cause,
                 "ledger_deaths": total,
                 "death_event_lives": death_event_lives,
+                "deaths_unresolved_jump": unresolved,
             }
     if index_rounds:
         detail = ", ".join(
