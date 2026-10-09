@@ -243,7 +243,14 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.10</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-09</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.11</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-09</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分训练图（静态靶连续重生的点击图，如 1wall5targets、beanClick 家族）的准星/目标轨迹数据被误判丢弃的问题：这类图的轨迹现在能正常重建并参与分析</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>数据自愈再进一步：更早版本误清的鼠标原始数据会继续从本地文件自动找回；存储迁移遗留的「假可用」记录也会被自动修正并如实标注</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.10</h2><span class="cl-date">2026-10-09</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复更新或重启后，近期训练局的鼠标原始数据显示「来源不可用」、分析退化成只看成绩和录像的问题；受影响的旧局会在更新后自动恢复，无需重打</span></li>
           </ul>
