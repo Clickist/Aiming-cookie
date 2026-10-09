@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.4.10",
+      "date": "2026-10-09",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复更新或重启后，近期训练局的鼠标原始数据显示「来源不可用」、分析退化成只看成绩和录像的问题；受影响的旧局会在更新后自动恢复，无需重打",
+          "en": "Fixed raw mouse data showing as unavailable for recent runs after an update or restart, which degraded analyses to scores and video only; affected past runs recover automatically after updating - no need to replay them"
+        }
+      ]
+    },
+    {
       "version": "1.4.9",
       "date": "2026-10-08",
       "items": [
