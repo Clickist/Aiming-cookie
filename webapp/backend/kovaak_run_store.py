@@ -2972,6 +2972,64 @@ async def attach_mouse_trace(
     return run
 
 
+_ORPHAN_MATCH_TOLERANCE_MS = 2_000
+
+
+def _mouse_snapshot_span(path: Path) -> Optional[tuple[int, int]]:
+    """Return (min_ts, max_ts) of a snapshot file, or None if unreadable/empty."""
+    try:
+        points = read_mouse_snapshot(path)
+    except (OSError, ValueError):
+        return None
+    if not points:
+        return None
+    timestamps = [int(point["timestamp_ms"]) for point in points]
+    return min(timestamps), max(timestamps)
+
+
+def _match_orphan_trace(
+    orphans_dir: Path,
+    start_ms: int,
+    end_ms: int,
+    run_id: int,
+    user_id: str,
+) -> Optional[Path]:
+    """Find the quarantined trace that belongs to this run's window, uniquely.
+
+    reconcile 清扫会把无引用切片平铺收进 runs/orphans/（局归属丢失）；切片内
+    的点带 epoch 时间戳，可用局窗口回配。命中不唯一（孤儿多候选或其他局窗口
+    同样命中）即放弃，宁可留孤儿也不冒险认领错数据。
+    """
+    if not orphans_dir.is_dir():
+        return None
+    low = start_ms - _ORPHAN_MATCH_TOLERANCE_MS
+    high = end_ms + _ORPHAN_MATCH_TOLERANCE_MS
+    hits: list[tuple[Path, tuple[int, int]]] = []
+    for candidate in sorted(orphans_dir.glob("*.bin")):
+        span = _mouse_snapshot_span(candidate)
+        if span is None:
+            continue
+        if span[0] >= low and span[1] <= high:
+            hits.append((candidate, span))
+    if len(hits) != 1:
+        return None
+    candidate, (span_low, span_high) = hits[0]
+    for other in _all_runs(user_id):
+        if other.get("id") == run_id:
+            continue
+        other_start = other.get("window_start_epoch_ms")
+        other_end = other.get("window_end_epoch_ms")
+        if not isinstance(other_start, int) or isinstance(other_start, bool):
+            continue
+        if not isinstance(other_end, int) or isinstance(other_end, bool):
+            continue
+        if span_low >= other_start - _ORPHAN_MATCH_TOLERANCE_MS and (
+            span_high <= other_end + _ORPHAN_MATCH_TOLERANCE_MS
+        ):
+            return None
+    return candidate
+
+
 async def reattach_mouse_trace_from_disk(
     run_id: int,
     user_id: str,
@@ -2979,33 +3037,59 @@ async def reattach_mouse_trace_from_disk(
     """[fix 2026-10-09] 重启补跑自愈：回挂磁盘上仍留存的窗口切片 trace 文件。
 
     v1.4.5~v1.4.9 的补跑预判会把已 attach 的 trace 清成 unavailable（只清
-    mouse_trace_path 指针，不清 runs/{id}/trace-*.bin 文件——该文件在首次
-    attach 时已按局窗口切片落盘）。重遇这类局时从这里回挂，恢复 Raw 证据；
-    没有可回挂文件时返回 None，调用方照旧走终态标注。
+    mouse_trace_path 指针）。切片文件有两个可能去处：仍在 runs/{id}/ 原地；
+或已被 reconcile 孤儿清扫收进 runs/orphans/（按窗口时间唯一回配认领，
+    拷回本局目录再 attach）。没有可回挂文件时返回 None，调用方照旧走终态。
     """
     run = _load_run(run_id)
     if run is None or run.get("user_id") != user_id:
         return None
     if run.get("trace_state") == "attached":
         return run
+    start_ms = run.get("window_start_epoch_ms")
+    end_ms = run.get("window_end_epoch_ms")
     from . import config
 
-    run_dir = config.DATA_ROOT / "runs" / str(run_id)
+    runs_root = Path(config.DATA_ROOT) / "runs"
+    run_dir = runs_root / str(run_id)
     try:
-        candidates = sorted(
+        in_place = sorted(
             run_dir.glob("trace-*.bin"),
             key=lambda path: path.stat().st_mtime_ns,
             reverse=True,
         )
     except OSError:
-        return None
-    for candidate in candidates:
+        in_place = []
+    orphan_hit: Optional[Path] = None
+    if (
+        isinstance(start_ms, int)
+        and not isinstance(start_ms, bool)
+        and isinstance(end_ms, int)
+        and not isinstance(end_ms, bool)
+        and end_ms > start_ms
+    ):
+        orphan_hit = _match_orphan_trace(
+            runs_root / "orphans", start_ms, end_ms, run_id, user_id,
+        )
+    candidates: list[tuple[Path, bool]] = [(path, False) for path in in_place]
+    if orphan_hit is not None:
+        candidates.append((orphan_hit, True))
+    for candidate, needs_copy in candidates:
         try:
-            if not read_mouse_snapshot(candidate):
-                continue
+            points = read_mouse_snapshot(candidate)
         except (OSError, ValueError):
             continue
-        return await attach_mouse_trace(run_id, user_id, str(candidate))
+        if not points:
+            continue
+        target = candidate
+        if needs_copy:
+            target = run_dir / f"trace-{uuid4().hex}.bin"
+            try:
+                run_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(candidate, target)
+            except OSError:
+                continue
+        return await attach_mouse_trace(run_id, user_id, str(target))
     return None
 
 

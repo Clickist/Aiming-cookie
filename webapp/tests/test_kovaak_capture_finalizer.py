@@ -1718,6 +1718,73 @@ async def test_stale_rebuild_heals_clobbered_trace_from_disk_artifact(
     assert Path(rerun["mouse_trace_path"]).is_file()
 
 
+@pytest.mark.asyncio
+async def test_stale_rebuild_heals_trace_quarantined_to_orphans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[fix 2026-10-09] 被清局的原地切片若已被 reconcile 孤儿清扫收走
+    （runs/orphans/ 平铺、无局归属），补跑按局窗口时间唯一回配认领，
+    拷回本局目录后 attach 恢复 Raw 证据。"""
+    from types import SimpleNamespace
+
+    from webapp.backend import config
+    from webapp.backend import kovaak_capture_finalizer as finalizer_module
+
+    fresh_start = int(time.time() * 1000) - 60_000
+    _configure_parsers(monkeypatch, start_epoch_ms=fresh_start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": fresh_start + 30_000, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="heal-trace-orphan",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+    assert run["trace_state"] == "attached"
+
+    # 复刻野外伤害全链：W7 清指针后，reconcile 把无引用切片收进孤儿仓。
+    damaged = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_snapshot_out_of_coverage",
+    )
+    assert damaged["trace_state"] == "unavailable"
+    orphans = config.DATA_ROOT / "runs" / "orphans"
+    orphans.mkdir(parents=True, exist_ok=True)
+    artifacts = list(
+        (config.DATA_ROOT / "runs" / str(run["id"])).glob("trace-*.bin")
+    )
+    assert len(artifacts) == 1
+    artifacts[0].rename(orphans / artifacts[0].name)
+
+    # 次日重启（文件与窗口不动，时钟前进=生产形态）：W7 触发 → 孤儿按窗口回配。
+    real_time = finalizer_module.time
+    monkeypatch.setattr(
+        finalizer_module, "time",
+        SimpleNamespace(time=lambda: real_time.time() + 86_400, monotonic=real_time.monotonic),
+    )
+    rerun = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="heal-trace-orphan",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert rerun["id"] == run["id"]
+    assert rerun["finalization_error"] == "video_replay_expired"
+    assert rerun["trace_state"] == "attached"
+    assert rerun["trace_error"] is None
+    healed_path = Path(rerun["mouse_trace_path"])
+    assert healed_path.is_file()
+    assert orphans not in healed_path.parents, "认领件应拷回本局目录，不留在孤儿仓"
+
+
 def test_capture_window_invalid_maps_to_replay_range_code() -> None:
     """[fix 2026-10-07 W8] native 的 capture_window_invalid（窗口不在 replay
     覆盖内，重启补跑旧局的必然形态）与 control_window_invalid（Python 侧窗口
