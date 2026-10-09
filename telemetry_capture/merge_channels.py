@@ -392,6 +392,100 @@ def _find_prior_accepted_manifest(round_dir, fp):
     return None
 
 
+def _reject_causes(check_result, aim_result, click_semantics, xcr, xcorr_dev_s,
+                   round_verdicts, verdict_reuse, game_fp):
+    """[fix 2026-10-09] 精确锚拒绝的机读 cause 码：全部小写下划线，进
+    manifest.alignment.reject.causes 与 stdout 拒绝行。纯函数，便于直测。"""
+    causes = []
+    detail = {}
+    if check_result is not None:
+        n = check_result.get("n") or 0
+        median = check_result.get("median_deg")
+        if n < CLICK_CHECK_MIN_N:
+            causes.append("click_geom_n_below_min")
+            detail["check_n"] = n
+        if median is None or median > 1.0:
+            causes.append("click_geom_median_above_max")
+            detail["check_median_deg"] = median
+    if not click_semantics:
+        causes.append("click_semantics_low")
+        lat = (xcr.get("click_to_death_latency_ms") or {}) if xcr else {}
+        detail["click_semantics_paired"] = lat.get("n", 0)
+    if aim_result is not None:
+        n = aim_result.get("n") or 0
+        median = aim_result.get("median_deg")
+        share = aim_result.get("share_lt_10deg")
+        if n < AIM_CHECK_MIN_N:
+            causes.append("aim_n_below_min")
+            detail["aim_n"] = n
+        if median is None or median > AIM_MEDIAN_DEGRADED_MAX_DEG:
+            causes.append("aim_median_above_band")
+            detail["aim_median_deg"] = median
+        if share is None or share < AIM_SHARE10_MIN:
+            causes.append("aim_share_below_min")
+            detail["aim_share_lt_10deg"] = share
+    if round_verdicts is not None and not any(round_verdicts.values()):
+        causes.append("per_round_all_failed")
+    if verdict_reuse is None:
+        causes.append("no_prior_verdict_reuse")
+        if game_fp is not None:
+            detail["game_fingerprint"] = game_fp
+    detail["xcorr_dev_s"] = round(xcorr_dev_s, 3)   # 摘门后的诊断留档
+    return causes, detail
+
+
+def _write_rejected_manifest(round_dir, idx_path, entry, args, cam, inp, *,
+                             seed, s, method, xcr, causes, detail,
+                             t0_epoch=None, check_result=None, aim_result=None,
+                             game_fp=None):
+    """[fix 2026-10-09] 拒绝也写 merge_manifest.json（alignment.accepted=false
+    + reject{causes,detail} + 已算出的回执数字）。消费合同不变：worker 侧只读
+    alignment.accepted；_prior_verdict_of 要求 accepted=true，拒绝件不会被
+    verdict 复用命中。"""
+    aln = {"method": method, "seed_epoch": round(seed, 3) if seed else None,
+           "s_epoch_of_t0": s,
+           "xcorr": xcr if xcr is not None else {},
+           "accepted": False, "t0_epoch_from_index": t0_epoch,
+           "reject": {"causes": list(causes), "detail": detail}}
+    manifest = {
+        "schema_version": "round_merge.v1",
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "round_dir": round_dir, "rounds_index": os.path.abspath(idx_path),
+        "rounds_index_mtime_ns": os.stat(idx_path).st_mtime_ns,
+        "source": entry.get("source"),
+        "camera": {"path": os.path.abspath(args.camera),
+                   "epoch_anchor": cam["epoch"],
+                   "n_cam": len(cam["frames"]), "n_null": cam["n_null"],
+                   "n_extra_map": cam["n_extra_map"], "dt": cam["dt"],
+                   "span_s": cam["span_s"],
+                   **({"reflection": cam["reflection"]}
+                      if cam.get("reflection") else {})},
+        "input": {"path": os.path.abspath(args.input),
+                  "delta_epoch_perf": round(inp["delta"], 6),
+                  "drift_s": inp["drift_s"], "n_events": inp["n_events"],
+                  "n_clicks_raw": inp["n_clicks_raw"],
+                  "n_clicks_clustered": inp["n_clicks_clustered"],
+                  "span_perf": inp["span_perf"]},
+        "alignment": aln,
+        **({"deaths_summary": ds}
+           if (ds := entry.get("deaths_summary")) is not None else {}),
+        **({"game_fingerprint": game_fp} if game_fp is not None else {}),
+        "t_domain_note": ("sidecar 与轮文件同 t 域（源文件相对秒）；"
+                          "epoch = s_epoch_of_t0 + t"),
+        "rounds": [],
+    }
+    if check_result is not None:
+        manifest["check"] = check_result
+        manifest["aim_check"] = aim_result
+    dst = os.path.join(round_dir, "merge_manifest.json")
+    tmp = dst + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, dst)
+    print("[rejected] merge_manifest.json（accepted=false, causes=%s）→ %s"
+          % (",".join(causes), round_dir))
+
+
 def main():
     ap = argparse.ArgumentParser(description="相机/输入并入 cleaned 轮次（旁车）")
     ap.add_argument("--round-dir", required=True)
@@ -419,6 +513,9 @@ def main():
     if not cam["frames"]:
         print("!! 相机通道零帧（冻结件无有效 cam 记录）—— fail-closed 拒绝写旁车 "
               "[cause=camera_zero_frames]")
+        _write_rejected_manifest(round_dir, idx_path, entry, args, cam, inp,
+                                 seed=None, s=None, method=None, xcr=None,
+                                 causes=["camera_zero_frames"], detail={})
         return 2
     click_epochs = sorted(t + inp["delta"] for t in inp["clicks_perf"])
 
@@ -431,10 +528,15 @@ def main():
                         int(hhmmss[:2]), int(hhmmss[2:4]), int(hhmmss[4:]),
                         0, 0, -1))
 
+    # [fix 2026-10-09] 局末存活 life（death_event=False，t_end=窗尾/自然坐标
+    # 末尾）不是死亡——旧口径把它们混进互相关与点击配对，t_end 假配对污染锚
+    # 诊断与语义分母（Sixshot 案第二局 59.8s 伪 life 即此形态）。兼容：旧
+    # index 无该键时保持现行为（全部计入）。
     deaths_t = [lv["t_end"]
                 for r in entry.get("rounds", [])
                 for tgt in r.get("targets", [])
-                for lv in tgt.get("lives", [])]
+                for lv in tgt.get("lives", [])
+                if lv.get("death_event") is not False]
     xcr = correlate(deaths_t, click_epochs, seed)
     print("[align] 粗锚 seed=%.3f  互相关 s*=%.3f  plateau=[%.3f, %.3f]  "
           "score=%d/%d  基线 mean=%.1f p95=%d max=%d  click→death 中位=%sms" % (
@@ -458,8 +560,11 @@ def main():
         method = "pooled_click_death_xcorr"
     else:
         print("!! 互相关不达峰（%d < %.1f×基线mean=%.1f 或平台过宽）且无 t0_epoch "
-              "—— 拒绝写旁车" % (xcr["score"], ACCEPT_RATIO,
-                                 xcr["baseline"]["mean"]))
+              "—— 拒绝写旁车 [cause=xcorr_below_peak_no_anchor]"
+              % (xcr["score"], ACCEPT_RATIO, xcr["baseline"]["mean"]))
+        _write_rejected_manifest(round_dir, idx_path, entry, args, cam, inp,
+                                 seed=seed, s=None, method=None, xcr=xcr,
+                                 causes=["xcorr_below_peak_no_anchor"], detail={})
         return 2
 
     # 相机帧 → 源 t 域
@@ -495,11 +600,15 @@ def main():
             total_deaths > 0
             and paired_deaths / total_deaths >= CLICK_SEMANTICS_MIN_SHARE
         )
+        # [fix 2026-10-09] xcorr 偏差从硬门摘除（言行对齐）：本路径自称"互相关
+        # 仅诊断"（SIDECARS §5），且 click 稀疏局峰被场景动力学锁偏（1005 实证
+        # 0.55~1.125s）时，一个自称诊断的量会误杀几何回执健康的局。摘门后锚真
+        # 错误仍被 n≥5+中位≤1° 拦住（准星不在靶上时该回执必爆炸）；偏差保留为
+        # 诊断值（stdout/manifest.xcorr 照记，进拒绝 detail）。
         click_geom_ok = (click_semantics
                          and check_result["n"] >= CLICK_CHECK_MIN_N
                          and check_result["median_deg"] is not None
-                         and check_result["median_deg"] <= 1.0
-                         and xcorr_dev_s <= XCORR_DEV_MAX_S)
+                         and check_result["median_deg"] <= 1.0)
         aim_grade = _aim_session_grade(aim_result)
         if click_geom_ok:
             accept_grade = "click_geom"
@@ -541,8 +650,19 @@ def main():
                       % (prior["prior_grade"], prior["prior_manifest"],
                          prior["prior_generated"]))
         if not accepted:
+            # [fix 2026-10-09] 拒绝路径机读化：cause 码 + 已算出的回执数字落
+            # manifest（accepted=false），远程分诊从「无 manifest」升级为
+            # 「带原因的拒绝」。退出码仍 2，服务侧 merge_status 语义不变。
+            causes, detail = _reject_causes(
+                check_result, aim_result, click_semantics, xcr, xcorr_dev_s,
+                round_verdicts, verdict_reuse, game_fp)
             print("!! 精确锚对齐验收未过（click 几何与 aim-at-death 双回执均不达标）"
-                  "—— 拒绝写旁车")
+                  "[causes=%s] —— 拒绝写旁车" % ",".join(causes))
+            _write_rejected_manifest(round_dir, idx_path, entry, args, cam, inp,
+                                     seed=seed, s=s, method=method, xcr=xcr,
+                                     t0_epoch=t0_epoch, causes=causes,
+                                     detail=detail, check_result=check_result,
+                                     aim_result=aim_result, game_fp=game_fp)
             return 2
 
     # 输入第二遍：先收集 (t_src, dx, dy, btn)（轮窗可能重叠——cleaner 的轮按出生
@@ -611,11 +731,12 @@ def main():
         aln["accept_grade"] = accept_grade
         aln["accept_rule"] = (
             "click_geom: click语义(死亡-点击配对率>=%.2f) and check.n>=%d and "
-            "check.median_deg<=1.0 and |xcorr.s-index_s|<=%.3fs | tracking_aim: "
+            "check.median_deg<=1.0 | tracking_aim: "
             "aim_check.n>=%d and aim_check.median_deg<=%.1f and "
             "aim_check.share_lt_10deg>=%.2f "
-            "(死亡前200ms窗最小夹角; xcorr 峰在 click 稀疏局被场景动力学锁偏, 仅诊断)"
-            % (CLICK_SEMANTICS_MIN_SHARE, CLICK_CHECK_MIN_N, XCORR_DEV_MAX_S,
+            "(死亡前200ms窗最小夹角; xcorr 峰在 click 稀疏局被场景动力学锁偏,"
+            "仅诊断[fix 2026-10-09 摘出硬门],偏差随 manifest.xcorr/detail 留档)"
+            % (CLICK_SEMANTICS_MIN_SHARE, CLICK_CHECK_MIN_N,
                AIM_CHECK_MIN_N, AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
         if round_verdicts is not None:   # [fix 2026-10-04] 逐轮部分验收语义
             aln["round_verdicts"] = round_verdicts
@@ -722,6 +843,9 @@ def kill_click_check(round_dir, rounds, cam, cam_ts, s, click_epochs):
             pts.sort()
             pt_ts = [p[0] for p in pts]
             for lv in tgt.get("lives", []):
+                if lv.get("death_event") is False:
+                    continue   # [fix 2026-10-09] 局末存活：t_end 非死亡，禁与
+                               # 窗尾点击假配对（旧 index 无该键照旧计入）
                 t_end = lv["t_end"]
                 j = bisect.bisect_right(clicks_src, t_end) - 1
                 if j < 0 or t_end - clicks_src[j] > CLICK2DEATH_MAX:

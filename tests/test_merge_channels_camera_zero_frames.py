@@ -85,7 +85,8 @@ def test_zero_frame_camera_fails_closed_not_crash(zero_camera_scene, capsys, mon
 
 
 def test_zero_frame_camera_writes_no_sidecar(zero_camera_scene):
-    """拒绝路径不落任何旁车件。"""
+    """拒绝路径不落任何旁车件；[fix 2026-10-09] 拒绝本身写 accepted=false
+    manifest（cause 码机读），旁车数据件仍一个不落。"""
     s = zero_camera_scene
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(sys, "argv", [
@@ -99,9 +100,13 @@ def test_zero_frame_camera_writes_no_sidecar(zero_camera_scene):
     finally:
         monkeypatch.undo()
     rd = s["round_dir"]
-    assert not os.path.isfile(os.path.join(rd, "merge_manifest.json"))
     assert not os.path.isfile(os.path.join(rd, "views_01.jsonl"))
     assert not os.path.isfile(os.path.join(rd, "inputs_01.jsonl"))
+    manifest = json.loads(
+        open(os.path.join(rd, "merge_manifest.json"), encoding="utf-8").read())
+    aln = manifest["alignment"]
+    assert aln["accepted"] is False
+    assert aln["reject"]["causes"] == ["camera_zero_frames"]
 
 
 def test_nonempty_camera_still_passes(zero_camera_scene, monkeypatch, tmp_path):

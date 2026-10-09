@@ -254,10 +254,15 @@ def test_rewash_hard_drift_reuses_prior_verdict(tmp_path, monkeypatch):
 
 
 def test_hard_drift_without_prior_still_fail_closed(tmp_path, monkeypatch):
-    """无已过验前科（首跑即 9.5°）⇒ fail-closed 拒写旁车，exit=2。"""
+    """无已过验前科（首跑即 9.5°）⇒ fail-closed 拒写旁车，exit=2。
+    [fix 2026-10-09] 拒绝写 accepted=false manifest（cause 码机读），不再无件。"""
     code, manifest = _run_merge(tmp_path, monkeypatch, swung_deg=9.5, drift_s=0.6)
     assert code == 2
-    assert manifest is None
+    aln = manifest["alignment"]
+    assert aln["accepted"] is False
+    causes = aln["reject"]["causes"]
+    assert "aim_median_above_band" in causes       # 9.5° > 降级带上界 7°
+    assert "no_prior_verdict_reuse" in causes       # 无前科可复用
 
 
 def test_hard_drift_different_recording_no_reuse(tmp_path, monkeypatch):

@@ -69,13 +69,23 @@
 
 - `alignment`：`{method, seed_epoch, s_epoch_of_t0, xcorr{score,n_deaths,plateau_s,
   baseline{mean,p95,max}, click_to_death_latency_ms}, accepted, t0_epoch_from_index}`。
+  **[fix 2026-10-09]** 拒绝路径也写本 manifest（`accepted=false` +
+  `reject{causes[], detail{}}` 机读 cause 码，旁车数据件仍一个不落；退出码仍 2）。
+  cause 码枚举：`camera_zero_frames / xcorr_below_peak_no_anchor /
+  click_semantics_low / click_geom_n_below_min / click_geom_median_above_max /
+  aim_n_below_min / aim_median_above_band / aim_share_below_min /
+  per_round_all_failed / no_prior_verdict_reuse`。
 - 接受判据（本工具实现）：峰值 ≥5×基线均值 **且** 平台宽 ≤50ms。FORMAT §5.3 的
   "≥5×基线p95"按稀疏会话标定；连续点击密集会话（pasu/连点类）随机基线 p95 可达
   峰值 1/3（250ms 窗 × ~1点击/秒 的碰撞率），峰形锐度才是判别量（实测平台 4ms）。
 - **[fix 2026-09-01]** 带**精确 index t0_epoch 锚**（clock_map 来源）时判据换轨为
   **双分级验收**（`alignment.accept_grade` / `accept_rule` 自描述）：
-  - `click_geom`（点击富集局）：`check.n≥5 且 check.median_deg≤1° 且
-    |xcorr峰−锚|≤250ms`——0901 验证局中位 0.233°/<1°占98%，与 0831 黄金回执一致；
+  - `click_geom`（点击富集局）：`check.n≥5 且 check.median_deg≤1°`——0901 验证局
+    中位 0.233°/<1°占98%，与 0831 黄金回执一致；**[fix 2026-10-09] xcorr 峰−锚
+    偏差摘出硬门**（言行对齐：本路径互相关本就"仅诊断"，click 稀疏局峰被场景
+    动力学锁偏时一个自称诊断的量会误杀几何回执健康的局；偏差保留为诊断值随
+    manifest.xcorr / reject.detail 留档。锚真错误仍被 n≥5+中位≤1° 拦住——准星
+    不在靶上时该回执必爆炸）；
   - `tracking_aim`（跟枪/hold-fire 局）：`aim_check.n≥5 且 median_deg≤5° 且
     share_lt_10deg≥0.5`。click 稀疏时互相关峰被场景动力学锁偏（峰偏≈−平均击杀延迟；
     2156 TileFrenzy tracking 实测 +1.125s，而双录 target_poll2×2 + 相机 yaw↔输入
@@ -126,7 +136,9 @@
 - `rounds[]`：每轮 `{n_views, view_gaps_gt_200ms, n_inputs}` 覆盖统计。
 - `check`（--check 时）：击杀点击瞬间 准心→垂死目标 角误差分布。**几何+对齐总验收**：
   实测参照 final_0831（596 击杀）中位 0.466°、p25 0.229°、66% <1°、71% <3°。
-  显著劣于该水平 = 对齐或几何链路有问题，拒绝消费。
+  显著劣于该水平 = 对齐或几何链路有问题，拒绝消费。**[fix 2026-10-09]** 局末存活
+  life（`death_event=false`，t_end=窗尾）不参与互相关 deaths、点击配对与
+  kill_click 采样（非死亡 t_end 与窗尾点击假配对；兼容：旧 index 无该键照旧计入）。
 - `aim_check`（精确锚路径必含）：死亡前 200ms 窗 准心→垂死目标 **最小**夹角分布
   （`{n, median_deg, p25/p75_deg, share_lt_5deg, share_lt_10deg, window_ms, per_round}`）。
   tracking_aim 级的验收证据；参照 2156 tracking 中位 2.48°/56% <10°（错位对照 34°/10%）。
