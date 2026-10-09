@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.4.11",
+      "date": "2026-10-09",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复部分训练图（静态靶连续重生的点击图，如 1wall5targets、beanClick 家族）的准星/目标轨迹数据被误判丢弃的问题：这类图的轨迹现在能正常重建并参与分析",
+          "en": "Fixed crosshair/target trajectory data being wrongly discarded on static-respawn clicking maps (the 1wall5targets / beanClick family): trajectories on these maps are now rebuilt correctly and feed the analysis"
+        },
+        {
+          "type": "imp",
+          "zh": "数据自愈再进一步：更早版本误清的鼠标原始数据会继续从本地文件自动找回；存储迁移遗留的「假可用」记录也会被自动修正并如实标注",
+          "en": "More data self-healing: raw mouse data wrongly dropped by earlier versions keeps recovering from local files automatically, and stale 'available' records left by storage migration are now corrected and honestly labeled"
+        }
+      ]
+    },
+    {
       "version": "1.4.10",
       "date": "2026-10-09",
       "items": [
