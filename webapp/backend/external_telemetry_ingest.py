@@ -597,6 +597,7 @@ class ExternalTelemetryWatcher:
                         source_discarded=source.get("discarded"),
                         source_cut_stats=source.get("per_addr_cut_stats"),
                         source_reorg_audit=source.get("reorg_audit"),
+                        source_survivor_check=source.get("survivor_check"),
                     )
                 except RetryableIngestionError as error:
                     self._handle_retryable(dedup_key, error, summary)
@@ -628,6 +629,7 @@ class ExternalTelemetryWatcher:
         source_discarded: object,
         source_cut_stats: object,
         source_reorg_audit: object,
+        source_survivor_check: object = None,
     ) -> str:
         round_file = str(round_entry.get("file", ""))
         round_path = round_dir / round_file
@@ -679,6 +681,12 @@ class ExternalTelemetryWatcher:
         if not (isinstance(source_reorg_audit, dict)
                 and source_reorg_audit.get("ok") is True):
             known_issues.append("cleaner_short_respawn_merge")
+        # [carryover v2 2026-10-09] 幸存者塌缩（cleaner sanity floor，可观测非门）：
+        # dc 账本死亡数正常而 death_event lives 不足一半 = cleaner 甄别塌缩家族；
+        # 数据 fail-open 照常入库（merge 验收门自己拦），known_issues 显名。
+        if (isinstance(source_survivor_check, dict)
+                and source_survivor_check.get("status") == "collapsed"):
+            known_issues.append("cleaner_life_starvation")
         if not index_targets:
             known_issues.append("missing_rounds_index")
         if frame_stats["unsupported_events"]:
@@ -725,6 +733,10 @@ class ExternalTelemetryWatcher:
                 "gates": gates,
                 "discarded": source_discarded,
                 "per_addr_cut_stats": source_cut_stats,
+                # [carryover v2 2026-10-09] additive：塌缩观测（健康局 status=ok
+                # 也透传，供趋势观测）；旧 index 无该键时整体缺席，形状不变。
+                **({"survivor_check": source_survivor_check}
+                   if isinstance(source_survivor_check, dict) else {}),
                 "known_issues": known_issues,
             },
             # proposal-only：置信度/tie_group/candidates 原样透传，绝不写

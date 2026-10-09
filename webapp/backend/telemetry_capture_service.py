@@ -590,7 +590,10 @@ class TelemetryCaptureService:
             self._child_argv("cleaner.py")
             + [str(f) for f in frozen_targets]
             + ["--outdir", str(cut_dir),
-               "--epoch-min", repr(lo), "--epoch-max", repr(hi)],
+               "--epoch-min", repr(lo), "--epoch-max", repr(hi),
+               # [carryover v2 2026-10-09] carryover 锚=stats 锚判据的前垫宽度，
+               # 显式传本服务的切窗前垫常量，防两处常量漂移
+               "--carryover-pre-margin", repr(_CUT_PRE_MARGIN_S)],
             label="cleaner.py",
         )
         if outcome != "ok":

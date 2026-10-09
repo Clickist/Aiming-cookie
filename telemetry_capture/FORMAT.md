@@ -453,7 +453,7 @@ n_frames、n_targets、n_moving_targets、motion_mix(moving/static/mixed)、targ
 | `birth` / `death` / `alive_window` | 首生~末死（跨池化重生） |
 | `n_samples` / `n_lives` | 样本数；life 数 = 出生次数（含池化重生，≈击杀数+1） |
 | `path_length` | life 内累计位移之和，**不含**重生跳距离 |
-| `lives[]` | 每段 `{t_start,t_end,n,path}` |
+| `lives[]` | 每段 `{t_start,t_end,n,path}`；flag 路径（有 death 行）additive `death_event`（True=t_end 由甄别后权威死亡边界收尾；旧文件无该键） |
 | `domain` | 全 life 并集的位置域 min/max（场景归一化依据） |
 
 `discarded`：`malformed_records / phantom_tracks{} / origin_ghost_tracks{} / static_ghost_tracks{} /
@@ -461,6 +461,18 @@ garbage_points / noise_segments`（审计用）；`phantom_gate`（[fix 2026-10-
 `{mode: window|full, rule_version, kept_ambiguous{addr: 复核诊断}}`——窗口模式下命中幽灵三联
 判据但被真目标生命周期复核**保留**的轨道清单（非丢弃，闸决策挂在丢弃报表语义下自描述；
 ingest 侧逐字透传进 meta.quality.discarded）。
+
+源级审计键（flag 路径 additive，[lives 2026-10-05d]/[carryover v2 2026-10-09]）：
+`n_death_events / n_death_events_unpaired / n_death_rows_rejected_unbacked /
+n_death_rows_rejected_carryover`；`reorg_audit{mode: window|full, carryover_rule=2,
+spawn_wave, addrs, violations[], ok}`——**spawn_wave v2 语义 = carryover 锚（stats 锚在
+源相对 t 域的时刻）**，非出生波：切窗模式下账目在锚前关账的死亡判上一局残留
+（窗 lo = 锚 − 前垫 `carryover_pre_margin` 秒），锚后关账的死亡无论身份段何时开启
+都是本局生命边界；全文件模式无锚不甄别。ingest 只读 `ok`。`deaths_summary /
+deaths_total`（dc 减法账本）与 `survivor_check{status: ok|collapsed, cause,
+ledger_deaths, death_event_lives}`（[carryover v2] 幸存者 sanity floor：D≥10 且
+L<0.5D 判 `collapsed`+cause=`cleaner_life_starvation`，fail-open 只标注；ingest 把
+collapsed 透传 meta.quality.known_issues 并存 `quality.survivor_check`）。
 
 ### 6.3 边界情况：重生跳 vs 野值
 

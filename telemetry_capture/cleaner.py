@@ -105,6 +105,10 @@ RESYNC_MIN_RUN = 3       # [flags 2026-10-05c] 异常重同步前瞻：坏步（
                           # （158/572/126/59 冻结类）跳后游程=0——区分度充分。
 DEATH_ROW_TOL = 0.1      # [lives 2026-10-05d] death 行与账本 +1 步的时刻匹配容差 s：
                           # 两者同源同 tick（实测逐条同刻），0.1 只兜采样慢步。
+CARRYOVER_PRE_MARGIN_S = 10.0  # [carryover v2 2026-10-09] 切窗 carryover 锚的前垫
+                          # 宽度 s：服务侧切窗 lo = stats 锚 − 该垫，故锚 = lo + 该垫。
+                          # 与 telemetry_capture_service._CUT_PRE_MARGIN_S 显式同值，
+                          # 服务侧经 CLI 传入防漂移。
 COORD_DP = 3            # 输出坐标小数位（float32 在 4096 量级分辨率 ≈0.0005）
 
 
@@ -544,22 +548,24 @@ def _regroup_lives(segs, boundaries, pair_after=DEATH_PAIR_AFTER):
     return lives, unpaired
 
 
-def _reorganize_addr(lives, rows, series, cfg, wave):
-    """[lives 2026-10-05d] 单 addr 死亡账本主导生命窗重组（flag 路径核心）。
+def _reorganize_addr(lives, rows, series, cfg, anchor):
+    """[lives 2026-10-05d][carryover v2 2026-10-09] 单 addr 死亡账本主导生命窗
+    重组（flag 路径核心）。
 
     lives: split_track 输出段；rows: [(t, dc)] 该 addr 的 death 行；series:
-    dc 观测账本（None=无账本）；wave: 切窗模式出生波锚 W（None=全文件模式，
-    不做 carryover 甄别）。返回 (new_lives, boundaries, audit)。
+    dc 观测账本（None=无账本）；anchor: 切窗模式 carryover 锚（stats 锚，源
+    相对 t 域；None=全文件模式，不做 carryover 甄别）。返回
+    (new_lives, boundaries, audit)。
 
     甄别两级（被甄别掉的行只入审计、不充当边界）：
       R1 步证：行 (t, dc) 须命中账本计入死亡步 (t_step, dc_after)：
         dc_after==dc 且 |t-t_step|<=death_row_tol。无步证 = 采集伪迹
         （重绑瞬态复读/边沿——如 TF180 语料 t=0.102 与 59.974 的 dc=0 行）。
         无账本时豁免（退化为旧行配对语义：行直接作为候选边界）。
-      R2 carryover（切窗模式）：命中步所属身份段 clean_end < W = 开局残留
-        身份——账目在出生波（换绑复位/场景重载的最终身份段起点最大值）前
-        关账，同 dc_slot_deaths 对 carryover 基值的截断哲学；其死亡属上一局
-        /预览残留，不是本局生命边界。
+      R2 carryover（切窗模式）：命中步所属身份段 clean_end < 锚 = 上一局残留
+        身份——账目在 stats 锚前关账（前垫区就是上一局尾巴），同 dc_slot_deaths
+        对 carryover 基值的截断哲学；其死亡不是本局生命边界。账目在锚后关账
+        的死亡无论身份段何时开启（开局延续/局中换绑重生）都放行。
     无行无账本 → 回退坐标切分（audit["fallback"]=True，行为同旧文件路径）；
     无行有账本 → 全部并回单条生命（账本背书"从未死亡"）。
     audit["ok"]：局内账本死亡数 == 接受行数、无 unpaired、生命数 ∈
@@ -578,7 +584,7 @@ def _reorganize_addr(lives, rows, series, cfg, wave):
             if hit is None:
                 audit["unbacked"] += 1
                 continue
-            if wave is not None and hit[2] < wave:
+            if anchor is not None and hit[2] < anchor:
                 audit["carryover"] += 1
                 continue
         accepted.append(t)   # 无账本（旧式 flag 文件）：信任行，退化为旧行配对
@@ -590,7 +596,7 @@ def _reorganize_addr(lives, rows, series, cfg, wave):
         pair_after=float(cfg.get("death_pair_after", DEATH_PAIR_AFTER)))
     audit["unpaired"] = unpaired
     audit["bound"] = len(accepted) - unpaired
-    audit["ledger_deaths"] = (sum(1 for s in steps if wave is None or s[2] >= wave)
+    audit["ledger_deaths"] = (sum(1 for s in steps if anchor is None or s[2] >= anchor)
                               if walk is not None else None)
     audit["lives"] = len(new_lives)
     audit["ok"] = (
@@ -745,20 +751,20 @@ def clean_file(path, outdir, cfg):
         deaths_by_addr.setdefault(d["addr"], []).append((d["t"], d["dc"]))
     flag_path = bool(deaths)
     tracks = build_tracks(frames)
-    # [lives 2026-10-05d] 切窗模式出生波锚 W：全体 addr 最终身份段起点的最大值
-    # = 本源（单局切窗）目标出生波时刻。开局残留身份的账目在 W 前关账，其
-    # death 行按 carryover 甄别（全文件模式无 W，不做该级甄别——多局归档里
-    # 每个真实死亡都是合法边界）。
-    wave = None
-    if flag_path and dc_obs and cfg.get("epoch_window") is not None:
-        resync_run = int(cfg.get("resync_min_run", RESYNC_MIN_RUN))
-        starts = []
-        for series in dc_obs.values():
-            w = _dc_walk(series, resync_run)
-            if w is not None and w["contexts"]:
-                starts.append(w["contexts"][-1]["t0"])
-        if starts:
-            wave = max(starts)
+    # [carryover v2 2026-10-09] 切窗模式 carryover 锚 = stats 锚（源相对 t 域）。
+    # 语义：身份段账目在 stats 锚**之前**关账的死亡 = 上一局/预览残留（前垫区
+    # 就是上一局尾巴）；账目在锚后关账的死亡，无论身份段何时开启（开局延续或
+    # 局中换绑重生）都是本局生命边界。旧规则（全体 addr 最终身份段起点的最大
+    # 值，"出生波"）与本局起点毫无因果——语料巡检证实它随机落在窗中后部，会把
+    # "每死必换绑"场景（Sixshot 家族）的局中死亡整批误拒、塌缩成整窗单 life。
+    # 全文件模式（epoch_window=None）无锚，不做该级甄别——多局归档里每个真实
+    # 死亡都是合法边界。
+    carryover_anchor = None
+    if (flag_path and dc_obs and cfg.get("epoch_window") is not None
+            and t0_map is not None):
+        lo = cfg["epoch_window"][0]
+        carryover_anchor = lo - float(t0_map["t"]) + float(
+            cfg.get("carryover_pre_margin", CARRYOVER_PRE_MARGIN_S))
 
     discarded = {
         "malformed_records": bad_recs,
@@ -790,7 +796,7 @@ def clean_file(path, outdir, cfg):
             # 由 _reorganize_addr 判回退坐标切分（audit.fallback）。
             rows = deaths_by_addr.get(a) or []
             series = dc_obs.get(a)
-            new_lives, bounds, aud = _reorganize_addr(lives, rows, series, cfg, wave)
+            new_lives, bounds, aud = _reorganize_addr(lives, rows, series, cfg, carryover_anchor)
             lives = new_lives
             boundaries_by_addr[a] = bounds
             st["death_rows"] = aud["death_rows"]
@@ -988,9 +994,14 @@ def clean_file(path, outdir, cfg):
             # 不影响 ok——它们本来就不是本局生命边界。
             src_meta["n_death_rows_rejected_unbacked"] = reorg_totals["unbacked"]
             src_meta["n_death_rows_rejected_carryover"] = reorg_totals["carryover"]
+            # [carryover v2 2026-10-09] carryover_rule=2（stats 锚判据）；保留
+            # spawn_wave 键名（消费侧兼容），v2 语义 = stats 锚在源相对 t 域的
+            # 时刻（不再是"出生波估计"）。ingest 只读 reorg_audit.ok，无风险。
             src_meta["reorg_audit"] = {
-                "mode": "window" if wave is not None else "full",
-                "spawn_wave": round(wave, 4) if wave is not None else None,
+                "mode": "window" if carryover_anchor is not None else "full",
+                "carryover_rule": 2,
+                "spawn_wave": (round(carryover_anchor, 4)
+                               if carryover_anchor is not None else None),
                 "addrs": reorg_totals["addrs"],
                 "violations": reorg_totals["violations"],
                 "ok": not reorg_totals["violations"] and n_death_unpaired == 0,
@@ -1024,6 +1035,23 @@ def clean_file(path, outdir, cfg):
                 "slots": slots,
             }
             src_meta["deaths_total"] = total   # 便捷别名（= deaths_summary.total）
+            # [carryover v2 2026-10-09] 幸存者 sanity floor（可观测性，非门）：
+            # D = deaths_summary.total（dc 减法账本，对坐标垃圾免疫）；L = 各轮
+            # lives 中 death_event=True 的条数。健康切窗语料 L/D ∈ [0.79, 1.07]，
+            # 甄别塌缩态 L ≪ D（Sixshot 家族事故实测 ≈4/500+）。fail-open：
+            # 只标注不拦数据——merge 验收门自己会拦；ingest 把 collapsed 透传
+            # known_issues。D≥10 下限排除低击杀局的小数噪音。
+            death_event_lives = sum(
+                1 for r in index_rounds for tm in r["targets"]
+                for lv in tm.get("lives", ())
+                if lv.get("death_event") is True)
+            collapsed = total >= 10 and death_event_lives < 0.5 * total
+            src_meta["survivor_check"] = {
+                "status": "collapsed" if collapsed else "ok",
+                "cause": "cleaner_life_starvation" if collapsed else "",
+                "ledger_deaths": total,
+                "death_event_lives": death_event_lives,
+            }
     if index_rounds:
         detail = ", ".join(
             "R%d:%d目标[%.1f~%.1fs]" % (r["round"], r["n_targets"], r["t_start"], r["t_end"])
@@ -1049,6 +1077,13 @@ def clean_file(path, outdir, cfg):
             )
         )
     print("[ok] %s → %d 轮, %s" % (name, len(index_rounds), detail))
+    check = src_meta.get("survivor_check")
+    if check and check["status"] == "collapsed":
+        # 进 finalize.log → 诊断包 finalizeLogTail，塌缩远程可见（fail-open，
+        # 数据照常交付，merge 验收门自己拦）。
+        print("[warn] 幸存者塌缩: lives=%d vs ledger_deaths=%s [cause=%s]"
+              % (check["death_event_lives"], check["ledger_deaths"],
+                 check["cause"]))
     return src_meta
 
 
@@ -1066,6 +1101,8 @@ def main():
                     help="按局增量切窗：只保留 epoch(t)≥该值的帧（绝对纪元秒）")
     ap.add_argument("--epoch-max", type=float, default=None,
                     help="按局增量切窗：只保留 epoch(t)≤该值的帧（绝对纪元秒）")
+    ap.add_argument("--carryover-pre-margin", type=float, default=CARRYOVER_PRE_MARGIN_S,
+                    help="切窗 carryover 锚的前垫宽度 s（窗 lo = stats 锚 − 该垫）")
     args = ap.parse_args()
     if (args.epoch_min is None) != (args.epoch_max is None):
         ap.error("--epoch-min 与 --epoch-max 必须成对使用")
@@ -1091,6 +1128,8 @@ def main():
            "death_pair_after": DEATH_PAIR_AFTER,
            # [lives 2026-10-05d] 死亡账本主导重组（常量，未开 CLI）
            "resync_min_run": RESYNC_MIN_RUN, "death_row_tol": DEATH_ROW_TOL,
+           # [carryover v2 2026-10-09] stats 锚判据的前垫宽度（服务侧显式传 CLI）
+           "carryover_pre_margin": args.carryover_pre_margin,
            "epoch_window": (args.epoch_min, args.epoch_max)
            if args.epoch_min is not None else None}
     index = {

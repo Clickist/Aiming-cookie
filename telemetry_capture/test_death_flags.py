@@ -581,23 +581,27 @@ def test_reorg_segments_merge_into_lives():
 
 
 def test_reorg_carryover_rejected_in_window_mode():
-    """开局残留甄别（切窗模式）：出生波前的 carryover 死亡（残留身份、账目在
-    波前关账）不作边界；全文件模式同一行照常是边界。"""
+    """开局残留甄别（切窗模式，[carryover v2 2026-10-09] stats 锚判据、生产
+    几何）：窗 lo = 本局 stats 锚 − 前垫 10s；锚前关账的残留死亡（上一局尾）
+    不作边界；锚后关账的局中死亡（含换绑重生后的新身份）全保留；全文件模式
+    同一行照常是边界。"""
     A, B = 0x7FF600000001, 0x7FF600000002
 
     def pos_a(t):
-        return [100.0 + 300.0 * t, 500.0, 100.0]
+        if t < 2.0:
+            return [100.0 + 300.0 * t, 500.0, 100.0]   # 残留身份（上一局尾巴）
+        return [3000.0 + 300.0 * t, 500.0, 100.0]      # 换绑重生（>2000 跳）
 
     def dc_a(t):
         if t < 1.0:
             return 0
-        if t < 3.0:
-            return 1     # 残留身份死亡 @1.0
-        if t < 4.0:
-            return 0     # 换绑复位 @3.0（跳后 +1 游程 3 → 重同步成新身份段）
-        if t < 4.5:
-            return 1
+        if t < 2.0:
+            return 1     # 残留身份死亡 @1.0（账本在换绑 @2.0 关账）
         if t < 5.0:
+            return 0     # 换绑复位 @2.0（本局开始）；局中死亡 @5.0/5.5/6.0
+        if t < 5.5:
+            return 1
+        if t < 6.0:
             return 2
         return 3
 
@@ -607,28 +611,32 @@ def test_reorg_carryover_rejected_in_window_mode():
     def dc_b(t):
         return 0 if t < 4.6 else 1
 
-    frames = _frames_dc(6.0, {A: (pos_a, dc_a, 0.0), B: (pos_b, dc_b, 3.5)})
-    deaths = [(1.0, A, 1), (4.0, A, 1), (4.5, A, 2), (5.0, A, 3), (4.6, B, 1)]
+    frames = _frames_dc(6.5, {A: (pos_a, dc_a, 0.0), B: (pos_b, dc_b, 3.5)})
+    deaths = [(1.0, A, 1), (5.0, A, 1), (5.5, A, 2), (6.0, A, 3), (4.6, B, 1)]
+    # 生产切窗几何：stats 锚=本局开始（源相对 3.0），窗 lo=锚−前垫 10 →
+    # (T0-7, T0+7)；carryover 锚换算回源相对 t = -7+10 = 3.0。
     src = clean_tmp(tempfile.mkdtemp(prefix="df_cow_"), frames, deaths,
-                    epoch_window=(T0 + 0.0, T0 + 7.0))
+                    epoch_window=(T0 - 7.0, T0 + 7.0))
     assert src["deaths_source"] == "flag"
-    # 出生波 W = max(A 最终身份段起点 3.0, B 最终身份段起点 3.5) = 3.5
-    assert src["reorg_audit"]["spawn_wave"] == 3.5
+    # v2 锚 = stats 锚 3.0（spawn_wave 键名保留、语义=stats 锚）
+    assert src["reorg_audit"]["spawn_wave"] == 3.0
+    assert src["reorg_audit"]["carryover_rule"] == 2
     assert src["reorg_audit"]["mode"] == "window"
     assert src["n_death_rows_rejected_carryover"] == 1
     assert src["reorg_audit"]["ok"] is True
     tmA, tmB = _tm_of(src, A), _tm_of(src, B)
-    # A：carryover@1.0 甄别掉 → 3 边界 → 4 生命（含局末存活），头部坐标并回
+    # A：残留死亡 @1.0 甄别掉 → 3 边界 → 4 生命（含头部并回 + 局末存活）
     assert tmA["n_lives"] == 4, tmA["lives"]
     assert sum(1 for l in tmA["lives"] if l["death_event"]) == 3
-    assert tmA["lives"][0]["t_start"] == 0.0 and tmA["lives"][0]["t_end"] == 4.0
+    assert tmA["lives"][0]["t_start"] == 0.0 and tmA["lives"][0]["t_end"] == 5.0
     assert tmB["n_lives"] == 2
     assert sum(1 for l in tmB["lives"] if l["death_event"]) == 1
 
-    # 全文件模式（无 epoch 窗）：无 W、不做 carryover 甄别，@1.0 照常是边界
+    # 全文件模式（无 epoch 窗）：无锚、不做 carryover 甄别，@1.0 照常是边界
     src2 = clean_tmp(tempfile.mkdtemp(prefix="df_cof_"), frames, deaths)
     assert src2["reorg_audit"]["mode"] == "full"
     assert src2["reorg_audit"]["spawn_wave"] is None
+    assert src2["reorg_audit"]["carryover_rule"] == 2
     assert src2["n_death_rows_rejected_carryover"] == 0
     tmA2 = _tm_of(src2, A)
     assert tmA2["n_lives"] == 5
@@ -730,6 +738,110 @@ def test_legacy_file_has_no_reorg_audit():
     for st in src["per_addr_cut_stats"].values():
         assert "reorg_ok" not in st and "reorg_fallback" not in st
         assert "split_segments" in st               # additive：门3 口径字段
+
+
+# ---------------- E. [carryover v2 2026-10-09] Sixshot 家族塌缩回归 ----------------
+
+def _piecewise_dc(events):
+    """events: [(t, dc_after)] 时间升序 → dc_at(t) 阶梯函数。"""
+    def dc(t):
+        value = 0
+        for et, v in events:
+            if t >= et - 1e-9:
+                value = v
+        return value
+    return dc
+
+
+def test_static_respawn_no_carryover_collapse():
+    """Sixshot 式静态连续重生（v2 主回归）：6 静态槽位局中连杀（dc 同身份内
+    爬升，真实语料形态），其一局中换绑一次（掉步+重同步新身份段，换绑后继续
+    爬升）；外加一个局中掉步、局尾才重同步的垃圾槽（旧全局 wave 规则的毒源
+    ——wave 被它拖到 60，把全窗死亡整批误拒塌缩成单 life）。v2 stats 锚判据
+    下：锚后关账的死亡全保留，无塌缩。"""
+    base = 0x7FF600000001
+    addrs = {}
+    deaths = []
+    # 5 个普通槽位：出生 10.0（=stats 锚），12+i 起三连杀（dc 爬升 1/2/3）
+    for i in (0, 1, 3, 4, 5):
+        a = base + i
+        t1 = 12.0 + i
+        addrs[a] = (
+            lambda t, i=i: [2000.0 + 300.0 * i, 500.0, 100.0],
+            _piecewise_dc([(t1, 1), (t1 + 1.0, 2), (t1 + 2.0, 3)]),
+            10.0,
+        )
+        deaths += [(t1, a, 1), (t1 + 1.0, a, 2), (t1 + 2.0, a, 3)]
+    # 第三槽位：三连杀后局中换绑（dc 掉 0，+1 三连重同步），换绑后继续三连杀
+    a3 = base + 2
+    addrs[a3] = (
+        lambda t: [2000.0 + 300.0 * 2, 500.0, 100.0],
+        _piecewise_dc([(14.0, 1), (14.2, 2), (14.4, 3), (15.0, 0),
+                       (15.2, 1), (15.4, 2), (15.6, 3),
+                       (16.0, 4), (16.2, 5), (16.4, 6)]),
+        10.0,
+    )
+    deaths += [(14.0, a3, 1), (14.2, a3, 2), (14.4, a3, 3),
+               (15.2, a3, 1), (15.4, a3, 2), (15.6, a3, 3),
+               (16.0, a3, 4), (16.2, a3, 5), (16.4, a3, 6)]
+    # 垃圾槽：55 掉步、60 掉 0、68~69.5 三连 +1 重同步——旧规则下 wave=60，
+    # 全窗死亡（<60）整批误拒（本测试的"塌缩负样本"来源）
+    g = base + 6
+    addrs[g] = (
+        lambda t: [6000.0, 800.0, 100.0],
+        _piecewise_dc([(55.0, 1), (60.0, 0), (68.0, 1), (69.0, 2), (69.5, 3)]),
+        10.0,
+    )
+    deaths += [(55.0, g, 1), (68.0, g, 1), (69.0, g, 2), (69.5, g, 3)]
+
+    frames = _frames_dc(70.0, addrs)
+    src = clean_tmp(tempfile.mkdtemp(prefix="df_six_"), frames, deaths,
+                    epoch_window=(T0 + 0.0, T0 + 70.0))
+
+    assert src["reorg_audit"]["mode"] == "window"
+    assert src["reorg_audit"]["carryover_rule"] == 2
+    assert src["reorg_audit"]["spawn_wave"] == 10.0      # stats 锚
+    assert src["n_death_rows_rejected_carryover"] == 0   # 塌缩消失
+    assert src["n_death_rows_rejected_unbacked"] == 0
+    assert src["reorg_audit"]["ok"] is True
+    # 每槽 lives = 死亡数 + 局末存活；死亡边界逐条 death_event
+    for i in (0, 1, 3, 4, 5):
+        tm = _tm_of(src, base + i)
+        assert tm["n_lives"] == 4, (base + i, tm["lives"])
+        assert sum(1 for l in tm["lives"] if l["death_event"]) == 3
+    tm3 = _tm_of(src, a3)
+    assert tm3["n_lives"] == 10, tm3["lives"]
+    assert sum(1 for l in tm3["lives"] if l["death_event"]) == 9
+    assert src["survivor_check"]["status"] == "ok"
+
+
+def test_survivor_check_floor():
+    """幸存者 sanity floor：D≥10 且 L<0.5D → collapsed+cause；低击杀局
+    （D<10）与健康局 → ok（fail-open，只标注不拦）。"""
+    A = ADDR
+
+    def synth(deaths_n, rows_n):
+        step = 0.2
+        events = [(round(step * k, 3), k) for k in range(1, deaths_n + 1)]
+        duration = round(step * deaths_n + 0.5, 3)
+        frames = _frames_dc(duration, {A: (
+            lambda t: [100.0 + 300.0 * t, 500.0, 100.0], _piecewise_dc(events), 0.0)})
+        rows = [(t, A, dc) for (t, dc) in events[:rows_n]]
+        return clean_tmp(tempfile.mkdtemp(prefix="df_sur_"), frames, rows)
+
+    src = synth(deaths_n=30, rows_n=2)
+    check = src["survivor_check"]
+    assert check["status"] == "collapsed"
+    assert check["cause"] == "cleaner_life_starvation"
+    assert check["ledger_deaths"] == 30 and check["death_event_lives"] == 2
+
+    src = synth(deaths_n=8, rows_n=2)          # 低击杀局：D<10 不触发
+    assert src["survivor_check"]["status"] == "ok"
+    assert src["survivor_check"]["cause"] == ""
+
+    src = synth(deaths_n=30, rows_n=28)        # 健康局
+    assert src["survivor_check"]["status"] == "ok"
+    assert src["survivor_check"]["death_event_lives"] == 28
 
 
 def main():
