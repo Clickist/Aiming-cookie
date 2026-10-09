@@ -1614,6 +1614,110 @@ async def test_stale_window_replay_rebuild_skips_export_and_trace(
     assert run["finalization_state"] == "finalized"
 
 
+@pytest.mark.asyncio
+async def test_stale_rebuild_reenqueue_keeps_attached_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[fix 2026-10-09] 重启补跑重遇已 finalize 且 trace 已 attach 的局，
+    不得把 Raw 轨迹清成 unavailable。
+
+    v1.4.5~v1.4.9 的补跑预判无条件翻转 trace——每次重启都把近期局已采集
+    好的 Raw 证据清掉，用户更新重启后历史局全部「Raw 来源不可用」（10-09
+    报障实锤）。视频侧 mark_run_video_unavailable 自带 attached 保护，所以
+    症状恰好是「有视频没轨迹」。"""
+    fresh_start = int(time.time() * 1000) - 60_000
+    _configure_parsers(monkeypatch, start_epoch_ms=fresh_start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": fresh_start + 30_000, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="keep-trace-attached",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+    assert run["trace_state"] == "attached"
+    assert run["video_state"] == "attached"
+    assert run["finalization_state"] == "finalized"
+
+    # 次日重启：watcher 重发同一 stem，窗口相对 now 已超 replay 覆盖（W7 触发）。
+    stale_start = fresh_start - 24 * 60 * 60 * 1000
+    _configure_parsers(monkeypatch, start_epoch_ms=stale_start, time_limit=60.0)
+    rerun = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="keep-trace-attached",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert rerun["id"] == run["id"]
+    assert rerun["finalization_error"] == "video_replay_expired"
+    assert rerun["video_state"] == "attached"
+    assert rerun["trace_state"] == "attached"
+    assert rerun["trace_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_stale_rebuild_heals_clobbered_trace_from_disk_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[fix 2026-10-09] 已被历史版本清掉 trace 的局，补跑重遇时从磁盘上的
+    窗口切片文件回挂自愈，恢复 Raw 证据。"""
+    from webapp.backend import config
+
+    fresh_start = int(time.time() * 1000) - 60_000
+    _configure_parsers(monkeypatch, start_epoch_ms=fresh_start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": fresh_start + 30_000, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="heal-trace-artifact",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+    assert run["trace_state"] == "attached"
+
+    # 复刻 v1.4.5~v1.4.9 的历史伤害：只清指针，窗口切片文件留在磁盘。
+    damaged = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_snapshot_out_of_coverage",
+    )
+    assert damaged["trace_state"] == "unavailable"
+    artifacts = list(
+        (config.DATA_ROOT / "runs" / str(run["id"])).glob("trace-*.bin")
+    )
+    assert artifacts, "首次 attach 落盘的窗口切片文件应仍在磁盘上"
+
+    stale_start = fresh_start - 24 * 60 * 60 * 1000
+    _configure_parsers(monkeypatch, start_epoch_ms=stale_start, time_limit=60.0)
+    rerun = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="heal-trace-artifact",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert rerun["id"] == run["id"]
+    assert rerun["trace_state"] == "attached"
+    assert rerun["trace_error"] is None
+    assert rerun["mouse_trace_path"] is not None
+    assert Path(rerun["mouse_trace_path"]).is_file()
+
+
 def test_capture_window_invalid_maps_to_replay_range_code() -> None:
     """[fix 2026-10-07 W8] native 的 capture_window_invalid（窗口不在 replay
     覆盖内，重启补跑旧局的必然形态）与 control_window_invalid（Python 侧窗口

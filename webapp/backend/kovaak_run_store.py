@@ -2972,6 +2972,43 @@ async def attach_mouse_trace(
     return run
 
 
+async def reattach_mouse_trace_from_disk(
+    run_id: int,
+    user_id: str,
+) -> Optional[dict]:
+    """[fix 2026-10-09] 重启补跑自愈：回挂磁盘上仍留存的窗口切片 trace 文件。
+
+    v1.4.5~v1.4.9 的补跑预判会把已 attach 的 trace 清成 unavailable（只清
+    mouse_trace_path 指针，不清 runs/{id}/trace-*.bin 文件——该文件在首次
+    attach 时已按局窗口切片落盘）。重遇这类局时从这里回挂，恢复 Raw 证据；
+    没有可回挂文件时返回 None，调用方照旧走终态标注。
+    """
+    run = _load_run(run_id)
+    if run is None or run.get("user_id") != user_id:
+        return None
+    if run.get("trace_state") == "attached":
+        return run
+    from . import config
+
+    run_dir = config.DATA_ROOT / "runs" / str(run_id)
+    try:
+        candidates = sorted(
+            run_dir.glob("trace-*.bin"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for candidate in candidates:
+        try:
+            if not read_mouse_snapshot(candidate):
+                continue
+        except (OSError, ValueError):
+            continue
+        return await attach_mouse_trace(run_id, user_id, str(candidate))
+    return None
+
+
 def _normalized_path(path: str | Path) -> Path:
     return Path(path).resolve()
 

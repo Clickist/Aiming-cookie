@@ -333,11 +333,24 @@ class KovaaKCaptureFinalizer:
             < end_epoch_ms
             < now_ms - kovaak_run_store.MAX_CAPTURE_WINDOW_MS
         ):
+            # [fix 2026-10-09] 补跑预判只补终态，不清既有证据，可自愈：
+            # mark_run_video_unavailable 对 attached 视频自保护，而 trace 侧
+            # 此前被无条件翻转——v1.4.5~v1.4.9 每次重启补跑都会把近期局已
+            # attach 的 Raw 轨迹清成 unavailable（10-09 报障实锤：更新重启后
+            # 前一晚的局全部 Raw 不可用）。现在 attached 不翻转；已被历史
+            # 版本清掉的局，磁盘上仍留有窗口切片文件时回挂自愈。
+            if run.get("trace_state") != "attached":
+                healed = await kovaak_run_store.reattach_mouse_trace_from_disk(
+                    run["id"], self._user_id,
+                )
+                if healed is not None:
+                    run = healed
+                else:
+                    run = await kovaak_run_store.mark_mouse_trace_unavailable(
+                        run["id"], self._user_id, "trace_snapshot_out_of_coverage",
+                    ) or run
             run = await kovaak_run_store.mark_run_video_unavailable(
                 run["id"], self._user_id, "video_replay_expired",
-            ) or run
-            run = await kovaak_run_store.mark_mouse_trace_unavailable(
-                run["id"], self._user_id, "trace_snapshot_out_of_coverage",
             ) or run
             return await self._finish_or_retry_trace(run, None, "video_replay_expired")
 
