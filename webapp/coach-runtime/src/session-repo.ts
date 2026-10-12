@@ -582,6 +582,11 @@ function collectVisibleMessages(
   // 自上一条可见消息以来，本轮是否出现过 assistant 工具/思考活动而始终
   // 没有产出正文（停止/中断的签名）。见到 assistant 正文或 user 边界时结算。
   let pendingInterruptStart: number | null = null;
+  // 回合「工具阶段未收尾」跟踪（1012 报障补）：assistant 带 toolCall（且非用户
+  // 停止）却始终没等到终稿——即使该条已输出部分正文，回复也是被切断的半截话。
+  // 此前只有「无正文」形态会合成标记，有正文的切断形态重启后完全隐形
+  // （报障实锤：回复停在「我再读一下事件数据」+ 工具结果，无任何提示）。
+  let openToolActivity = false;
   let lastTimestamp = "";
   // 每条可见项的 keepThroughIndex 覆盖到「下一可见项起点」的前一条：普通
   // assistant 文本后的 toolResult 等非可见条目属于它的回合，截断时一并保留
@@ -595,23 +600,34 @@ function collectVisibleMessages(
     // 尾部未完结回合（nextStart===null）在有活跃 run 时是进行中的中间态，
     // 跳过合成；边界结算（nextStart 为下一条起点）的真停止标记不受影响。
     const suppressTrailing = nextStart === null && opts.suppressTrailingInterruptMarker === true;
-    if (opts.withInterruptMarkers && pendingInterruptStart !== null && !suppressTrailing) {
-      closeGroupBefore(pendingInterruptStart);
+    const needsMarker = opts.withInterruptMarkers && !suppressTrailing
+      && (pendingInterruptStart !== null || openToolActivity);
+    if (needsMarker) {
+      if (pendingInterruptStart !== null) {
+        closeGroupBefore(pendingInterruptStart);
+      } else {
+        // 有正文形态：标记追加在末条可见项（半截话）之后，并让它覆盖本回合
+        // 的工具结果，避免截断路径留下悬空 toolCall。
+        closeGroupBefore(nextStart ?? entries.length);
+      }
       visible.push({
         message: {
           role: "assistant",
           content: "",
           timestamp: lastTimestamp || new Date().toISOString(),
           stopped: true,
-          // 尾部标记且该回合在本进程内（内存里有 run 记录）→ 只是本进程内的
-          // 未完中间态，不算被打断；其余合成标记（含历史边界结算的）都视作
-          // 重启/进程死亡打断。
-          interrupted: !(nextStart === null && opts.trailingTurnInProcess === true),
+          // 只有「尾部」标记才断言原因：尾部回合在本进程内（内存里有 run 记录）
+          // → 本进程内结束（用户停止等），不算重启打断；无记录（进程死亡清空
+          // Map）→ 重启打断。边界结算的历史标记一律中性（stopped 无 interrupted）
+          // ——编辑重发截断与重启打断在数据上同形，历史位断言原因会误标
+          // （1012 修：编辑重发也是「回合没说完」，但不能说成「应用重启」）。
+          interrupted: nextStart === null && opts.trailingTurnInProcess !== true,
         },
         keepThroughIndex: -1,
       });
     }
     pendingInterruptStart = null;
+    openToolActivity = false;
   };
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index]!;
@@ -633,6 +649,20 @@ function collectVisibleMessages(
       continue;
     }
     if (message.role === "user") flushInterruptMarker(index);
+    // assistant 条目：带 toolCall 且非用户停止/非错误收尾（stopReason 非
+    // aborted/error）时记为「工具阶段未收尾」；后续出现不带 toolCall 的终稿
+    // 或 user 边界才结算。error 排除：provider 断流的失败回合已有错误卡与
+    // 重试入口，再合成「被打断」标记是重复且误导。
+    if (message.role === "assistant") {
+      const hasToolCall = Array.isArray(message.content)
+        && message.content.some((c) => isRecord(c) && c.type === "toolCall");
+      const terminalStop = message.stopReason === "aborted" || message.stopReason === "error";
+      if (hasToolCall && !terminalStop) {
+        openToolActivity = true;
+      } else if ((content.trim() && !hasToolCall) || message.stopReason === "aborted" || message.stopReason === "error") {
+        openToolActivity = false;
+      }
+    }
     pendingInterruptStart = null;
     closeGroupBefore(index);
     visible.push({

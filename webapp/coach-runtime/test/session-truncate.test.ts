@@ -209,7 +209,9 @@ test("truncate keeps the trailing toolResult of the last retained turn", async (
   );
   assert.deepEqual(
     (await readSessionMessagesForUi(threadId)).map((message) => message.content),
-    ["u0", "先读一下"],
+    // 截断后分支停在「半截话 + toolResult」上（回合没有终稿）：读侧如实补一条
+    // 中断标记（1012 报障修复：回复没说完必须可见），内容为空串。
+    ["u0", "先读一下", ""],
   );
 });
 

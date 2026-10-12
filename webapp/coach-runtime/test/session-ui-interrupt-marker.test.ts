@@ -126,7 +126,7 @@ test("with an in-process run record, trailingTurnInProcess clears interrupted on
 
   assert.deepEqual(
     (await readSessionMessagesForUi(threadId, { trailingTurnInProcess: true })).map(labelEx),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped"],
   );
 });
 
@@ -136,11 +136,11 @@ test("trailingTurnInProcess bypasses the ui stat cache in both directions", asyn
   await seedOngoingTrailingTurn(threadId);
   assert.deepEqual(
     (await readSessionMessagesForUi(threadId)).map(labelEx),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped#interrupted"],
   );
   assert.deepEqual(
     (await readSessionMessagesForUi(threadId, { trailingTurnInProcess: true })).map(labelEx),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped"],
   );
 
   // 反向：带标志读先行且不得写缓存 → 随后的默认读不得吃到带标志的合成结果。
@@ -148,11 +148,11 @@ test("trailingTurnInProcess bypasses the ui stat cache in both directions", asyn
   await seedOngoingTrailingTurn(freshId);
   assert.deepEqual(
     (await readSessionMessagesForUi(freshId, { trailingTurnInProcess: true })).map(labelEx),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped"],
   );
   assert.deepEqual(
     (await readSessionMessagesForUi(freshId)).map(labelEx),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped#interrupted"],
   );
 });
 
@@ -164,6 +164,110 @@ test("getCoachSessionDetail marks the trailing tool-only turn as interrupted aft
   const detail = await getCoachSessionDetail("marker-owner-d", threadId);
   assert.deepEqual(
     detail.messages.map((message) => labelEx(message as { role: string; content: string; interrupted?: boolean; stopped?: boolean })),
-    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped#interrupted"],
+  );
+});
+
+test("a turn cut off mid-text (partial reply + open tool activity) also gets an interrupted marker", async () => {
+  // 1012 报障精确形态：回复已写出半截正文 + 工具调用，进程死在工具阶段。
+  // 此前该形态不合成任何标记，重启后就是"话说到一半、没有任何提示"。
+  const threadId = 838;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  const text = (role: string, value: string) =>
+    session.appendMessage({ role, content: [{ type: "text", text: value }], timestamp: stamp });
+  await text("user", "u0");
+  await text("assistant", "a0");
+  await text("user", "分析这局");
+  // 半截话 + 工具调用（进程在这里被杀）
+  await session.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "text", text: "我再读一下事件级数据" },
+      { type: "toolCall", id: "call-read", name: "read", arguments: {} },
+    ],
+    timestamp: stamp,
+  });
+  await session.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-read",
+    toolName: "read",
+    content: [{ type: "text", text: "…大文件…" }],
+    timestamp: stamp,
+  });
+
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map(labelEx),
+    [
+      "user:u0",
+      "assistant:a0",
+      "user:分析这局",
+      "assistant:我再读一下事件级数据",
+      "assistant:#stopped#interrupted",
+    ],
+  );
+
+  // 本进程内（run 记录在内存）→ 尾标记不算重启打断（进行中中间态）。
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId, { trailingTurnInProcess: true })).map(labelEx),
+    [
+      "user:u0",
+      "assistant:a0",
+      "user:分析这局",
+      "assistant:我再读一下事件级数据",
+      "assistant:#stopped",
+    ],
+  );
+});
+
+test("mid-text cut-off marker settles at the next user turn and does not fire for completed or stopped turns", async () => {
+  const threadId = 839;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  const text = (role: string, value: string) =>
+    session.appendMessage({ role, content: [{ type: "text", text: value }], timestamp: stamp });
+  await text("user", "u0");
+  // 历史回合：半截话 + 工具调用后被下一条 user 结算 → 永久标记。
+  await session.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "text", text: "旧半截话" },
+      { type: "toolCall", id: "call-old", name: "read", arguments: {} },
+    ],
+    timestamp: stamp,
+  });
+  await text("user", "u1");
+  // 正常完成回合：带工具调用但最终有纯文本终稿 → 不标。
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "先读数据" }, { type: "toolCall", id: "call-ok", name: "read", arguments: {} }],
+    timestamp: stamp,
+  });
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "这是最终结论" }],
+    timestamp: stamp,
+  });
+  await text("user", "u2");
+  // 用户停止：aborted 半截话 → 只标 stopped，不标 interrupted。
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "被打断前的话" }],
+    stopReason: "aborted",
+    timestamp: stamp,
+  });
+
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map(labelEx),
+    [
+      "user:u0",
+      "assistant:旧半截话",
+      "assistant:#stopped",
+      "user:u1",
+      "assistant:先读数据",
+      "assistant:这是最终结论",
+      "user:u2",
+      "assistant:被打断前的话#stopped",
+    ],
   );
 });
