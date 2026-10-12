@@ -30,7 +30,7 @@ import {
   ProviderAuthRequestError,
 } from "./provider-auth.ts";
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
-import { listBuiltinProviderCatalog } from "./provider-models.ts";
+import { kickBuiltinCatalogRefresh, listBuiltinProviderCatalog, refreshConfiguredBuiltinProviders } from "./provider-models.ts";
 import { handleProviderProfileRequest } from "./provider-profiles.ts";
 import { loadProfile } from "./provider-store.ts";
 import { readSessionStats, readSessionMessages } from "./session-repo.ts";
@@ -49,6 +49,7 @@ import {
   AgentRunError,
   createAgentRun,
   getAgentRun,
+  getAgentRunEventsSince,
   steerAgentRun,
   stopAgentRun,
   retryAgentRun,
@@ -452,7 +453,40 @@ export async function handleSidecarRequest(
     req.method === "GET" &&
     (url.pathname === "/v1/catalog" || url.pathname === "/v0/providers/catalog" || url.pathname === "/v1/providers/catalog")
   ) {
+    // 发现层后台刷新（fire-and-forget，TTL 节流）：不阻塞目录响应，本轮拉
+    // 不到也照常返回快照+上次发现叠加，失败只记 cause 日志。
+    kickBuiltinCatalogRefresh();
     try {
+      writeJson(res, 200, await listBuiltinProviderCatalog());
+    } catch (error) {
+      writeJson(
+        res,
+        500,
+        failureResponse(
+          makeError({
+            category: "provider_catalog",
+            code: "catalog_failed",
+            message: error instanceof Error ? error.message : String(error),
+            retryable: false,
+          }),
+        ),
+      );
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/providers/catalog/refresh") {
+    // 设置页 ⟳获取模型 的强制刷新端点：跳过 TTL 逐家发现已配置凭证的内置
+    // Provider，单家失败不影响他家（结果记日志），目录照常返回。
+    try {
+      const results = await refreshConfiguredBuiltinProviders();
+      for (const result of results) {
+        if (!result.ok) {
+          console.error(
+            `[builtin-model-discovery] refresh failed for ${result.provider_id}: ${result.detail ?? "unknown"}`,
+          );
+        }
+      }
       writeJson(res, 200, await listBuiltinProviderCatalog());
     } catch (error) {
       writeJson(
@@ -631,7 +665,9 @@ export async function handleSidecarRequest(
       writeJson(res, 202, result);
     } catch (error) {
       if (error instanceof AgentRunError) {
-        writeJson(res, 400, { detail: error.code });
+        // session_busy（同会话并发 turn 闸，P1-11）与 truncate 的 409 同口径：
+        // 409 表达「会话忙、等运行结束」，400 保留给请求本身非法。
+        writeJson(res, error.code === "session_busy" ? 409 : 400, { detail: error.code });
       } else if (error instanceof Error && error.message === "request body is not valid JSON") {
         writeJson(res, 400, { detail: error.message });
       } else {
@@ -864,6 +900,24 @@ export async function handleSidecarRequest(
       const ownerId = ownerIdFromRequest(req);
       const runRef = decodeURIComponent(agentRunMatch[1]);
       resumeWaitingRuns(ownerId);
+      // events_since 增量拉取（性能审计 TS-1）：响应仍是 AgentRunState 形状，
+      // 但 events 只含 sequence > 游标的事件，另带 latest_sequence 供推进游标。
+      // 缺省（无参数）保持全量事件，旧调用方行为不变。
+      const eventsSinceRaw = url.searchParams.get("events_since");
+      if (eventsSinceRaw !== null) {
+        const since = Number(eventsSinceRaw);
+        if (!Number.isInteger(since) || since < 0) {
+          writeJson(res, 400, { detail: "events_since must be a non-negative integer" });
+          return;
+        }
+        const result = getAgentRunEventsSince(ownerId, runRef, since);
+        if (result === null) {
+          writeJson(res, 404, { detail: "Coach agent run is unavailable" });
+        } else {
+          writeJson(res, 200, result);
+        }
+        return;
+      }
       const result = getAgentRun(ownerId, runRef);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });

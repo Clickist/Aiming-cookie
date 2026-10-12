@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { createResilientFetch, forced4FetchDefault, wrapModelsWithResilientFetch, isConnectionLevelError } =
+const { createResilientFetch, forced4FetchDefault, wrapModelsWithResilientFetch, isConnectionLevelError, isNeverConnectedError } =
   await import("../src/net-resilience.ts");
 const { classifyCoachFailureCode, isRetryableFailureCode } = await import("../src/turn.ts");
 
@@ -16,6 +16,34 @@ async function settle(times = 6): Promise<void> {
 const BUN_ERR = new Error("Unable to connect. Is the computer able to access the url?");
 (BUN_ERR as Error & { code?: string }).code = "ConnectionRefused";
 const SDK_ERR = new Error("Connection error.");
+
+test("sticky-path diagnostic emit failures are contained, not unhandled rejections (P1-12)", async () => {
+  // 鲁棒性审计 P1-12：粘性路径两处 `void emit(...)` 的 rejection 此前会逃逸
+  // 成 unhandled rejection 杀掉 sidecar。日志通道死亡时 safeEmit 必须就地
+  // 收口（本用例通过 = 无 rejection 逃逸；Node 默认对未处理 rejection 直接
+  // 崩进程，逃逸即本套件失败）。
+  let logCalls = 0;
+  let clock = 1_000_000;
+  const fetch = createResilientFetch({
+    primary: async () => {
+      throw BUN_ERR;
+    },
+    forced4: async () => okResponse("rescued"),
+    dns4: async () => ["203.0.113.10"],
+    dns6: async () => [],
+    tcpProbe: async () => "open",
+    writeLog: () => {
+      logCalls += 1;
+      if (logCalls > 1) throw new Error("log channel dead");
+    },
+    now: () => clock,
+  });
+  await fetch("https://api.example.com/v1/a"); // rescue_ok：置粘性窗（日志放行一次）
+  clock += 1_000;
+  const res = await fetch("https://api.example.com/v1/b"); // 粘性跳：诊断发射必败
+  assert.equal(res.status, 200, "sticky hop must still serve the response");
+  await settle(); // rejection 若逃逸，这里会以进程崩溃形式暴露
+});
 
 function okResponse(body = "ok", status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "text/plain" } });
@@ -124,6 +152,64 @@ test("connection-level failure + forced4 success: rescued, single parseable netp
   const line = h.lines[0];
   assert.ok(!line.includes("secret=1"), "must not leak URL query");
   assert.ok(!line.toLowerCase().includes("authorization"), "must not leak headers");
+});
+
+// ── B2. 重放安全性（2026-10-10 双计费修复）：rescue 只允许「从未连上」族 ──
+
+function errorWith(code: string, message = `read ${code}`): Error {
+  const e = new Error(message);
+  (e as Error & { code?: string }).code = code;
+  return e;
+}
+
+test("mid-connection reset (ECONNRESET) rethrows without rescue (billing-safe)", async () => {
+  const h = makeHarness({ primaryImpl: async () => { throw errorWith("ECONNRESET"); } });
+  await assert.rejects(
+    h.fetch("https://api.example.com/v1/chat", { method: "POST", body: '{"x":1}' }),
+    (e) => e instanceof Error && e.code === "ECONNRESET",
+  );
+  await settle();
+  assert.equal(h.primaryCalls, 1);
+  assert.equal(h.forced4Calls, 0);
+  assert.equal(h.lines.length, 0);
+});
+
+test("undici 'fetch failed' wrapping mid-connection cause: no rescue", async () => {
+  const h = makeHarness({
+    primaryImpl: async () => {
+      const e = new Error("fetch failed");
+      (e as Error & { cause?: { code?: string } }).cause = { code: "ECONNRESET" };
+      throw e;
+    },
+  });
+  await assert.rejects(h.fetch("https://api.example.com/v1/x", { method: "POST", body: "{}" }), /fetch failed/);
+  await settle();
+  assert.equal(h.forced4Calls, 0);
+  assert.equal(h.lines.length, 0);
+});
+
+test("undici 'fetch failed' wrapping never-connected cause: still rescued", async () => {
+  const h = makeHarness({
+    primaryImpl: async () => {
+      const e = new Error("fetch failed");
+      (e as Error & { cause?: { code?: string } }).cause = { code: "ENOTFOUND" };
+      throw e;
+    },
+  });
+  const res = await h.fetch("https://api.example.com/v1/x", { method: "POST", body: "{}" });
+  assert.equal(await res.text(), "rescued");
+  await settle();
+  assert.equal(h.forced4Calls, 1);
+});
+
+test("isNeverConnectedError vs isConnectionLevelError: reset classified but never replayed", () => {
+  const reset = errorWith("ECONNRESET");
+  assert.equal(isConnectionLevelError(reset), true);
+  assert.equal(isNeverConnectedError(reset), false);
+  assert.equal(isNeverConnectedError(errorWith("ENOTFOUND")), true);
+  assert.equal(isNeverConnectedError(errorWith("ECONNREFUSED")), true);
+  assert.equal(isNeverConnectedError(BUN_ERR), true);
+  assert.equal(isNeverConnectedError(new Error("quota exceeded")), false);
 });
 
 test("non-connection error rethrows without rescue or netprobe", async () => {

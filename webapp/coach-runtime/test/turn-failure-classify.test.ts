@@ -36,3 +36,23 @@ test("isRetryableFailureCode: transient codes retryable, deterministic ones not"
   assert.equal(isRetryableFailureCode("turn_failed"), false);
   assert.equal(isRetryableFailureCode("stopped"), false);
 });
+
+test("classifyCoachFailureCode maps gateway provisioning_in_flight to trial_provisioning", () => {
+  // 野外报文形态：网关 error 体折进 provider message（含 type 字符串与中文文案）
+  assert.equal(classifyCoachFailureCode(new Error('403 {"error":{"message":"免费试用额度正在准备中，请稍候片刻","type":"provisioning_in_flight"}}')), "trial_provisioning");
+  assert.equal(isRetryableFailureCode("trial_provisioning"), true);
+});
+test("order guard: provisioning_in_flight 不被 quota/鉴权族吞掉", () => {
+  assert.equal(classifyCoachFailureCode(new Error("provisioning_in_flight 用户额度不足")), "trial_provisioning");
+});
+
+test("classifyCoachFailureCode maps session JSONL corruption to local_storage_corrupt", () => {
+  // 鲁棒性审计 P0-1：pi invalid_entry 原文（撕裂行自愈失败后的残余形态）。
+  const torn = new Error(
+    "Invalid JSONL session file C:\\d\\conversations\\--coach--\\a_2.jsonl: line 4 is not valid JSON",
+  );
+  assert.equal(classifyCoachFailureCode(torn), "local_storage_corrupt");
+  assert.equal(isRetryableFailureCode("local_storage_corrupt"), true);
+  // 砖化红线：该分类绝不能落不可重试的 turn_failed。
+  assert.notEqual(classifyCoachFailureCode(torn), "turn_failed");
+});

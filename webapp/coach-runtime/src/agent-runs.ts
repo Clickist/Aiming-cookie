@@ -128,6 +128,38 @@ interface RunRecord {
 
 const runs = new Map<string, RunRecord>();
 
+// ── Run 记录淘汰（性能审计 TS-1）──────────────────────────────────────
+// runs Map 此前只增不减：事件数组、partial 文本随进程生命周期单调退化，且
+// 每次轮询全量克隆+序列化全部事件。终态 run 保留 TTL 过后淘汰、数量上限兜
+// 底。TTL（30 分钟）远大于前端轮询/重试窗口，活跃轮询不会因此 404。
+const TERMINAL_RUN_TTL_MS = 30 * 60 * 1000;
+const TERMINAL_RUN_MAX = 200;
+
+/** 淘汰终态 run：过期（finished_at 距今 ≥ TTL）或超出数量上限（最旧优先）。
+ * 返回淘汰条数；导出供测试注入时钟。 */
+export function sweepTerminalRuns(now: number = Date.now()): number {
+  const survivors: Array<{ runRef: string; finishedAt: number }> = [];
+  let evicted = 0;
+  for (const [runRef, record] of runs) {
+    if (!isTerminalStatus(record.state.status)) continue;
+    const finishedAt = record.state.finished_at ? Date.parse(record.state.finished_at) : Number.NaN;
+    if (!Number.isNaN(finishedAt) && now - finishedAt >= TERMINAL_RUN_TTL_MS) {
+      runs.delete(runRef);
+      evicted += 1;
+      continue;
+    }
+    survivors.push({ runRef, finishedAt: Number.isNaN(finishedAt) ? 0 : finishedAt });
+  }
+  if (survivors.length > TERMINAL_RUN_MAX) {
+    survivors.sort((a, b) => a.finishedAt - b.finishedAt);
+    for (const item of survivors.slice(0, survivors.length - TERMINAL_RUN_MAX)) {
+      runs.delete(item.runRef);
+      evicted += 1;
+    }
+  }
+  return evicted;
+}
+
 // ── Provider profile loading ──────────────────────────────────────────
 
 export function loadDefaultProviderProfile(_ownerId: string): {
@@ -446,8 +478,9 @@ async function runAgentTurn(
               || error.code === "service_overloaded"
               ? "network"
               : error.code === "local_storage_busy"
-                // 本地会话文件锁（session-repo EBUSY 重试耗尽）不是模型问题，
-                // 归 model 会让前端标题误显「模型生成失败」。
+                // 本地会话文件锁/损坏（session-repo EBUSY 重试耗尽、撕裂自愈
+                // 失败残余）不是模型问题，归 model 会让前端标题误显「模型生成失败」。
+                || error.code === "local_storage_corrupt"
                 ? "coach_runtime"
                 : "model",
             code: error.code,
@@ -521,6 +554,13 @@ export function createAgentRun(
   }
   const safeContent = content.trim().slice(0, 12_000);
   const threadId = options.sessionId ?? resolveThreadId(ownerId, options.sessionId);
+  // 同会话并发 turn 闸（鲁棒性审计 P1-11，与 truncate 409 同口径）：双击/
+  // 多窗口此前可并发两个 harness open 同一 JSONL，并发 compact+append 交错
+  // 造成语义损坏。queued（含 provider_waiting）与 running 都算占用。
+  if (hasActiveAgentRunForSession(threadId)) {
+    throw new AgentRunError("session_busy", "A Coach run is already active for this session");
+  }
+  sweepTerminalRuns();
 
   const runRef = `agent_run:${randomUUID().replace(/-/g, "")}`;
   const now = new Date().toISOString();
@@ -602,6 +642,32 @@ export function getAgentRun(ownerId: string, runRef: string): AgentRunState | nu
 }
 
 /**
+ * events_since 增量拉取（性能审计 TS-1）：只返回 sequence > sinceSequence 的
+ * 事件，避免长回合（数百条 partial 事件）每次轮询全量克隆+序列化。响应在
+ * AgentRunState 之上加 `latest_sequence`（服务端最大序号，零增量时前端据此
+ * 推进游标）。run 不存在或不属该 owner 返回 null（调用方 404）。
+ */
+export function getAgentRunEventsSince(
+  ownerId: string,
+  runRef: string,
+  sinceSequence: number,
+): AgentRunState & { latest_sequence: number } | null {
+  const record = runs.get(runRef);
+  if (!record || record.ownerId !== ownerId) return null;
+  const latestSequence = record.events.length > 0
+    ? record.events[record.events.length - 1]!.sequence
+    : 0;
+  const events = sinceSequence > 0
+    ? record.events.filter((event) => event.sequence > sinceSequence)
+    : [...record.events];
+  return {
+    ...record.state,
+    events,
+    latest_sequence: latestSequence,
+  };
+}
+
+/**
  * Subscribe to live stream updates for a single agent run.
  *
  * Returns an unsubscribe function, or null when the run is not visible to the
@@ -663,6 +729,12 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
 
   const record = runs.get(runRef);
   if (!record) return null;
+  // 同会话并发 turn 闸（P1-11，与 createAgentRun 同口径）：重试也是往同一
+  // JSONL 追加的新 turn，已有活跃 run 时必须 409。
+  if (hasActiveAgentRunForSession(record.threadId)) {
+    throw new AgentRunError("session_busy", "A Coach run is already active for this session");
+  }
+  sweepTerminalRuns();
 
   const newRunRef = `agent_run:${randomUUID().replace(/-/g, "")}`;
   const attempt = (detail.attempt ?? 1) + 1;

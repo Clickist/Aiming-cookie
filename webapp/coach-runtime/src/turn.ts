@@ -1,6 +1,7 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendFileSync } from "node:fs";
+import { appendFile as appendFileAsync, rename, stat } from "node:fs/promises";
 
 import {
   COACH_RUNTIME_TURN_SCHEMA,
@@ -505,6 +506,35 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
   return { history, lastMessage: last.content };
 }
 
+// ── buildContext 调试日志（性能审计 TS-3）────────────────────────────────
+// 此前每 provider 轮次一次同步 appendFileSync 且无上限无轮转：长驻进程单调
+// 退化，同步写落在流式热路径上。现默认关闭（排障能力保留为显式开关）；
+// COACH_DEBUG_CONTEXT_LOG=1 打开时异步追加，超 1MB 轮转保留一代 .1。
+const COACH_DEBUG_LOG_LIMIT_BYTES = 1_000_000;
+let coachDebugChain: Promise<void> = Promise.resolve();
+
+function coachDebugAppend(seq: string): void {
+  if (process.env.COACH_DEBUG_CONTEXT_LOG !== "1") return;
+  const filePath = join(getDataRoot(), "coach-debug.log");
+  // 链式串行：轮转 rename 与追加不交错；fire-and-forget，失败吞掉（best-effort
+  // 调试），绝不阻塞 buildContext 热路径。
+  coachDebugChain = coachDebugChain
+    .then(async () => {
+      try {
+        const info = await stat(filePath);
+        if (info.size > COACH_DEBUG_LOG_LIMIT_BYTES) {
+          await rename(filePath, `${filePath}.1`);
+        }
+      } catch {
+        // 不存在＝无需轮转
+      }
+      await appendFileAsync(filePath, `${new Date().toISOString()} [buildContext] ${seq}\n`, "utf8");
+    })
+    .catch(() => {
+      // best-effort debug
+    });
+}
+
 // ── Persistent session wrapper ───────────────────────────────────────────
 
 // 上下文窗口管理只有一种：pi compaction（窗口 80% 触发，shouldCompactNow）。
@@ -633,7 +663,7 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
                 && content.some((c) => isRecord(c) && c.type === "toolCall");
               return hasToolCalls ? `${role}(tool_calls)` : role;
             }).join(" → ");
-            appendFileSync(join(getDataRoot(), "coach-debug.log"), `${new Date().toISOString()} [buildContext] ${seq}\n`, "utf8");
+            coachDebugAppend(seq);
           } catch {
             // best-effort debug
           }
@@ -842,12 +872,18 @@ function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
 export function isRetryableFailureCode(failureCode: string): boolean {
   return failureCode === "service_overloaded"
     || failureCode === "network_transient"
-    || failureCode === "local_storage_busy";
+    || failureCode === "local_storage_busy"
+    || failureCode === "local_storage_corrupt"
+    || failureCode === "trial_provisioning";
 }
 
 export function classifyCoachFailureCode(error: unknown): string {
   if (error instanceof ProviderProfileError) return error.code;
   const message = error instanceof Error ? error.message : String(error ?? "");
+  // 试用/会员额度在途（accounts 网关 403 provisioning_in_flight，2026-10-11）：
+  // 等待后可重试——前端初始化卡自动放行走 retryAgentRun，要求 retryable=true。
+  // 必须放最前：在途不是 quota/鉴权/网络任何一族，防止被后面的宽 pattern 吞掉。
+  if (/provisioning_in_flight/i.test(message)) return "trial_provisioning";
   // 额度类：new-api 网关 403 透传（中转/BYOK 链路）、accounts 网关稳定 type
   // （quota_prehold_insufficient）与 OpenAI 口径。重试无意义。
   if (/insufficient_user_quota|insufficient_quota|quota_exhausted|quota_prehold_insufficient|预扣费额度失败|用户额度不足/i.test(message)) return "quota_exhausted";
@@ -860,6 +896,10 @@ export function classifyCoachFailureCode(error: unknown): string {
   // 本地会话文件被外部进程加锁（同步盘/杀软；session-repo 已退避重试 3 次）。
   // 瞬态锁，用户关掉占用方或稍后重试即可，同网络瞬断待遇必须可重试。
   if (/EBUSY|resource busy or locked/i.test(message)) return "local_storage_busy";
+  // 会话 JSONL 撕裂/损坏（鲁棒性审计 P0-1）：openSession 的隔离+截断重建自愈
+  // 失败后的残余形态。自愈已把砖化面收窄到「重建也失败」，此时重试会再次走
+  // 自愈路径——按瞬态可重试呈现，不把一次文件事故变成死局。
+  if (/Invalid JSONL session file|invalid_entry|invalid_session/i.test(message)) return "local_storage_corrupt";
   return "turn_failed";
 }
 

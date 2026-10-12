@@ -37,9 +37,15 @@ export interface ResilientFetchDeps {
 }
 
 // ── 连接级失败判定 ──────────────────────────────────────────────────────────
-// 只认"连接从未建立"族（服务端零处理，重发幂等）。不含 terminated（连接
-// 建立后中断，是 pi 流内重试/owner 领地）。Bun 原生文案 "Unable to connect."
-// 与 OpenAI SDK 包装后的 "Connection error." 都在案。
+// rescue 重发的是同一请求体，因此只允许在「请求从未到达服务端」时进行：
+// ECONNRESET / ConnectionReset / ConnectionClosed / ECONNABORTED / socket hang
+// up 等「连接建立后中断」族意味着请求可能已被服务端受理并开始计费，重发存在
+// 双份计费风险，一律不 rescue（2026-10-10 修：此前这些码混在重放集合里，与
+// 旧注释声称的「服务端零处理，重发幂等」矛盾）。分类语义与重放语义分离：
+// isConnectionLevelError 仍把中断族定性为网络错误（不重发，原样抛给分类层），
+// 重放决策走 isNeverConnectedError。Bun 原生文案 "Unable to connect." 与
+// OpenAI SDK 包装后的 "Connection error." 仍在案；undici 的顶层 "fetch failed"
+// 原因不明，仅当 error.cause.code 落在未连接族时才重放，原因不明一律不重发。
 
 const CONN_ERROR_CODES = new Set([
   "ConnectionRefused", "ConnectionReset", "ConnectionClosed", "ConnectionTimedOut",
@@ -49,11 +55,28 @@ const CONN_ERROR_CODES = new Set([
 const CONN_ERROR_MESSAGE =
   /unable to connect|connection error|connection refused|connection reset|socket hang up|econn(refused|reset|aborted)|ehostunreach|enetunreach|enotfound|eai_again|etimedout|connect timeout|fetch failed|network error/;
 
+const NEVER_CONNECTED_CODES = new Set([
+  "ConnectionRefused", "ConnectionTimedOut",
+  "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
+  "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT",
+]);
+const NEVER_CONNECTED_MESSAGE =
+  /unable to connect|connection refused|ehostunreach|enetunreach|enotfound|eai_again|etimedout|connect timeout/;
+
 export function isConnectionLevelError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as Error & { code?: unknown }).code;
   if (typeof code === "string" && CONN_ERROR_CODES.has(code)) return true;
   return CONN_ERROR_MESSAGE.test(error.message.toLowerCase());
+}
+
+export function isNeverConnectedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: unknown }).code;
+  if (typeof code === "string" && NEVER_CONNECTED_CODES.has(code)) return true;
+  const causeCode = (error as Error & { cause?: { code?: unknown } }).cause?.code;
+  if (typeof causeCode === "string" && NEVER_CONNECTED_CODES.has(causeCode)) return true;
+  return NEVER_CONNECTED_MESSAGE.test(error.message.toLowerCase());
 }
 
 // ── 默认依赖实现 ────────────────────────────────────────────────────────────
@@ -238,6 +261,29 @@ export function createResilientFetch(deps: ResilientFetchDeps = {}): FetchLike {
     writeLog(`${new Date().toISOString()} [netprobe] ${JSON.stringify(record)}`);
   };
 
+  // 诊断发射失败必须就地收口（鲁棒性审计 P1-12）：此前两处 `void emit(...)`
+  // 的 rejection 会逃逸成 unhandled rejection 杀掉整个 sidecar。这里补
+  // emit_failed 落痕（writeLog 自身再失败则放弃观测），把隐形自杀变有痕降级。
+  const safeEmit = (
+    host: string,
+    port: number,
+    phase: "rescue_ok" | "rescue_fail" | "sticky",
+    primaryError: string,
+    forced4Result: string,
+    startedAt: number,
+  ): void => {
+    emit(host, port, phase, primaryError, forced4Result, startedAt).catch((error) => {
+      try {
+        writeLog(
+          `${new Date().toISOString()} [netprobe] emit_failed`
+          + ` ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } catch {
+        // 最终兜底：日志通道本身不可用时放弃观测，绝不二次抛出。
+      }
+    });
+  };
+
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const httpUrl = url.protocol === "http:" || url.protocol === "https:";
@@ -248,10 +294,10 @@ export function createResilientFetch(deps: ResilientFetchDeps = {}): FetchLike {
     if (httpUrl && now() < state.stickyUntil) {
       try {
         const res = await forced4(input, init);
-        void emit(url.hostname, Number(url.port) || (url.protocol === "https:" ? 443 : 80), "sticky", "", String(res.status), startedAt);
+        safeEmit(url.hostname, Number(url.port) || (url.protocol === "https:" ? 443 : 80), "sticky", "", String(res.status), startedAt);
         return res;
       } catch (e) {
-        void emit(url.hostname, Number(url.port) || (url.protocol === "https:" ? 443 : 80), "rescue_fail", "", e instanceof Error ? (e as NodeJS.ErrnoException).code ?? e.message : String(e), startedAt);
+        safeEmit(url.hostname, Number(url.port) || (url.protocol === "https:" ? 443 : 80), "rescue_fail", "", e instanceof Error ? (e as NodeJS.ErrnoException).code ?? e.message : String(e), startedAt);
         state.stickyUntil = 0;
         // 粘性路径没有首选错误可 rethrow，抛当前错误（同为连接级语义）。
         throw e;
@@ -265,7 +311,7 @@ export function createResilientFetch(deps: ResilientFetchDeps = {}): FetchLike {
       if (init?.signal?.aborted) throw primaryError;
       const body = init?.body;
       if (body != null && typeof body !== "string") throw primaryError; // 流式 body 不重发
-      if (!httpUrl || !isConnectionLevelError(primaryError)) throw primaryError;
+      if (!httpUrl || !isNeverConnectedError(primaryError)) throw primaryError;
 
       const port = Number(url.port) || (url.protocol === "https:" ? 443 : 80);
       // 救援与诊断都在后台 settle，不阻塞主路径返回（label 若同步等会拖慢

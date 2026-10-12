@@ -9,6 +9,12 @@ import {
   startSidecarServer,
 } from "./src/sidecar-server.ts";
 import { ensureAppDataDirs } from "./src/app-data.ts";
+import { installProcessGuards } from "./src/process-guards.ts";
+
+// 进程级兜底（鲁棒性审计 P1-12）：unhandledRejection 落日志存活、
+// uncaughtException 落日志退出——kill 落在会话 JSONL appendFile 中途正是
+// 撕裂行（P0-1）的直接放大器，先把"隐形自杀"变"有痕降级"。
+installProcessGuards();
 
 // Ensure app-data directory structure exists before the server starts.
 ensureAppDataDirs();

@@ -181,6 +181,56 @@ test("fetchMemberMe reads the frozen /api/me schema and accepts the pct floor", 
   }
 });
 
+test("fetchMemberMe passes trial.provisioning through loosely (§3.4 透传补齐)", async () => {
+  // accounts Worker 的 trial 视图带 provisioning（在途试用发货单）；sidecar 不
+  // 透传则前端永远看不到。宽松口径：true/false 原样、非布尔/缺失 = undefined
+  // （fail-open 不注入，前端按 undefined 容错），trial 整体不活跃时恒 null。
+  const meBody = (provisioning: unknown) => ({
+    user: { id: "u1", email: "u1@example.com", name: null },
+    member: false,
+    plan: null,
+    status: "none",
+    cancel_at_period_end: false,
+    period_start: null,
+    period_end: null,
+    dunning: false,
+    pools: { sub: null, boost: null },
+    current_pool: null,
+    boost_buyable: false,
+    server_time: "2026-10-11T00:00:00.000Z",
+    trial: {
+      active: true,
+      analyses_remaining: 3,
+      questions_remaining: 5,
+      verified_at: null,
+      ...(provisioning === undefined ? {} : { provisioning }),
+    },
+  });
+  const cases: Array<{ input: unknown; expected: boolean | undefined }> = [
+    { input: true, expected: true },
+    { input: false, expected: false },
+    { input: "yes", expected: undefined },
+    { input: undefined, expected: undefined },
+  ];
+  for (const { input, expected } of cases) {
+    resetDataRoot();
+    memberAuth.storeMemberJwt(JWT);
+    const stub = stubAccounts({ "/api/me": { status: 200, body: meBody(input) } });
+    try {
+      const result = await memberAuth.fetchMemberMe();
+      assert.equal(result.ok, true);
+      const trial = result.ok ? result.me.trial : null;
+      assert.ok(trial && trial.active === true);
+      assert.equal(trial?.provisioning, expected, `provisioning=${String(input)} must map to ${String(expected)}`);
+      // JSON 序列化合同：undefined 不得出现在响应体里（字段缺失而非 null）。
+      const serialized = JSON.stringify(result.ok ? result.me.trial : null) ?? "";
+      assert.equal(serialized.includes('"provisioning"'), expected !== undefined);
+    } finally {
+      stub.restore();
+    }
+  }
+});
+
 test("fetchMemberMe degrades on 401 instead of throwing", async () => {
   resetDataRoot();
   memberAuth.storeMemberJwt(JWT);
@@ -285,4 +335,84 @@ test("logout with no BYOK reports a null fallback (Coach greys out instead of re
   memberAuth.storeMemberJwt(JWT);
   const result = memberAuth.logoutMember();
   assert.equal(result.fallback_profile_id, null);
+});
+
+// ── 轮询兜底（1009 野外案：deep-link 被浏览器吞时等待页的自救通道）─────────────
+
+test("poll returns pending while the site login has not claimed yet, and keeps the pending dc", async () => {
+  resetDataRoot();
+  writeMemberState({ device_code: "dc-poll", login_url: "u", started_at: Date.now() });
+  const stub = stubAccounts({
+    "/api/device/poll": { status: 200, body: { status: "pending" } },
+  });
+  try {
+    const result = await memberAuth.pollMemberTicket();
+    assert.deepEqual(result, { outcome: "pending" });
+    assert.equal(memberAuth.storedMemberJwt(), null, "pending 不得落 JWT");
+    assert.equal(memberAuth.loadMemberState().pending?.device_code, "dc-poll", "pending 保留待用 dc");
+  } finally {
+    stub.restore();
+  }
+});
+
+test("poll on claimed stores the JWT, clears the pending dc, and never throws", async () => {
+  resetDataRoot();
+  writeMemberState({ device_code: "dc-poll", login_url: "u", started_at: Date.now() });
+  const stub = stubAccounts({
+    "/api/device/poll": {
+      status: 200,
+      body: { jwt: JWT, user: { id: "u1", email: "u***@gmail.com", name: "U" }, member: true },
+    },
+  });
+  try {
+    const result = await memberAuth.pollMemberTicket();
+    assert.equal(result.outcome, "done");
+    assert.equal(result.outcome === "done" && result.member, true);
+    assert.equal(memberAuth.storedMemberJwt(), JWT);
+    assert.equal(memberAuth.loadMemberState().pending, null);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("poll maps 404/410 to stopped outcomes so the wizard can stop the loop", async () => {
+  resetDataRoot();
+  writeMemberState({ device_code: "dc-poll", login_url: "u", started_at: Date.now() });
+  const stub = stubAccounts({
+    "/api/device/poll": { status: 404, body: { error: "invalid device_code" } },
+  });
+  try {
+    const result = await memberAuth.pollMemberTicket();
+    assert.equal(result.outcome, "stopped");
+    assert.equal(result.outcome === "stopped" && result.code, "device_code_invalid");
+  } finally {
+    stub.restore();
+  }
+
+  const stub410 = stubAccounts({
+    "/api/device/poll": { status: 410, body: { error: "ticket expired" } },
+  });
+  try {
+    const result = await memberAuth.pollMemberTicket();
+    assert.equal(result.outcome, "stopped");
+    assert.equal(result.outcome === "stopped" && result.code, "ticket_expired");
+  } finally {
+    stub410.restore();
+  }
+});
+
+test("poll keeps polling on network errors (transient flakiness is the case this saves)", async () => {
+  resetDataRoot();
+  writeMemberState({ device_code: "dc-poll", login_url: "u", started_at: Date.now() });
+  // stub 不挂 /api/device/poll → fetch 打到不可达基址 → requestJson 抛错
+  const result = await memberAuth.pollMemberTicket();
+  assert.equal(result.outcome, "error");
+  assert.equal(result.outcome === "error" && result.code, "network_error");
+});
+
+test("poll with no pending dc stops immediately without touching the network", async () => {
+  resetDataRoot();
+  const result = await memberAuth.pollMemberTicket();
+  assert.equal(result.outcome, "stopped");
+  assert.equal(result.outcome === "stopped" && result.code, "no_pending");
 });

@@ -38,6 +38,7 @@ import {
   exchangeMemberTicket,
   fetchMemberMe,
   logoutMember,
+  pollMemberTicket,
   relayProfileId,
   reportTrialEvent,
   startMemberLogin,
@@ -468,6 +469,31 @@ export async function handleProviderProfileRequest(
         user: exchange.user,
         member: exchange.member,
         profile_id: relayProfileId(),
+        connection_ok: connection.ok,
+        connection_code: connection.ok ? null : connection.code,
+        connection_message: connection.ok ? null : connection.message,
+      });
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  /** 轮询兜底（1009 野外案）：deep-link 被浏览器吞时，等待页定期询问 dc 是否已认领。
+   *  done 与 exchange 成功同形（附带连通测试），pending/stopped/error 均为 200 + outcome。 */
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/member/poll") {
+    try {
+      const result = await pollMemberTicket();
+      if (result.outcome !== "done") {
+        writeJson(res, 200, result);
+        return true;
+      }
+      const connection = await testMemberConnection();
+      writeJson(res, 200, {
+        outcome: "done",
+        ok: true,
+        user: result.user,
+        member: result.member,
         connection_ok: connection.ok,
         connection_code: connection.ok ? null : connection.code,
         connection_message: connection.ok ? null : connection.message,

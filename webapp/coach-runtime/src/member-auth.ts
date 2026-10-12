@@ -141,6 +141,8 @@ export type MemberMe = {
     analyses_remaining: number;
     questions_remaining: number;
     verified_at: string | null;
+    /** 在途试用发货单（accounts §7.1-8 v2.2 增量；缺省 = 未知，不参与判定）。 */
+    provisioning?: boolean;
   } | null;
 };
 
@@ -161,6 +163,20 @@ export type MemberExchangeErrorCode =
   | "device_code_claimed"
   | "device_code_expired"
   | "network_error";
+
+/**
+ * 轮询兜底结果（1009 野外案立项，RFC 8628 device flow 形态）：deep-link 被浏览器
+ * 吞掉（协议弹窗拒掉/策略拦截）时，等待页定期询问 dc 是否已认领的自救通道。
+ * - `pending`：网站上还没完成登录 → 前端继续轮询；
+ * - `done`：认领完成、JWT 已入仓（与 exchange 成功同一落库路径）→ 前端推进向导；
+ * - `stopped`：终态（dc 失效/票过期/本地无待用 dc）→ 前端停止轮询并给出指引；
+ * - `error`：网络抖动 → 前端**继续**轮询（下一轮可能就好，这正是本通道要救的场景）。
+ */
+export type MemberPollResult =
+  | { outcome: "pending" }
+  | { outcome: "done"; jwt: string; user: { id: string; email: string; name: string | null }; member: boolean }
+  | { outcome: "stopped"; code: "no_pending" | "device_code_invalid" | "ticket_expired"; message: string }
+  | { outcome: "error"; code: "network_error"; message: string };
 
 type MemberStateFile = {
   schema_version: typeof MEMBER_STATE_SCHEMA;
@@ -436,6 +452,57 @@ export async function exchangeMemberTicket(input: {
   };
 }
 
+/**
+ * 轮询兜底（1009 野外案立项）：等待页定期用本地待用 dc 询问 accounts（§2 poll 端点），
+ * claim 完成 → 直接换 JWT 入仓（与 exchange 成功同一落库语义：清 pending）。
+ * 绝不抛异常；网络失败返回 `error` 让前端继续轮询——瞬态抖动正是本通道要救的场景。
+ */
+export async function pollMemberTicket(): Promise<MemberPollResult> {
+  const state = loadMemberState();
+  if (!state.pending) {
+    return { outcome: "stopped", code: "no_pending", message: "没有进行中的登录，请重新发起。" };
+  }
+  let status: number;
+  let body: unknown;
+  try {
+    ({ status, body } = await requestJson("/api/device/poll", {
+      method: "POST",
+      body: { device_code: state.pending.device_code },
+    }));
+  } catch {
+    return { outcome: "error", code: "network_error", message: "账号服务暂时不可达，将继续重试。" };
+  }
+
+  if (status === 200 && isRecord(body) && body.status === "pending") {
+    return { outcome: "pending" };
+  }
+  if (status === 200 && isRecord(body) && typeof body.jwt === "string" && body.jwt) {
+    const user = isRecord(body.user) ? body.user : {};
+    storeMemberJwt(body.jwt);
+    const next = loadMemberState();
+    next.pending = null;
+    saveMemberState(next);
+    return {
+      outcome: "done",
+      jwt: body.jwt,
+      user: {
+        id: typeof user.id === "string" ? user.id : "",
+        email: typeof user.email === "string" ? user.email : "",
+        name: typeof user.name === "string" ? user.name : null,
+      },
+      member: body.member === true,
+    };
+  }
+  if (status === 404) {
+    // 行已删：多半是 deep-link 已在别处消费（或 dc 从未存在）。前端会以 /api/me 复核。
+    return { outcome: "stopped", code: "device_code_invalid", message: "登录会话已失效，请重新发起登录。" };
+  }
+  if (status === 410) {
+    return { outcome: "stopped", code: "ticket_expired", message: "登录已过期，请重新发起登录。" };
+  }
+  return { outcome: "error", code: "network_error", message: `登录查询异常（HTTP ${status}），将继续重试。` };
+}
+
 /** `/api/me`（契约 §7.1-8）：会员状态的唯一数据源。401 → 静默降级未登录。 */
 export async function fetchMemberMe(): Promise<
   { ok: true; me: MemberMe } | { ok: false; code: "unauthorized" | "unavailable"; message: string }
@@ -480,6 +547,9 @@ export async function fetchMemberMe(): Promise<
         analyses_remaining: trialRaw.analyses_remaining,
         questions_remaining: trialRaw.questions_remaining,
         verified_at: typeof trialRaw.verified_at === "string" ? trialRaw.verified_at : null,
+        // 在途试用发货单（trial-provision-race §3.4）：宽松透传——非布尔 =
+        // undefined（字段缺失时 fail-open 不注入，前端已按 undefined 容错）。
+        provisioning: trialRaw.provisioning === true ? true : trialRaw.provisioning === false ? false : undefined,
       }
     : null;
   return {

@@ -11,8 +11,22 @@ function promptFile(): string {
   return resourceRoot ? resolve(resourceRoot, "coach-system.md") : SOURCE_PROMPT_FILE;
 }
 
+/**
+ * TS-5 实测（2026-10-11）：本函数此前每调用一次都同步 readFileSync（26KB，
+ * 实测 ~0.3ms/次），落在每回合 turn 热路径；turn.ts 的注释「此处命中缓存」
+ * 只指 env 探测（coach-env-facts），提示词本体从未缓存。提示词是打包资源，
+ * 进程内不变——按解析路径缓存（release-resource-paths 合同会切换
+ * AIMING_COOKIE_RESOURCE_ROOT，按路径缓存保住 env 切换语义，每路径至多读一次）。
+ */
+const promptCache = new Map<string, string>();
+
 export function loadDefaultCoachSystemPrompt(): string {
-  return readFileSync(promptFile(), "utf8").trim();
+  const path = promptFile();
+  const cached = promptCache.get(path);
+  if (cached !== undefined) return cached;
+  const prompt = readFileSync(path, "utf8").trim();
+  promptCache.set(path, prompt);
+  return prompt;
 }
 
 /**

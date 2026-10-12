@@ -5,7 +5,7 @@
  * all evidence query commands in-process, eliminating the HTTP tool
  * bridge for evidence operations.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getAnalysesDir } from "./app-data.ts";
 import { buildProcessedEventTableCatalog, EvidenceKeyRegistry } from "./evidence-catalogs.ts";
@@ -51,6 +51,26 @@ function registry(): EvidenceKeyRegistry {
 
 type LoadedArtifact = { artifact: AnyDict; analysisRef: string; derivedArtifact: AnyDict };
 
+// ── Artifact / catalog 缓存（性能审计 TS-2）─────────────────────────────
+// 同一回合内对同一 analysis 常连发多条命令，此前每条都同步重读+重解析整个
+// evidence.json，表目录还各自 structuredClone 重建（可达数百 KB/条），阻塞
+// 流式 partial 帧下发。按 (analysisId → mtimeMs+size) 进程内缓存解析结果；
+// 文件被后端重写时 stat 变化自然失效。表目录按 artifact 对象身份（WeakMap）
+// 只构建一次，随缓存淘汰一并回收。
+const ARTIFACT_CACHE_LIMIT = 8;
+type ArtifactCacheEntry = { mtimeMs: number; size: number; artifact: AnyDict };
+const artifactCache = new Map<string, ArtifactCacheEntry>();
+const catalogCache = new WeakMap<object, ReturnType<typeof buildProcessedEventTableCatalog>>();
+
+/** 表目录按 artifact 身份缓存：同一解析结果的多条命令共享一次构建。 */
+export function cachedProcessedTableCatalog(artifact: AnyDict): ReturnType<typeof buildProcessedEventTableCatalog> {
+  const hit = catalogCache.get(artifact);
+  if (hit) return hit;
+  const tables = buildProcessedEventTableCatalog(artifact);
+  catalogCache.set(artifact, tables);
+  return tables;
+}
+
 export function loadArtifact(analysisRef: string, _ownerId: string): LoadedArtifact | null {
   const match = analysisRef.match(/^analysis:(\d+)$/);
   if (!match) return null;
@@ -60,11 +80,29 @@ export function loadArtifact(analysisRef: string, _ownerId: string): LoadedArtif
   const artifactPath = join(getAnalysesDir(), analysisId, "evidence.json");
   if (!existsSync(artifactPath)) return null;
 
-  let artifact: AnyDict;
+  // (mtimeMs, size) 未变即复用上次解析结果：同回合成串命令零重复 IO；后端
+  // 重写文件时 stat 变化自然失效。stat 失败用哨兵值（0,0）＝缓存永不命中。
+  let stat: { mtimeMs: number; size: number } = { mtimeMs: 0, size: 0 };
   try {
-    artifact = JSON.parse(readFileSync(artifactPath, "utf-8"));
+    const info = statSync(artifactPath);
+    stat = { mtimeMs: info.mtimeMs, size: info.size };
   } catch {
-    return null;
+    // 按「缓存不命中」处理，走重读兜底。
+  }
+  const cached = artifactCache.get(analysisId);
+  let artifact: AnyDict;
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    artifact = cached.artifact;
+  } else {
+    const parsed = parseArtifactFile(artifactPath);
+    if (parsed === null) return null;
+    artifact = parsed;
+    artifactCache.set(analysisId, { ...stat, artifact });
+    // 进程生命周期上限（审计「进程生命周期视角」主题）：超限淘汰最早入队项。
+    if (artifactCache.size > ARTIFACT_CACHE_LIMIT) {
+      const oldest = artifactCache.keys().next().value;
+      if (oldest !== undefined && oldest !== analysisId) artifactCache.delete(oldest);
+    }
   }
 
   // Record the engaged analysis so the enclosing turn can attach the ref.
@@ -78,6 +116,15 @@ export function loadArtifact(analysisRef: string, _ownerId: string): LoadedArtif
   };
 
   return { artifact, analysisRef, derivedArtifact };
+}
+
+/** 读+解析 evidence.json；不存在/损坏回 null（与原直读路径语义一致）。 */
+function parseArtifactFile(artifactPath: string): AnyDict | null {
+  try {
+    return JSON.parse(readFileSync(artifactPath, "utf-8")) as AnyDict;
+  } catch {
+    return null;
+  }
 }
 
 // ── Analysis brief builder (ported from coach_context.build_analysis_brief) ──
@@ -528,7 +575,8 @@ function aggregateGroups(
 // ── Processed table events ──
 
 function processedTableEvents(artifact: AnyDict, tableRef: string): [AnyDict, AnyDict[]] {
-  const tables = buildProcessedEventTableCatalog(artifact);
+  // TS-2：表目录按 artifact 身份缓存（每条命令不再各自 structuredClone 重建）。
+  const tables = cachedProcessedTableCatalog(artifact);
   const table = tables.find((t) => t.table_ref === tableRef);
   if (!table) throw new Error("table not found");
   const events = artifact.event_bundles
@@ -1218,7 +1266,8 @@ function cmdEvidenceCompare(ctx: EvidenceCtx, params: AnyDict): NativeResult {
         .filter((m: AnyDict) => metricKeys.includes(m.metric_key))
         .map(safeMetric);
     } else {
-      const processedTables = buildProcessedEventTableCatalog(artifact);
+      // TS-2：表目录按 artifact 身份缓存（对比路径与查询路径共享一次构建）。
+      const processedTables = cachedProcessedTableCatalog(artifact);
 
       if (comparisonScope === "segment" && processedTables.length === 0) {
         // Legacy: use metric_records linked to the segment.

@@ -12,7 +12,7 @@
  * session on first access.
  */
 
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ensureAppDataDirs, getConversationsDir, getDataRoot } from "./app-data.ts";
@@ -183,16 +183,203 @@ export async function getSessionRepo(): Promise<JsonlRepoLike> {
 
 // ── Thread → session mapping ─────────────────────────────────────────────
 
+// ── 会话查找缓存（性能审计 TS-4）─────────────────────────────────────────
+// findSessionMetadata 此前每次 openSession 都全量 repo.list（每会话一次 header
+// 文件读）：回合路径一次扫两遍、/v1/sessions 每次轮询对每会话再全量解析——
+// O(N²) 文件读，与已修 usage 12.5s→364ms 案同根。id→metadata 进程内缓存：
+// 首次全扫后全命中，create/迁移后回填，删除时清除。
+const metadataByThread = new Map<number, SessionMetadataLike>();
+
+// UI 消息列表 stat 缓存：listCoachSessions 每次 3s/10s 轮询对每会话全量解析
+// JSONL。文件 (mtimeMs, size) 未变即复用上次解析结果；追加/截断/删除都会改
+// 变 stat，自然失效，不需要显式失效钩子。
+type UiMessagesCacheEntry = { mtimeMs: number; size: number; messages: SessionMessage[] };
+const uiMessagesCache = new Map<number, UiMessagesCacheEntry>();
+
 async function findSessionMetadata(threadId: number): Promise<SessionMetadataLike | null> {
+  const cached = metadataByThread.get(threadId);
+  if (cached) return cached;
   const repo = await getSessionRepo();
   const sessions = await repo.list({ cwd: SESSION_CWD });
-  return sessions.find((session) => session.id === String(threadId)) ?? null;
+  for (const session of sessions) {
+    const parsed = Number(session.id);
+    if (Number.isInteger(parsed) && parsed > 0 && !metadataByThread.has(parsed)) {
+      metadataByThread.set(parsed, session);
+    }
+  }
+  return metadataByThread.get(threadId) ?? null;
+}
+
+// ── 会话 JSONL 撕裂自愈（鲁棒性审计 P0-1）────────────────────────────────
+// pi appendEntry 是单次 appendFile（无 fsync、无原子写）：进程死在写入中途
+// （unhandledRejection / taskkill sweep / 断电）会留下尾部半行 JSON，下次
+// repo.open 抛 invalid_entry——该会话所有后续 turn 判不可重试失败、detail
+// 500，整段对话事实砖化。自愈策略：
+//   1) 按「最长全行合法前缀」截断重建（尾部孤儿行本就是未完成写入，丢弃是
+//      唯一正解）；被丢弃的内容写入 *.corrupt-<时间戳> 隔离文件留痕，绝不
+//      静默蒸发；重写走 tmp+rename 原子替换。
+//   2) header 损坏（无法定位合法起点）时整文件改名隔离，openSession 返回
+//      null，ensureSession 以同一 id 重建空会话（meta 标题保留）。
+//   3) 自愈全程带 cause 码落 coach-error.log；自愈本身失败时原样抛出原始
+//      错误——分类层落 local_storage_corrupt（可重试），绝不静默降级。
+// 写路径原子性口径：整文件写（meta、重建重写）走 tmp+rename；JSONL 追加
+// 保持单次 appendFile（逐条重写全文件是 O(N²)），其崩溃面由本自愈兜底——
+// 这正是 LDJSON 存储的标准崩溃恢复形态。
+
+function logCoachCause(line: string): void {
+  try {
+    appendFileSync(join(getDataRoot(), "coach-error.log"), `${line}\n`, "utf8");
+  } catch {
+    // best-effort：日志失败不掩盖自愈结果
+  }
+}
+
+/** pi SessionError 的鸭子类型识别（pi 是动态加载的，不 import 其类型）。 */
+function sessionCorruptionCause(error: unknown): "invalid_entry" | "invalid_session" | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  if (code === "invalid_entry" || code === "invalid_session") return code;
+  const name = (error as { name?: unknown }).name;
+  const message = (error as { message?: unknown }).message;
+  if (name === "SessionError" && typeof message === "string" && /Invalid JSONL session file/.test(message)) {
+    return /invalid_entry/.test(message) ? "invalid_entry" : "invalid_session";
+  }
+  return null;
+}
+
+/** pi parseHeaderLine 的结构镜像：只为定位撕裂尾，重写后由 pi 权威校验，
+ * 若判宽了会在重开时再次抛错并原样上报，绝不静默。 */
+function parsesAsSessionHeader(line: string): boolean {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (!isRecord(parsed) || Array.isArray(parsed)) return false;
+    return parsed.type === "session"
+      && parsed.version === 3
+      && typeof parsed.id === "string" && parsed.id.length > 0
+      && typeof parsed.timestamp === "string" && parsed.timestamp.length > 0
+      && typeof parsed.cwd === "string" && parsed.cwd.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** pi parseEntryLine 的结构镜像（同上，宁严勿宽）。 */
+function parsesAsSessionEntry(line: string): boolean {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (!isRecord(parsed) || Array.isArray(parsed)) return false;
+    if (typeof parsed.type !== "string" || typeof parsed.id !== "string" || parsed.id.length === 0) return false;
+    if (parsed.parentId !== null && typeof parsed.parentId !== "string") return false;
+    if (typeof parsed.timestamp !== "string" || parsed.timestamp.length === 0) return false;
+    if (parsed.type === "leaf" && parsed.targetId !== null && typeof parsed.targetId !== "string") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type CorruptionRepairOutcome =
+  | { status: "rebuilt"; keptLines: number; droppedLines: number; firstBadLine: number }
+  | { status: "quarantined" }
+  | { status: "failed" };
+
+function quarantinePathFor(filePath: string): string {
+  // 后缀不能以 .jsonl 结尾：repo.list 按后缀发现会话，隔离件不得再次入选。
+  return `${filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+}
+
+/**
+ * 按「最长全行合法前缀」截断重建会话 JSONL。同步 fs 直读直写（不经 env 的
+ * busy-retry 包装）：自愈是一次原子动作，失败就原样上报，不重试不递归。
+ */
+function repairCorruptSessionFile(filePath: string): CorruptionRepairOutcome {
+  let content: string;
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch {
+    return { status: "failed" };
+  }
+  const lines = content.split("\n");
+  let keepCount = 0;
+  let firstBadLine = 0;
+  if (lines[0] !== undefined && lines[0].trim() && parsesAsSessionHeader(lines[0])) {
+    keepCount = 1;
+    for (let index = 1; index < lines.length; index++) {
+      const line = lines[index]!;
+      if (!line.trim()) continue; // pi 解析前本就过滤空行，不算损坏
+      if (parsesAsSessionEntry(line)) {
+        keepCount = index + 1;
+        continue;
+      }
+      firstBadLine = index + 1;
+      break;
+    }
+  }
+  const droppedLines = lines.slice(keepCount).filter((line) => line.trim().length > 0);
+
+  if (keepCount === 0) {
+    // header 不合法：无法定位重建起点，整文件隔离（调用方按会话缺失处理，
+    // ensureSession 会以同一 id 重建）。
+    try {
+      renameSync(filePath, quarantinePathFor(filePath));
+      return { status: "quarantined" };
+    } catch {
+      return { status: "failed" };
+    }
+  }
+
+  if (droppedLines.length === 0) {
+    // 找不到损坏行（如 header 之后全部合法却仍抛错）：不自愈，原样上报。
+    return { status: "failed" };
+  }
+
+  const quarantinePath = quarantinePathFor(filePath);
+  try {
+    // 隔离件先落盘（留痕优先于修复：失败则放弃自愈、原样上报）。
+    writeFileSync(quarantinePath, droppedLines.join("\n") + "\n", "utf8");
+    // 原文件 tmp+rename 原子替换，杜绝「重建写一半」二次撕裂。
+    const tmpPath = `${filePath}.repair-tmp`;
+    writeFileSync(tmpPath, lines.slice(0, keepCount).map((line) => line + "\n").join(""), "utf8");
+    renameSync(tmpPath, filePath);
+  } catch {
+    return { status: "failed" };
+  }
+  return { status: "rebuilt", keptLines: keepCount, droppedLines: droppedLines.length, firstBadLine };
 }
 
 export async function openSession(threadId: number): Promise<SessionLike | null> {
   const metadata = await findSessionMetadata(threadId);
   if (!metadata) return null;
-  return (await getSessionRepo()).open(metadata);
+  const repo = await getSessionRepo();
+  try {
+    return await repo.open(metadata);
+  } catch (error) {
+    const cause = sessionCorruptionCause(error);
+    if (!cause) throw error;
+    const path = metadata.path;
+    try {
+      const outcome = repairCorruptSessionFile(path);
+      if (outcome.status === "quarantined") {
+        metadataByThread.delete(threadId);
+        uiMessagesCache.delete(threadId);
+        logCoachCause(`${new Date().toISOString()} [session-repo] corrupt_session_quarantined cause=${cause} path=${path}`);
+        return null; // ensureSession 会以同一 id 重建空会话（meta 标题保留）
+      }
+      if (outcome.status === "rebuilt") {
+        logCoachCause(
+          `${new Date().toISOString()} [session-repo] corrupt_session_repaired cause=${cause} path=${path}`
+          + ` kept_lines=${outcome.keptLines} dropped_lines=${outcome.droppedLines} first_bad_line=${outcome.firstBadLine}`,
+        );
+        return await repo.open(metadata);
+      }
+    } catch (repairError) {
+      logCoachCause(
+        `${new Date().toISOString()} [session-repo] corrupt_session_repair_failed cause=${cause} path=${path}`
+        + ` error=${repairError instanceof Error ? repairError.message : String(repairError)}`,
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -214,9 +401,23 @@ export async function ensureSession(threadId: number): Promise<SessionLike> {
   const existing = await openSession(threadId);
   if (existing) return existing;
   const migrated = await migrateLegacyConversation(threadId);
-  if (migrated) return migrated;
+  if (migrated) {
+    // 迁移建的 pi 会话元数据回填查找缓存（避免下次再全扫）。
+    try {
+      metadataByThread.set(threadId, await migrated.getMetadata());
+    } catch {
+      // 元数据不可得时下次全扫兜底
+    }
+    return migrated;
+  }
   const repo = await getSessionRepo();
-  return repo.create({ cwd: SESSION_CWD, id: String(threadId) });
+  const session = await repo.create({ cwd: SESSION_CWD, id: String(threadId) });
+  try {
+    metadataByThread.set(threadId, await session.getMetadata());
+  } catch {
+    // 元数据不可得时下次全扫兜底
+  }
+  return session;
 }
 
 export async function sessionExists(threadId: number): Promise<boolean> {
@@ -228,6 +429,8 @@ export async function deleteSessionFile(threadId: number): Promise<void> {
   const metadata = await findSessionMetadata(threadId);
   if (!metadata) return;
   await (await getSessionRepo()).delete(metadata);
+  metadataByThread.delete(threadId);
+  uiMessagesCache.delete(threadId);
 }
 
 export async function listSessionIds(): Promise<number[]> {
@@ -298,6 +501,37 @@ export async function readSessionMessages(threadId: number): Promise<SessionMess
  * 不是被停止；只跳过这一条尾标记，更早回合的真停止标记照常保留。
  */
 export async function readSessionMessagesForUi(
+  threadId: number,
+  opts: { suppressTrailingInterruptMarker?: boolean } = {},
+): Promise<SessionMessage[]> {
+  // TS-4：无抑制位的常规读取（会话列表轮询）按文件 stat 缓存——文件未变时
+  // 直接复用上次解析结果，3s/10s 轮询不再对每会话全量解析 JSONL。缓存数组
+  // 视为只读（消费方 shapeSession/detail 只读遍历）。
+  if (!opts.suppressTrailingInterruptMarker) {
+    const filePath = metadataByThread.get(threadId)?.path
+      ?? (() => {
+        const legacy = join(getConversationsDir(), `${threadId}.jsonl`);
+        return existsSync(legacy) ? legacy : null;
+      })();
+    if (filePath) {
+      let stat: { mtimeMs: number; size: number } | null = null;
+      try {
+        const info = statSync(filePath);
+        stat = { mtimeMs: info.mtimeMs, size: info.size };
+      } catch {
+        stat = null; // 文件刚被删除等：走无缓存路径
+      }
+      const hit = stat ? uiMessagesCache.get(threadId) : undefined;
+      if (hit && stat && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.messages;
+      const messages = await readSessionMessagesForUiUncached(threadId, opts);
+      if (stat) uiMessagesCache.set(threadId, { ...stat, messages });
+      return messages;
+    }
+  }
+  return readSessionMessagesForUiUncached(threadId, opts);
+}
+
+async function readSessionMessagesForUiUncached(
   threadId: number,
   opts: { suppressTrailingInterruptMarker?: boolean } = {},
 ): Promise<SessionMessage[]> {
@@ -582,7 +816,12 @@ export function readConversationMeta(threadId: number): ConversationMeta {
 
 export function writeConversationMeta(threadId: number, meta: ConversationMeta): void {
   ensureAppDataDirs();
-  writeFileSync(metaFilePath(threadId), JSON.stringify(meta, null, 2), "utf8");
+  // P0-1 写路径原子性：meta 是整文件重写的小文件，tmp+rename 原子替换——
+  // 进程死在写入中途不会留下半截 meta（旧文件保持完整旧态）。
+  const path = metaFilePath(threadId);
+  const tmpPath = `${path}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(meta, null, 2), "utf8");
+  renameSync(tmpPath, path);
 }
 
 /**

@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { getConfigDir } from "./app-data.ts";
 import {
   AIMING_COOKIE_RELAY_MODEL_ID,
   AIMING_COOKIE_RELAY_PROVIDER_ID,
@@ -10,6 +14,7 @@ import {
   type ProviderCatalogResponse,
   type ProviderCredential,
 } from "./contracts.ts";
+import { loadProviderStore } from "./provider-store.ts";
 import {
   SnapshotCredentialStore,
   projectProviderAuthCapability,
@@ -201,7 +206,7 @@ export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogRespo
     ...providers.filter((provider) => provider.id === AIMING_COOKIE_RELAY_PROVIDER_ID),
     ...providers.filter((provider) => provider.id !== AIMING_COOKIE_RELAY_PROVIDER_ID),
   ];
-  return {
+  const response: ProviderCatalogResponse = {
     schema_version: PROVIDER_CATALOG_SCHEMA,
     providers: ordered.map((provider) => ({
       ...projectProviderAuthCapability(provider),
@@ -209,6 +214,43 @@ export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogRespo
       models: models.getModels(provider.id).map(toCatalogModel),
     })),
   };
+  return mergeDiscoveredBuiltinModelsIntoCatalog(response);
+}
+
+/**
+ * 发现层叠加（magpie 式动态名单，2026-10-10）：把该用户凭证从 Provider 官方
+ * /models 发现并持久化的名单叠到目录出口——目录已有的 id 跳过（快照元数据
+ * 更全），仅追加目录未收录的 id，元数据经 projectCustomModelReasoning 按目录
+ * 继承、未命中按默认能力。纯读盘，不发网络；无发现层时目录原样返回。
+ */
+async function mergeDiscoveredBuiltinModelsIntoCatalog(
+  response: ProviderCatalogResponse,
+): Promise<ProviderCatalogResponse> {
+  const discovered = loadDiscoveredBuiltinModels();
+  if (Object.keys(discovered.providers).length === 0) return response;
+  for (const entry of response.providers) {
+    const overlay = discovered.providers[entry.provider_id];
+    if (!overlay || overlay.models.length === 0) continue;
+    const known = new Set(entry.models.map((model) => model.model_id));
+    const delta = overlay.models.filter((item) => !known.has(item.model_id));
+    if (delta.length === 0) continue;
+    const enriched = await projectCustomModelReasoning(delta);
+    entry.models.push(
+      ...enriched.map((item) => ({
+        model_id: item.model_id,
+        model_name: item.model_id,
+        api: overlay.api,
+        provider_id: entry.provider_id,
+        base_url: overlay.base_url,
+        reasoning: item.reasoning,
+        reasoning_efforts: item.reasoning_efforts,
+        input: ["text"],
+        context_window: item.context_window ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+        max_tokens: item.max_tokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+      }) satisfies ProviderCatalogModel),
+    );
+  }
+  return response;
 }
 
 const CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -331,6 +373,211 @@ export async function projectCustomModelReasoning(
   });
 }
 
+// ---- 内置 Provider 发现层（magpie 式动态名单，2026-10-10 点点拍板）----------
+// 名单实时问该 Provider 官方 /models 端点（用用户已存凭证），元数据仍按 id
+// 回 pinned Pi 目录继承，快照永远是地板。会员档锁死单模型（契约 §0），不参与。
+
+const DISCOVERED_BUILTIN_MODELS_FILE = "discovered-builtin-models.json";
+const DISCOVERED_BUILTIN_MODELS_SCHEMA = "builtin_discovered_models.v1";
+
+type DiscoveredBuiltinProviderEntry = {
+  models: CustomProviderModel[];
+  /** 发现时实际使用的端点（provider.baseUrl 或首模型 baseUrl）。 */
+  base_url: string | null;
+  /** 发现时按首模型 api 推断的协议；合成运行时模型按它分发起义流。 */
+  api: "openai-completions" | "anthropic-messages";
+  discovered_at: string;
+};
+
+type DiscoveredBuiltinModelsDocument = {
+  schema_version: typeof DISCOVERED_BUILTIN_MODELS_SCHEMA;
+  providers: Record<string, DiscoveredBuiltinProviderEntry>;
+};
+
+function discoveredBuiltinModelsPath(): string {
+  return join(getConfigDir(), DISCOVERED_BUILTIN_MODELS_FILE);
+}
+
+function emptyDiscoveredBuiltinModels(): DiscoveredBuiltinModelsDocument {
+  return { schema_version: DISCOVERED_BUILTIN_MODELS_SCHEMA, providers: {} };
+}
+
+function loadDiscoveredBuiltinModels(): DiscoveredBuiltinModelsDocument {
+  const path = discoveredBuiltinModelsPath();
+  if (!existsSync(path)) return emptyDiscoveredBuiltinModels();
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!isRecord(raw) || raw.schema_version !== DISCOVERED_BUILTIN_MODELS_SCHEMA || !isRecord(raw.providers)) {
+      return emptyDiscoveredBuiltinModels();
+    }
+    return raw as DiscoveredBuiltinModelsDocument;
+  } catch {
+    return emptyDiscoveredBuiltinModels();
+  }
+}
+
+function saveDiscoveredBuiltinModels(document: DiscoveredBuiltinModelsDocument): void {
+  const dir = getConfigDir();
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(dir, `.${DISCOVERED_BUILTIN_MODELS_FILE}.tmp`);
+  writeFileSync(tmpPath, JSON.stringify(document, null, 2), "utf8");
+  renameSync(tmpPath, discoveredBuiltinModelsPath());
+}
+
+/** 按 probe 同款链解析发现一个内置 Provider 所需的端点/凭证/协议。 */
+async function resolveBuiltinProviderConnection(
+  providerId: string,
+  credential: ProviderCredential | undefined,
+): Promise<{ baseUrl: string; apiKey: string; protocol: "openai-completions" | "anthropic-messages" }> {
+  const credentialStore = new SnapshotCredentialStore(providerId, credential);
+  const models = await createBuiltinModels(credentialStore);
+  const provider = models.getProvider(providerId);
+  if (!provider) {
+    throw new ProviderProfileError("unknown_provider", `Unknown provider: ${providerId}`);
+  }
+  const firstModel = models.getModels(providerId)[0];
+  // 大多数内置 Provider 在目录层带 base_url；个别（如 opencode-go）按模型
+  // 携带端点，回落首个模型的 baseUrl。
+  const baseUrl = provider.baseUrl ?? firstModel?.baseUrl ?? null;
+  if (!baseUrl) {
+    throw new ProviderProfileError("invalid_profile", `Provider ${providerId} has no base URL to probe`);
+  }
+  let apiKey = credential?.type === "api_key" && credential.key ? credential.key : null;
+  if (!apiKey) {
+    const auth = firstModel ? await models.getAuth(firstModel) : undefined;
+    const resolved = auth?.auth?.apiKey;
+    apiKey = typeof resolved === "string" && resolved ? resolved : null;
+  }
+  if (!apiKey) throw new Error("Provider credential is unavailable");
+  const protocol = firstModel?.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions";
+  return { baseUrl, apiKey, protocol };
+}
+
+/**
+ * 实时发现一个内置 Provider 的模型名单并落盘发现层：id 清单以端点为准，
+ * 端点应答为空清单时保留既有发现层（不覆盖上次有效名单）。
+ */
+export async function discoverBuiltinProviderLive(
+  providerId: string,
+  credential: ProviderCredential | undefined,
+  timeoutMs: number = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
+): Promise<CustomProviderModel[]> {
+  const connection = await resolveBuiltinProviderConnection(providerId, credential);
+  const models = await fetchCustomProviderModels(
+    connection.protocol,
+    connection.baseUrl,
+    connection.apiKey,
+    timeoutMs,
+  );
+  if (models.length > 0) {
+    const document = loadDiscoveredBuiltinModels();
+    document.providers[providerId] = {
+      models,
+      base_url: connection.baseUrl,
+      api: connection.protocol,
+      discovered_at: new Date().toISOString(),
+    };
+    saveDiscoveredBuiltinModels(document);
+  }
+  return models;
+}
+
+const BUILTIN_CATALOG_REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
+let builtinCatalogRefreshLastKickAt = 0;
+
+function builtinCatalogRefreshThrottled(now: number, lastKickAt: number, ttlMs: number): boolean {
+  return now - lastKickAt < ttlMs;
+}
+
+/** 测试钩子：重置后台刷新的 TTL 节流状态。 */
+export function resetBuiltinCatalogRefreshForTest(): void {
+  builtinCatalogRefreshLastKickAt = 0;
+}
+
+/**
+ * 目录读取处的后台刷新入口（fire-and-forget）：TTL 内只真刷一次，失败仅记
+ * cause 日志——发现层拉不到时目录照常返回快照+上次发现叠加，属可观测降级。
+ * 强制刷新走 refreshConfiguredBuiltinProviders（POST /v1/providers/catalog/refresh）。
+ */
+export function kickBuiltinCatalogRefresh(now: number = Date.now()): void {
+  if (builtinCatalogRefreshThrottled(now, builtinCatalogRefreshLastKickAt, BUILTIN_CATALOG_REFRESH_TTL_MS)) return;
+  builtinCatalogRefreshLastKickAt = now;
+  void refreshConfiguredBuiltinProviders().catch((error: unknown) => {
+    console.error(
+      "[builtin-model-discovery] background refresh failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+}
+
+/**
+ * 对所有配置了凭证的内置 Provider（去重；会员档跳过）强制发现一轮。
+ * 单家失败不影响他家，逐家返回 ok/detail 供调用方记日志。
+ */
+export async function refreshConfiguredBuiltinProviders(): Promise<
+  Array<{ provider_id: string; ok: boolean; detail: string | null }>
+> {
+  const store = loadProviderStore();
+  const targets = new Map<string, ProviderCredential | undefined>();
+  for (const entry of store.profiles) {
+    if (entry.kind !== "builtin") continue;
+    if (entry.provider_id === AIMING_COOKIE_RELAY_PROVIDER_ID) continue;
+    if (!targets.has(entry.provider_id)) targets.set(entry.provider_id, profileCredential(entry));
+  }
+  return Promise.all(
+    [...targets.entries()].map(async ([providerId, credential]) => {
+      try {
+        await discoverBuiltinProviderLive(providerId, credential);
+        return { provider_id: providerId, ok: true, detail: null };
+      } catch (error) {
+        return {
+          provider_id: providerId,
+          ok: false,
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+  );
+}
+
+/**
+ * 发现层放行（白名单门放宽的另一半）：pinned 目录未收录但该用户凭证发现过
+ * 的 model_id，按「目录命中整体继承 / 未命中默认能力（supportsDeveloperRole:
+ * false）」链现场合成运行时模型——与 resolveCustomProfile 同语义。不注册进
+ * provider：pi 的 streamSimple 按 model.provider 找 provider、按 model.api
+ * 分发实现，合成对象可直接走流；overlay.api 取自该 Provider 首模型的 api，
+ * 协议必然匹配。
+ */
+function synthesizeDiscoveredBuiltinModel(
+  models: PiModels,
+  providerId: string,
+  modelId: string,
+): PiModel | undefined {
+  const overlay = loadDiscoveredBuiltinModels().providers[providerId];
+  const item = overlay?.models.find((candidate) => candidate.model_id === modelId);
+  if (!overlay || !item || !overlay.base_url) return undefined;
+  const catalogModels = models.getModels() as Array<
+    PiModel & { compat?: Record<string, unknown>; thinkingLevelMap?: unknown }
+  >;
+  const catalogHit = catalogModels.find((candidate) => candidate.id === modelId);
+  return {
+    id: modelId,
+    name: catalogHit?.name ?? modelId,
+    api: overlay.api,
+    provider: providerId,
+    baseUrl: overlay.base_url,
+    reasoning: catalogHit ? catalogHit.reasoning === true : true,
+    input: catalogHit ? [...catalogHit.input] : ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: item.context_window ?? catalogHit?.contextWindow ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: item.max_tokens ?? catalogHit?.maxTokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+    ...(catalogHit?.compat
+      ? { compat: catalogHit.compat }
+      : { compat: { supportsDeveloperRole: false } }),
+    ...(catalogHit?.thinkingLevelMap ? { thinkingLevelMap: catalogHit.thinkingLevelMap } : {}),
+  };
+}
+
 async function resolveBuiltinProfile(
   profile: Extract<CoachRuntimeProviderProfile, { kind: "builtin" }>,
 ): Promise<ResolvedProviderModel> {
@@ -340,7 +587,10 @@ async function resolveBuiltinProfile(
   if (!models.getProvider(profile.provider_id)) {
     throw new ProviderProfileError("unknown_provider", `Unknown provider: ${profile.provider_id}`);
   }
-  const model = models.getModel(profile.provider_id, profile.model_id);
+  // 白名单门放宽（magpie 式动态名单）：pinned 目录未收录但发现层有的 id 放行，
+  // 使 create/PUT/模型切换三处门与目录叠加层看到同一份可选集。
+  const model = models.getModel(profile.provider_id, profile.model_id)
+    ?? synthesizeDiscoveredBuiltinModel(models, profile.provider_id, profile.model_id);
   if (!model) {
     throw new ProviderProfileError(
       "unknown_model",
@@ -463,38 +713,22 @@ export async function resolveProviderModel(rawProfile: unknown): Promise<Resolve
  * 免模型连通探测（点点 0911 两步式向导）：内置档在选定 model 前先打目录
  * base_url 的 /models 验证 Key 与连通。协议按目录首个模型的 api 推断；
  * 运行时未带 api_key 时回落凭据层解析（含环境/系统级凭据），两者皆无则
- * 视为凭据不可用。只读，不落库。
+ * 视为凭据不可用。连通即名单到手：发现的模型清单落盘发现层并原样返回
+ * （2026-10-10 magpie 式动态名单，原先拉完即弃）。错误透传原始文本
+ * （上游统一脱敏后上报），拿不到才回退固定文案。
  */
 export async function probeBuiltinProvider(
   providerId: string,
   credential: ProviderCredential | undefined,
   timeoutMs: number = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
-): Promise<void> {
-  const credentialStore = new SnapshotCredentialStore(providerId, credential);
-  const models = await createBuiltinModels(credentialStore);
-  const provider = models.getProvider(providerId);
-  if (!provider) {
-    throw new ProviderProfileError("unknown_provider", `Unknown provider: ${providerId}`);
-  }
-  const firstModel = models.getModels(providerId)[0];
-  // 大多数内置 Provider 在目录层带 base_url；个别（如 opencode-go）按模型
-  // 携带端点，回落首个模型的 baseUrl 探测。
-  const baseUrl = provider.baseUrl ?? firstModel?.baseUrl ?? null;
-  if (!baseUrl) {
-    throw new ProviderProfileError("invalid_profile", `Provider ${providerId} has no base URL to probe`);
-  }
-  let apiKey = credential?.type === "api_key" && credential.key ? credential.key : null;
-  if (!apiKey) {
-    const auth = firstModel ? await models.getAuth(firstModel) : undefined;
-    const resolved = auth?.auth?.apiKey;
-    apiKey = typeof resolved === "string" && resolved ? resolved : null;
-  }
-  if (!apiKey) throw new Error("Provider credential is unavailable");
-  const protocol = firstModel?.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions";
+): Promise<CustomProviderModel[]> {
   try {
-    await fetchCustomProviderModels(protocol, baseUrl, apiKey, timeoutMs);
+    return await discoverBuiltinProviderLive(providerId, credential, timeoutMs);
   } catch (error) {
-    // 探针失败不再吞底层错误：透传原始文本（上游统一脱敏后上报），拿不到才回退固定文案。
+    // ProviderProfileError（unknown_provider/invalid_profile）原样透传：路由
+    // 按它分类 model_unavailable（不发网络即判型），只有链路层错误才包普通
+    // Error 呈现固定文案。
+    if (error instanceof ProviderProfileError) throw error;
     throw new Error(
       error instanceof Error && error.message
         ? error.message
