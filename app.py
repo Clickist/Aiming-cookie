@@ -188,6 +188,5 @@ if st.button("Run Deep Analysis", type="primary"):
             col.image(img)
 
     st.success(
-        "Data Saved! You can now run Analyze.py in your terminal:\n"
-        "python Analyze.py --csv output/calibration_raw.csv"
+        "Data Saved! Calibration data written to output/calibration_raw.csv."
     )
