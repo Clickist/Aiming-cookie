@@ -416,3 +416,85 @@ def test_write_via_install_dir_override(monkeypatch, tmp_path):
     expected = tmp_path / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
     assert Path(result["path"]).parent == expected
     assert Path(result["path"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# 地图刷块 winding 回归（2026-10-08 真机事故）
+# ---------------------------------------------------------------------------
+
+def _map_brush_vertices(sce_text: str) -> list[list[tuple[float, float, float]]]:
+    """从 [Map Data] 段解析每块刷的 8 个顶点（reflex 文本格式）。"""
+    map_data = sce_text[sce_text.index("[Map Data]"):].replace("\r\n", "\n")
+    lines = map_data.split("\n")
+    brushes: list[list[tuple[float, float, float]]] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == "brush" and lines[i + 1].strip() == "vertices":
+            pts: list[tuple[float, float, float]] = []
+            j = i + 2
+            while j < len(lines) and len(pts) < 8:
+                token = lines[j].strip()
+                try:
+                    parts = [float(v) for v in token.split()]
+                except ValueError:
+                    break
+                if len(parts) != 3:
+                    break
+                pts.append((parts[0], parts[1], parts[2]))
+                j += 1
+            brushes.append(pts)
+            i = j
+        else:
+            i += 1
+    return brushes
+
+
+def test_map_brush_vertex_order_matches_real_scenario_winding():
+    """回归：刷块顶点枚举必须先 max-Y 平面（与 1wall 6targets small 真实刷块同构），
+    面索引 _BRUSH_FACE_INDICES 才能给出正确朝向。min-Y 在前会翻转全部面法线——
+    房间从内侧背面剔除后不可见且无碰撞（点点 2026-10-08 实报「打开啥也没有」）。"""
+    prescription = sce_forge.forge_R3_6()
+    text = sce_forge.forge_sce_text(prescription, name="AC-WindCheck").decode("utf-8")
+    brushes = _map_brush_vertices(text)
+    # 空心立方体：6 面板 + 12 边 + 8 角（与真实 1w6ts 同构）
+    assert len(brushes) == 26
+    for pts in brushes:
+        assert len(pts) == 8
+        top_ys = {y for _, y, _ in pts[:4]}
+        bottom_ys = {y for _, y, _ in pts[4:]}
+        assert min(top_ys) > max(bottom_ys), f"前 4 顶点必须是 max-Y 平面: {pts}"
+        # 面内序 (x0,z1),(x1,z1),(x1,z0),(x0,z0)
+        assert pts[0][2] == max(p[2] for p in pts[:4])
+        assert pts[2][2] == min(p[2] for p in pts[:4])
+
+
+def test_none_tier_embeds_map_without_spawn_entities():
+    """none 档必须内嵌地图但一个出生点都不写：KovaaK 不做 MapName 回退（1008 真机
+    证实无 [Map Data] 即空场）；真实无网格样本 Aimerz+ 内嵌 0 出生点地图，玩家走
+    默认落点、靶位由 Dodge dist 承担。写了出生点会被读侧判成网格分布。"""
+    prescription = sce_forge.forge_R2_1()  # space_tier="none"
+    text = sce_forge.forge_sce_text(prescription, name="AC-NoGrid").decode("utf-8")
+    assert "[Map Data]" in text
+    map_data = text[text.index("[Map Data]"):]
+    assert "type PlayerSpawn" not in map_data
+    assert "type WorldSpawn" in map_data
+    descriptor = _descriptor(sce_forge.forge_sce_text(prescription, name="AC-NoGrid"), "AC-NoGrid")
+    assert descriptor["space"]["basis"] == "dodge_target_distance"
+
+
+def test_forge_writes_referenced_bot_file_when_missing(tmp_path):
+    """回归（2026-10-10 真机定罪）：AddedBots 引用 Bots/<name>.bot，其内部
+    DodgeProfileNames 指向的 profile 名必须存在于 .sce——生成器 dodge 固定命名
+    'Mimic' 与随附 bot 内容互为镜像；bot 文件缺失时 forge 必须自举写入，已存在则绝不覆盖。"""
+    assert sce_forge._DODGE_PROFILE in {
+        line.split("=")[1] for line in sce_forge._BOT_FILE_LINES if line.startswith("DodgeProfileNames=")
+    }, "dodge profile 名必须被 bot 文件引用，否则挑战构建中止（空场）"
+    bot_name = f"{sce_forge._TARGET_BOT}.bot"
+    scenarios = tmp_path / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+    first = sce_forge.forge_and_write(sce_forge.forge_R1_1(1), scenarios_dir=scenarios)
+    written = scenarios.parent / "Bots" / bot_name
+    assert written.exists()
+    assert first["bot_file_written"] == str(written)
+    before = written.read_bytes()
+    sce_forge.forge_and_write(sce_forge.forge_R2_1(1), scenarios_dir=scenarios)
+    assert written.read_bytes() == before, "已存在的 bot 文件不得覆盖"

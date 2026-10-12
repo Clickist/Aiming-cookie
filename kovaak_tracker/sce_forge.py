@@ -52,10 +52,41 @@ LR_FLOOR = 0.05
 _PLAYER_CHAR = "player"
 _TARGET_CHAR = "target"
 _TARGET_BOT = "target"
-_DODGE_PROFILE = "ac strafe"
+# 不变量（2026-10-10 真机定罪）：AddedBots 引用的 Bots/<_TARGET_BOT>.bot 文件内部
+# 写死了 DodgeProfileNames/AimingProfileNames/CharacterProfile——生成器的 dodge 必须
+# 命名为 "Mimic" 才能被它解析；对不上时整个挑战构建中止（空场，连地图都不建）。
+_DODGE_PROFILE = "Mimic"
 _WEAPON_PROFILE = "ac gun"
+#: 与 Bots/target.bot 逐字节一致的自举内容（CRLF 无 BOM）：用户机器上没有这个
+# .bot 文件时由 forge_and_write 写入，已存在则绝不覆盖。
+_BOT_FILE_LINES = (
+    "Name=target",
+    "DodgeProfileNames=Mimic",
+    "DodgeProfileWeights=1.0",
+    "DodgeProfileMaxChangeTime=5.0",
+    "DodgeProfileMinChangeTime=1.0",
+    "WeaponProfileWeights=1.0;1.0;1.0;1.0;1.0;1.0;1.0;1.0",
+    "AimingProfileNames=Default;Default;Default;Default;Default;Default;Default;Default",
+    "WeaponSwitchTime=3.0",
+    "UseWeapons=false",
+    "CharacterProfile=target",
+    "SeeThroughWalls=false",
+    "NoDodging=true",
+    "NoAiming=false",
+    "AbilityUseTimer=0.1",
+    "UseAbilityFrequency=1.0",
+    "UseAbilityFreqMinTime=0.3",
+    "UseAbilityFreqMaxTime=0.6",
+    "ShowLaser=false",
+    "LaserRGB=X=1.000 Y=0.300 Z=0.000",
+    "LaserAlpha=1.0",
+    "RandomizeDodgeProfiles=true",
+    "RepeatDodgeProfileEntries=true",
+    "UseMinimumRespawnTime=true",
+)
 
 _SCENARIOS_SUBPATH = Path("FPSAimTrainer") / "Saved" / "SaveGames" / "Scenarios"
+_BOTS_SUBPATH = Path("FPSAimTrainer") / "Saved" / "SaveGames" / "Bots"
 
 
 class ForgeError(ValueError):
@@ -724,10 +755,13 @@ _BRUSH_FACE_INDICES = ((0, 1, 2, 3), (6, 5, 4, 7), (2, 1, 5, 6), (0, 3, 7, 4), (
 
 
 def _box_brush(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float) -> str:
-    """轴对齐盒刷（顶点序与 6 面索引逐一拷贝自 1wall 6targets small 的刷块）。"""
+    """轴对齐盒刷。顶点枚举规则逐字对齐 1wall 6targets small 真实刷块：
+    先 max-Y 平面后 min-Y 平面，面内序 (x0,z1),(x1,z1),(x1,z0),(x0,z0)，再配
+    _BRUSH_FACE_INDICES。平面序写反会翻转全部面法线——房间内侧背面剔除后
+    不可见且无碰撞（2026-10-08 真机验证过的失败态），改此函数必须跑 winding 回归。"""
     vertices = (
-        (x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0),
         (x0, y1, z1), (x1, y1, z1), (x1, y1, z0), (x0, y1, z0),
+        (x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0),
     )
     lines = ["\tbrush", "\t\tvertices"]
     lines += [f"\t\t\t{v[0]:.6f} {v[1]:.6f} {v[2]:.6f}" for v in vertices]
@@ -756,8 +790,9 @@ def _spawn_entity(x: float, y: float, z: float) -> str:
 
 
 def _map_data_blob(space_tier: str) -> str:
-    """生成 [Map Data] 段。space_tier=none → 0 出生点的无网格形态（D6：44% 场景，
-    分布轴由 Dodge dist 承担；真实样本 Aimerz+ Week #7 - Suavetrack）。"""
+    """生成 [Map Data] 段。space_tier=none → 0 靶位出生点的无网格形态（D6：44% 场景，
+    分布轴由 Dodge dist 承担；真实样本 Aimerz+ Week #7 - Suavetrack——注意其仍内嵌地图，
+    2026-10-08 真机证实 KovaaK 不做 MapName 回退，无 [Map Data] 即空场）。"""
     lines = ["[Map Data]", "reflex map version 8", "global"]
     # WorldSpawn（三张真实场景逐字同构）
     lines += [
@@ -767,13 +802,25 @@ def _map_data_blob(space_tier: str) -> str:
         "\t\tUInt8 playersMin 1",
         "\t\tUInt8 playersMax 16",
     ]
-    # 封闭房间：地板 + 天花板 + 四面全长墙（含角落，六刷密封）
-    lines.append(_box_brush(-_ROOM, _ROOM, _FLOOR_TOP - 64.0, _FLOOR_TOP, -_ROOM, _ROOM))
-    lines.append(_box_brush(-_ROOM, _ROOM, _ROOM, _WALL_OUT, -_ROOM, _ROOM))
-    lines.append(_box_brush(-_WALL_OUT, -_ROOM, _FLOOR_TOP, _ROOM, -_WALL_OUT, _WALL_OUT))
-    lines.append(_box_brush(_ROOM, _WALL_OUT, _FLOOR_TOP, _ROOM, -_WALL_OUT, _WALL_OUT))
-    lines.append(_box_brush(-_ROOM, _ROOM, _FLOOR_TOP, _ROOM, -_WALL_OUT, -_ROOM))
-    lines.append(_box_brush(-_ROOM, _ROOM, _FLOOR_TOP, _ROOM, _ROOM, _WALL_OUT))
+    # 封闭房间 = 26 块刷子拼的空心立方体，与 1wall 6targets small 同构：
+    # 外廓按 ±1024 切三段（内段 [-1024,1024]、外段 [1024,1088]/[-1088,-1024]），
+    # 27 组合去中心 = 6 面板 + 12 边 + 8 角。
+    def _band(index: int) -> tuple[float, float]:
+        if index < 0:
+            return (-_WALL_OUT, -_ROOM)
+        if index > 0:
+            return (_ROOM, _WALL_OUT)
+        return (-_ROOM, _ROOM)
+
+    for iy in (1, 0, -1):
+        for ix in (1, 0, -1):
+            for iz in (1, 0, -1):
+                if ix == 0 and iy == 0 and iz == 0:
+                    continue
+                x0, x1 = _band(ix)
+                y0, y1 = _band(iy)
+                z0, z1 = _band(iz)
+                lines.append(_box_brush(x0, x1, y0, y1, z0, z1))
     # CameraPath（Reactive Flick 形态：无悬空实体引用）
     lines += [
         "\tentity",
@@ -781,10 +828,16 @@ def _map_data_blob(space_tier: str) -> str:
         "\t\tUInt8 posLerp 2",
         "\t\tUInt8 angleLerp 2",
     ]
-    # 出生网格：玩家恒在原点，靶位按档铺网格
-    coords = [(0.0, 0.0)] + list(_SPAWN_GRIDS.get(space_tier, []))
-    for x, z in coords:
-        lines.append(_spawn_entity(x, _SPAWN_Y, z))
+    # 出生网格：玩家恒在原点（首个实体），靶位按档铺网格；原点去重防玩家与靶同点。
+    # none 档一个出生点实体都不写（对齐真实无网格样本 Aimerz+：连玩家出生点都没有，
+    # 玩家由游戏默认落点、靶位由 Dodge dist 承担——写了出生点会被读侧判成网格分布）。
+    if space_tier != "none":
+        coords = [(0.0, 0.0)]
+        for point in _SPAWN_GRIDS.get(space_tier, []):
+            if point != (0.0, 0.0):
+                coords.append(point)
+        for x, z in coords:
+            lines.append(_spawn_entity(x, _SPAWN_Y, z))
     return "\r\n".join(lines)
 
 
@@ -945,8 +998,9 @@ def forge_sce_text(prescription: ForgePrescription, *, name: str) -> bytes:
         ("Weapon Profile", _render(_WEAPON_PROFILE_TEMPLATE, weapon_params)),
     ):
         parts.append(f"[{section_name}]\r\n{body}")
-    if prescription.space_tier != "none":
-        parts.append(_map_data_blob(prescription.space_tier))
+    # 全档位一律内嵌地图：KovaaK 不做 MapName 回退（2026-10-08 真机证实——
+    # 无 [Map Data] 的场景进入后空场），none 档嵌的是 0 靶位出生点的空房间。
+    parts.append(_map_data_blob(prescription.space_tier))
     return ("\r\n\r\n".join(parts) + "\r\n").encode("utf-8")
 
 
@@ -1076,7 +1130,9 @@ def self_check(data: bytes, prescription: ForgePrescription, *, name: str) -> di
         expected_span = _GRID_EXPECTED_SPAN[prescription.space_tier]
         check("space.tier", prescription.space_tier, space["tier"])
         check("space.max_span_uu", expected_span, space["max_span_uu"])
-        check("space.spawn_count", len(_SPAWN_GRIDS[prescription.space_tier]) + 1, space["spawn_count"])
+        # 玩家原点出生点 + 网格去重后的靶位点（原点不重复算，与 _map_data_blob 写侧一致）
+        grid_points = [p for p in _SPAWN_GRIDS[prescription.space_tier] if p != (0.0, 0.0)]
+        check("space.spawn_count", len(grid_points) + 1, space["spawn_count"])
 
     # —— 训练语义闭环（生成器×读回器互证）——
     check("training.semantics", prescription.expected_semantics, descriptor["training"]["semantics"])
@@ -1200,6 +1256,22 @@ def _resolve_scenarios_dir(
     return root / _SCENARIOS_SUBPATH
 
 
+def _ensure_bot_file(scenarios_dir: Path) -> Path | None:
+    """确保 Bots/<_TARGET_BOT>.bot 存在（缺失才写，绝不覆盖）。
+
+    .sce 的 AddedBots 按 bot 文件名解析到 <install>/FPSAimTrainer/Saved/SaveGames/Bots/；
+    用户机器上没有该文件时场景无法构建（2026-10-10 真机教训的同族风险）。
+    返回写入路径；已存在返回 None。
+    """
+    bots_dir = scenarios_dir.parent / "Bots"
+    bot_path = bots_dir / f"{_TARGET_BOT}.bot"
+    if bot_path.exists():
+        return None
+    bots_dir.mkdir(parents=True, exist_ok=True)
+    bot_path.write_bytes(("\r\n".join(_BOT_FILE_LINES) + "\r\n").encode("utf-8"))
+    return bot_path
+
+
 def forge_and_write(
     prescription: ForgePrescription,
     *,
@@ -1210,7 +1282,9 @@ def forge_and_write(
 ) -> dict[str, Any]:
     """生成 → 回读自检 → 写入 KovaaK 场景目录（AC- 前缀命名，已存在拒绝覆盖）。
 
-    返回 ``{"path", "name", "self_check_report"}``。任何一步失败都不产生文件。
+    顺带确保引用的 Bots/<_TARGET_BOT>.bot 存在（缺失才写）。
+    返回 ``{"path", "name", "self_check_report", "bot_file_written"}``。
+    任何一步失败都不产生场景文件。
     """
     name = naming_scheme(prescription, name_style, date=date)
     data, report = forge_sce_text_checked(prescription, name=name)
@@ -1224,7 +1298,13 @@ def forge_and_write(
         )
     target_dir.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    return {"path": str(path), "name": name, "self_check_report": report}
+    bot_written = _ensure_bot_file(target_dir)
+    return {
+        "path": str(path),
+        "name": name,
+        "self_check_report": report,
+        "bot_file_written": str(bot_written) if bot_written else None,
+    }
 
 
 # ---------------------------------------------------------------------------
