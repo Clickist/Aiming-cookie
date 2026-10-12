@@ -243,7 +243,22 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.11</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-09</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.12</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-12</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">New</span><span>Redesigned first-run activation: if your trial credit is still being provisioned on first use, an initialization indicator shows and the app resumes automatically instead of wrongly asking you to pay</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Training history rows now show a diagnosis-type badge and a one-line takeaway, so each run&#39;s focus and conclusion are visible at a glance</span></li>
+            <li class="cl-new"><span class="cl-tag">New</span><span>Analysis artifacts now support an auto-cleanup cap (default 10GB, adjustable or off): only analysis artifacts are cleaned — recordings and raw traces are never touched automatically, and every auto-clean is logged in Settings</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Coach session files now self-repair when damaged: history conversations no longer get lost (corrupt content is quarantined as evidence, the session opens normally)</span></li>
+            <li class="cl-imp"><span class="cl-tag">Improved</span><span>Faster analysis: redundant re-verification of the same video removed and hot loops vectorized; the capture/recording hot path uses fewer resources</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Closing the window responds instantly: data is finalized safely in the background with timeout guards — no more long unresponsive waits after clicking close</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>The onboarding success banner no longer renders in the red error style</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>The startup window now has the same rounded corners as the main window</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>More resilient startup: no more crashes when antivirus interferes; internal waits now have timeout guards so nothing hangs forever</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Provider authorization polling no longer stalls after a single network hiccup; the capture input channel self-heals and reports honestly</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.11</h2><span class="cl-date">2026-10-09</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed crosshair/target trajectory data being wrongly discarded on static-respawn clicking maps (the 1wall5targets / beanClick family): trajectories on these maps are now rebuilt correctly and feed the analysis</span></li>
             <li class="cl-imp"><span class="cl-tag">Improved</span><span>More data self-healing: raw mouse data wrongly dropped by earlier versions keeps recovering from local files automatically, and stale &#39;available&#39; records left by storage migration are now corrected and honestly labeled</span></li>

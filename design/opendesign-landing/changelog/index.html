@@ -243,7 +243,22 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.11</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-09</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.12</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-12</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>新用户开通体验重做：注册后首次使用若额度还在准备中，会显示初始化进度并自动继续，不再误显示「去充值」</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>训练记录列表新增诊断类型徽章与结论摘要，一眼看清每局练的是什么、结论是什么</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>分析产物支持总量上限自动清理（默认 10GB，可调可关）：只清理分析产物，录像与原始轨迹永不自动触碰，每次自动清理都在设置中留痕</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>教练会话文件意外损坏时自动修复：历史对话不再因此丢失（坏内容隔离留证，会话照常打开）</span></li>
+            <li class="cl-imp"><span class="cl-tag">改进</span><span>分析提速：省去对同一段视频的重复校验，热点计算向量化；采集录制热路径更省资源</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>关闭窗口立即响应：数据在后台安全收尾（有超时保护），不再出现点了关闭后长时间无响应</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>新手引导「连接成功」提示不再显示为红色错误样式</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>启动窗口圆角与主界面一致</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>启动更抗干扰：杀毒软件拦截等场景不再闪退；各类内部等待加超时保护，不再出现永久卡住</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>模型服务授权轮询不再因一次网络抖动卡死；采集输入通道故障可自愈并如实标注</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.11</h2><span class="cl-date">2026-10-09</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分训练图（静态靶连续重生的点击图，如 1wall5targets、beanClick 家族）的准星/目标轨迹数据被误判丢弃的问题：这类图的轨迹现在能正常重建并参与分析</span></li>
             <li class="cl-imp"><span class="cl-tag">改进</span><span>数据自愈再进一步：更早版本误清的鼠标原始数据会继续从本地文件自动找回；存储迁移遗留的「假可用」记录也会被自动修正并如实标注</span></li>

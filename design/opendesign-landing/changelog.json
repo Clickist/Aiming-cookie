@@ -1,6 +1,62 @@
 {
   "versions": [
     {
+      "version": "1.4.12",
+      "date": "2026-10-12",
+      "items": [
+        {
+          "type": "new",
+          "zh": "新用户开通体验重做：注册后首次使用若额度还在准备中，会显示初始化进度并自动继续，不再误显示「去充值」",
+          "en": "Redesigned first-run activation: if your trial credit is still being provisioned on first use, an initialization indicator shows and the app resumes automatically instead of wrongly asking you to pay"
+        },
+        {
+          "type": "imp",
+          "zh": "训练记录列表新增诊断类型徽章与结论摘要，一眼看清每局练的是什么、结论是什么",
+          "en": "Training history rows now show a diagnosis-type badge and a one-line takeaway, so each run's focus and conclusion are visible at a glance"
+        },
+        {
+          "type": "new",
+          "zh": "分析产物支持总量上限自动清理（默认 10GB，可调可关）：只清理分析产物，录像与原始轨迹永不自动触碰，每次自动清理都在设置中留痕",
+          "en": "Analysis artifacts now support an auto-cleanup cap (default 10GB, adjustable or off): only analysis artifacts are cleaned — recordings and raw traces are never touched automatically, and every auto-clean is logged in Settings"
+        },
+        {
+          "type": "fix",
+          "zh": "教练会话文件意外损坏时自动修复：历史对话不再因此丢失（坏内容隔离留证，会话照常打开）",
+          "en": "Coach session files now self-repair when damaged: history conversations no longer get lost (corrupt content is quarantined as evidence, the session opens normally)"
+        },
+        {
+          "type": "imp",
+          "zh": "分析提速：省去对同一段视频的重复校验，热点计算向量化；采集录制热路径更省资源",
+          "en": "Faster analysis: redundant re-verification of the same video removed and hot loops vectorized; the capture/recording hot path uses fewer resources"
+        },
+        {
+          "type": "fix",
+          "zh": "关闭窗口立即响应：数据在后台安全收尾（有超时保护），不再出现点了关闭后长时间无响应",
+          "en": "Closing the window responds instantly: data is finalized safely in the background with timeout guards — no more long unresponsive waits after clicking close"
+        },
+        {
+          "type": "fix",
+          "zh": "新手引导「连接成功」提示不再显示为红色错误样式",
+          "en": "The onboarding success banner no longer renders in the red error style"
+        },
+        {
+          "type": "fix",
+          "zh": "启动窗口圆角与主界面一致",
+          "en": "The startup window now has the same rounded corners as the main window"
+        },
+        {
+          "type": "fix",
+          "zh": "启动更抗干扰：杀毒软件拦截等场景不再闪退；各类内部等待加超时保护，不再出现永久卡住",
+          "en": "More resilient startup: no more crashes when antivirus interferes; internal waits now have timeout guards so nothing hangs forever"
+        },
+        {
+          "type": "fix",
+          "zh": "模型服务授权轮询不再因一次网络抖动卡死；采集输入通道故障可自愈并如实标注",
+          "en": "Provider authorization polling no longer stalls after a single network hiccup; the capture input channel self-heals and reports honestly"
+        }
+      ]
+    },
+    {
       "version": "1.4.11",
       "date": "2026-10-09",
       "items": [
