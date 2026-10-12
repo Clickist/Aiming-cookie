@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.4.14",
+      "date": "2026-10-12",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "启动不再先黑一下：窗口等界面第一帧画好才显示，启动更顺眼",
+          "en": "No more black flash on startup: the window now appears only after the first frame is painted"
+        }
+      ]
+    },
+    {
       "version": "1.4.13",
       "date": "2026-10-12",
       "items": [
