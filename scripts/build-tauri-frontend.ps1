@@ -96,6 +96,13 @@ if ($mirroredEnvFiles.Count -gt 0) {
     Write-Warning "No production env file found under $frontendRoot; NEXT_PUBLIC_* values will not be inlined."
 }
 
+# Sync changelog before building: the npm prebuild hook does not fire on
+# `npm run build:tauri` (tauri beforeBuildCommand), so without this the exe
+# embeds a stale changelog and the in-app release notice silently skips the
+# new version (fail-closed no-show, found in the 1.4.12 RC walkthrough).
+& node (Join-Path $frontendRoot "scripts\sync-changelog.mjs")
+if ($LASTEXITCODE -ne 0) { throw "sync-changelog failed (exit $LASTEXITCODE)" }
+
 # The route is a Browser Mock server surface, not part of the Desktop WebView.
 Remove-BuildArtifact (Join-Path $stageRoot "app\api")
 # Legacy dynamic analysis paths stay available in development. The packaged
