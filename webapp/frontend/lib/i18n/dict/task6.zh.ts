@@ -277,6 +277,8 @@ export const task6Zh = {
   "settings.capture.loading": "正在读取采集状态",
   "settings.capture.unavailableTitle": "采集状态不可用",
   "settings.capture.unavailableBody": "本地采集服务暂时不可用。",
+  "settings.capture.restartExhaustedTitle": "遥测通道已停止",
+  "settings.capture.restartExhaustedBody": "采集通道多次异常退出且自动恢复达到上限，本轮遥测数据将缺失到下一次开始采集；重启应用可重新拉起。",
   "settings.capture.togglePrefix": "检测到 KovaaK 进程后开始采集",
   "settings.capture.standbySuffix": "，当前待命",
   "settings.capture.offSuffix": "，当前已关闭",
@@ -321,6 +323,17 @@ export const task6Zh = {
   "settings.storage.removeIncompleteTitle": "移除未完成采集",
   "settings.storage.reasonInterrupted": "整理过程被中断",
   "settings.storage.reasonUncategorized": "未归类的采集产物",
+  "settings.storage.cleanupCap.title": "分析产物自动清理",
+  "settings.storage.cleanupCap.desc": "分析产物超过上限时自动从最旧开始删除；只清分析产物，不动 Run 录像与 Raw trace。",
+  "settings.storage.cleanupCap.enable": "超过上限时自动清理",
+  "settings.storage.cleanupCap.limitLabel": "上限（GB）",
+  "settings.storage.cleanupCap.apply": "应用",
+  "settings.storage.cleanupCap.applied": "已保存自动清理设置。",
+  "settings.storage.cleanupCap.applyFailed": "保存自动清理设置失败，请重试。",
+  "settings.storage.cleanupCap.loadFailed": "自动清理设置读取失败。",
+  "settings.storage.cleanupCap.invalidLimit": "上限至少为 1GB。",
+  "settings.storage.cleanupCap.lastRun": "上次自动清理：删除 {count} 项，释放 {bytes}。",
+  "settings.storage.cleanupCap.lastRunNone": "尚未触发过自动清理。",
   "settings.storage.emptyCleanup": "没有可清理的录像、Raw trace 或未完成采集。",
 
   // ── SettingsWorkspace.tsx —— 存储位置卡（自定义数据根，2026-09-28）────────
@@ -636,6 +649,9 @@ export const task6Zh = {
   // zh = 后端现行中文逐字（动态部分为 {占位符}，名字对应 detail.args 键）；
   // 缺码时 api.ts 回落后端 zh 原文 message，未映射错误永远有兜底。
   "api.error.session.notFound": "session 不存在",
+  // 2026-10-11 竞态修复：网关 403 在途（sidecar 稳定码 trial_provisioning 的
+  // 兜底文案；正常路径由 CoachPanel 初始化卡分流，不进错误卡）。
+  "api.error.trialProvisioning": "免费试用额度正在准备中，请稍候片刻",
   "api.error.session.forbidden": "无权访问此 session",
   "api.error.session.contractVersionUnsupported": "分析结果版本不受支持",
   "api.error.session.deleteActive": "分析进行中，请等完成或失败后再删除",

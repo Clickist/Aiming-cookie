@@ -9,11 +9,11 @@ import {
   deleteProviderProfile,
   discoverCustomProviderModels,
   getProviderAuthOperation,
-  getProviderCatalog,
   getProviderCredential,
   fetchMemberStatus,
   listStoredCustomProviderModels,
   logoutMemberAccount,
+  refreshProviderCatalog,
   startMemberLogin,
   setDefaultProviderProfile,
   setProviderApiKey,
@@ -491,7 +491,8 @@ export function ProviderSettingsSection({
 
   const reloadWizardCatalog = () => {
     setWizardCatalogReloading(true);
-    void getProviderCatalog()
+    // ⟳ 走强制刷新端点：内置档名单实时问上游 /models（发现层落盘后合并返回）。
+    void refreshProviderCatalog()
       .then((next) => setWizardCatalogReload(next))
       .catch(() => notify(t("settings.provider.catalogRefreshFailed")))
       .finally(() => setWizardCatalogReloading(false));
@@ -632,7 +633,11 @@ export function ProviderSettingsSection({
     }
   };
 
-  // OAuth 授权轮询：非终态时 900ms 后读取一次操作状态。
+  // OAuth 授权轮询：非终态时 900ms 后读取一次操作状态。一次瞬态网络失败不
+  // 能停摆（鲁棒性审计 P1-14）：catch 里除 toast 外自增 authPollTick 重排
+  // effect——否则 state 不变、effect 不重跑，状态条永远停在「授权运行中」。
+  // 停止条件由操作自身终态兜底（服务端超时回 timed_out 终态），不会无限轮询。
+  const [authPollTick, setAuthPollTick] = useState(0);
   useEffect(() => {
     if (!authOperation || isAuthTerminal(authOperation)) return;
     const timer = window.setTimeout(() => {
@@ -647,10 +652,14 @@ export function ProviderSettingsSection({
             await refresh(true);
           }
         })
-        .catch(() => notify(t("settings.provider.authUnreadable")));
+        .catch(() => {
+          notify(t("settings.provider.authUnreadable"));
+          // 瞬态失败也要排下一拍：状态不变时 effect 不会重跑（P1-14 停摆根因）。
+          setAuthPollTick((tick) => tick + 1);
+        });
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [authOperation, authProfileId, notify, refresh]);
+  }, [authOperation, authProfileId, notify, refresh, authPollTick]);
 
   const selectedAuthModes = officialSelected
     ? catalog?.providers.find((provider) => provider.provider_id === OFFICIAL_RELAY_PROVIDER_ID)?.auth_modes
@@ -686,7 +695,8 @@ export function ProviderSettingsSection({
   const reloadDetailCatalog = () => {
     if (!detail || isCustomProviderKind(detail.kind)) return;
     setDetailCatalogReloading(true);
-    void getProviderCatalog()
+    // ⟳ 走强制刷新端点：内置档名单实时问上游 /models（发现层落盘后合并返回）。
+    void refreshProviderCatalog()
       .then((next) => setDetailCatalogReload(next))
       .catch(() => notify(t("settings.provider.catalogRefreshFailed")))
       .finally(() => setDetailCatalogReloading(false));

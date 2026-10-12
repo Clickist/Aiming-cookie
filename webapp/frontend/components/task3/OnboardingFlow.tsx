@@ -27,6 +27,7 @@ import {
   getProviderAuthOperation,
   getProviderCatalog,
   listProviderProfiles,
+  pollMemberLogin,
   startMemberLogin,
   submitProviderAuthInput,
   takeProviderAuthResult,
@@ -83,6 +84,9 @@ type MemberStage = "waiting" | "not_subscribed" | "member" | "test_failed";
 const CUSTOM_PROVIDER_ID = "custom";
 /** 订阅页（契约 §0：落地页 origin 白名单含 accounts）。①b 态1 一键回订阅页。 */
 const MEMBER_SUBSCRIBE_URL = `${ACCOUNTS_BASE_URL}/pay`;
+/** 轮询兜底间隔（1009 野外案，RFC 8628 device flow 形态）：deep-link 被浏览器吞时
+ * 等待页的自救通道。3s 与 deep-link 即时回跳并存，谁先到谁消费（行一次性）。 */
+const MEMBER_POLL_INTERVAL_MS = 3000;
 const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: CustomProviderProtocol }> = {
   custom_openai_compatible: {
     label: "OpenAI-compatible",
@@ -120,6 +124,10 @@ export function OnboardingFlow() {
   const [operation, setOperation] = useState<ProviderAuthOperation | null>(null);
   const [promptValue, setPromptValue] = useState("");
   const [message, setMessage] = useState("");
+  // message 的并行 tone（1010 审计 P0-2）：该通道原先一律按 error 渲染，
+  // 「连接成功」也走红横幅（红=成功语义反转）。按 Notice 既有词表分
+  // success/info/error 三档；缺省 error 保持失败提示的既有视觉。
+  const [messageTone, setMessageTone] = useState<"success" | "info" | "error">("error");
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
   const [captureOptIn, setCaptureOptIn] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatusV1 | null>(null);
@@ -433,6 +441,49 @@ export function OnboardingFlow() {
     return () => window.clearInterval(timer);
   }, [memberSelected, desktop, memberStage, memberTrialAvailable, syncMemberState]);
 
+  // 登录轮询兜底（1009 野外案，RFC 8628 device flow 形态）：deep-link 被浏览器
+  // 吞掉（协议弹窗拒掉/策略拦截）时，上面的 syncMemberState 轮询救不了——sidecar
+  // 还没拿到票，/api/me 永远未登录。这里直接问「dc 是否已被认领」，认领即换票，
+  // 与 deep-link 汇合同一推进路径；pending/error 继续轮询（网络抖动正是要救的
+  // 场景），stopped 给指引后由用户重开登录自然起新 dc 恢复轮询。
+  const pollLoginInflightRef = useRef(false);
+  useEffect(() => {
+    if (!memberSelected || !desktop || memberStage !== "waiting") return undefined;
+    let disposed = false;
+    const timer = window.setInterval(async () => {
+      if (disposed || pollLoginInflightRef.current) return;
+      pollLoginInflightRef.current = true;
+      try {
+        const result = await pollMemberLogin();
+        if (disposed) return;
+        if (result.outcome === "pending" || result.outcome === "error") return;
+        if (result.outcome === "stopped") {
+          setMemberMessage(result.message);
+          return;
+        }
+        // done：与 deep-link 成功同一推进路径（连通测试失败 → test_failed）。
+        if (result.connection_ok === false) {
+          const me = await syncMemberState();
+          if (!disposed && me?.member) {
+            setMemberStage("test_failed");
+            setMemberMessage(result.connection_message ?? t("onboarding.member.testFailedFallback"));
+          }
+          return;
+        }
+        const me = await syncMemberState();
+        if (!disposed && me?.member) setMemberStage("member");
+      } catch {
+        // sidecar 未就绪等瞬态失败：保持等待下一轮。
+      } finally {
+        pollLoginInflightRef.current = false;
+      }
+    }, MEMBER_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [memberSelected, desktop, memberStage, syncMemberState, t]);
+
   useEffect(() => {
     const controller = new AbortController();
     void Promise.allSettled([
@@ -457,12 +508,14 @@ export function OnboardingFlow() {
       } else {
         setCatalogUnavailable(true);
         setMessage(t("onboarding.catalog.unavailable"));
+        setMessageTone("error");
       }
       if (statusResult.status === "fulfilled" && statusResult.value.status === "ready") {
         setProfileId(statusResult.value.profile_id);
         setConnectionState("ready");
         setCatalogUnavailable(false);
         setMessage(t("onboarding.connect.successSaved"));
+        setMessageTone("success");
         if (profilesResult.status === "fulfilled") {
           const profile = profilesResult.value.profiles.find((item) => item.id === statusResult.value.profile_id) ?? null;
           setSavedProfile(profile);
@@ -520,14 +573,18 @@ export function OnboardingFlow() {
             const status = await testProviderProfile(profileId);
             setConnectionState(status.status === "ready" ? "ready" : "failed");
             setMessage(status.status === "ready" ? t("onboarding.connect.successModel", { model: custom ? customModel : selectedModelLabel }) : status.message);
+            setMessageTone(status.status === "ready" ? "success" : "error");
+            if (status.status === "ready") refreshCatalogModels();
           } else if (["failed", "cancelled", "timed_out"].includes(next.status)) {
             setConnectionState("failed");
             setMessage(t("onboarding.auth.incomplete"));
+            setMessageTone("error");
           }
         })
         .catch(() => {
           setConnectionState("failed");
           setMessage(t("onboarding.auth.statusUnreadable"));
+          setMessageTone("error");
         });
     }, 900);
     return () => window.clearTimeout(timer);
@@ -539,6 +596,20 @@ export function OnboardingFlow() {
       .then(setCaptureStatus)
       .catch(() => setCaptureStatus(null));
   }, [desktop, step]);
+
+  // 探针成功即名单落盘（sidecar 发现层）：重拉目录让内置档模型下拉立即
+  // 出现实时发现的模型（含 pinned 目录未收录的新模型）。失败静默——原快照
+  // 名单仍可用。
+  const refreshCatalogModels = () => {
+    void getProviderCatalog()
+      .then((next) => {
+        setProviders((current) => current.map((provider) => {
+          const fresh = next.providers.find((item) => item.provider_id === provider.provider_id);
+          return fresh ? { ...provider, models: fresh.models } : provider;
+        }));
+      })
+      .catch(() => undefined);
+  };
 
   const connect = async () => {
     setConnectionState("testing");
@@ -573,14 +644,18 @@ export function OnboardingFlow() {
         const next = await authorizeProviderProfile(profile.id, "oauth");
         setOperation(next);
         setMessage(t("onboarding.auth.followProvider"));
+        setMessageTone("info");
         return;
       }
       const status = await testProviderProfile(profile.id);
       setConnectionState(status.status === "ready" ? "ready" : "failed");
       setMessage(status.status === "ready" ? t("onboarding.connect.successModel", { model: custom ? customModel : selectedModelLabel }) : status.message);
+      setMessageTone(status.status === "ready" ? "success" : "error");
+      if (status.status === "ready" && !custom) refreshCatalogModels();
     } catch {
       setConnectionState("failed");
       setMessage(t("onboarding.connect.failed"));
+      setMessageTone("error");
     }
   };
 
@@ -593,6 +668,7 @@ export function OnboardingFlow() {
       setOperation(next);
     } catch {
       setMessage(t("onboarding.auth.inputRejected"));
+      setMessageTone("error");
     }
   };
 
@@ -616,6 +692,7 @@ export function OnboardingFlow() {
       router.push("/");
     } catch {
       setMessage(t("onboarding.capture.saveFailed"));
+      setMessageTone("error");
       setFinishing(false);
     }
   };
@@ -1062,7 +1139,7 @@ export function OnboardingFlow() {
               <span>{t("onboarding.capture.currentCapture")} <strong>{captureStatus.capture_enabled ? t("onboarding.capture.captureEnabled") : t("onboarding.capture.captureDisabled")}</strong></span>
             </div>
           ) : null}
-          {message ? <Notice tone="error">{message}</Notice> : null}
+          {message ? <Notice tone={messageTone}>{message}</Notice> : null}
           <div className="task3-onboarding-actions">
             <Button onClick={() => setStep(1)} variant="secondary">{t("onboarding.capture.back")}</Button>
             <Button disabled={finishing || !desktop || !captureOptIn || !(connectionReady || memberReady)} onClick={() => void finish()}>{finishing ? t("onboarding.capture.saving") : t("onboarding.capture.enter")}</Button>

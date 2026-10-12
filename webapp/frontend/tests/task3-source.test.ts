@@ -287,6 +287,25 @@ test("onboarding provider catalog failure has error status semantics", async () 
   assert.match(styles, /\[data-tone="error"\][^{]*\{[\s\S]*color: var\(--error\)/);
 });
 
+test("onboarding success messages leave the error banner channel (1010 审计 P0-2)", async () => {
+  const onboarding = await source("components/task3/OnboardingFlow.tsx");
+  const primitives = await source("ui/primitives.tsx");
+  const theme = await source("ui/theme.css");
+  // message 通道带并行 tone 状态，按 Notice 既有词表分 success/info/error。
+  assert.match(onboarding, /const \[messageTone, setMessageTone\] = useState<"success" \| "info" \| "error">\("error"\)/);
+  // 成功路径写入 success tone；失败路径显式落 error（不留上一次的 tone 残留）。
+  assert.match(onboarding, /setMessage\(t\("onboarding\.connect\.successSaved"\)\);\s*setMessageTone\("success"\)/);
+  assert.match(onboarding, /setMessageTone\(status\.status === "ready" \? "success" : "error"\)/);
+  assert.match(onboarding, /setMessageTone\("info"\)/);
+  // Notice 不再写死 error tone。
+  assert.match(onboarding, /<Notice tone=\{messageTone\}>\{message\}<\/Notice>/);
+  assert.doesNotMatch(onboarding, /<Notice tone="error">\{message\}<\/Notice>/);
+  // Notice 的 success tone 进类型与样式层：成功 = event-kill 文字（透明底+hairline 边）。
+  assert.match(primitives, /tone\?: Exclude<Tone, "neutral">;/);
+  assert.match(theme, /\.ac-notice\[data-tone="success"\]\s*\{[^}]*background:\s*transparent;/);
+  assert.match(theme, /\.ac-notice\[data-tone="success"\]\s*\{[^}]*color:\s*var\(--event-kill\);/);
+});
+
 test("custom Provider auto-detects protocol and exposes protocol choice only as fallback", async () => {
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
   assert.doesNotMatch(onboarding, /useState\("http:\/\/127\.0\.0\.1:11434\/v1"\)/);

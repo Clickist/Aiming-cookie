@@ -264,7 +264,12 @@ export function planLabel(plan: MemberMe["plan"]): string {
  * （契约 §5.3 兼容段）：新值 `jwt_expired` / `member_required` / `quota_exhausted`
  * / `quota_prehold_insufficient`，旧值 `auth_expired` / `ac_member_required`。
  */
-export type MemberGatewayError = "jwt_expired" | "member_required" | "quota_exhausted" | "quota_prehold_insufficient";
+export type MemberGatewayError =
+  | "jwt_expired"
+  | "member_required"
+  | "quota_exhausted"
+  | "quota_prehold_insufficient"
+  | "trial_provisioning";
 
 const GATEWAY_ERROR_ALIASES: Record<string, MemberGatewayError> = {
   jwt_expired: "jwt_expired",
@@ -275,6 +280,10 @@ const GATEWAY_ERROR_ALIASES: Record<string, MemberGatewayError> = {
   // 2026-10-01 新增（服务端网关 403）：语义＝本回合预算预扣超过剩余额度，
   // 与「本期额度用完」（quota_exhausted）是两种口径，文案分列。
   quota_prehold_insufficient: "quota_prehold_insufficient",
+  // 2026-10-11 新增（网关 403 在途）：不是错误——CoachPanel 据此转初始化卡，
+  // 不走 gatewayErrorNotice 的错误文案。表尾追加＝旧码优先级不变（混入旧码
+  // 子串的文本仍按旧码分流，不吞旧码语义）。
+  provisioning_in_flight: "trial_provisioning",
 };
 
 /**
@@ -298,6 +307,9 @@ export function gatewayErrorNotice(code: MemberGatewayError): { tone: "warn" | "
   if (code === "quota_exhausted") return { tone: "error", text: MEMBER_COPY.quotaExhausted };
   if (code === "quota_prehold_insufficient") return { tone: "error", text: MEMBER_COPY.quotaPreholdInsufficient };
   if (code === "member_required") return { tone: "error", text: MEMBER_COPY.noProvider };
+  // 2026-10-11（trial_provisioning）：不应到达——该码在 CoachPanel 单独分流为
+  // 初始化卡，永远不该进错误文案路径；空文案兜底防泄漏成错误提示。
+  if (code === "trial_provisioning") return { tone: "warn", text: "" };
   return { tone: "warn", text: MEMBER_COPY.jwtExpired };
 }
 

@@ -169,7 +169,8 @@ test("Capture section hosts the aggregate status dot and the diagnostics export 
   // 橙点悬浮「采集服务不正常」；具体采集细节不上屏。
   assert.match(settings, /className="task6-capture-status-dot"/);
   assert.match(settings, /captureIssue \? t\("settings\.capture\.dotIssue"\)/);
-  assert.match(settings, /const captureIssue = \(capture \? capture\.runtime_health !== "healthy" : false\) \|\| externalBroken;/);
+  // [rb P1-16 2026-10-11] 遥测通道拉起预算耗尽（restart_exhausted）一并转橙。
+  assert.match(settings, /const captureIssue = \(capture \? capture\.runtime_health !== "healthy" : false\) \|\| externalBroken \|\| telemetryRestartExhausted;/);
   assert.match(settings, /externalTelemetry\?\.activation === "runtime_unavailable"/);
   // 开关行合并 KovaaK 在线状态；细节行（Raw Input 授权/平台/暂停局）与回放缓冲卡退役。
   assert.match(settings, /className="task6-toggle-row"/);
@@ -339,4 +340,15 @@ test("Knowledge section pins the official pack on top and gates switching on val
   assert.match(api, /export async function uninstallKnowledgePack\(/);
   assert.match(api, /export class KnowledgePackImportError/);
   assert.match(api, /"\/api\/knowledge-packs\/import"/);
+});
+
+test("settings status polling drops to 3s and pauses while the tab is hidden (1010 性能审计 FE-1)", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  // 采集状态（2 路 HTTP）与窗口捕获状态（1 路 IPC）两处常驻轮询共用 3s 档；
+  // 迁移中的条件轮询（storage 卡片）不在此列，仍按自身节奏。
+  assert.match(settings, /const SETTINGS_POLL_INTERVAL_MS = 3_000;/);
+  assert.equal(settings.match(/SETTINGS_POLL_INTERVAL_MS/g)?.length, 3);
+  // tab 不可见/最小化即整路暂停，恢复可见重新起拍。
+  assert.equal(settings.match(/document\.hidden \? stopPolling\(\) : startPolling\(\)/g)?.length, 2);
+  assert.equal(settings.match(/document\.addEventListener\("visibilitychange", handleVisibility\)/g)?.length, 2);
 });

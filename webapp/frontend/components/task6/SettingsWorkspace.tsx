@@ -6,6 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 
 import {
   deleteCalibrationProfile,
+  getAnalysisCleanupSettings,
   getCalibrationProfile,
   getCaptureStatus,
   getExternalTelemetry,
@@ -17,6 +18,7 @@ import {
   removeIncompleteCapture,
   removeRunEvidence,
   revealStorageItem,
+  saveAnalysisCleanupSettings,
   saveCalibrationProfile,
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
@@ -39,6 +41,7 @@ import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPan
 import { KnowledgeSettingsSection } from "@/components/task6/KnowledgeSettingsSection";
 import { ProviderSettingsSection } from "@/components/task6/ProviderSettingsSection";
 import type {
+  AnalysisCleanupSettingsV1,
   CalibrationProfileV1,
   CaptureStatusV1,
   ExternalTelemetryConfigV1,
@@ -335,6 +338,120 @@ function StorageLocationCard({
   );
 }
 
+// [ac P0-5 2026-10-11] 分析产物总量上限清理卡（点点拍板 Steam 方案，层 2+3）：
+// 上限默认 10GB，超限从最旧的分析产物开始删；设置里可见可关（禁止静默），
+// 最近一次自动清理的「删了哪些、释放多少」在此留痕展示。只清 Analysis
+// artifacts——Run 录像与 Raw trace 是用户证据，本卡绝不触碰。
+function AnalysisCleanupCard({ notify }: { notify: (message: string) => void }) {
+  const t = useT();
+  const [settings, setSettings] = useState<AnalysisCleanupSettingsV1 | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [limitGb, setLimitGb] = useState("10");
+  const [busy, setBusy] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    getAnalysisCleanupSettings()
+      .then((next) => {
+        if (disposed) return;
+        setSettings(next);
+        setEnabled(next.enabled);
+        setLimitGb(String(Math.round(next.limit_bytes / 1024 ** 3)));
+      })
+      .catch(() => {
+        if (!disposed) setLoadFailed(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const apply = async () => {
+    const gigabytes = Number(limitGb);
+    if (!Number.isFinite(gigabytes) || gigabytes < 1) {
+      notify(t("settings.storage.cleanupCap.invalidLimit"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await saveAnalysisCleanupSettings({
+        enabled,
+        limit_bytes: Math.round(gigabytes * 1024 ** 3),
+      });
+      setSettings(next);
+      setEnabled(next.enabled);
+      setLimitGb(String(Math.round(next.limit_bytes / 1024 ** 3)));
+      notify(t("settings.storage.cleanupCap.applied"));
+    } catch {
+      notify(t("settings.storage.cleanupCap.applyFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const lastRun = settings?.last_run ?? null;
+  const lastRunFacts = lastRun
+    ? [
+        t("settings.storage.cleanupCap.lastRun", {
+          count: lastRun.removed.length,
+          bytes: formatBytes(lastRun.removed.reduce((sum, item) => sum + item.bytes, 0)),
+        }),
+      ]
+    : [t("settings.storage.cleanupCap.lastRunNone")];
+
+  return (
+    <Panel>
+      <h3 className="task6-profile-group-title">{t("settings.storage.cleanupCap.title")}</h3>
+      <p className="task6-card-desc">{t("settings.storage.cleanupCap.desc")}</p>
+      {loadFailed ? <p className="task6-storage-location-error">{t("settings.storage.cleanupCap.loadFailed")}</p> : null}
+      {settings ? (
+        <>
+          <div className="task6-toggle-rows">
+            <div className="task6-toggle-row">
+              <div className="task6-toggle-row-text">
+                <span>{t("settings.storage.cleanupCap.enable")}</span>
+              </div>
+              <div className="task6-toggle-row-side">
+                <input
+                  checked={enabled}
+                  onChange={(event) => setEnabled(event.target.checked)}
+                  type="checkbox"
+                  aria-label={t("settings.storage.cleanupCap.enable")}
+                />
+              </div>
+            </div>
+            <div className="task6-toggle-row">
+              <div className="task6-toggle-row-text">
+                <span>{t("settings.storage.cleanupCap.limitLabel")}</span>
+              </div>
+              <div className="task6-toggle-row-side">
+                <FieldControl
+                  aria-label={t("settings.storage.cleanupCap.limitLabel")}
+                  inputMode="decimal"
+                  min="1"
+                  step="1"
+                  type="number"
+                  value={limitGb}
+                  onChange={(event) => setLimitGb(event.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="task6-storage-location-actions">
+            <Button disabled={busy} onClick={() => void apply()} size="compact" variant="secondary">
+              {t("settings.storage.cleanupCap.apply")}
+            </Button>
+          </div>
+          <p className="task6-muted">{lastRunFacts.join(" ")}</p>
+        </>
+      ) : !loadFailed ? (
+        <Loading>{t("settings.storage.loading")}</Loading>
+      ) : null}
+    </Panel>
+  );
+}
+
 /** 「8月27日」短日期；解析失败返回 null（不渲染，不硬造）。 */
 function formatDay(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -387,9 +504,14 @@ const HASH_SECTION_ALIASES: Record<string, SettingsSectionId> = {
   theme: "general",
 };
 
-// Consecutive unavailable polls (1s each) before the settings UI leaves the last
+// Consecutive unavailable polls before the settings UI leaves the last
 // known good capture status; single blips (~1/1000 polls) must not flash red.
 const CAPTURE_UNAVAILABLE_POLL_LIMIT = 3;
+
+// FE-1（1010 性能审计）：设置页三路轮询原为 1s（≈180 请求/分钟，无条件、
+// 不分 tab、不随 document.hidden 暂停）。降到 3s 档；tab 不可见/窗口最小化
+// 时整路暂停，恢复可见立即补一拍保住状态点新鲜度。
+const SETTINGS_POLL_INTERVAL_MS = 3_000;
 
 // The first settings load must not block on a slow native control channel:
 // after this long the snapshot keeps capture null and the 1 s poller fills it in.
@@ -583,6 +705,7 @@ export function SettingsWorkspace() {
     if (!desktop) return;
     let disposed = false;
     let unavailableStreak = 0;
+    let timer: number | undefined;
     const pollCaptureStatus = async () => {
       // 外部遥测源健康随同一轮询刷新（状态点聚合用；失败不打扰用户）。
       void getExternalTelemetry().then(setExternalTelemetry).catch(() => undefined);
@@ -600,18 +723,33 @@ export function SettingsWorkspace() {
         // Polling is best effort after the initial settings load.
       }
     };
-    const timer = window.setInterval(() => void pollCaptureStatus(), 1_000);
+    // FE-1（1010 性能审计）：可见时按 3s 档轮询；tab 不可见/最小化即整路暂停，
+    // 恢复可见重新起拍（状态点新鲜度取舍 1s→3s，审计施工单定档）。
+    const startPolling = () => {
+      window.clearInterval(timer);
+      timer = window.setInterval(() => void pollCaptureStatus(), SETTINGS_POLL_INTERVAL_MS);
+    };
+    const stopPolling = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+    };
+    const handleVisibility = () => (document.hidden ? stopPolling() : startPolling());
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      stopPolling();
     };
   }, [desktop]);
 
-  // 性能栏（点点拍板）：自动录像编码路径只在桌面运行时存在；1s 轮询照抄上面
-  // 采集状态模式，首查立即执行避免空屏；失败保留上一份已知状态，不打扰用户。
+  // 性能栏（点点拍板）：自动录像编码路径只在桌面运行时存在；轮询照抄上面
+  // 采集状态模式（FE-1：3s 档 + 隐藏暂停），首查立即执行避免空屏；失败保留
+  // 上一份已知状态，不打扰用户。
   useEffect(() => {
     if (!desktop) return;
     let disposed = false;
+    let timer: number | undefined;
     const pollWindowCaptureStatus = async () => {
       try {
         const next = await getDesktopWindowCaptureStatus();
@@ -620,11 +758,21 @@ export function SettingsWorkspace() {
         // Polling is best effort after the initial settings load.
       }
     };
-    void pollWindowCaptureStatus();
-    const timer = window.setInterval(() => void pollWindowCaptureStatus(), 1_000);
+    const startPolling = () => {
+      void pollWindowCaptureStatus();
+      timer = window.setInterval(() => void pollWindowCaptureStatus(), SETTINGS_POLL_INTERVAL_MS);
+    };
+    const stopPolling = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+    };
+    const handleVisibility = () => (document.hidden ? stopPolling() : startPolling());
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      stopPolling();
     };
   }, [desktop]);
 
@@ -697,7 +845,10 @@ export function SettingsWorkspace() {
   // 采集源状态点（点点 0912 拍板）：任一采集源（采集服务/外部遥测）异常即整点转橙。
   const externalBroken = externalTelemetry?.activation === "failed"
     || externalTelemetry?.activation === "runtime_unavailable";
-  const captureIssue = (capture ? capture.runtime_health !== "healthy" : false) || externalBroken;
+  // [rb P1-16 2026-10-11] 遥测通道拉起预算耗尽 = 死亡通道缺席到下一会话，
+  // 是用户必须看见的明确失败（禁止恒绿假象）：状态点一并转橙。
+  const telemetryRestartExhausted = capture?.telemetry_capture?.restart_exhausted === true;
+  const captureIssue = (capture ? capture.runtime_health !== "healthy" : false) || externalBroken || telemetryRestartExhausted;
   // 性能栏：编码路径展示映射（null=未在录制，未知枚举值原样透出）。
   const encoderPathDisplay = describeEncoderPath(windowCapture ? windowCapture.encoderPath : null);
 
@@ -895,6 +1046,9 @@ export function SettingsWorkspace() {
               {!desktop ? <Notice className="task6-settings-notice" tone="warning" title={t("settings.capture.browserTitle")}>{t("settings.capture.browserBody")}</Notice> : null}
               {desktop && capture === null ? <Loading>{t("settings.capture.loading")}</Loading> : null}
               {capture?.availability === "unavailable" ? <Notice className="task6-settings-notice" tone="error" title={t("settings.capture.unavailableTitle")}>{capture.error?.message ?? t("settings.capture.unavailableBody")}</Notice> : null}
+              {/* [rb P1-16] 拉起预算耗尽是明确失败：不进投影、只靠状态点转色
+                  就是「活 UI 恒绿」的审计伤口，必须有一行可见的失败说明。 */}
+              {telemetryRestartExhausted ? <Notice className="task6-settings-notice" tone="error" title={t("settings.capture.restartExhaustedTitle")}>{t("settings.capture.restartExhaustedBody")}</Notice> : null}
               {capture ? (
                 <div className="task6-toggle-rows">
                   <div className="task6-toggle-row">
@@ -1059,6 +1213,11 @@ export function SettingsWorkspace() {
           {desktop ? (
             <div className="task6-settings-subsection">
               <StorageLocationCard ask={ask} notify={setFeedback} />
+            </div>
+          ) : null}
+          {desktop ? (
+            <div className="task6-settings-subsection">
+              <AnalysisCleanupCard notify={setFeedback} />
             </div>
           ) : null}
           <div className="task6-settings-subsection">

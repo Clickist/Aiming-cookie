@@ -22,9 +22,11 @@ html.ac-window-rounded body {
 }
 
 /* onboarding 与主壳共用圆角窗口处理：onboarding 根是独立 .task3-onboarding，
-   不在选择器内时窗口直角（1002 点点发现）。 */
+   不在选择器内时窗口直角（1002 点点发现）。启动闸 .task3-runtime-gate 同理
+   （1012 点点发现）：闸是启动期唯一根节点，漏了就方角顶满。 */
 html.ac-window-rounded:not(.ac-window-maximized) .task3-app,
-html.ac-window-rounded:not(.ac-window-maximized) .task3-onboarding {
+html.ac-window-rounded:not(.ac-window-maximized) .task3-onboarding,
+html.ac-window-rounded:not(.ac-window-maximized) .task3-runtime-gate {
   border-radius: var(--radius-lg);
   /* 用 outline 画描边：border 会在文档高度上 +2px，把 body 顶出一条
      2px 的外层滚动条（0910 实测）；outline 不占布局且跟随圆角。 */
@@ -34,7 +36,8 @@ html.ac-window-rounded:not(.ac-window-maximized) .task3-onboarding {
 }
 
 html.ac-window-rounded.ac-window-maximized .task3-app,
-html.ac-window-rounded.ac-window-maximized .task3-onboarding {
+html.ac-window-rounded.ac-window-maximized .task3-onboarding,
+html.ac-window-rounded.ac-window-maximized .task3-runtime-gate {
   border-radius: 0;
   border: 0;
 }
@@ -1856,7 +1859,11 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
 .task3-runtime-gate {
   align-items: center;
   display: grid;
-  min-height: 100vh;
+  /* 圆角窗口下 body 透明，闸自画不透明底（1012：与 .task3-app 同口径，
+     min-height 扣 inset 保持 calc 相容）。 */
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
+  background: var(--background);
+  color: var(--on-background);
   place-items: center;
 }
 

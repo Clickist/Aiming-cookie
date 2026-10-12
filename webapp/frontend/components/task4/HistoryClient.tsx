@@ -51,6 +51,12 @@ const PENDING_COLLAPSED_KEY = "aiming-cookie.ui.history-pending-collapsed";
 /** 视频 finalize 由后台完成；这些终态之外的 Run 证据还会变化，需要继续跟进。 */
 const RUN_FINALIZED_STATES = new Set(["finalized", "source_unavailable", "unavailable"]);
 
+/** 历史页轮询节奏（FE-3，1010 性能审计）：有非终态 Run 时 5s 跟进 finalize；
+    空列表（新装机最常见长期状态）没有跟进对象，原样 5s 会永不停歇，降到
+    20s 档——新训练发现延迟 5s→20s，换取空置页面 3/4 的请求量。 */
+const HISTORY_POLL_INTERVAL_MS = 5_000;
+const HISTORY_EMPTY_POLL_INTERVAL_MS = 20_000;
+
 /** 「更新于 N 前」距最近一次读取超过该毫秒数视为陈旧，文字转轻提醒色。 */
 const STALE_AFTER_MS = 2 * 60 * 1000;
 
@@ -87,6 +93,24 @@ const INPUT_MODE_KEYS: Record<string, MessageKey> = {
 function inputModeLabel(mode: string): string {
   const key = INPUT_MODE_KEYS[mode];
   return key === undefined ? mode : t(key);
+}
+
+/** 分析记录行的诊断类型（1010 审计 P0-3 接线）：analysis_type 已在
+    SessionListItem，原先只进 hover。已知值走字典；flicking 是后端对
+    static_clicking 家族的固定落盘别名（analysis_service._analysis_type_for_snapshot），
+    界面仍用既有 family 词表叫「静态点击」；未知值原样直出（与 inputModeLabel
+    同款兜底）。 */
+const ANALYSIS_TYPE_KEYS: Record<string, MessageKey> = {
+  dynamic_clicking: "analysis.family.dynamicClicking",
+  continuous_tracking: "analysis.family.continuousTracking",
+  target_switching: "analysis.family.targetSwitching",
+  flicking: "analysis.type.flicking",
+  input_kinematics: "analysis.type.inputKinematics",
+};
+
+function analysisTypeLabel(type: string): string {
+  const key = ANALYSIS_TYPE_KEYS[type];
+  return key === undefined ? type : t(key);
 }
 
 /** 异常人话映射（0911 点点第三批 F）：恢复上一批删掉的 limitationLabel 精简版。
@@ -344,14 +368,22 @@ function AnalysisRow({
         </div>
       ) : null}
       <span className="task4-name">{presentRecordLabel({ scenario: session.scenario, titleOnly: true })}</span>
-      {/* 0911 点点五轮对称化：正常（已完成）行不再挂任何徽章，只有失败/分析中
+      {/* 0911 点点五轮对称化：正常（已完成）行不再挂状态徽章，只有失败/分析中
           这类非默认状态才显示；模式/预览等详情进整行悬停提示。 */}
       {tone !== "success" ? (
         <span className={`task4-badge task4-badge-${tone === "error" ? "err" : "neu"}`}>
           {sessionStatus(session.status)}
         </span>
       ) : null}
-      <span className="task4-analysis-gap" />
+      {/* 诊断类型 + 一句最重要结论（1010 审计 P0-3 接线）：两项已在此前裁撤
+          副行时收敛进 hover，合同 §3.3 的必显项数据本就随行返回（SessionListItem），
+          这里恢复常驻呈现；运行中阶段与失败原因数据侧暂无字段，另立项补。 */}
+      <span className="task4-badge task4-badge-neu">{analysisTypeLabel(session.analysis_type)}</span>
+      {session.summary_label ? (
+        <span className="task4-analysis-summary">{session.summary_label}</span>
+      ) : (
+        <span className="task4-analysis-gap" />
+      )}
       <span className="task4-analysis-time">{analysisAt ? formatHistoryDate(analysisAt) : "—"}</span>
     </div>
   );
@@ -615,10 +647,12 @@ export function HistoryClient() {
 
   useEffect(() => {
     if (!shouldPollHistory) return undefined;
-    // 顺路更新 nowTick：「更新于 N 前」随轮询自然刷新，不新增定时器。
-    const timer = window.setInterval(() => { setNowTick(Date.now()); void loadHistory(); }, 5000);
+    // 空列表走 20s 降频档（FE-3）；「更新于 N 前」的显示刷新仍搭轮询便车
+    // （nowTick），不新增定时器。
+    const interval = runs.length === 0 ? HISTORY_EMPTY_POLL_INTERVAL_MS : HISTORY_POLL_INTERVAL_MS;
+    const timer = window.setInterval(() => { setNowTick(Date.now()); void loadHistory(); }, interval);
     return () => window.clearInterval(timer);
-  }, [shouldPollHistory, loadHistory]);
+  }, [shouldPollHistory, runs, loadHistory]);
 
   // 整理完成检测（issue #5 方案 D）：记录上一轮各 run 的「可分析」状态，
   // 某 run 从不可分析（finalization_state ∈ pending/retryable 或无可用输入

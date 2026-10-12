@@ -52,6 +52,7 @@ import type {
   KovaaKScoresV1,
   MemberExchangeResponse,
   MemberLoginStartResponse,
+  MemberPollResponse,
   MemberStatusResponse,
   KovaaKRunItem,
   KovaaKRunListResponse,
@@ -70,6 +71,7 @@ import type {
   SessionStatus,
   SessionListResponse,
   StorageResponse,
+  AnalysisCleanupSettingsV1,
   FrontendEvidenceSegmentsV1,
   StoredCustomProviderModelListRequest,
   TaskDetailV1,
@@ -302,6 +304,37 @@ export async function getStorage(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as StorageResponse;
+}
+
+/** [ac P0-5] 分析产物总量上限清理：设置 + 最近一次自动清理留痕。 */
+export async function getAnalysisCleanupSettings(
+  opts: { signal?: AbortSignal } = {},
+): Promise<AnalysisCleanupSettingsV1> {
+  const res = await apiFetch(
+    "/api/storage/analysis-cleanup",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as AnalysisCleanupSettingsV1;
+}
+
+/** [ac P0-5] 保存清理设置（后端保存后立即对账一次，响应带新留痕）。 */
+export async function saveAnalysisCleanupSettings(
+  body: { enabled: boolean; limit_bytes: number },
+  opts: { signal?: AbortSignal } = {},
+): Promise<AnalysisCleanupSettingsV1> {
+  const res = await apiFetch(
+    "/api/storage/analysis-cleanup",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as AnalysisCleanupSettingsV1;
 }
 
 export async function getSession(
@@ -833,6 +866,19 @@ export async function getProviderCatalog(
   return (await res.json()) as ProviderCatalogV1;
 }
 
+/** 强制刷新内置 Provider 的实时模型名单（跳过 TTL 逐家发现）后返回合并目录。 */
+export async function refreshProviderCatalog(
+  opts: { signal?: AbortSignal } = {},
+): Promise<ProviderCatalogV1> {
+  const res = await apiFetchSidecar(
+    "/v1/providers/catalog/refresh",
+    { method: "POST" },
+    { signal: opts.signal },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderCatalogV1;
+}
+
 export async function getProviderAuthCapabilities(
   opts: { signal?: AbortSignal } = {},
 ): Promise<ProviderAuthCapabilitiesV1> {
@@ -904,6 +950,23 @@ export async function exchangeMemberTicket(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as MemberExchangeResponse;
+}
+
+/**
+ * 轮询兜底（1009 野外案，RFC 8628 device flow 形态）：等待页定期询问 sidecar
+ * 「dc 是否已被认领」。`pending`/`error` 继续轮询（网络抖动正是本通道要救的
+ * 场景）；`done` 与 exchange 成功同形；`stopped` 终态停止并给指引。
+ */
+export async function pollMemberLogin(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<MemberPollResponse> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/member/poll",
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as MemberPollResponse;
 }
 
 /** 会员状态（chip/用户中心/④/⑨ 唯一数据源）；未登录与不可用都是 200。 */
@@ -1433,9 +1496,12 @@ export async function createCoachAgentRun(
 
 export async function getCoachAgentRun(
   runRef: string,
-  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number; eventsSince?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const res = await apiFetchSidecar(`/v1/agent-runs/${encodeURIComponent(runRef)}`, { method: "GET" }, { signal: opts.signal });
+  // events_since 增量拉取（性能审计 TS-1）：响应 events 只含游标之后的事件，
+  // 另带 latest_sequence 供推进游标；缺省（不传）保持全量，旧调用方行为不变。
+  const query = opts.eventsSince !== undefined ? `?events_since=${opts.eventsSince}` : "";
+  const res = await apiFetchSidecar(`/v1/agent-runs/${encodeURIComponent(runRef)}${query}`, { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }

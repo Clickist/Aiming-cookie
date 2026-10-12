@@ -273,6 +273,8 @@ export const task6En = {
   "settings.capture.loading": "Reading capture status",
   "settings.capture.unavailableTitle": "Capture status unavailable",
   "settings.capture.unavailableBody": "The local capture service is temporarily unavailable.",
+  "settings.capture.restartExhaustedTitle": "Telemetry channel stopped",
+  "settings.capture.restartExhaustedBody": "A capture channel exited repeatedly and used up its auto-restart budget; telemetry will be missing until the next capture session. Restart the app to relaunch it.",
   "settings.capture.togglePrefix": "Capture starts when a KovaaK process is detected",
   "settings.capture.standbySuffix": ", currently standing by",
   "settings.capture.offSuffix": ", currently off",
@@ -317,6 +319,17 @@ export const task6En = {
   "settings.storage.removeIncompleteTitle": "Remove incomplete capture",
   "settings.storage.reasonInterrupted": "Finalization was interrupted",
   "settings.storage.reasonUncategorized": "Uncategorized capture artifacts",
+  "settings.storage.cleanupCap.title": "Analysis artifact auto-cleanup",
+  "settings.storage.cleanupCap.desc": "When analysis artifacts exceed the cap, the oldest are removed first. Only analysis artifacts are cleaned — Run recordings and Raw traces are never touched.",
+  "settings.storage.cleanupCap.enable": "Auto-clean when over the cap",
+  "settings.storage.cleanupCap.limitLabel": "Cap (GB)",
+  "settings.storage.cleanupCap.apply": "Apply",
+  "settings.storage.cleanupCap.applied": "Auto-cleanup settings saved.",
+  "settings.storage.cleanupCap.applyFailed": "Failed to save auto-cleanup settings. Try again.",
+  "settings.storage.cleanupCap.loadFailed": "Failed to load auto-cleanup settings.",
+  "settings.storage.cleanupCap.invalidLimit": "The cap must be at least 1 GB.",
+  "settings.storage.cleanupCap.lastRun": "Last auto-cleanup: removed {count} item(s), freed {bytes}.",
+  "settings.storage.cleanupCap.lastRunNone": "Auto-cleanup has not triggered yet.",
   "settings.storage.emptyCleanup": "Nothing to clean — no recordings, Raw traces, or incomplete captures.",
 
   // ── SettingsWorkspace.tsx —— 存储位置卡（自定义数据根，2026-09-28）────────
@@ -632,6 +645,10 @@ export const task6En = {
   // api.ts performs the same conversion). Unknown codes fall back to the
   // backend zh message.
   "api.error.session.notFound": "Session not found",
+  // 2026-10-11 race fix: gateway 403 in-flight (fallback copy for the sidecar
+  // stable code trial_provisioning; the normal path is routed to the CoachPanel
+  // provisioning card, not the error card).
+  "api.error.trialProvisioning": "Your free trial credits are being prepared. Please wait a moment.",
   "api.error.session.forbidden": "You don't have access to this session",
   "api.error.session.contractVersionUnsupported": "Unsupported analysis result version",
   "api.error.session.deleteActive": "An analysis is in progress. Wait until it completes or fails before deleting.",

@@ -17,10 +17,12 @@ import {
   stopCoachAgentRun,
 } from "@/lib/api";
 import { isDesktopRuntime, openExternalUrl, openKovaakScenario } from "@/lib/desktop";
+import { logFrontendError } from "@/lib/frontend-log";
 import { ANALYSIS_AUTO_TEACH_EVENT, COACH_PENDING_INTENT_KEY, COACH_SESSION_UPDATED_EVENT, TRIAL_QUESTION_ANSWERED_EVENT, computeAnalysisEtaSeconds, formatHistoryDate } from "@/lib/contracts";
 import { discussionChipLabel, groupDiscussionChips, DISCUSSION_BAR_MAX_PINNED } from "@/lib/discussion-bar";
 import { MEMBER_COPY, bothPoolsEmpty, classifyMemberGatewayError, formatMemberDate, gatewayErrorNotice } from "@/lib/member";
 import { useMemberState } from "@/lib/member-state";
+import { useTrialProvisioningWait } from "@/lib/trial-provisioning-wait";
 import { MemberNotice, memberEndDate, memberNotice, memberNoticeText } from "@/components/task3/MemberChrome";
 import { t, useT, type MessageKey } from "@/lib/i18n";
 import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
@@ -622,6 +624,16 @@ export function CoachPanel({
   const [run, setRun] = useState<CoachAgentRunV1 | null>(null);
   // 会员态（④ 双池皆空 / ⑨ 提示 / 401 降级）：与 AppShell 同源，60s 轮询。
   const member = useMemberState();
+  // 试用/会员额度在途的等待编排（2026-10-11 竞态修复）：失败码=trial_provisioning
+  // 时错误卡位置改装初始化卡，轮询 /api/me，到账自动 retry 原回合，超时降级。
+  // onArrived 经 trialRetryRef 转发——retry 是 const 箭头函数，定义在本区块
+  // 之后（~2598），直接引用有提升问题，ref 保证调用时拿到已初始化的最新闭包。
+  const trialRetryRef = useRef<(runRef: string) => void>(() => {});
+  const trialWait = useTrialProvisioningWait({
+    refresh: () => member.refresh(),
+    onArrived: (ref) => { trialRetryRef.current(ref); },
+    onTimedOut: () => { logFrontendError("trial-provisioning", "trial_provisioning_timeout"); },
+  });
   const [memberNoticeDismissed, setMemberNoticeDismissed] = useState(false);
   const [memberSoftNoticeDismissed, setMemberSoftNoticeDismissed] = useState(false);
   // ④/⑨ 右：会员双池皆空才触发发送禁用（历史照常可读）。BYOK 用户 me=null，
@@ -630,7 +642,10 @@ export function CoachPanel({
   const memberConnectionLost = member.me !== null
     && (member.me.status === "expired" || member.me.status === "refunded")
     && bothPoolsEmpty(member.me);
-  const sendBlockedByMember = memberQuotaOut || memberConnectionLost;
+  // 2026-10-11 竞态修复：在途等待期间禁用发送（初始化卡已在对话流内呈现，
+  // 不再加 memberBlockNotice 在途文案，避免双提示）。
+  const trialWaitBlocking = trialWait.phase === "waiting";
+  const sendBlockedByMember = memberQuotaOut || memberConnectionLost || trialWaitBlocking;
   const memberPeriodEnd = formatMemberDate(member.me?.period_end ?? null);
   const memberBlockNotice = memberQuotaOut
     ? MEMBER_COPY.quotaExhausted
@@ -730,6 +745,25 @@ export function CoachPanel({
       });
     }
   }, [run]);
+
+  // 2026-10-11 竞态修复：失败码=trial_provisioning → 进入在途等待（错误卡改装
+  // 初始化卡，见下方错误卡 IIFE 的渲染分流）；run 恢复 running/succeeded 或被
+  // 清 → 等待复位（arrived 后 retry 已接管）。code 来源 run 与 failedCard 快照
+  // 二选一（与 IIFE 的 error 来源口径一致）；intro kickoff run 同管线同码也
+  // 触发——不按 sessionId 过滤（任务书 §6 已核实 kickoff 走同一 run 管线）。
+  useEffect(() => {
+    const failedCode = run?.status === "failed"
+      ? run.error?.code ?? null
+      : failedCard?.code ?? null;
+    if (failedCode === "trial_provisioning" && trialWait.phase === "idle") {
+      const ref = run?.run_ref ?? failedCard?.runRef ?? null;
+      if (ref) trialWait.begin(ref);
+    }
+    // run 恢复 running/succeeded 或被清 → 等待复位（arrived 后 retry 已接管）
+    if (failedCode !== "trial_provisioning" && (trialWait.phase === "waiting" || trialWait.phase === "arrived")) {
+      trialWait.reset();
+    }
+  }, [run?.status, run?.error?.code, run?.run_ref, failedCard?.code, failedCard?.runRef, trialWait.phase]);
 
   // 成功回合的活动摘要：对话流不再「成功即消失」，工作流时序段保留在
   // 已落库回答之上，直到下一次发送（切换会话不再清除，见 archivedTurns）。
@@ -1518,7 +1552,33 @@ export function CoachPanel({
       }
     };
 
-    const fetchRun = () => getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
+    // 轮询增量拉取（性能审计 TS-1）：长回合可产出数百条 partial 事件，每拍
+    // 全量克隆+序列化随事件数线性放大。首拍全量；此后带 events_since 游标，
+    // 在本 effect 的镜像（polledRun）上并集去重合并，调用方拿到的始终是完整
+    // 事件集。SSE 活跃时轮询停拍，互不干扰；SSE 掉线转入轮询时首拍全量重
+    // 建，与旧行为一致。
+    let polledRun: CoachAgentRunV1 | null = null;
+    let pollEventsSince: number | null = null;
+
+    const fetchRun = async (): Promise<CoachAgentRunV1> => {
+      const next = await getCoachAgentRun(runRef, {
+        ...(sessionId == null ? {} : { sessionId }),
+        ...(pollEventsSince !== null ? { eventsSince: pollEventsSince } : {}),
+      });
+      if (polledRun && polledRun.run_ref === next.run_ref) {
+        const known = new Set(polledRun.events.map((item) => item.sequence));
+        polledRun = {
+          ...next,
+          events: [...polledRun.events, ...next.events.filter((item) => !known.has(item.sequence))]
+            .sort((a, b) => a.sequence - b.sequence),
+        };
+      } else {
+        polledRun = next;
+      }
+      pollEventsSince = next.latest_sequence
+        ?? (polledRun.events.length > 0 ? polledRun.events[polledRun.events.length - 1]!.sequence : 0);
+      return polledRun;
+    };
 
     // 成功终态统一收敛：回合工作流时序归档（思考段/工具段交错，思考段在
     // 归档时刻统一冻结），实时段清空，本地 run 解除以落库消息接管对话。
@@ -2640,6 +2700,11 @@ export function CoachPanel({
     notify(t("coach.retry.runLost"));
   };
 
+  // 初始化卡自动放行（2026-10-11 竞态修复）：retry 是 const 箭头函数，定义在
+  // useTrialProvisioningWait 实例之后——在 retry 定义处经 ref 转发最新闭包，
+  // onArrived 触发时（等待到达，远晚于渲染）拿到的一定是已初始化的 retry。
+  trialRetryRef.current = (runRef: string) => { void retry(runRef); };
+
   const stop = async () => {
     if (!run) return;
     try {
@@ -3274,9 +3339,43 @@ export function CoachPanel({
           // 网关错误码分流（契约 §5.3，新旧值双认）：quota_exhausted → ④ 口径，
           // member_required → 未订阅引导，jwt_expired → 重登录引导（静默降级未登录）。
           const gatewayCode = classifyMemberGatewayError(error.message);
+          // 2026-10-11 竞态修复：在途双认（sidecar 稳定码 / 网关报文子串）→
+          // 初始化卡编排，不进错误文案路径（gatewayErrorNotice 对该码兜底空文案）。
+          const isTrialProvisioning = error.code === "trial_provisioning" || gatewayCode === "trial_provisioning";
           const gateway = gatewayCode ? gatewayErrorNotice(gatewayCode) : null;
           // B3：error.v1 稳定 code 优先查字典（api.error.*），缺码回落 message 原文。
           const presentedMessage = presentErrorV1Message({ code: error.code, message: error.message }) ?? error.message;
+          if (isTrialProvisioning && trialWait.phase !== "timed_out") {
+            // 初始化卡（非错误语气）：等待中/已到达（retry 进行中，卡片随即消失）
+            const secs = Math.floor(trialWait.elapsedMs / 1000);
+            return (
+              <div className="task6-error-card" data-tone="info" role="status">
+                <div className="task6-error-card-head">
+                  <div className="task6-error-card-title">{t("trial.wait.title")}</div>
+                  <div className="task6-error-card-desc">{t("trial.wait.body")}</div>
+                </div>
+                <div className="task6-error-card-actions">
+                  <span className="task6-trial-wait-elapsed">{secs > 0 ? t("trial.wait.elapsed", { n: secs }) : t("trial.wait.elapsed0")}</span>
+                </div>
+              </div>
+            );
+          }
+          if (isTrialProvisioning && trialWait.phase === "timed_out") {
+            // 超时降级（明确文案 + 两个动作，禁止静默）
+            return (
+              <div className="task6-error-card" role="alert">
+                <div className="task6-error-card-head">
+                  <div className="task6-error-card-title">{t("trial.wait.timeoutTitle")}</div>
+                  <div className="task6-error-card-desc">{t("trial.wait.timeoutBody")}</div>
+                </div>
+                <div className="task6-error-card-actions">
+                  <Button onClick={() => { trialWait.begin(error.runRef); }} size="compact" variant="secondary">{t("common.retry")}</Button>
+                  <Button onClick={() => router.push("/account")} size="compact" variant="secondary">{t("trial.wait.openAccount")}</Button>
+                  <Button onClick={() => { setFailedCard(null); setRun(null); trialWait.reset(); }} size="compact" variant="ghost">{t("update.prompt.later")}</Button>
+                </div>
+              </div>
+            );
+          }
           return (
             <div className="task6-error-card" role="alert">
               <div className="task6-error-card-head">

@@ -2244,6 +2244,24 @@ button.task6-discussion-chip:focus-visible {
   opacity: 0.7;
 }
 
+/* 初始化卡（试用在途等待，2026-10-11 竞态修复）：非错误语气。info 语义用
+   既有 tertiary 族 token，不发明新色。 */
+.task6-error-card[data-tone="info"] {
+  border-color: var(--tertiary);
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+}
+
+.task6-error-card[data-tone="info"] .task6-error-card-actions .ac-button[data-variant="secondary"] {
+  border-color: var(--on-tertiary-container);
+  color: var(--on-tertiary-container);
+}
+
+.task6-trial-wait-elapsed {
+  font-size: var(--text-caption);
+  opacity: 0.7;
+}
+
 /* Confirmation card（对话流内联确认，原稿 cfm-card） */
 
 .task6-cfm-card {

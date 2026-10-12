@@ -59,6 +59,11 @@ export const sharedEn = {
   "analysis.family.targetSwitching": "Target switching",
   "analysis.family.movementAiming": "Movement aiming",
   "analysis.family.unknown": "Unclassified",
+  // analysis_type 落盘值的界面词（1010 审计 P0-3 接线，History 分析行诊断类型
+  // 徽章用）：flicking 是后端对 static_clicking 的固定落盘别名，界面沿用
+  // family 词表口径；input_kinematics 是家族未识别时的基础运动学档。
+  "analysis.type.flicking": "Static clicking",
+  "analysis.type.inputKinematics": "Basic kinematics",
   "analysis.switching.transitionTime": "Transition time",
   "analysis.switching.transitionDistance": "Transition distance",
   "analysis.switching.pathEfficiency": "Path efficiency",
@@ -315,6 +320,14 @@ export const sharedEn = {
   "member.ended.resubscribe": "Re-subscribe",
   "member.ended.resubscribeHint": "↑ Opens the subscription page in your system browser (returns to subscription quota automatically after re-subscribing)",
   "member.ended.planEnded": "{plan} · Ended",
+  // components/task6/CoachPanel.tsx —— trial provisioning wait card (2026-10-11 race fix)
+  "trial.wait.title": "Preparing your free trial credits…",
+  "trial.wait.body": "Your account is registered; the server is preparing your credits and will continue automatically.",
+  "trial.wait.elapsed0": "Ready soon",
+  "trial.wait.elapsed": "Waiting {n}s",
+  "trial.wait.timeoutTitle": "Trial credit setup is taking longer than expected",
+  "trial.wait.timeoutBody": "Your account is registered and the server is still processing your credits. Retry in a moment, or check the account page.",
+  "trial.wait.openAccount": "Open account page",
   // lib/coach-home.ts —— 空对话首页问候与建议 chips（批 1）
   "coach.home.greeting.morning1": "Good morning! What do you want to practice today?",
   "coach.home.greeting.morning2": "Good morning! Want to talk through yesterday's issues before you start?",

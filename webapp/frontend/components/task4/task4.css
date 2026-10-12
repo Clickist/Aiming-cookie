@@ -345,7 +345,10 @@
    margin 分隔）；只有平铺不分天的 AnalysisRow 维持行间线——修饰类区分，
    避免互相污染。 */
 .task4-analysis-row .task4-name {
-  flex: 1;
+  /* 1010 审计 P0-3：诊断类型徽章与一句结论恢复常驻后，场景名按内容取宽
+     （超长仍 ellipsis）；弹性中段让给结论列。无摘要行由 .task4-analysis-gap
+     维持时间列右对齐，视觉不变。 */
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -354,6 +357,18 @@
 
 .task4-analysis-gap {
   flex: 1;
+}
+
+/* 一句最重要结论（1010 审计 P0-3 接线）：合同 §3.3 必显项，占弹性中段，
+   小字弱化不与场景名争层级。 */
+.task4-analysis-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
 }
 
 .task4-analysis-time {

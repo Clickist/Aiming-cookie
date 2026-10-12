@@ -62,6 +62,11 @@ export const sharedZh = {
   "analysis.family.targetSwitching": "目标切换",
   "analysis.family.movementAiming": "移动瞄准",
   "analysis.family.unknown": "未确认分类",
+  // analysis_type 落盘值的界面词（1010 审计 P0-3 接线，History 分析行诊断类型
+  // 徽章用）：flicking 是后端对 static_clicking 的固定落盘别名，界面沿用
+  // family 词表口径；input_kinematics 是家族未识别时的基础运动学档。
+  "analysis.type.flicking": "静态点击",
+  "analysis.type.inputKinematics": "基础运动学",
   "analysis.switching.transitionTime": "切换耗时",
   "analysis.switching.transitionDistance": "切换距离",
   "analysis.switching.pathEfficiency": "路径效率",
@@ -319,6 +324,14 @@ export const sharedZh = {
   "member.ended.resubscribe": "重新订阅",
   "member.ended.resubscribeHint": "↑ 在系统浏览器打开订阅页（重新订阅后自动回到订阅额度）",
   "member.ended.planEnded": "{plan} · 已结束",
+  // components/task6/CoachPanel.tsx —— 试用在途初始化卡（2026-10-11 竞态修复）
+  "trial.wait.title": "正在初始化免费试用额度…",
+  "trial.wait.body": "账号已注册成功，服务端正在准备额度，就绪后自动继续。",
+  "trial.wait.elapsed0": "即将就绪",
+  "trial.wait.elapsed": "已等待 {n} 秒",
+  "trial.wait.timeoutTitle": "免费试用额度初始化时间超出预期",
+  "trial.wait.timeoutBody": "你的账号已注册成功，额度仍在服务端处理。可以稍等片刻重试，或到账号页查看状态。",
+  "trial.wait.openAccount": "打开账号页",
   // lib/coach-home.ts —— 空对话首页问候与建议 chips（批 1）
   "coach.home.greeting.morning1": "早上好，今天想练什么？",
   "coach.home.greeting.morning2": "早上好，开练前聊聊昨天的问题？",

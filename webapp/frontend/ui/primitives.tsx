@@ -104,7 +104,10 @@ export function Status({ tone = "neutral", className, children, ...props }: Badg
 }
 
 export interface NoticeProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
-  tone?: Exclude<Tone, "neutral" | "success">;
+  // success 已接入（1010 审计 P0-2）：Onboarding「连接成功」原先单通道一律
+  // error 渲染，红=成功语义反转；tone 样式按 design-system「成功=event-kill
+  // 文字（透明底+hairline 边）」承接。
+  tone?: Exclude<Tone, "neutral">;
   title?: ReactNode;
 }
 

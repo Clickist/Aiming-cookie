@@ -206,6 +206,21 @@ test("gateway error codes accept both the v2 and v1 spellings (dual-recognition 
   assert.equal(classifyMemberGatewayError(null), null);
 });
 
+test("classifyMemberGatewayError: provisioning_in_flight 新码识别且不误伤旧码", () => {
+  // 2026-10-11 网关 403 在途（竞态修复）：新 type 串 + 中性中文文案都能命中。
+  assert.equal(
+    classifyMemberGatewayError('403 {"error":{"message":"免费试用额度正在准备中","type":"provisioning_in_flight"}}'),
+    "trial_provisioning",
+  );
+  // 旧码语义不被新码吞掉。
+  assert.equal(classifyMemberGatewayError("AC 会员未开通或已过期 member_required"), "member_required");
+  // 表序即优先级：新别名加在表尾，混入旧码子串的文本仍按旧码分流（锁住现状）。
+  assert.equal(
+    classifyMemberGatewayError("provisioning_in_flight 文本里混入 quota_exhausted"),
+    "quota_exhausted",
+  );
+});
+
 test("gateway notice copy stays inside the zero-commercialization rule", () => {
   for (const code of ["quota_exhausted", "quota_prehold_insufficient", "member_required", "jwt_expired"] as const) {
     const notice = gatewayErrorNotice(code);

@@ -399,8 +399,9 @@ export interface paths {
         post?: never;
         /**
          * Delete Kovaak Run By Id
-         * @description 删除整个 run：证据文件走证据墓碑，source_key 写抑制清单防止随源 CSV
-         *     重新导入；已产生分析的 run 拒绝（先删分析），误删不可回退。
+         * @description 删除整个 run（级联语义，[ac P0-5 2026-10-11] 点点拍板）：done/failed 的
+         *     关联分析记录+工作区+孤立工作区级联删除，证据文件走证据墓碑，source_key
+         *     写抑制清单防止随源 CSV 重新导入。仍有进行中分析的 run 拒绝（等完成或失败）。
          */
         delete: operations["delete_kovaak_run_by_id_api_kovaak_runs__run_id__delete"];
         options?: never;
@@ -738,6 +739,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/analysis-cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Analysis Cleanup Settings
+         * @description [ac P0-5 2026-10-11] 分析产物总量上限清理：设置 + 最近一次留痕。
+         *
+         *     明示留痕合同：自动清理不静默——设置里可见可关，last_run 快照回答「上次
+         *     自动删了哪些、释放多少」。
+         */
+        get: operations["get_analysis_cleanup_settings_api_storage_analysis_cleanup_get"];
+        /**
+         * Save Analysis Cleanup Settings
+         * @description 保存清理设置并立即对账一次（调低上限即刻生效，不等下次启动/完成）。
+         */
+        put: operations["save_analysis_cleanup_settings_api_storage_analysis_cleanup_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/storage/incomplete": {
         parameters: {
             query?: never;
@@ -889,6 +917,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisCleanupSettingsResponse
+         * @description 分析产物总量上限清理设置 + 最近一次自动清理留痕（GET/PUT 响应）。
+         *
+         *     last_run 为 analysis_cleanup_run.v1 快照（removed 明细含 session_id/orphan/
+         *     bytes）；null = 从未触发。current_bytes 不在本响应（前端与 /api/storage 同
+         *     页读取 analysis_artifacts_bytes，不做重复全量扫描）。
+         */
+        AnalysisCleanupSettingsResponse: {
+            /** Enabled */
+            enabled: boolean;
+            /** Last Run */
+            last_run?: {
+                [key: string]: unknown;
+            } | null;
+            /** Limit Bytes */
+            limit_bytes: number;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "analysis_cleanup_settings.v1";
+        };
+        /**
+         * AnalysisCleanupSettingsUpdate
+         * @description [ac P0-5 2026-10-11] 分析产物总量上限清理设置（PUT 请求体）。
+         */
+        AnalysisCleanupSettingsUpdate: {
+            /** Enabled */
+            enabled: boolean;
+            /** Limit Bytes */
+            limit_bytes: number;
+        };
         /** AnalysisHistoryDetailOut */
         AnalysisHistoryDetailOut: {
             /** Analysis Completed At */
@@ -3736,6 +3797,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StorageResponse"];
+                };
+            };
+        };
+    };
+    get_analysis_cleanup_settings_api_storage_analysis_cleanup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisCleanupSettingsResponse"];
+                };
+            };
+        };
+    };
+    save_analysis_cleanup_settings_api_storage_analysis_cleanup_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalysisCleanupSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisCleanupSettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

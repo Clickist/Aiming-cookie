@@ -100,8 +100,33 @@ test("History polls incomplete runs and desktop empty states, but not browser em
   assert.match(value, /isDesktopRuntime\(\) && \(runs\.length === 0 \|\| runs\.some\(\(run\) => !RUN_FINALIZED_STATES\.has\(run\.finalization_state\)\)\)/);
   assert.match(value, /if \(!shouldPollHistory\) return undefined;/);
   // 「更新于 N 前」的显示刷新搭既有轮询便车（nowTick），不新增定时器。
-  assert.match(value, /setInterval\(\(\) => \{ setNowTick\(Date\.now\(\)\); void loadHistory\(\); \}, 5000\)/);
+  assert.match(value, /setInterval\(\(\) => \{ setNowTick\(Date\.now\(\)\); void loadHistory\(\); \}, interval\)/);
   assert.match(value, /clearInterval\(timer\)/);
+});
+
+test("history polling slows down in the empty-list state (1010 性能审计 FE-3)", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  // 空列表（新装机常见长期状态）没有非终态 Run 可跟进：5s 永动降为 20s 档；
+  // 有非终态 Run 时维持 5s 跟进 finalize 的节奏不变。
+  assert.match(value, /const HISTORY_POLL_INTERVAL_MS = 5_000;/);
+  assert.match(value, /const HISTORY_EMPTY_POLL_INTERVAL_MS = 20_000;/);
+  assert.match(value, /const interval = runs\.length === 0 \? HISTORY_EMPTY_POLL_INTERVAL_MS : HISTORY_POLL_INTERVAL_MS;/);
+});
+
+test("analysis rows surface the diagnosis type and one-line conclusion persistently (1010 审计 P0-3)", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  const styles = await source("components/task4/task4.css");
+  const shared = await source("lib/i18n/dict/shared.zh.ts");
+  // 诊断类型徽章常驻在场景名与时间之间（数据已在 SessionListItem，原先只进 hover）。
+  assert.match(value, /<span className="task4-badge task4-badge-neu">\{analysisTypeLabel\(session\.analysis_type\)\}<\/span>/);
+  // 一句最重要结论占弹性中段；无摘要行仍由 gap 撑开时间列，右对齐不变。
+  assert.match(value, /session\.summary_label \? \(\s*<span className="task4-analysis-summary">\{session\.summary_label\}<\/span>\s*\) : \(\s*<span className="task4-analysis-gap" \/>\s*\)/);
+  assert.match(styles, /\.task4-analysis-summary\s*\{[^}]*flex:\s*1;/);
+  assert.match(styles, /\.task4-analysis-row \.task4-name\s*\{[^}]*flex:\s*0 1 auto;/);
+  // 已知 analysis_type 走既有词表；flicking 是后端对 static_clicking 的落盘别名，
+  // 界面口径与 family 词表一致。
+  assert.match(value, /flicking: "analysis\.type\.flicking"/);
+  assert.match(shared, /"analysis\.type\.flicking": "静态点击"/);
 });
 
 test("history distinguishes desktop empty states with watcher guidance instead of new timers", async () => {

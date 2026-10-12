@@ -32,6 +32,11 @@ export function RuntimeGate({ children }: { children: ReactNode }) {
       setState("ready");
       return undefined;
     }
+    // 圆角窗口（0910 拍板方案）在闸门期就要生效：AppShell 挂载前闸门是唯
+    // 一根节点，缺类时 body 不透明、闸门方角顶满（1012 点点发现，与 1002
+    // onboarding 同根）。只挂类不清理——类随应用生命周期存续，AppShell 的
+    // 同名 effect 幂等重挂并接管最大化切换。
+    document.documentElement.classList.add("ac-window-rounded");
     let cancelled = false;
     void (async () => {
       try {

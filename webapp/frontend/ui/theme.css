@@ -306,6 +306,15 @@ a {
   color: var(--on-error-container);
 }
 
+/* success（1010 审计 P0-2 接线）：按 design-system「成功=event-kill 文字
+   （透明底+hairline 边）」——与 Badge/Status 的 success tone 同一信号语义，
+   不新造 token。 */
+.ac-notice[data-tone="success"] {
+  background: transparent;
+  border-color: var(--outline-variant);
+  color: var(--event-kill);
+}
+
 .ac-notice__title {
   font-weight: 600;
   margin-bottom: 2px;
@@ -317,7 +326,8 @@ a {
 
 .ac-notice[data-tone="info"] .ac-notice__body,
 .ac-notice[data-tone="warning"] .ac-notice__body,
-.ac-notice[data-tone="error"] .ac-notice__body {
+.ac-notice[data-tone="error"] .ac-notice__body,
+.ac-notice[data-tone="success"] .ac-notice__body {
   color: inherit;
   opacity: 0.9;
 }

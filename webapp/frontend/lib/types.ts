@@ -692,6 +692,27 @@ export interface CaptureRunAttachment {
   video_attached: boolean;
 }
 
+/** [ac P0-5 2026-10-11] 一次分析产物上限自动清理的留痕（diagnostics 快照）。 */
+export interface AnalysisCleanupRunV1 {
+  schema_version: "analysis_cleanup_run.v1";
+  finished_epoch_s: number;
+  triggered: boolean;
+  enabled: boolean;
+  limit_bytes: number;
+  total_after_bytes: number;
+  removed: { session_id: number; orphan: boolean; bytes: number }[];
+  skipped_active: number;
+  error: string | null;
+}
+
+/** [ac P0-5 2026-10-11] 分析产物总量上限清理设置（默认开，10GB，可调可关）。 */
+export interface AnalysisCleanupSettingsV1 {
+  schema_version: "analysis_cleanup_settings.v1";
+  enabled: boolean;
+  limit_bytes: number;
+  last_run: AnalysisCleanupRunV1 | null;
+}
+
 /** 遥测整理（run cut）服务摘要（capture_status.v1 additive 字段）。 */
 export interface TelemetryCaptureSummaryV1 {
   state: string | null;
@@ -699,6 +720,10 @@ export interface TelemetryCaptureSummaryV1 {
   run_cuts_in_flight: number | null;
   /** 进程生命周期累计切窗数（累计值，界面不直接展示，避免误导）。 */
   run_cuts_total: number | null;
+  /** [rb P1-16] 生命周期累计自动拉起次数（additive，诊断向计数）。 */
+  child_restarts_total?: number | null;
+  /** [rb P1-16] 拉起预算耗尽：死亡通道将缺席到下一会话，UI 必须标红。 */
+  restart_exhausted?: boolean;
 }
 
 export interface CaptureStatusV1 {
@@ -1026,6 +1051,8 @@ export interface MemberMe {
     analyses_remaining: number;
     questions_remaining: number;
     verified_at: string | null;
+    /** 在途试用发货单（sidecar 宽松透传；缺省 = 未知，等待流不据此提前终止）。 */
+    provisioning?: boolean;
   } | null;
 }
 
@@ -1075,6 +1102,25 @@ export type MemberExchangeFailureCode =
 export type MemberLoginStartResponse =
   | { ok: true; device_code: string; login_url: string; expires_in: number }
   | { ok: false; message: string };
+
+/**
+ * `/v1/provider-profiles/member/poll`：轮询兜底（1009 野外案，RFC 8628 形态）。
+ * deep-link 被浏览器吞时等待页的自救通道——`pending`/`error` 继续轮询，
+ * `done` 与 exchange 成功同形（附带连通测试），`stopped` 终态停止并给指引。
+ */
+export type MemberPollResponse =
+  | { outcome: "pending" }
+  | {
+      outcome: "done";
+      ok: true;
+      user: { id: string; email: string; name: string | null };
+      member: boolean;
+      connection_ok: boolean;
+      connection_code: "unauthorized" | "unreachable" | null;
+      connection_message: string | null;
+    }
+  | { outcome: "stopped"; code: "no_pending" | "device_code_invalid" | "ticket_expired"; message: string }
+  | { outcome: "error"; code: "network_error"; message: string };
 
 /** Raw sidecar status detail with the resolved catalog model (model switch response). */
 export interface ProviderProfileStatusDetail {
@@ -1480,6 +1526,8 @@ export interface CoachAgentRunV1 {
   /** 深读命中的附加分析 refs（与另一 agent 约定的合同字段，消费逻辑另行落地）。 */
   deep_read_analysis_refs?: string[];
   events: CoachAgentRunEventV1[];
+  /** 仅 events_since 增量拉取时出现：服务端事件最大序号（游标推进依据）。 */
+  latest_sequence?: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
