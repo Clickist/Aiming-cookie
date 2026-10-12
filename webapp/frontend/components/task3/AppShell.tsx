@@ -28,6 +28,7 @@ import {
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
+import { setCoachRunActive, useCoachRunActive } from "@/lib/coach-run-activity";
 import { useT } from "@/lib/i18n";
 import { memberChipView } from "@/lib/member";
 import { OFFICIAL_RELAY_PROVIDER_ID } from "@/lib/provider-helpers";
@@ -713,11 +714,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [coachWorkspaceRoute, onboardingResolved, reloadCoachSessions, router, startupRouteResolved]);
 
-  // Coach 回合活跃上报的落点：自动开讲据此让路（见下方 handleAutoTeach）。
+  // Coach 回合活跃上报的落点：自动开讲据此让路（见下方 handleAutoTeach），
+  // 同时广播给更新/存储等"会重启应用"的入口做守卫（coach-run-activity）。
   const activeCoachRunRef = useRef(false);
   const handleCoachActiveRunChange = useCallback((active: boolean) => {
     activeCoachRunRef.current = active;
+    setCoachRunActive(active);
   }, []);
+  const coachRunActive = useCoachRunActive();
 
   // 分析完成自动开讲：AnalysisWorkspace 活体观察与 CoachPanel 列表轮询
   // 观察到 done 时派发同一事件；这里在
@@ -1042,7 +1046,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         ) : null}
       </div>
       {desktopUpdate ? (
-        <UpdatePrompt onDismiss={() => setDesktopUpdate(null)} update={desktopUpdate} />
+        <UpdatePrompt blocked={coachRunActive} onDismiss={() => setDesktopUpdate(null)} update={desktopUpdate} />
       ) : null}
       {/* 与 UpdatePrompt 同为右下 fixed 定位，同屏会重叠：更新提示优先，关掉后公告卡再出场。 */}
       {releaseNotice && !desktopUpdate ? (

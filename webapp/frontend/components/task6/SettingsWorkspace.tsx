@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
+import { getCoachRunActive, useCoachRunActive } from "@/lib/coach-run-activity";
 import { describeEncoderPath } from "@/lib/encoder-path-label";
 import { getLocale, t, useLocale, useT, type Locale, type MessageKey } from "@/lib/i18n";
 import { DIAGNOSTICS_UPLOAD_NOT_CONFIGURED, exportDesktopCaptureDiagnostics, getDesktopWindowCaptureStatus, isDesktopRuntime, pickDesktopDirectory, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics, type DesktopWindowCaptureStatus } from "@/lib/desktop";
@@ -97,6 +98,8 @@ function AppUpdatePanel() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [checkState, setCheckState] = useState<AppUpdateCheckState>({ phase: "idle" });
   const [installing, setInstalling] = useState(false);
+  // Coach 回合活跃时禁装（安装会重启应用打断回复），卡片内同步说明。
+  const coachRunActive = useCoachRunActive();
 
   useEffect(() => {
     if (!isDesktopRuntime()) return undefined;
@@ -157,6 +160,7 @@ function AppUpdatePanel() {
           {checkState.phase === "checking" ? t("settings.update.checkingSuffix") : null}
           {checkState.phase === "error" ? t("settings.update.errorSuffix") : null}
           {installing ? t("settings.update.installingSuffix") : null}
+          {coachRunActive ? t("update.prompt.noteCoachBusy") : null}
         </p>
         <div className="task6-inline-actions">
           <Button
@@ -168,7 +172,7 @@ function AppUpdatePanel() {
             {t("settings.update.checkButton")}
           </Button>
           {checkState.phase === "available" && !installing ? (
-            <Button onClick={() => void installNow()} size="compact">
+            <Button disabled={coachRunActive} onClick={() => void installNow()} size="compact">
               {t("settings.update.updateTo", { version: checkState.update.version })}
             </Button>
           ) : null}
@@ -246,7 +250,12 @@ function StorageLocationCard({
   };
 
   // 更改位置：选文件夹 → 二次确认（说明迁移语义）→ 写指针；重启后自动迁移。
+  // Coach 回合活跃时劝返：写指针提示重启，装/重启会打断在途回合。
   const changeLocation = async () => {
+    if (getCoachRunActive()) {
+      notify(t("settings.storage.location.coachBusy"));
+      return;
+    }
     const current = status?.effectiveRoot ?? "";
     const picked = await pick();
     if (!picked) return;
@@ -268,6 +277,10 @@ function StorageLocationCard({
 
   // 恢复默认位置：同一确认与迁移流程，方向相反。
   const restoreLocation = async () => {
+    if (getCoachRunActive()) {
+      notify(t("settings.storage.location.coachBusy"));
+      return;
+    }
     const target = status?.defaultRoot ?? "";
     ask(
       t("settings.storage.location.restoreTitle"),

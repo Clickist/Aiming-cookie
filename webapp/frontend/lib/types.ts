@@ -1363,6 +1363,8 @@ export interface CoachThreadMessageOut {
   legacy_session_id: number | null;
   /** 被用户停止的半截回复（stopReason=aborted 投影）：渲染「已停止」标记。 */
   stopped?: boolean;
+  /** 应用重启打断的回复标记，与 stopped=用户主动停止 区分。 */
+  interrupted?: boolean;
   /** Legacy attach-era field; always absent in the file-based architecture. */
   context_refs?: CoachContextRefV1[];
   /** Legacy attach-era field; always absent in the file-based architecture. */

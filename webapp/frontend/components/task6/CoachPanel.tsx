@@ -927,6 +927,14 @@ export function CoachPanel({
   }, [run]);
   const composerBusy = Boolean(run && ["queued", "running"].includes(run.status));
 
+  /** 被打断回复的重试原文：该回复之前最近一条用户消息；找不到（理论不可达）返回 null。 */
+  const interruptedRetryText = (index: number): string | null => {
+    for (let i = index - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") return messages[i].content;
+    }
+    return null;
+  };
+
   // 草稿三级持久（digests §11 item 4 + 拍板③）：sessionId | PENDING_CONVO | NEW_CONVO；
   // 400ms debounce 落 localStorage。存储值为 envelope v2 { v:2, text, quotes }；
   // 读端兼容 legacy 纯文本。（多窗格 pane 后缀已删：唯一调用点固定 full 档，
@@ -3267,9 +3275,29 @@ export function CoachPanel({
                       analysisRef={messageAnalysisRefs.get(message.id) ?? deepReadRunRef ?? deepReadSessionRef}
                       onOpenVideo={onOpenVideo}
                     />
-                    {/* 被停止的半截回复如实标记：与「停止生成」的停止尾标一致，
-                        打断并转向后旧回复不再伪装成完整回答（0911 审计 §12.5）。 */}
-                    {message.stopped ? <span className="task6-message-stopped">{t("coach.message.stopped")}</span> : null}
+                    {/* 停止/打断的半截回复如实标记（0911 审计 §12.5 + 0912 P0）：
+                        interrupted=应用重启打断，给「重新回答」入口强制重发前置
+                        问题——但只在它是最后一条消息时给按钮，历史回合的旧标记
+                        重发会把旧问题追加到会话尾部（重复提问）；找不到前置用户
+                        消息只标记不给按钮。run 活跃/创建中禁用，不与在途回合互踩。
+                        stopped=用户主动停止，维持原「已停止」文案。 */}
+                    {message.interrupted ? (
+                      <>
+                        <span className="task6-message-stopped">{t("coach.message.interrupted")}</span>
+                        {index === messages.length - 1 && interruptedRetryText(index) !== null ? (
+                          <Button
+                            disabled={composerBusy || pendingRunStart}
+                            onClick={() => void sendText(interruptedRetryText(index) ?? "", { force: true })}
+                            size="compact"
+                            variant="secondary"
+                          >
+                            {t("coach.message.interruptedRetry")}
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : message.stopped ? (
+                      <span className="task6-message-stopped">{t("coach.message.stopped")}</span>
+                    ) : null}
                   </>
                 ) : (
                   /* 已发送用户消息的引用块回显（Codex 不做回显是长期 bug）；

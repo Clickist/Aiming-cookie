@@ -391,3 +391,17 @@ test("Task 3 styles consume semantic tokens and contain no raw color literals", 
   assert.match(value, /var\(--surface/);
   assert.match(kovaak, /var\(--(?:on-)?surface/);
 });
+
+test("UpdatePrompt respects the Coach-busy block: install disabled and note swapped", async () => {
+  const prompt = await source("components/task3/UpdatePrompt.tsx");
+  const shell = await source("components/task3/AppShell.tsx");
+  // blocked（Coach 回合活跃）是可选 prop：按钮禁用、ready 说明换成不打断口径，
+  // 卡片本身照常出现（用户仍应知道有新版本）。
+  assert.match(prompt, /blocked = false/);
+  assert.match(prompt, /<Button disabled=\{blocked\} onClick=\{\(\) => void install\(\)\} size="compact">/);
+  assert.match(prompt, /: blocked\s*\n\s*\? t\("update\.prompt\.noteCoachBusy"\)/);
+  // AppShell 上报链：handleCoachActiveRunChange 落点广播活跃态，UpdatePrompt 吃订阅值。
+  assert.match(shell, /setCoachRunActive\(active\);/);
+  assert.match(shell, /const coachRunActive = useCoachRunActive\(\);/);
+  assert.match(shell, /<UpdatePrompt blocked=\{coachRunActive\}/);
+});

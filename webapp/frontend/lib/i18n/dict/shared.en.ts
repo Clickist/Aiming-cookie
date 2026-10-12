@@ -10,6 +10,7 @@ export const sharedEn = {
   "update.prompt.noteInstalling": "Downloading and installing. The app will restart automatically when it's done…",
   "update.prompt.noteFailed": "Update failed. Check your connection, then retry from \"App updates\" in Settings.",
   "update.prompt.noteReady": "Download the official installer and restart automatically to complete the upgrade.",
+  "update.prompt.noteCoachBusy": "Coach is replying. Installing restarts the app and interrupts the current reply — you can install once the turn ends.",
   "update.prompt.busy": "Working…",
   "update.prompt.retry": "Retry",
   "update.prompt.installNow": "Update now",

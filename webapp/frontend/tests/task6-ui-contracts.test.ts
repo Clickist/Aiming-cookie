@@ -247,3 +247,28 @@ test("已退役的 Coach/Settings 结构、类名与措辞不得复活", async (
     assert.doesNotMatch(shellStyles, new RegExp(`${name}\\b`), name);
   }
 });
+
+test("被打断（应用重启）的回复给重新回答入口，且只挂在最后一条消息上", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  // 诚实呈现：interrupted 分支渲染专属文案，与用户主动停止（stopped）的
+  // 「回答已停止」分流；重试经 force 强制发送前置用户消息。
+  assert.match(coach, /message\.interrupted \?[\s\S]{0,400}coach\.message\.interrupted/);
+  assert.match(coach, /coach\.message\.interruptedRetry/);
+  // 误伤防线：按钮只在 interrupted 消息是最后一条时渲染（历史回合旧标记
+  // 不给重发入口，避免把旧问题追加到会话尾部）。
+  assert.match(coach, /index === messages\.length - 1 && interruptedRetryText\(index\) !== null/);
+  assert.match(coach, /sendText\(interruptedRetryText\(index\) \?\? "", \{ force: true \}\)/);
+  // 在途回合/创建死窗期间禁用，不与 run 互踩。
+  assert.match(coach, /disabled=\{composerBusy \|\| pendingRunStart\}/);
+});
+
+test("Coach 回合活跃时存储位置入口被劝返，更新面板禁装并说明", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  // 更改/恢复存储位置都在入口守卫：活跃时 notify 劝返，不进选文件夹流程。
+  assert.match(settings, /const changeLocation = async \(\) => \{\s*\n\s*if \(getCoachRunActive\(\)\) \{\s*\n\s*notify\(t\("settings\.storage\.location\.coachBusy"\)\);\s*\n\s*return;/);
+  assert.match(settings, /const restoreLocation = async \(\) => \{\s*\n\s*if \(getCoachRunActive\(\)\) \{\s*\n\s*notify\(t\("settings\.storage\.location\.coachBusy"\)\);\s*\n\s*return;/);
+  // 设置页「应用更新」安装按钮同款禁用，并用同一句 coach busy 说明。
+  assert.match(settings, /useCoachRunActive\(\)/);
+  assert.match(settings, /disabled=\{coachRunActive\} onClick=\{\(\) => void installNow\(\)\}/);
+  assert.match(settings, /\{coachRunActive \? t\("update\.prompt\.noteCoachBusy"\) : null\}/);
+});

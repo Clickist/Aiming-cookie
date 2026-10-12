@@ -10,12 +10,17 @@ type UpdatePhase = "ready" | "installing" | "failed";
 
 // 启动静默检查命中新版本后的右下角提示卡：安装（下载 → 被动安装 → 自动重启）
 // 在桌面壳内完成，不打断当前会话内容；关闭只是本次启动内不再打扰。
+// blocked（Coach 回合活跃）时卡片照常出现，但安装按钮禁用并换说明文案：
+// 安装会重启应用打断在途回合，回合结束后再装。
 export function UpdatePrompt({
   update,
   onDismiss,
+  blocked = false,
 }: {
   update: DesktopUpdate;
   onDismiss: () => void;
+  /** Coach 回合活跃：安装会重启应用打断回复，按钮禁用并换说明。 */
+  blocked?: boolean;
 }) {
   const [phase, setPhase] = useState<UpdatePhase>("ready");
   const t = useT();
@@ -36,7 +41,9 @@ export function UpdatePrompt({
           ? t("update.prompt.noteInstalling")
           : phase === "failed"
             ? t("update.prompt.noteFailed")
-            : t("update.prompt.noteReady")}
+            : blocked
+              ? t("update.prompt.noteCoachBusy")
+              : t("update.prompt.noteReady")}
       </p>
       <div className="task3-update-prompt-actions">
         {phase === "installing" ? (
@@ -45,7 +52,7 @@ export function UpdatePrompt({
           </span>
         ) : (
           <>
-            <Button onClick={() => void install()} size="compact">
+            <Button disabled={blocked} onClick={() => void install()} size="compact">
               {phase === "failed" ? t("update.prompt.retry") : t("update.prompt.installNow")}
             </Button>
             <Button onClick={onDismiss} size="compact" variant="secondary">
