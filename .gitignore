@@ -91,3 +91,6 @@ CLAUDE.md
 # 构建产物/缓存（可再生，2026-10-04 工作区清理时补录）
 webapp/node_modules/
 webapp/frontend/src-tauri/resources/
+
+# 本地草稿/运行产物目录（临时基准、日志、走查截图等）
+tmp/
