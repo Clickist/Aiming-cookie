@@ -75,6 +75,10 @@ class Logger:
         self.n_btn = 0
         self.last_map = 0.0
         self.path = path
+        # 落盘失败台账（鲁棒性审计 P1-15）：僵尸通道（进程活着、零产出）的
+        # cause 码。write_failures>0 = 本会话通道已停用。
+        self.write_failures = 0
+        self.write_error = None
         self.f = open(path, "a", encoding="utf-8") if path else None
         self.map_line()
 
@@ -99,16 +103,37 @@ class Logger:
             self.n_move += 1
         if btn:
             self.n_btn += len(btn)
-        self.lines.append(json.dumps({"ev": "m", "t": perf, "qpc": qpc,
-                                      "dx": dx, "dy": dy, "btn": btn}))
-        if self.f and len(self.lines) >= 200:
-            self.flush()
+        # 只在通道活着时进缓冲（P1-15：通道停用后继续积压 = 无界增长）。
+        if self.f:
+            self.lines.append(json.dumps({"ev": "m", "t": perf, "qpc": qpc,
+                                          "dx": dx, "dy": dy, "btn": btn}))
+            if len(self.lines) >= 200:
+                self.flush()
 
     def flush(self):
         if self.f and self.lines:
-            self.f.write("\n".join(self.lines) + "\n")
-            self.f.flush()
-            self.lines = []
+            try:
+                self.f.write("\n".join(self.lines) + "\n")
+                self.f.flush()
+                self.lines = []
+            except OSError as exc:
+                # P1-15 僵尸通道防护：磁盘满/杀软锁文件时，此前异常沿 wndproc
+                # ctypes 回调外溢被吞（"Exception ignored"），缓冲无界增长、
+                # is_file() 指纹恒真、UI 恒显 capturing。就地停通道：清缓冲、
+                # 关句柄、留 cause——通道死亡在 stats 与服务侧指纹可见。
+                self.lines = []
+                self.write_failures += 1
+                self.write_error = "io_error:%s" % exc.__class__.__name__
+                try:
+                    print("[input] write failed, channel disabled: %r" % exc,
+                          file=sys.stderr)
+                except OSError:
+                    pass
+                try:
+                    self.f.close()
+                except OSError:
+                    pass
+                self.f = None
 
 
 def make_wnd(logger):
@@ -224,6 +249,10 @@ def stats(logger, dur, nmsg=0):
           % (dur, logger.n_move, logger.n_move / max(dur, 1e-9),
              logger.n_btn, logger.n_btn / max(dur, 1e-9),
              logger.n_move + logger.n_btn))
+    if logger.write_failures:
+        # P1-15 cause 码：通道曾因落盘失败停用（零产出指纹的服务侧对账依据）。
+        print("[stats] cause=input_channel_dead %s write_failures=%d"
+              % (logger.write_error, logger.write_failures))
     if logger.n_move / max(dur, 1e-9) < 400:
         print("[stats] 注意：速率 <400/s。原始鼠标上报率通常 125/500/1000Hz；"
               "若远低于该值，检查省电设置/蓝牙连接。")

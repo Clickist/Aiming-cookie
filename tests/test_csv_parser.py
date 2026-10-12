@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from kovaak_tracker.csv_parser import KovaaKStats, parse_stats_bytes, parse_stats_csv
 
@@ -157,3 +158,45 @@ def test_cm_per_360_empty_config_returns_none():
     assert s.sens_scale == ""
     assert s.yaw is None
     assert s.cm_per_360 is None
+
+
+# --- [rb P1-2 2026-10-11] summary 块截断按 ValueError 合同失败 ---
+
+_VALID_KILL_HEADER = ",".join([
+    "Kill #", "Timestamp", "Bot", "Weapon", "TTK", "Shots", "Hits",
+    "Accuracy", "Damage Done", "Damage Possible", "Efficiency", "Cheated",
+    "OverShots",
+])
+
+
+def _valid_csv_bytes(summary_lines: list[str]) -> bytes:
+    lines = [
+        _VALID_KILL_HEADER,
+        "1,12:00:00.100,Bot,Weapon,0.5s,2,1,50%,100,200,50%,0,1",
+        "",
+        "Weapon,Shots,Hits,Damage Done,Damage Possible",
+        "Pistol,2,1,100,200",
+        "",
+        *summary_lines,
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def test_truncated_summary_raises_value_error_not_keyerror():
+    """磁盘满/同步中断截掉 summary 块：裸 KeyError 会被 worker 按
+    internal_unknown/retryable 错分类，合同是坏 CSV → ValueError。"""
+    data = _valid_csv_bytes(["Kills:,1", "TTK:,0.5"])
+    with pytest.raises(ValueError, match="Challenge Start"):
+        parse_stats_bytes(data, file_name="truncated.csv")
+
+
+def test_empty_summary_raises_value_error_not_keyerror():
+    data = _valid_csv_bytes([])
+    with pytest.raises(ValueError, match="Challenge Start"):
+        parse_stats_bytes(data, file_name="empty-summary.csv")
+
+
+def test_challenge_start_property_raises_value_error_for_missing_key():
+    stats = _make_stats({})
+    with pytest.raises(ValueError, match="Challenge Start"):
+        stats.challenge_start  # noqa: B018 (property raises)

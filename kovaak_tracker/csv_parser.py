@@ -80,11 +80,24 @@ class KovaaKStats:
     @property
     def challenge_start(self) -> datetime:
         """Scenario start as wall-clock datetime (the alignment anchor)."""
-        return _parse_wallclock(self.summary["Challenge Start"])
+        return _parse_wallclock(self._require_challenge_start())
 
     @property
     def scenario(self) -> str:
         return self.summary["Scenario"]
+
+    def _require_challenge_start(self) -> str:
+        """[rb P1-2 2026-10-11] summary 被截断（磁盘满/同步中断）时按合同抛
+        ValueError 而非裸 KeyError——调用方（worker 按注释「坏 CSV→先抛
+        ValueError」设计）按 ValueError 分类为输入问题，漏接会错标 retryable。
+        """
+        value = self.summary.get("Challenge Start")
+        if not value:
+            raise ValueError(
+                "KovaaK Stats CSV summary block is missing 'Challenge Start' "
+                "(file may be truncated)"
+            )
+        return value
 
     @property
     def dpi(self) -> int | None:
@@ -155,7 +168,9 @@ def parse_stats_csv(csv_path: str | Path) -> KovaaKStats:
     """Parse a KovaaK's stats CSV into kills table + summary + config.
 
     Raises ``ValueError`` if the kill-table header does not match the expected
-    schema (guards against unrelated CSVs being handed in).
+    schema (guards against unrelated CSVs being handed in), or if the summary
+    block is truncated and ``Challenge Start`` is missing (same ValueError
+    contract — a bare KeyError would be misclassified as an internal error).
     """
     csv_path = Path(csv_path)
     return parse_stats_bytes(csv_path.read_bytes(), file_name=csv_path.name)
@@ -215,6 +230,14 @@ def parse_stats_bytes(data: bytes, *, file_name: str = "<memory>") -> KovaaKStat
         summary_start_idx = row_idx
 
     summary, config = _parse_kv_blocks(lines, summary_start_idx - 1)
+    if not summary.get("Challenge Start"):
+        # [rb P1-2 2026-10-11] header 校验只看首行；summary 被截断（磁盘满/
+        # 同步中断）会让下方的 summary["Challenge Start"] 裸抛 KeyError，
+        # 绕开「坏 CSV → ValueError」的既有分类合同。此处按同合同提前失败。
+        raise ValueError(
+            "KovaaK Stats CSV summary block is missing 'Challenge Start' "
+            "(file may be truncated)"
+        )
 
     kills = pd.DataFrame(kill_rows, columns=list(KILL_HEADER))
     # Coerce numeric columns. TTK carries an "s" suffix ("0.395000s").

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 from copy import deepcopy
 from math import atan2, degrees, hypot, isfinite
 from statistics import median
@@ -71,19 +72,33 @@ def _samples(value: Any, field: str) -> list[dict[str, float | int]]:
 def _point_at(
     samples: Sequence[Mapping[str, float | int]], time_ms: int,
 ) -> tuple[float, float] | None:
-    for sample in samples:
-        if sample["canonical_time_ms"] == time_ms:
-            return float(sample["x"]), float(sample["y"])
-    for left, right in zip(samples, samples[1:]):
-        left_time = int(left["canonical_time_ms"])
-        right_time = int(right["canonical_time_ms"])
-        if left_time < time_ms < right_time:
-            ratio = (time_ms - left_time) / (right_time - left_time)
-            return (
-                float(left["x"]) + (float(right["x"]) - float(left["x"])) * ratio,
-                float(left["y"]) + (float(right["y"]) - float(left["y"])) * ratio,
-            )
-    return None
+    """样本序列在 time_ms 处的 (x, y)：精确命中取样本点，落在相邻两点之间
+    线性插值，窗外返回 None。
+
+    [perf 2026-10-11] 旧实现逐样本线性扫（精确一段 + 相邻对一段），
+    O(T×N)——每链每 transition 反复调用。所有调用方的样本都经
+    ``_samples`` / ``_visual_chain_samples`` 校验为严格递增整数时间戳，
+    二分与线性扫描在键唯一有序的前提下逐步等价（插值算式不变）。
+    """
+    index = bisect.bisect_left(
+        samples, time_ms, key=lambda sample: int(sample["canonical_time_ms"]),
+    )
+    if index >= len(samples):
+        return None
+    right = samples[index]
+    right_time = int(right["canonical_time_ms"])
+    if right_time == time_ms:
+        return float(right["x"]), float(right["y"])
+    if index == 0:
+        return None
+    left = samples[index - 1]
+    left_time = int(left["canonical_time_ms"])
+    # 二分落点下必有 left_time < time_ms < right_time（严格递增、无重复）。
+    ratio = (time_ms - left_time) / (right_time - left_time)
+    return (
+        float(left["x"]) + (float(right["x"]) - float(left["x"])) * ratio,
+        float(left["y"]) + (float(right["y"]) - float(left["y"])) * ratio,
+    )
 
 
 def _relative_path_between(

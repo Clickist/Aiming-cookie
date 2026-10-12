@@ -348,3 +348,40 @@ def test_switching_extension_round_trips_without_outcome_associations():
     assert len(extended["event_bundles"]) == 1
     assert extended["event_bundles"][0]["outcome_associations"] == []
     assert {metric["metric_key"] for metric in extended["metric_records"]} == set(result["metrics"])
+
+
+# --- [perf 2026-10-11] _point_at 二分与旧线性扫描逐步等价 ---
+
+def test_point_at_matches_naive_reference():
+    """严格递增样本下，bisect 版 _point_at 必须与旧双段线性扫描逐值一致。"""
+    import random
+
+    rng = random.Random(20261011)
+    for _round in range(256):
+        count = rng.randint(1, 12)
+        times = sorted(rng.sample(range(0, 10_000), count))
+        samples = [
+            {"canonical_time_ms": t, "x": float(rng.randint(-500, 500)),
+             "y": float(rng.randint(-500, 500))}
+            for t in times
+        ]
+
+        def naive(samples, time_ms):
+            for sample in samples:
+                if sample["canonical_time_ms"] == time_ms:
+                    return float(sample["x"]), float(sample["y"])
+            for left, right in zip(samples, samples[1:]):
+                left_time = int(left["canonical_time_ms"])
+                right_time = int(right["canonical_time_ms"])
+                if left_time < time_ms < right_time:
+                    ratio = (time_ms - left_time) / (right_time - left_time)
+                    return (
+                        float(left["x"]) + (float(right["x"]) - float(left["x"])) * ratio,
+                        float(left["y"]) + (float(right["y"]) - float(left["y"])) * ratio,
+                    )
+            return None
+
+        probes = {rng.randint(-10, 10_010) for _ in range(64)} | set(times)
+        for probe in probes:
+            assert target_switching_analysis._point_at(samples, probe) == \
+                naive(samples, probe), (times, probe)

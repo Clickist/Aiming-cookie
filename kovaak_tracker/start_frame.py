@@ -180,6 +180,15 @@ def lock_challenge_window(
     meta = get_video_metadata(video_path)
     fps = fps if fps is not None else meta.fps
     total = meta.frame_count
+    # [rb P0-2 2026-10-11] frame_count==0（容器损坏/零可解码帧）时旧实现返回
+    # (0, -1) 窗口，下游 compute_pan_trajectory 产出 0 行轨迹、在导数计算处
+    # 炸穿。这里按 typed 合同提前失败（与 video.get_video_metadata 的宽高/
+    # fps 校验同口径），不再产出自相矛盾的窗口。
+    if total <= 0:
+        raise ValueError(
+            f"Video has no decodable frames (frame_count={total}) for "
+            f"{video_path}; file may be corrupted or truncated."
+        )
     target_len = int(round(duration_s * fps))
     tol = max(3, int(0.03 * target_len))  # ~3% tolerance
 

@@ -39,6 +39,11 @@ def _ball_speed(df: pd.DataFrame, fps: float) -> np.ndarray:
         return np.array([])
     x = df["ball_x"].astype(float).to_numpy()
     y = df["ball_y"].astype(float).to_numpy()
+    # [rb P0-2 2026-10-11] 空/截断轨迹守卫移到导数计算之前：np.gradient 对
+    # <2 样本抛 ValueError（旧实现炸穿整局作业，下游 :133 的空守卫来不及
+    # 生效）。<2 样本返回空速度序列，由调用方按 typed unavailable 处理。
+    if x.size < 2:
+        return np.array([])
     # Gap = position NaN (real tracking writes None on loss) or ball_w==0 (synthetic).
     bad = np.isnan(x) | np.isnan(y)
     if "ball_w" in df.columns:

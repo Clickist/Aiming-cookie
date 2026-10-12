@@ -171,3 +171,63 @@ def test_empty_frames_h1_fingerprint(tmp_path):
     assert src["frames_with_targets"] == 0
     assert src["first_frame_target_count"] == 0
     assert src["n_rounds"] == 0
+
+
+# --- [perf 2026-10-11] _regroup_lives bisect 化与旧过滤语义逐点等价 ---
+
+def test_regroup_lives_matches_naive_reference():
+    """bisect 切片输出必须与旧的逐边界全量列表推导逐点一致（含 t_end 改写、
+    局末存活 tail、unpaired 计数、空边界间隙不产空生命）。"""
+    import random
+
+    rng = random.Random(20261011)
+    for _round in range(64):
+        # 合成 2-4 条坐标段（时间有序、可跨边界），边界随机落在段内/段间。
+        t = 100.0
+        segs = []
+        for _seg in range(rng.randint(1, 4)):
+            n = rng.randint(0, 12)
+            seg = []
+            for _p in range(n):
+                t = round(t + rng.uniform(0.01, 0.05), 4)
+                seg.append((t, rng.uniform(-5, 5), rng.uniform(-5, 5)))
+            if seg:
+                segs.append(seg)
+        bounds = sorted({
+            round(rng.uniform(100.0, t + 1.0), 3) for _ in range(rng.randint(0, 6))
+        })
+        got_lives, got_unpaired = cleaner._regroup_lives(
+            [list(seg) for seg in segs], bounds, pair_after=0.05,
+        )
+
+        # 参考实现 = 旧逐边界全量过滤语义。
+        segs_sorted = sorted(segs, key=lambda s: s[0][0] if s else 0.0)
+        segs_sorted = [seg for seg in segs_sorted if seg]
+        paired = []
+        seg_i = 0
+        for d in bounds:
+            while seg_i < len(segs_sorted) and \
+                    segs_sorted[seg_i][-1][0] + 0.05 < d:
+                seg_i += 1
+            if seg_i < len(segs_sorted) and segs_sorted[seg_i][0][0] <= d:
+                paired.append(d)
+        ref_lives = []
+        prev_d = None
+        for d in paired:
+            pts = [p for seg in segs_sorted for p in seg
+                   if (prev_d is None or p[0] > prev_d) and p[0] <= d]
+            if pts:
+                pts[-1] = (d,) + pts[-1][1:]
+                ref_lives.append(pts)
+            prev_d = d
+        if paired:
+            tail = [p for seg in segs_sorted for p in seg if p[0] > prev_d]
+        else:
+            tail = [p for seg in segs_sorted for p in seg]
+        if tail:
+            ref_lives.append(tail)
+
+        assert got_unpaired == len(bounds) - len(paired)
+        assert got_lives == ref_lives, (
+            f"round={_round} bounds={bounds} segs={segs}"
+        )

@@ -146,6 +146,7 @@ def resolve_time_window_stats_only(
     pause_count: int | float | str | None = None,
     pause_duration_seconds: float = 0.0,
     local_timezone: tzinfo | None = None,
+    stats_local_to_utc_mapping: Mapping[str, object] | None = None,
 ) -> TimeWindow:
     """CSV-only window rebuild for machines whose KovaaK never writes .perf.
 
@@ -158,6 +159,15 @@ def resolve_time_window_stats_only(
     the production resolver exactly: stats event end first, full-timer anchor
     (``time_limit - Time_Remaining``) only as the zero-kill fallback — so a run
     resolves to the same window whether or not the .perf file exists.
+
+    The naive start anchor timezone resolves with the same
+    ``stats_local_to_utc.v1`` mapping contract as the production path:
+    injected mapping first, then the explicit ``local_timezone`` argument, and
+    only as a last resort the analysis machine's current local timezone. The
+    machine fallback still runs but is honestly labeled: the resolved window
+    carries the mapping it actually used (source ``analysis_machine_local``,
+    warning ``csv_only_anchor_timezone_from_analysis_machine``) so callers can
+    persist it and make re-analysis deterministic across machines/DST seasons.
     """
     reject_pause_evidence(None, pause_duration_seconds, pause_count=pause_count)
 
@@ -166,8 +176,11 @@ def resolve_time_window_stats_only(
         raise TimeAlignmentError(
             f"anchor_conflict: invalid Stats Challenge Start {stats_challenge_start!r}"
         )
+    warnings: list[str] = []
+    resolved_mapping: dict[str, object] | None = None
     if parsed.tzinfo is not None:
         start_ms = _round_ms(parsed.timestamp() * 1000)
+        anchor_status = "explicit_timezone_argument"
     else:
         filename_dt = _parse_filename_time(filename_time)
         if filename_dt is None:
@@ -178,7 +191,12 @@ def resolve_time_window_stats_only(
         day = filename_dt.date()
         if parsed.time() > filename_dt.time():
             day = day - timedelta(days=1)
-        tz = local_timezone or datetime.now().astimezone().tzinfo
+        tz, resolved_mapping, anchor_status, tz_warnings = _resolve_csv_only_timezone(
+            datetime.combine(day, parsed.time()),
+            local_timezone=local_timezone,
+            stats_local_to_utc_mapping=stats_local_to_utc_mapping,
+        )
+        warnings.extend(tz_warnings)
         start_dt = datetime.combine(day, parsed.time()).replace(tzinfo=tz)
         start_ms = _round_ms(start_dt.timestamp() * 1000)
 
@@ -204,7 +222,6 @@ def resolve_time_window_stats_only(
         duration_ms = _round_ms(duration_seconds * 1000)
         end_source = "csv_timer_profile"
 
-    warnings: list[str] = []
     filename_hint_ms = _filename_hint_ms(filename_time, start_ms, local_timezone)
     if filename_hint_ms is not None:
         warnings.append("filename_time_is_coarse_hint")
@@ -217,9 +234,62 @@ def resolve_time_window_stats_only(
         end_source=end_source,
         filename_end_hint_ms=filename_hint_ms,
         warnings=tuple(dict.fromkeys(warnings)),
-        stats_anchor_status="explicit_timezone_argument",
+        stats_anchor_status=anchor_status,
         stats_time_of_day_ms=start_ms % 86_400_000,
-        stats_local_to_utc_mapping=None,
+        stats_local_to_utc_mapping=resolved_mapping,
+    )
+
+
+def _resolve_csv_only_timezone(
+    naive_start: datetime,
+    *,
+    local_timezone: tzinfo | None,
+    stats_local_to_utc_mapping: Mapping[str, object] | None,
+) -> tuple[tzinfo, dict[str, object] | None, str, list[str]]:
+    """CSV-only 起点锚时区解析：注入 mapping > local_timezone > 机器回退。
+
+    返回 (固定偏移时区, 实际使用的 mapping, stats_anchor_status, 附加 warnings)。
+    机器回退仍可运行，但必须留下痕迹（mapping source=analysis_machine_local +
+    warning token）：同一 CSV 换机器/跨 DST 季重分析时，窗口漂移才可被发现。
+    """
+    warnings: list[str] = []
+    mapping = _normalize_stats_mapping(stats_local_to_utc_mapping)
+    if mapping is not None:
+        offset_minutes = int(mapping["utc_offset_minutes"])
+        return (
+            timezone(timedelta(minutes=offset_minutes)),
+            mapping,
+            "persisted_mapping",
+            warnings,
+        )
+    if local_timezone is not None:
+        offset_minutes = int(
+            (local_timezone.utcoffset(naive_start) or timedelta(0)).total_seconds() // 60
+        )
+        return (
+            timezone(timedelta(minutes=offset_minutes)),
+            {
+                "version": "stats_local_to_utc.v1",
+                "source": "explicit_timezone_argument",
+                "utc_offset_minutes": offset_minutes,
+            },
+            "explicit_timezone_argument",
+            warnings,
+        )
+    machine_tz = datetime.now().astimezone().tzinfo
+    offset_minutes = int(
+        ((machine_tz.utcoffset(naive_start) if machine_tz else None) or timedelta(0)).total_seconds() // 60
+    )
+    warnings.append("csv_only_anchor_timezone_from_analysis_machine")
+    return (
+        timezone(timedelta(minutes=offset_minutes)),
+        {
+            "version": "stats_local_to_utc.v1",
+            "source": "analysis_machine_local",
+            "utc_offset_minutes": offset_minutes,
+        },
+        "machine_local_timezone",
+        warnings,
     )
 
 

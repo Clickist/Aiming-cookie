@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,8 +37,18 @@ def get_video_metadata(video_path: str | Path) -> VideoMetadata:
                 f"Invalid video dimensions ({width}x{height}) for {video_path}; "
                 f"file may be corrupted or codec unsupported."
             )
+        # [rb P1-1 2026-10-11] 旧实现 fps=0/非有限值静默兜 60：px/s 速度与
+        # SPARC 频域全部静默错数且无任何标注，违反「降级必须可观测」合同。
+        # 与上方宽高校验同口径 fail-closed：容器读不出 fps 即按损坏输入失败，
+        # 由调用方的既有 typed 错误路径呈现，不再产出看似正常的时间基错数。
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if not math.isfinite(fps) or fps <= 0.0:
+            raise ValueError(
+                f"Invalid video fps ({fps}) for {video_path}; file may be "
+                f"corrupted or its container does not declare a frame rate."
+            )
         return VideoMetadata(
-            fps=float(cap.get(cv2.CAP_PROP_FPS) or 60),
+            fps=fps,
             width=width,
             height=height,
             frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),

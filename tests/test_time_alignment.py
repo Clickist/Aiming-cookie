@@ -374,3 +374,127 @@ def test_stats_only_missing_filename_date_fails_closed():
             stats_event_times_seconds=[10.0],
             local_timezone=CSV_ONLY_LOCAL_TZ,
         )
+
+
+# ---------------------------------------------------------------------------
+# CSV-only 起点锚时区确定性（2026-10-10 缺陷修复）：起点锚不得依赖「分析那一刻」
+# 的本机时区（同一 CSV 换机器/跨 DST 重分析窗口会漂移）。时区解析优先级：
+# 注入 stats_local_to_utc.v1 mapping > local_timezone 参数 > 机器回退（留痕）。
+
+
+def _csv_only_mapping(offset_minutes: int) -> dict:
+    return {
+        "version": "stats_local_to_utc.v1",
+        "source": "analysis_machine_local",
+        "utc_offset_minutes": offset_minutes,
+    }
+
+
+class _FakeAnalysisMachineTz(datetime):
+    """把 datetime.now().astimezone() 伪装成另一台机器的本地时区（UTC+13）。"""
+
+    def astimezone(self, tz=None):
+        return self.replace(tzinfo=timezone(timedelta(hours=13)))
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_stats_only_machine_fallback_records_mapping_and_warning():
+    result = resolve_time_window_stats_only(
+        stats_challenge_start="10:00:00.000",
+        filename_time="2026.10.08-10.01.00",
+        stats_event_times_seconds=[10.0],
+    )
+    mapping = result.stats_local_to_utc_mapping
+    assert mapping is not None
+    assert mapping["version"] == "stats_local_to_utc.v1"
+    assert mapping["source"] == "analysis_machine_local"
+    offset = timedelta(minutes=mapping["utc_offset_minutes"])
+    start = datetime.fromtimestamp(result.start_ms / 1000, tz=timezone(offset))
+    assert start.strftime("%Y-%m-%d %H:%M:%S.%f") == "2026-10-08 10:00:00.000000"
+    assert result.stats_anchor_status == "machine_local_timezone"
+    assert "csv_only_anchor_timezone_from_analysis_machine" in result.warnings
+
+
+def test_stats_only_injected_mapping_matches_explicit_timezone_result():
+    explicit = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+        local_timezone=CSV_ONLY_LOCAL_TZ,
+    )
+    injected = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+        stats_local_to_utc_mapping=_csv_only_mapping(480),
+    )
+    assert injected.start_ms == explicit.start_ms
+    assert injected.end_ms == explicit.end_ms
+    assert injected.duration_ms == explicit.duration_ms
+    assert injected.stats_time_of_day_ms == explicit.stats_time_of_day_ms
+    assert injected.warnings == explicit.warnings
+    assert injected.stats_local_to_utc_mapping["utc_offset_minutes"] == 480
+    assert explicit.stats_local_to_utc_mapping["utc_offset_minutes"] == 480
+    # 来源标注按实际取用：注入=persisted_mapping，显式参数=explicit_timezone_argument。
+    assert injected.stats_anchor_status == "persisted_mapping"
+    assert explicit.stats_anchor_status == "explicit_timezone_argument"
+
+
+def test_stats_only_injected_mapping_ignores_analysis_machine_timezone(monkeypatch):
+    monkeypatch.setattr(
+        "kovaak_tracker.time_alignment.datetime", _FakeAnalysisMachineTz
+    )
+    result = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+        stats_local_to_utc_mapping=_csv_only_mapping(0),
+    )
+    # 跨午夜：23:58 > 词干 00:02 ⇒ 前一天。窗口=naive 墙钟按 mapping 偏移（UTC+0）
+    # 的绝对时刻，与伪装的分析机器时区（UTC+13）无关。
+    expected = int(
+        datetime(2026, 10, 7, 23, 58, 40, 321000, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    assert result.start_ms == expected
+    assert result.stats_anchor_status == "persisted_mapping"
+    assert "csv_only_anchor_timezone_from_analysis_machine" not in result.warnings
+
+
+def test_stats_only_reimport_reuses_persisted_mapping_across_machine_tz(monkeypatch):
+    # 第一次分析：机器回退（本机 UTC+8）→ 窗口 + mapping（source=analysis_machine_local）。
+    first = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+    )
+    assert first.stats_local_to_utc_mapping["source"] == "analysis_machine_local"
+    # 第二次：伪装另一台机器（UTC+13），注入第一次存下的 mapping → 窗口必须一致。
+    monkeypatch.setattr(
+        "kovaak_tracker.time_alignment.datetime", _FakeAnalysisMachineTz
+    )
+    second = resolve_time_window_stats_only(
+        stats_challenge_start="23:58:40.321",
+        filename_time="2026.10.08-00.02.11",
+        stats_event_times_seconds=[1.0, 59.944],
+        stats_local_to_utc_mapping=first.stats_local_to_utc_mapping,
+    )
+    assert second.start_ms == first.start_ms
+    assert second.end_ms == first.end_ms
+    assert second.stats_anchor_status == "persisted_mapping"
+    assert "csv_only_anchor_timezone_from_analysis_machine" not in second.warnings
+
+
+def test_stats_only_rejects_unsupported_mapping_version():
+    with pytest.raises(TimeAlignmentError, match="anchor_timezone_unmapped"):
+        resolve_time_window_stats_only(
+            stats_challenge_start="10:00:00.000",
+            filename_time="2026.10.08-10.01.00",
+            stats_event_times_seconds=[10.0],
+            stats_local_to_utc_mapping={
+                "version": "stats_local_to_utc.v999",
+                "utc_offset_minutes": 0,
+            },
+        )

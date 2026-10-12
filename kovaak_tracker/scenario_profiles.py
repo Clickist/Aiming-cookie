@@ -89,6 +89,10 @@ _FAMILY_BASELINE_LIMITATIONS = [
     "outcome_association_unavailable",
     "scenario_prescription_unavailable",
 ]
+# [边界收紧 2026-10-11] 家族基线判型规则是稳定合同：backend（analysis_service）
+# 按审计 B1 走公有名消费，不再 import 私有符号；私有名保留为模块内/既有
+# 测试的兼容别名（同一对象，非拷贝）。
+FAMILY_BASELINE_LIMITATIONS = _FAMILY_BASELINE_LIMITATIONS
 # Challenge-shape v1: the winning discriminator is the FIRE MODE read from
 # the Raw Input button bitmask (state samples, not edges). Real runs: tapping
 # classes spend 16–27 held samples per kill, sustained-fire tracking 426–445,
@@ -670,6 +674,10 @@ def _family_baseline_resolution(
         "family_analyzer_dispatch": "allowed",
         "limitations": list(limitations),
     }
+
+
+# [边界收紧 2026-10-11] 公有名：backend 跨层消费走这里（同一函数对象）。
+family_baseline_resolution = _family_baseline_resolution
 
 
 def _family_from_display_name(display_name: str) -> str | None:

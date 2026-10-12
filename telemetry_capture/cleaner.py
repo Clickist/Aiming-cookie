@@ -46,6 +46,7 @@
 纯本地只读工具：只读输入 JSONL，不触碰游戏进程。
 """
 import argparse
+import bisect
 import json
 import math
 import os
@@ -534,19 +535,34 @@ def _regroup_lives(segs, boundaries, pair_after=DEATH_PAIR_AFTER):
         if seg_i < len(segs) and segs[seg_i][0][0] <= d:
             paired.append(d)
     unpaired = len(bounds) - len(paired)
+    # [perf 2026-10-11] 旧实现每条边界对全部坐标点做一次列表推导
+    # （O(边界×全点)，高击杀局阻塞 finalize 切窗）。坐标段按时间有序拼接后
+    # 点序列整体有序，预拼接一次、每条边界 bisect 切片（O(N+B)）。
+    all_pts = [p for seg in segs for p in seg]
+    times = [p[0] for p in all_pts]
+    time_sorted = all(times[i] <= times[i + 1] for i in range(len(times) - 1))
     lives = []
     prev_d = None
     for d in paired:
-        pts = [p for seg in segs for p in seg
-               if (prev_d is None or p[0] > prev_d) and p[0] <= d]
+        if time_sorted:
+            lo = 0 if prev_d is None else bisect.bisect_right(times, prev_d)
+            hi = bisect.bisect_right(times, d)
+            pts = all_pts[lo:hi]
+        else:
+            # 兜底：点序列意外乱序时保持旧过滤语义（结果一致，只是不 bisect）。
+            pts = [p for p in all_pts
+                   if (prev_d is None or p[0] > prev_d) and p[0] <= d]
         if pts:
             pts[-1] = (d,) + pts[-1][1:]      # t_end 权威 = 死亡时刻
             lives.append(pts)
         prev_d = d
     if paired:
-        tail = [p for seg in segs for p in seg if p[0] > prev_d]
+        if time_sorted:
+            tail = all_pts[bisect.bisect_right(times, prev_d):]
+        else:
+            tail = [p for p in all_pts if p[0] > prev_d]
     else:
-        tail = [p for seg in segs for p in seg]
+        tail = list(all_pts)
     if tail:
         lives.append(tail)                    # 局末存活（无死亡收尾）
     return lives, unpaired

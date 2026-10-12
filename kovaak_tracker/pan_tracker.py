@@ -142,6 +142,11 @@ def compute_pan_trajectory(
     prev = None
     all_widths = []
     total = max(1, end_frame - start_frame + 1)
+    # [rb P1-4 2026-10-11] 中途 cap.read() 失败（解码中断/截断文件）时旧实现
+    # 静默 break，用截断轨迹继续打分、报告看似完整。这里把截断事实标注到
+    # DataFrame.attrs（timeline_status="partial"，语义对齐 native 路径
+    # performance_parser.timeline_status），由 analyze 层透传到 extras/summary。
+    decoded_complete = True
     try:
         # Seek ONCE to start_frame, then read sequentially. Per-frame cap.set is
         # O(frame_no) on H.264 (re-decodes from the last keyframe each call) and was
@@ -150,6 +155,7 @@ def compute_pan_trajectory(
         for off, f in enumerate(range(start_frame, end_frame + 1)):
             ok, frame = cap.read()
             if not ok:
+                decoded_complete = False
                 # cap.read() 提前失败时,下面的 progress_callback 永远到不了 1.0,
                 # 等待 100% 切状态的 UI 会卡。补发一次满进度。
                 if progress_callback is not None:
@@ -186,6 +192,7 @@ def compute_pan_trajectory(
         cap.release()
 
     df = pd.DataFrame(rows, columns=["frame", "time_s", "pan_dx", "pan_dy", "n_targets"])
+    df.attrs["timeline_status"] = "complete" if decoded_complete else "partial"
     xx = [cx0]
     yy = [cy0]
     for dx, dy in zip(df["pan_dx"], df["pan_dy"]):
@@ -290,6 +297,13 @@ def analyze_flicking_reference(
     track_df.to_csv(output_dir / "ref_pan_trajectory.csv", index=False)
 
     speed = _ball_speed(track_df, fps)
+    if speed.size == 0:
+        # [rb P0-2 2026-10-11] 空/截断轨迹（损坏视频无可解码帧）按 typed
+        # 合同失败，不再静默产出全 None 的"0 flick"正常形报告。
+        raise ValueError(
+            "visual trajectory unavailable: challenge window contains no "
+            "decodable frames"
+        )
     accel = calc_derivative(speed, fps)
     win = max(5, int(fps * 0.05))
     if win % 2 == 0:
@@ -360,6 +374,21 @@ def analyze_flicking_fair_summary(
     )
 
     speed = _ball_speed(track_df, fps)
+    if speed.size == 0:
+        # [rb P0-2 2026-10-11] 空/截断轨迹按 typed 合同失败（同 reference 入口）。
+        raise ValueError(
+            "visual trajectory unavailable: challenge window contains no "
+            "decodable frames"
+        )
+    # [rb P1-4 2026-10-11] 视频中途解码失败 → 截断轨迹标注 partial（对齐
+    # native 路径 performance_parser.timeline_status 语义），随 extras 透传，
+    # 由 worker 落 deterministic.limitations/warnings，绝不静默输出看似完整
+    # 的报告。
+    timeline_status = (
+        "partial"
+        if track_df.attrs.get("timeline_status", "complete") != "complete"
+        else "complete"
+    )
     accel = calc_derivative(speed, fps)
     win = max(5, int(fps * 0.05))
     if win % 2 == 0:
@@ -435,6 +464,9 @@ def analyze_flicking_fair_summary(
         # 非精确帧),前端展示时标注为近似定位。
         "corrective_frames": corrective_frames,
         "corrective_frame_estimated": True,
+        # [rb P1-4 2026-10-11] 视频中途解码失败 → "partial"（完整解码为
+        # "complete"）；worker 落 deterministic.limitations/warnings。
+        "timeline_status": timeline_status,
     }
     return summary, extras
 

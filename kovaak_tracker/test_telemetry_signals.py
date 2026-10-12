@@ -1058,3 +1058,271 @@ def test_index_round_file_fallback_retired_fail_closed(tmp_path):
     # origin 回落轮帧首帧 t（0.032s），不是索引条目的 55.5s。
     assert _track_keys(result) == {"target.0.position", "target.1.position"}
     assert result["video_time_mapping"]["source_pts_origin_ms"] == pytest.approx(32.0)
+
+
+# ---------- [rb P1-5 2026-10-11] JSONL 坏行不再静默丢（记 limitation） ----------
+
+
+def test_malformed_jsonl_lines_surface_as_limitations(tmp_path):
+    """round/views/inputs 任一文件含损坏行：样本按旧行为跳过，但 run 级
+    limitations 必须出现对应 cause 码——坏行时段与真死亡间隙可区分。"""
+    round_dir = tmp_path / "ext-malformed-jsonl"
+    _write_single_target_sidecars(round_dir, (4000.0, 10.0, 0.0))
+    # 各注入一行坏 JSON（不影响其余行解析）。
+    frames_path = round_dir / "round.jsonl"
+    frames_path.write_bytes(
+        b'{"ev": "frame", "t": 0.001, "targets": []}\n{BROKEN\n'
+        + frames_path.read_bytes()
+    )
+    views_path = round_dir / "views_01.jsonl"
+    views_path.write_bytes(b'{BROKEN-VIEW\n' + views_path.read_bytes())
+    inputs_path = round_dir / "inputs_01.jsonl"
+    inputs_path.write_bytes(b'not-json-at-all\n' + inputs_path.read_bytes())
+
+    result = _frustum_build(round_dir)
+    assert "round_jsonl_malformed_lines_skipped" in result["limitations"]
+    assert "views_jsonl_malformed_lines_skipped" in result["limitations"]
+    assert "inputs_jsonl_malformed_lines_skipped" in result["limitations"]
+
+
+def test_clean_jsonl_produces_no_malformed_limitations(tmp_path):
+    """完好文件不引入新 limitation（既有口径不变）。"""
+    round_dir = tmp_path / "ext-clean-jsonl"
+    _write_single_target_sidecars(round_dir, (4000.0, 10.0, 0.0))
+    result = _frustum_build(round_dir)
+    for code in (
+        "round_jsonl_malformed_lines_skipped",
+        "views_jsonl_malformed_lines_skipped",
+        "inputs_jsonl_malformed_lines_skipped",
+    ):
+        assert code not in result["limitations"]
+
+
+
+
+# ---------- [perf P0-2 2026-10-11] 投影内循环优化与旧实现逐位等价 ----------
+
+
+def _write_randomized_sidecars(round_dir: Path, seed: int = 20261011) -> dict:
+    """多目标×多生命×随机相机的合成旁车：覆盖死亡间隙、生命窗外帧、
+    相机后方目标、视锥外目标、兜底半径窗、窗外/非单调帧。"""
+    import random
+
+    rng = random.Random(seed)
+    round_dir.mkdir(parents=True)
+    dt = 1.0 / 60.0
+    frame_count = 240
+    view_t = [round(i * dt, 6) for i in range(frame_count)]
+    # 注入一个重复 t（非单调帧）与一个窗外帧。
+    view_t.insert(50, view_t[50])
+    view_t.append(999.0)
+
+    target_count = 5
+    lives_meta = []
+    for tid in range(target_count):
+        # 每目标 3 条生命，含生命间死亡间隙。
+        lives = []
+        seg = (frame_count * dt) / 5.0
+        for k in range(3):
+            t0 = k * seg * 1.4 + 0.01
+            t1 = t0 + seg
+            if t0 >= frame_count * dt:
+                break
+            lives.append((round(t0, 6), round(min(t1, frame_count * dt), 6)))
+        lives_meta.append(lives)
+
+    def world_at(tid, t):
+        x = 3000.0 + 800.0 * tid
+        y = -1500.0 + 750.0 * tid
+        z = 0.0
+        return (x, y, z)
+
+    frames_lines = []
+    for t in view_t:
+        targets = []
+        for tid in range(target_count):
+            if t > frame_count * dt:
+                continue
+            alive = any(t0 <= t <= t1 for t0, t1 in lives_meta[tid])
+            if alive:
+                x, y, z = world_at(tid, t)
+                targets.append([tid * 16, x, y, z])
+        frames_lines.append(json.dumps({"ev": "frame", "t": t, "targets": targets}))
+    # 随机相机：yaw/pitch 变化（覆盖 wrap/pitch 门）。
+    views_lines = []
+    for i, t in enumerate(view_t):
+        yaw = math.degrees(-0.6 + (i % 97) / 97.0 * 1.2)
+        pitch = math.degrees(-0.25 + (i % 61) / 61.0 * 0.5)
+        views_lines.append(json.dumps({
+            "t": t, "pos": [0.0, 0.0, 0.0],
+            "rot": [pitch, yaw, 0.0], "fov": 103.0,
+        }))
+    inputs_lines = [
+        json.dumps({"t": round(k * dt * 3, 6), "btn": ["L_down"]})
+        for k in range(1, 40)
+    ]
+    (round_dir / "round.jsonl").write_text(
+        "\n".join(frames_lines) + "\n", encoding="utf-8")
+    (round_dir / "views_01.jsonl").write_text(
+        "\n".join(views_lines) + "\n", encoding="utf-8")
+    (round_dir / "inputs_01.jsonl").write_text(
+        "\n".join(inputs_lines) + "\n", encoding="utf-8")
+    # bb 只覆盖前半窗 → 后半窗走兜底半径（target_radius_measurement_unavailable）。
+    (round_dir / "bb.json").write_text(json.dumps({
+        "challenges": [{"window_t": [0.0, frame_count * dt / 2.0], "bots": [
+            {"character": {"bb": {"radius": 45.0}}}
+        ]}]
+    }), encoding="utf-8")
+    frozen = {
+        "targets": [
+            {
+                "tid": tid,
+                "addr_hex": hex(tid * 16),
+                "lives": [
+                    {"t_start": t0, "t_end": t1} for t0, t1 in lives_meta[tid]
+                ],
+            }
+            for tid in range(target_count)
+        ],
+        "t_start": 0.0,
+    }
+    return frozen
+
+
+def test_projection_loop_matches_pre_optimization_reference(tmp_path):
+    """随机合成旁车上，优化后的投影内循环必须与优化前的逐帧×逐目标×
+    逐生命参考实现逐位一致（样本、limitation 首次出现顺序）。"""
+    from kovaak_tracker.telemetry_signals import (
+        _MAX_SAMPLE_GAP_MS,
+        _build_radius_lookup,
+        _frozen_round_meta_entry,
+        _interpolate_in_life,
+        _is_in_front,
+        _is_in_view_frustum,
+        _load_click_times,
+        _load_round_target_positions,
+        _load_views,
+        _radius_at,
+    )
+
+    round_dir = tmp_path / "ext-equivalence"
+    frozen = _write_randomized_sidecars(round_dir)
+    window_start, window_end = 0.0, 10_000_000
+
+    result = build_telemetry_visual_result(
+        round_dir, 1,
+        canonical_window=(window_start, window_end),
+        analysis_ref="analysis:eq",
+        file_names={
+            "round": "round.jsonl", "views": "views_01.jsonl",
+            "inputs": "inputs_01.jsonl",
+        },
+        frozen_round_meta=frozen,
+    )
+
+    # ---- 参考实现 = 优化前循环逐字同构 ----
+    positions, first_frame_t = _load_round_target_positions(
+        round_dir, 1, "round.jsonl",
+    )
+    views = _load_views(round_dir, 1, "views_01.jsonl")
+    click_times = _load_click_times(round_dir, 1, "inputs_01.jsonl")
+    radius_windows, fallback_radius, bb_limitations = _build_radius_lookup(round_dir)
+    entry = _frozen_round_meta_entry(frozen)
+    origin_t = entry.get("origin_t")
+    if origin_t is None:
+        origin_t = entry.get("t_start")
+    if origin_t is None:
+        origin_t = first_frame_t
+
+    def to_canonical_ms(source_t):
+        return window_start + int(round((source_t - origin_t) * 1000.0))
+
+    fovs = [fov for _, _, _, fov in views if fov is not None]
+    selector_fov = float(statistics.median(fovs)) if fovs else 103.0
+    targets = {}
+    for target in entry.get("targets") or []:
+        targets[target["tid"]] = {
+            "addr": target["addr"],
+            "lives": [
+                (life["t_start"], life["t_end"]) for life in target["lives"]
+            ],
+        }
+
+    limitations = list(bb_limitations)
+    crosshair = []
+    track = {tid: [] for tid in sorted(targets)}
+    previous_canonical = None
+    for frame_t, pos, rot, _fov in views:
+        canonical_ms = to_canonical_ms(frame_t)
+        if not window_start <= canonical_ms < window_end:
+            limitations.append("frame_pts_outside_canonical_window")
+            continue
+        if previous_canonical is not None and canonical_ms <= previous_canonical:
+            limitations.append("non_monotonic_frame_pts")
+            continue
+        if (previous_canonical is not None
+                and canonical_ms - previous_canonical > _MAX_SAMPLE_GAP_MS):
+            limitations.append("visual_frame_gap")
+        previous_canonical = canonical_ms
+        crosshair.append({
+            "canonical_time_ms": canonical_ms,
+            "x": float(1920 / 2), "y": float(1080 / 2), "confidence": 1.0,
+        })
+        radius_cm, radius_measured = _radius_at(
+            radius_windows, fallback_radius, frame_t,
+        )
+        for tid in sorted(targets):
+            target = targets[tid]
+            world = None
+            for life_start, life_end in target["lives"]:
+                if life_start <= frame_t <= life_end:
+                    world = _interpolate_in_life(
+                        positions.get(target["addr"], ()),
+                        life_start, life_end, frame_t,
+                    )
+                    break
+            if world is None:
+                continue
+            if not _is_in_front(world, pos, rot):
+                limitations.append("target_behind_camera_skipped")
+                continue
+            if not _is_in_view_frustum(
+                target=world, camera_pos=pos, rot=rot,
+                horizontal_fov_deg=selector_fov, target_radius_cm=radius_cm,
+            ):
+                limitations.append("target_outside_frustum_skipped")
+                continue
+            try:
+                px_x, px_y, px_radius = project_world_to_viewport(
+                    target=world, camera_pos=pos, rot=rot,
+                    horizontal_fov_deg=selector_fov, target_radius_cm=radius_cm,
+                )
+            except ValueError:
+                limitations.append("target_behind_camera_skipped")
+                continue
+            track[tid].append({
+                "canonical_time_ms": canonical_ms,
+                "x": px_x, "y": px_y,
+                "visible_radius": px_radius if radius_measured else None,
+                "confidence": 1.0,
+                "measurement_source": "telemetry_world_projection",
+            })
+            if not radius_measured:
+                limitations.append("target_radius_measurement_unavailable")
+
+    def dedup_first_occurrence(codes):
+        seen = []
+        for code in codes:
+            if code not in seen:
+                seen.append(code)
+        return seen
+
+    assert result["local_samples"]["crosshair.position"] == crosshair
+    for tid in sorted(track):
+        got = result["local_samples"].get(f"target.{tid}.position")
+        assert got == track[tid], f"target {tid} samples diverged"
+    assert result["limitations"] == dedup_first_occurrence(limitations)
+    # 覆盖率哨兵：随机夹具必须真的踩到视锥/兜底/非单调 limitation。
+    assert "target_outside_frustum_skipped" in result["limitations"]
+    assert "target_radius_measurement_unavailable" in result["limitations"]
+    assert "non_monotonic_frame_pts" in result["limitations"]

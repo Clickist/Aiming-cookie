@@ -195,3 +195,147 @@ def test_fair_summary_throughput_live(monkeypatch):
     med = tp["med"] if isinstance(tp, dict) else tp
     assert not (isinstance(med, float) and np.isnan(med)), \
         f"throughput median should not be NaN, got {med}"
+
+
+# ---------------------------------------------------------------------------
+# [rb P0-2 2026-10-11] 空/截断轨迹守卫 + [rb P1-4] partial 标注 + [rb P1-1] fps 兜底
+# ---------------------------------------------------------------------------
+
+def _empty_track_df():
+    import pandas as pd
+    return pd.DataFrame(
+        [], columns=["frame", "time_s", "pan_dx", "pan_dy", "n_targets"],
+    )
+
+
+def _pan_pipeline_stubs(monkeypatch, track_df, *, frame_count=180):
+    import numpy as np
+    import pandas as pd
+    monkeypatch.setattr(
+        P, "compute_pan_trajectory",
+        lambda *a, **k: (track_df, np.array([30.0]))
+        if k.get("return_widths") else track_df,
+    )
+    monkeypatch.setattr(
+        P, "lock_challenge_window",
+        lambda *a, **k: type("W", (), {"start_frame": 0, "end_frame": 179})(),
+    )
+    monkeypatch.setattr(
+        P, "get_video_metadata",
+        lambda *a, **k: type(
+            "M", (), {"fps": 60.0, "width": 1920, "frame_count": frame_count},
+        )(),
+    )
+
+    class _S:
+        kills = pd.DataFrame({"time_s": [2.0]})
+
+    monkeypatch.setattr(P, "parse_stats_csv", lambda *a, **k: _S())
+
+
+def test_empty_trajectory_raises_typed_value_error(monkeypatch):
+    """损坏/截断视频（0 可解码帧 → 0 行轨迹）必须按 ValueError typed 失败，
+    不能在 np.gradient 深处炸出无类型错误，也不许静默产出 0-flick 报告。"""
+    _pan_pipeline_stubs(monkeypatch, _empty_track_df())
+
+    with pytest.raises(ValueError, match="visual trajectory unavailable"):
+        P.analyze_flicking_fair_summary("v.mp4", "c.csv", fov=103.0)
+
+
+def test_ball_speed_guard_short_trajectories():
+    import numpy as np
+    import pandas as pd
+    from kovaak_tracker.flicking import _ball_speed
+
+    empty = pd.DataFrame(
+        [], columns=["frame", "time_s", "pan_dx", "pan_dy", "ball_x", "ball_y"],
+    )
+    assert _ball_speed(empty, 60.0).size == 0
+    one_row = pd.DataFrame({
+        "frame": [0], "time_s": [0.0], "pan_dx": [0.0], "pan_dy": [0.0],
+        "ball_x": [960.0], "ball_y": [540.0],
+    })
+    assert _ball_speed(one_row, 60.0).size == 0
+    # calc_derivative 对 <2 样本按零导数返回（不再抛 ValueError）。
+    from kovaak_tracker.analysis import calc_derivative
+    assert calc_derivative(np.array([]), 60.0).size == 0
+    assert calc_derivative(np.array([1.0]), 60.0).tolist() == [0.0]
+
+
+def test_partial_decode_marks_timeline_status(monkeypatch):
+    """视频中途 cap.read() 失败 → extras 带 timeline_status="partial"，
+    完整解码 → "complete"（对齐 native 路径 performance_parser 语义）。"""
+    import numpy as np
+    import pandas as pd
+
+    fps = 60.0
+    t = np.arange(180) / fps
+    speed = 1000 * np.exp(-((t - 1.5) ** 2) / (2 * 0.09 ** 2))
+    for status in ("partial", "complete"):
+        df = pd.DataFrame({
+            "frame": np.arange(180), "time_s": t,
+            "ball_x": np.cumsum(speed) / fps, "ball_y": np.zeros(180),
+        })
+        df.attrs["timeline_status"] = status
+        _pan_pipeline_stubs(monkeypatch, df)
+
+        summary, extras = P.analyze_flicking_fair_summary(
+            "v.mp4", "c.csv", fov=103.0, return_extras=True,
+        )
+        assert extras["timeline_status"] == status
+
+
+def test_lock_challenge_window_rejects_zero_frame_video(monkeypatch):
+    """frame_count==0（损坏容器）→ typed ValueError，而不是 (0, -1) 自相矛盾
+    窗口流向下游。"""
+    from kovaak_tracker import start_frame
+
+    monkeypatch.setattr(
+        start_frame, "get_video_metadata",
+        lambda *a, **k: type(
+            "M", (), {"fps": 60.0, "width": 1920, "height": 1080, "frame_count": 0},
+        )(),
+    )
+    with pytest.raises(ValueError, match="no decodable frames"):
+        start_frame.lock_challenge_window("broken.mp4", 60.0)
+
+
+class _FakeCapture:
+    def __init__(self, fps):
+        self._values = {
+            3: 1920, 4: 1080, 5: fps, 7: 180,  # WIDTH/HEIGHT/FPS/FRAME_COUNT
+        }
+
+    def isOpened(self):
+        return True
+
+    def get(self, prop):
+        return self._values.get(prop, 0.0)
+
+    def release(self):
+        pass
+
+
+@pytest.mark.parametrize("fps", [0.0, -1.0])
+def test_get_video_metadata_rejects_non_positive_fps(monkeypatch, fps):
+    """[rb P1-1 2026-10-11] fps<=0 不再静默兜 60：与宽高校验同口径 fail-closed。"""
+    import cv2
+    from kovaak_tracker import video as video_mod
+
+    monkeypatch.setattr(
+        video_mod.cv2, "VideoCapture", lambda _path: _FakeCapture(fps),
+    )
+    with pytest.raises(ValueError, match="Invalid video fps"):
+        video_mod.get_video_metadata("zero-fps.mp4")
+
+
+def test_get_video_metadata_valid_fps_unchanged(monkeypatch):
+    import cv2
+    from kovaak_tracker import video as video_mod
+
+    monkeypatch.setattr(
+        video_mod.cv2, "VideoCapture", lambda _path: _FakeCapture(59.94),
+    )
+    meta = video_mod.get_video_metadata("ok.mp4")
+    assert meta.fps == 59.94
+    assert meta.frame_count == 180

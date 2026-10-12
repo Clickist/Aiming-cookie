@@ -79,8 +79,15 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
-def _read_jsonl(path: Path) -> list[dict]:
+def _read_jsonl_with_malformed_count(path: Path) -> tuple[list[dict], int]:
+    """读 JSONL，返回 (records, unusable_lines)。
+
+    [rb P1-5 2026-10-11] 旧实现坏行静默 continue：round.jsonl 损坏行覆盖的
+    时段被下游当作"死亡间隙"，无法与真死亡区分（静默错误数据）。坏行/非对
+    象行计数上浮，由调用方记 limitation，绝不静默吞。
+    """
     records: list[dict] = []
+    unusable = 0
     try:
         with open(path, encoding="utf-8") as handle:
             for line in handle:
@@ -90,12 +97,20 @@ def _read_jsonl(path: Path) -> list[dict]:
                 try:
                     record = json.loads(line)
                 except ValueError:
+                    unusable += 1
                     continue
                 if isinstance(record, dict):
                     records.append(record)
+                else:
+                    unusable += 1
     except OSError:
-        return []
-    return records
+        return [], 0
+    return records, unusable
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    """兼容包装：只取 records（坏行计数见 _read_jsonl_with_malformed_count）。"""
+    return _read_jsonl_with_malformed_count(path)[0]
 
 
 def _focal_length_px(horizontal_fov_deg: float) -> float:
@@ -198,13 +213,20 @@ def _load_round_target_positions(
     round_dir: Path,
     round_number: int,
     frames_name: str | None = None,
-) -> tuple[dict[int, list[tuple[float, float, float, float]]], float | None]:
-    """round_NN.jsonl -> addr -> 按时间排序的 [(t, x, y, z)]；附带首帧 t。"""
+    *,
+    return_malformed_count: bool = False,
+) -> tuple[dict[int, list[tuple[float, float, float, float]]], float | None] | tuple[dict[int, list[tuple[float, float, float, float]]], float | None, int]:
+    """round_NN.jsonl -> addr -> 按时间排序的 [(t, x, y, z)]；附带首帧 t。
+
+    [rb P1-5 2026-10-11] return_malformed_count=True 时追加坏行计数
+    （坏行不再静默当死亡间隙）；缺省 False 保持既有调用形状不变
+    （.zcode 冻结校验锚等外部消费方不感知）。"""
     positions: dict[int, list[tuple[float, float, float, float]]] = {}
     first_t: float | None = None
-    for record in _read_jsonl(
+    records, malformed = _read_jsonl_with_malformed_count(
         round_dir / (frames_name or f"round_{round_number:02d}.jsonl")
-    ):
+    )
+    for record in records:
         if record.get("ev") != "frame":
             continue
         try:
@@ -224,6 +246,8 @@ def _load_round_target_positions(
             positions.setdefault(addr, []).append(point)
     for points in positions.values():
         points.sort()
+    if return_malformed_count:
+        return positions, first_t, malformed
     return positions, first_t
 
 
@@ -231,12 +255,17 @@ def _load_views(
     round_dir: Path,
     round_number: int,
     views_name: str | None = None,
-) -> list[tuple[float, tuple[float, ...], tuple[float, ...], float | None]]:
-    """views_NN.jsonl -> 按时间排序的 [(t, pos, rot, fov)]。"""
+    *,
+    return_malformed_count: bool = False,
+) -> list[tuple[float, tuple[float, ...], tuple[float, ...], float | None]] | tuple[list[tuple[float, tuple[float, ...], tuple[float, ...], float | None]], int]:
+    """views_NN.jsonl -> 按时间排序的 [(t, pos, rot, fov)]。
+
+    [rb P1-5 2026-10-11] return_malformed_count=True 时追加坏行计数。"""
     frames: list[tuple[float, tuple[float, ...], tuple[float, ...], float | None]] = []
-    for record in _read_jsonl(
+    records, malformed = _read_jsonl_with_malformed_count(
         round_dir / (views_name or f"views_{round_number:02d}.jsonl")
-    ):
+    )
+    for record in records:
         try:
             frame_t = float(record["t"])
             pos = tuple(float(item) for item in record["pos"])
@@ -249,6 +278,8 @@ def _load_views(
         fov = float(raw_fov) if isinstance(raw_fov, (int, float)) and math.isfinite(float(raw_fov)) else None
         frames.append((frame_t, pos, rot, fov))
     frames.sort(key=lambda item: item[0])
+    if return_malformed_count:
+        return frames, malformed
     return frames
 
 
@@ -256,12 +287,17 @@ def _load_click_times(
     round_dir: Path,
     round_number: int,
     inputs_name: str | None = None,
-) -> list[float]:
-    """inputs_NN.jsonl 的 L_down 逐发沿时刻（源 t 域，秒），升序。"""
+    *,
+    return_malformed_count: bool = False,
+) -> list[float] | tuple[list[float], int]:
+    """inputs_NN.jsonl 的 L_down 逐发沿时刻（源 t 域，秒），升序。
+
+    [rb P1-5 2026-10-11] return_malformed_count=True 时追加坏行计数。"""
     clicks: list[float] = []
-    for record in _read_jsonl(
+    records, malformed = _read_jsonl_with_malformed_count(
         round_dir / (inputs_name or f"inputs_{round_number:02d}.jsonl")
-    ):
+    )
+    for record in records:
         buttons = record.get("btn")
         if not isinstance(buttons, Sequence) or isinstance(buttons, str):
             continue
@@ -272,6 +308,8 @@ def _load_click_times(
         except (KeyError, TypeError, ValueError):
             continue
     clicks.sort()
+    if return_malformed_count:
+        return clicks, malformed
     return clicks
 
 
@@ -515,11 +553,23 @@ def build_telemetry_visual_result(
     radius_windows, fallback_radius, bb_limitations = _build_radius_lookup(round_dir)
     limitations.extend(bb_limitations)
 
-    positions, first_frame_t = _load_round_target_positions(
-        round_dir, round_number, frames_name,
+    positions, first_frame_t, frames_malformed = _load_round_target_positions(
+        round_dir, round_number, frames_name, return_malformed_count=True,
     )
-    views = _load_views(round_dir, round_number, views_name)
-    click_times = _load_click_times(round_dir, round_number, inputs_name)
+    views, views_malformed = _load_views(
+        round_dir, round_number, views_name, return_malformed_count=True,
+    )
+    click_times, inputs_malformed = _load_click_times(
+        round_dir, round_number, inputs_name, return_malformed_count=True,
+    )
+    # [rb P1-5 2026-10-11] JSONL 坏行不再静默丢：损坏行覆盖的时段会被当成
+    # 死亡间隙/丢帧，必须记 limitation 与真死亡区分（可观测性硬合同）。
+    if frames_malformed:
+        add_limitation("round_jsonl_malformed_lines_skipped")
+    if views_malformed:
+        add_limitation("views_jsonl_malformed_lines_skipped")
+    if inputs_malformed:
+        add_limitation("inputs_jsonl_malformed_lines_skipped")
     if not views:
         raise ValueError("telemetry sidecar views are unavailable")
     if not positions:
@@ -584,10 +634,42 @@ def build_telemetry_visual_result(
 
     fovs = [fov for _, _, _, fov in views if fov is not None]
     selector_fov = float(statistics.median(fovs)) if fovs else float(fov_fallback)
+    # 视锥/投影常量只由 selector_fov 决定（原在每对 (帧,目标) 内重算，提前
+    # 求值；表达式与 _is_in_view_frustum / _focal_length_px 逐字相同）。
+    hfov_half = math.radians(selector_fov) / 2.0
+    vfov_half = math.atan(
+        (VIEWPORT_HEIGHT_PX / VIEWPORT_WIDTH_PX) * math.tan(hfov_half)
+    )
+    focal_px = _focal_length_px(selector_fov)
 
     # 采样时钟 = view 帧；目标世界位置在该生命窗内的轮帧间插值。
     crosshair_samples: list[dict] = []
     track_samples: dict[int, list[dict]] = {tid: [] for tid in sorted(targets)}
+    center_x = float(VIEWPORT_WIDTH_PX / 2.0)
+    center_y = float(VIEWPORT_HEIGHT_PX / 2.0)
+    # [perf P0-2 2026-10-11] 投影内循环热路径前置计算（逐位等价优化；同构
+    # 问题在 telemetry_scenario_features._ObservedWorld 已定罪为冻结运行时
+    # ~100x 放大，此处是该函数的孪生路径）：
+    #   - sorted(targets) 原先每帧重排一次 → 循环外一次定序；
+    #   - 生命窗线性扫全部窗 → 生命起点有序且互不重叠时 bisect 定位唯一
+    #     候选窗（前提不成立则该目标回退原线性扫描，语义不变）；
+    #   - 相机 rot→radians / forward 向量原先在 _is_in_front 内每对
+    #     (帧, 目标) 重算 → 每帧一次（同公式同输入，浮点逐位一致）。
+    target_entries: list[tuple[int, Sequence[tuple[float, float, float, float]], Sequence[tuple[float, float]], list[float] | None]] = []
+    for tid in sorted(targets):
+        target = targets[tid]
+        lives = target["lives"]
+        life_starts = [life[0] for life in lives]
+        bisectable = all(
+            life_starts[i] <= life_starts[i + 1] and lives[i][1] < life_starts[i + 1]
+            for i in range(len(lives) - 1)
+        )
+        target_entries.append((
+            tid,
+            positions.get(target["addr"], ()),
+            lives,
+            life_starts if bisectable else None,
+        ))
     view_sample_count = 0
     previous_canonical: int | None = None
     for frame_t, pos, rot, _frame_fov in views:
@@ -607,54 +689,73 @@ def build_telemetry_visual_result(
         view_sample_count += 1
         crosshair_samples.append({
             "canonical_time_ms": canonical_ms,
-            "x": float(VIEWPORT_WIDTH_PX / 2.0),
-            "y": float(VIEWPORT_HEIGHT_PX / 2.0),
+            "x": center_x,
+            "y": center_y,
             "confidence": 1.0,
         })
         # fov 用全轮稳健值（中位，撕裂帧不逐帧跟随）：同一轮内像素尺度必须一致。
         # bb 窗未覆盖该帧时 radius 是兜底常数：测量域样本记 None（不可作几何
         # 依据），通道域发射时才回填兜底值（schema 硬约束点值必须有限）。
         radius_cm, radius_measured = _radius_at(radius_windows, fallback_radius, frame_t)
-        for tid in sorted(targets):
-            target = targets[tid]
+        # _is_in_front 的逐帧不变前缀：与原内联实现同公式同输入（pitch/yaw
+        # → radians → forward 三元组），逐对重算时结果逐位一致。
+        pitch_rad = math.radians(float(rot[0]))
+        yaw_rad = math.radians(float(rot[1]))
+        fwd_x = math.cos(pitch_rad) * math.cos(yaw_rad)
+        fwd_y = math.cos(pitch_rad) * math.sin(yaw_rad)
+        fwd_z = math.sin(pitch_rad)
+        for tid, points, lives, life_starts in target_entries:
             world = None
-            for life_start, life_end in target["lives"]:
-                if life_start <= frame_t <= life_end:
-                    world = _interpolate_in_life(
-                        positions.get(target["addr"], ()),
-                        life_start,
-                        life_end,
-                        frame_t,
-                    )
-                    break
+            if life_starts is not None:
+                life_index = bisect.bisect_right(life_starts, frame_t) - 1
+                if life_index >= 0:
+                    life_start, life_end = lives[life_index]
+                    if frame_t <= life_end:
+                        world = _interpolate_in_life(
+                            points, life_start, life_end, frame_t,
+                        )
+            else:
+                for life_start, life_end in lives:
+                    if life_start <= frame_t <= life_end:
+                        world = _interpolate_in_life(
+                            points, life_start, life_end, frame_t,
+                        )
+                        break
             if world is None:
                 # 死亡间隙或该 addr 无帧：目标不存在，不产生样本（非遮挡）。
                 continue
-            if not _is_in_front(world, pos, rot):
+            if not (
+                (world[0] - pos[0]) * fwd_x
+                + (world[1] - pos[1]) * fwd_y
+                + (world[2] - pos[2]) * fwd_z
+            ) > 0.0:
                 add_limitation("target_behind_camera_skipped")
                 continue
-            if not _is_in_view_frustum(
-                target=world,
-                camera_pos=pos,
-                rot=rot,
-                horizontal_fov_deg=selector_fov,
-                target_radius_cm=radius_cm,
+            # 视锥门 + 投影内联（[perf P0-2 2026-10-11]）：原先每对调
+            # _is_in_view_frustum 与 project_world_to_viewport 两次，各自重算
+            # _target_angles/_wrap_pi/distance/angular_radius 与前方点积；
+            # 此处同一中间量只算一次。全部表达式与两个原函数逐字相同、输入
+            # 相同（focal_px/hfov/vfov 常量对 selector_fov 确定，提前到循环外
+            # 求值），浮点逐位一致；前置前方过滤后 project 的 ValueError
+            # 分支不可达（其唯一 raise 是同一个前方判定）。
+            yaw_target, pitch_target = _target_angles(world, pos)
+            dyaw = _wrap_pi(yaw_target - yaw_rad)
+            dpitch = pitch_target - pitch_rad
+            distance = math.dist(world, pos)
+            angular_radius = (
+                math.atan2(radius_cm, distance) if distance > 0 else math.pi / 2
+            )
+            if not (
+                abs(dyaw) <= hfov_half + angular_radius
+                and abs(dpitch) <= vfov_half + angular_radius
             ):
                 # 前方但出视锥（tan 爆炸区）：画外样本丢弃不产样本，与死亡
                 # 间隙同型；run 级记 limitation，不静默。
                 add_limitation("target_outside_frustum_skipped")
                 continue
-            try:
-                px_x, px_y, px_radius = project_world_to_viewport(
-                    target=world,
-                    camera_pos=pos,
-                    rot=rot,
-                    horizontal_fov_deg=selector_fov,
-                    target_radius_cm=radius_cm,
-                )
-            except ValueError:
-                add_limitation("target_behind_camera_skipped")
-                continue
+            px_x = center_x + focal_px * math.tan(dyaw)
+            px_y = center_y - focal_px * math.tan(dpitch)
+            px_radius = angular_radius * focal_px
             track_samples[tid].append({
                 "canonical_time_ms": canonical_ms,
                 "x": px_x,

@@ -8,10 +8,10 @@ Differences from flicking advice (see spec
 ``docs/superpowers/specs/2026-07-05-tracking-coach-design.md`` §5.1):
 
 - flicking summary is ``{metric: {med, p75, p90}}`` per-flick distribution;
-  tracking summary is **single-segment scalar aggregates** written by
-  :func:`kovaak_tracker.analysis.evaluate_mechanics` to metrics.json in two
-  nested groups (``tension`` / ``loss``). ``_flatten_metrics`` normalizes
-  the nested shape into a flat dict before rule evaluation.
+  tracking summary is **single-segment scalar aggregates** written to
+  metrics.json in two nested groups (``tension`` / ``loss``).
+  ``_flatten_metrics`` normalizes the nested shape into a flat dict before
+  rule evaluation.
 - tracking rule thresholds are **initial empirical values marked
   "needs calibration"**. Enabled thresholds produce experimental
   observations rather than calibrated health judgments; thresholds set to
