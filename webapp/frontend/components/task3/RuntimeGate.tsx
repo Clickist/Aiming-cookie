@@ -13,6 +13,25 @@ import { Button, ErrorState } from "@/ui/primitives";
 
 type GateState = "starting" | "ready" | "failed";
 
+/**
+ * 窗口显示闸（1012 黑屏修复）：窗口在 tauri.conf 里 visible:false 创建——
+ * WebView2 首帧渲染完成前窗口不可见，深色主题下不再有 0~700ms 的黑窗空窗
+ * （拓帧实证）。本组件首帧渲染后（useEffect 在 paint 之后运行）立即 show()；
+ * 失败静默（Rust 侧另有 5s 兜底 show，窗口绝不失踪）。浏览器预览短路。
+ */
+async function showDesktopWindow(): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.show();
+    // 显窗后补焦点：visible:false 创建不再由系统自动聚焦，这里恢复「启动
+    // 即前台」的既有行为（show 不保证前台化）。
+    await win.setFocus();
+  } catch {
+    // 非桌面运行时 / 权限缺失：Rust 兜底会显示窗口，无需处理。
+  }
+}
+
 // 启动闸门（2026-10-06 启动闪退案的结构性修复前端侧）：runtime 由 Tauri 在
 // 后台线程拉起、窗口秒开，就绪前应用不挂载——避免启动期请求全部打在
 // 「runtime 未就绪」上。启动屏 = logo + 流动进度条（进度不可知，不承诺
@@ -26,6 +45,12 @@ export function RuntimeGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>("starting");
   const [slowStarted, setSlowStarted] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
+
+  // 首帧可见化：与 runtime 分流解耦——无论 runtime 快慢，启动闸（或子应用）
+  // 画出第一帧就把窗口显出来。
+  useEffect(() => {
+    void showDesktopWindow();
+  }, []);
 
   useEffect(() => {
     if (!isDesktopRuntime()) {

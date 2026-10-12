@@ -29,11 +29,16 @@ test("Tauri package uses the app toolbar instead of a native title bar", async (
   const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
   const capability = JSON.parse(await source("src-tauri/capabilities/default.json"));
   assert.equal(config.app.windows[0].decorations, false);
+  // 1012 黑屏修复：窗口 visible:false 创建（首帧前不显示，消除启动黑窗），
+  // 前端启动闸首帧后 show()+setFocus() 显窗（Rust 5s 兜底）。
+  assert.equal(config.app.windows[0].visible, false);
   // 0910 圆角窗口：is-maximized 供前端在最大化时收回圆角与自绘阴影。
   assert.deepEqual(capability.permissions.filter((permission: string) => permission.startsWith("core:window:")), [
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "core:window:allow-minimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
   ]);

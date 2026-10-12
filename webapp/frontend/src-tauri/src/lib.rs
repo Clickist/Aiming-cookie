@@ -1204,6 +1204,35 @@ pub fn run() {
                     }
                 }
             }
+            // [1012 黑屏修复兜底] 窗口以 visible:false 创建（WebView2 首帧前
+            // 不显示，消除启动期 0~700ms 黑窗空窗，拓帧实证）；前端启动闸
+            // 首帧渲染后经 window.show() 显窗。若前端因任何原因没走到（脚本
+            // 崩溃 / 权限缺失 / 渲染失败），这里 5s 后补 show，窗口绝不失踪。
+            // 已可见或已进入关窗收尾（用户 5s 内就关了）时不动作——绝不复活
+            // 用户刚关掉的窗口。
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if app_handle
+                        .state::<RuntimeState>()
+                        .is_shutdown_requested()
+                    {
+                        return;
+                    }
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        match window.is_visible() {
+                            Ok(true) => {}
+                            _ => {
+                                crate::dlog!(
+                                    "[window-reveal] frontend did not show the window in time; revealing from watchdog"
+                                );
+                                let _ = window.show();
+                            }
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -321,6 +321,11 @@ impl RuntimeState {
             guard.take();
         }
     }
+
+    /// 是否已进入关窗收尾（1012 黑屏修复看门狗用：关窗后不得复活窗口）。
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.supervisor.shutdown_requested.load(Ordering::SeqCst)
+    }
 }
 
 fn start_runtime_supervisor(supervisor: Arc<RuntimeSupervisor>) {

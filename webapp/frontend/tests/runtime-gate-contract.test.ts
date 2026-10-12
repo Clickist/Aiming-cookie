@@ -34,8 +34,7 @@ test("gate keeps the app mounted only after the runtime reports ready", () => {
   const tsx = read("components/task3/RuntimeGate.tsx");
   assert.match(tsx, /state === "ready"\) return <>\{children\}<\/>/);
   const layout = read("app/layout.tsx");
-  assert.match(layout, /<RuntimeGate>[\s\S]*?<AppShell>/);
-});
+  assert.match(layout, /<RuntimeGate>[\s\S]*?<AppShell>/);});
 
 test("gate styles carry the slide animation and a reduced-motion static fallback", () => {
   const css = read("components/task3/task3.css");
@@ -70,4 +69,20 @@ test("gate i18n keys exist in both locales", () => {
       assert.ok(dict.includes(`"${key}"`), `${shard} missing ${key}`);
     }
   }
+});
+
+// 1012 黑屏修复（拓帧实证：visible:true 创建时 WebView2 首帧前有 0~700ms
+// 黑窗）：窗口 visible:false 创建 → 启动闸首帧渲染后 show()+setFocus()；
+// Rust 侧 5s 看门狗兜底 show（前端失败窗口也不失踪），关窗收尾后不复活。
+test("window starts hidden and is revealed by the gate's first frame with a Rust watchdog fallback", () => {
+  const config = JSON.parse(read("src-tauri/tauri.conf.json"));
+  assert.equal(config.app.windows[0].visible, false);
+  const tsx = read("components/task3/RuntimeGate.tsx");
+  assert.match(tsx, /useEffect\(\(\) => \{\s*void showDesktopWindow\(\);/);
+  assert.match(tsx, /getCurrentWindow\(\)/);
+  assert.match(tsx, /\.show\(\)/);
+  assert.match(tsx, /\.setFocus\(\)/);
+  const rust = read("src-tauri/src/lib.rs");
+  assert.match(rust, /\[window-reveal\]/);
+  assert.match(rust, /is_shutdown_requested\(\)/);
 });
