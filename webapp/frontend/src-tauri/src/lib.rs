@@ -675,7 +675,7 @@ fn atomic_temp_path(path: &Path) -> PathBuf {
     ))
 }
 
-fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         use winapi::um::winbase::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
@@ -716,6 +716,25 @@ fn atomic_write_file(path: &Path, payload: &[u8]) -> io::Result<()> {
             Err(error)
         }
     }
+}
+
+/// [rb P1-8/P1-9 2026-10-11] 带 deadline 的线程回收：正常完成即 join；
+/// 超时则放弃句柄（线程脱离，自行退出或随进程收尾），绝不无限阻塞调用
+/// 线程。返回 false = 超时脱离，调用方负责 dlog 留痕（降级必须可观测）。
+/// 与 capture_coordinator::join_control_connections 的轮询回收同构。
+pub(crate) fn join_thread_with_deadline<T>(
+    join: std::thread::JoinHandle<T>,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while !join.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _ = join.join();
+    true
 }
 
 fn host_version() -> Option<String> {
@@ -1033,11 +1052,27 @@ pub fn run() {
             // 数据根的唯一权威在这里：先解析「生效数据根」（指针合法且自定义根
             // 可用时用它，否则默认根），壳自身所有写入与子进程的 DATA_ROOT 一律
             // 用生效根；指针与迁移记录始终留在默认根。
-            let default_app_data_dir = app.path().app_data_dir()?;
+            // [rb P1-7] 默认根解析失败（已知文件夹解析故障族）不在 setup 主
+            // 线程 panic（那会经 tauri「Failed to setup app」exit 101 闪退）：
+            // 降级到进程临时目录下的回退根继续启动，回退事实在 diag_log 就绪
+            // 后落 native.log，生效根变化在设置页可见——绝不闪退。
+            let (default_app_data_dir, data_root_fallback_reason) =
+                match app.path().app_data_dir() {
+                    Ok(path) => (path, None),
+                    Err(error) => (
+                        std::env::temp_dir().join("aiming-cookie-data-root-fallback"),
+                        Some(error.to_string()),
+                    ),
+                };
             let storage_location =
                 Arc::new(StorageLocationState::initialize(default_app_data_dir.clone()));
             let app_data_dir = storage_location.effective_root().to_path_buf();
             diag_log::init(app_data_dir.join("logs"));
+            if let Some(reason) = &data_root_fallback_reason {
+                diag_log::write_line(&format!(
+                    "data-root: default app data dir resolution failed: {reason} —— session runs on the fallback root; see storage settings"
+                ));
+            }
             // 补记 run() 顶部的孤儿 WebView2 清理计数（执行时日志尚未初始化）；
             // 0 不记，避免每次启动都产生一行噪音。
             if cleaned_webview_orphans > 0 {
@@ -1088,18 +1123,44 @@ pub fn run() {
             let window_capture = Arc::new(Mutex::new(
                 WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).map_err(io::Error::other)?,
             ));
+            // [rb P1-7] 协调器构造已去 Result 化：数据根建目录失败、bind 失败、
+            // 槽位中毒全部就地降级（dlog + cause 码），setup 主线程不再有
+            // panic 入口（同 0f6a0362 修D 原则）。
             let coordinator = CaptureCoordinatorState::new(
                 app_data_dir.clone(),
                 Arc::clone(&raw_input),
                 Arc::clone(&window_capture),
-            )
-            .map_err(io::Error::other)?;
+            );
             // 窗口展示之前恢复持久化的捕获总开关：setup 完成前 WebView 不能
             // 发起任何命令，前端首次查询见到的就是恢复后的状态；失败只落日志。
             coordinator.restore_persisted_enabled();
-            let runtime_layout =
-                runtime_layout(&app.path().resource_dir()?).map_err(io::Error::other)?;
-            let capture_control = coordinator.control_connection().map_err(io::Error::other)?;
+            // 采集面降级原则：控制通道建服失败（bind 失败族=杀软拦 socket /
+            // Winsock 损坏，生产先例）在 capture_coordinator 内部降级为
+            // 「采集禁用 + cause 码 + dlog」，这里拿不到连接句柄只透 None，
+            // 绝不拖垮启动。
+            // [rb P1-7] resource_dir 解析失败（已知文件夹故障族）同样不在
+            // setup 主线程 panic：dlog 后用占位空根——打包版布局在该路径上
+            // 由后台拉起 spawn 失败接管 → runtime.failed → 前端失败卡；
+            // dev 布局不依赖 resource_dir，行为不变。布局构造本身已去
+            // Result 化（资源缺失按修D降级），不再有 Err 形态。
+            let resource_dir = app.path().resource_dir().unwrap_or_else(|error| {
+                diag_log::write_line(&format!(
+                    "desktop-runtime: resource dir resolution failed: {error} —— continuing with placeholder layout, background spawn failure takes over"
+                ));
+                PathBuf::new()
+            });
+            let runtime_layout = runtime_layout(&resource_dir);
+            // 控制通道缺席时不注入 capture env：后端对 env 空缺的既有合同是
+            // native_status=None，壳侧传 None 即复用，后端零改动。
+            let capture_control = match coordinator.control_connection() {
+                Ok(connection) => Some(connection),
+                Err(error) => {
+                    diag_log::write_line(&format!(
+                        "capture: control channel unavailable: {error}"
+                    ));
+                    None
+                }
+            };
             // 启动即返回：窗口立刻可交互，runtime 在后台线程拉起；起不来时经
             // desktop_runtime_connection 以 runtime.starting / runtime.failed
             // 稳定码透给前端启动闸门呈现——绝不在 setup 里同步等 45s×2 后
@@ -1159,6 +1220,17 @@ pub fn run() {
             scenario_open,
         ])
         .on_window_event(|window, event| {
+            // [rb P1-9 UX 半边 2026-10-11 点点拍板方案 B] 关窗 = 窗口立刻消失，
+            // 收尾在不可见的后台跑完：CloseRequested 一到先 hide（Win32
+            // ShowWindow 同步生效，不依赖主线程消息循环继续泵消息），随后本
+            // handler 在主线程上照旧跑完整条同步收尾链（各腿 deadline join：
+            // coordinator monitor 80s / 控制连接 65s / WGC stop 65s，超时放弃
+            // 各腿已 dlog 留痕），handler 返回后窗口才真正销毁、进程退出。
+            // 用户可见行为变化只有一条：关窗后窗口立即消失，进程可能还在后台
+            // 收尾最多 ~80s。Destroyed 分支不 hide（窗口已经没了）。
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let _ = window.hide();
+            }
             if matches!(
                 event,
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
@@ -1194,6 +1266,31 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         root
+    }
+
+    #[test]
+    fn join_thread_with_deadline_joins_prompt_exits_and_reports_timeouts() {
+        // [rb P1-8/P1-9] 已退出线程立即回收（返回 true）。
+        let finished = std::thread::spawn(|| {});
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(join_thread_with_deadline(
+            finished,
+            std::time::Duration::from_secs(1)
+        ));
+        // 仍在运行的线程：deadline 到点脱离（返回 false），线程随后自行
+        // 退出（句柄已丢弃，脱离是本合同的既定语义）。
+        let blocked = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        });
+        let started = std::time::Instant::now();
+        assert!(!join_thread_with_deadline(
+            blocked,
+            std::time::Duration::from_millis(10)
+        ));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "timeout must return promptly instead of waiting for the thread"
+        );
     }
 
     #[test]

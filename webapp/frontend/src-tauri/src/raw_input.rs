@@ -26,10 +26,26 @@ const DEFAULT_BUFFER_MINUTES: u64 = 10;
 const MAX_SNAPSHOT_POINTS: usize = 1_000_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SNAPSHOT_SPAN_MS: i64 = (DEFAULT_BUFFER_MINUTES * 60 * 1_000) as i64;
+// 快照跨度按 MAX+宽限量校验：盖章与落盘节奏需要少量余量，严格 MAX 会
+// 在正常写盘路径上误拒边界样本。
+const SNAPSHOT_SPAN_TOLERANCE_MS: i64 = 5_000;
+// 快照尾点超出墙钟未来容忍即判旧时钟域残留，启动时整体隔离重建。
+const SNAPSHOT_FUTURE_TOLERANCE_MS: i64 = 5_000;
+// 盖章时钟域标注（receipt.clock_source）：墙钟为主+单调钳制护栏；与
+// capture_clock_anchor 锚链路（"utc_epoch_ms+qpc"，视频 PTS 映射依赖）
+// 字符串严格区分，消费方据此识别时间戳域。
+#[cfg(windows)]
+const CAPTURE_STAMP_CLOCK_SOURCE: &str = "utc_epoch_ms+qpc_guard";
+#[cfg(not(windows))]
+const CAPTURE_STAMP_CLOCK_SOURCE_FALLBACK: &str = "utc_epoch_ms+monotonic_guard";
 const SUPPORTED_BUTTON_MASK: u32 = 0b111;
 const SNAPSHOT_MAX_DIRTY_INTERVAL: Duration = Duration::from_secs(30);
 const SNAPSHOT_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const SNAPSHOT_BARRIER_TIMEOUT: Duration = Duration::from_secs(5);
+// [rb P1-9 工程半边] 关窗同步链 stop 的 join 硬上限：覆盖快照全量 flush
+//（≤32MB 写盘，慢盘秒级）的合法最坏耗时，再留余量；只防异常挂死，不改变
+// 正常路径耗时。
+const RAW_INPUT_THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(windows)]
 const CAPTURE_QUEUE_CAPACITY: usize = 16_384;
 #[cfg(windows)]
@@ -255,16 +271,6 @@ pub struct CaptureClockAnchor {
     pub timebase_version: &'static str,
 }
 
-fn clock_sample_to_utc_ms(anchor: &CaptureClockAnchor, sample_monotonic_ns: u128) -> i64 {
-    let delta_ns = if sample_monotonic_ns >= anchor.monotonic_elapsed_ns {
-        (sample_monotonic_ns - anchor.monotonic_elapsed_ns) as i128
-    } else {
-        -((anchor.monotonic_elapsed_ns - sample_monotonic_ns) as i128)
-    };
-    let delta_ms = delta_ns / 1_000_000;
-    (anchor.utc_epoch_ms as i128 + delta_ms).clamp(i64::MIN as i128, i64::MAX as i128) as i64
-}
-
 #[cfg(windows)]
 static QPC_FREQUENCY: OnceLock<i64> = OnceLock::new();
 
@@ -314,17 +320,6 @@ pub fn capture_clock_anchor() -> CaptureClockAnchor {
         clock_source: "utc_epoch_ms+monotonic_fallback",
         timebase_version: "time_alignment.v2",
     }
-}
-
-fn capture_clock_now_ms(anchor: &CaptureClockAnchor) -> i64 {
-    #[cfg(windows)]
-    if anchor.clock_source == "utc_epoch_ms+qpc" {
-        if let (Some(ticks), Some(frequency)) = (qpc_ticks(), qpc_frequency()) {
-            let sample_ns = (ticks as u128).saturating_mul(1_000_000_000) / frequency as u128;
-            return clock_sample_to_utc_ms(anchor, sample_ns);
-        }
-    }
-    now_ms()
 }
 
 #[derive(Debug)]
@@ -435,7 +430,9 @@ fn validate_snapshot_points(points: &[MousePoint]) -> io::Result<()> {
             ));
         }
         if let Some(first) = first_timestamp {
-            if point.timestamp_ms.saturating_sub(first) > MAX_SNAPSHOT_SPAN_MS {
+            if point.timestamp_ms.saturating_sub(first)
+                > MAX_SNAPSHOT_SPAN_MS + SNAPSHOT_SPAN_TOLERANCE_MS
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "raw input snapshot exceeds retention window",
@@ -616,6 +613,16 @@ struct SnapshotStatus {
     snapshot_error: Option<String>,
 }
 
+/// 可被 clear_runtime_failure 清除的瞬时失败码集合（探测失败/数据读失败/
+/// 注册失败都会被下一次成功事件冲掉；trace_snapshot_* 是需要人工看日志的
+/// 粘滞失败，不属于可清集合）。[perf RS-2] 的原子标志以此为准。
+fn failure_code_is_clearable(code: &str) -> bool {
+    matches!(
+        code,
+        "kovaak_process_probe_failed" | "raw_input_data_failed" | "raw_input_registration_failed"
+    )
+}
+
 struct CaptureDiagnostics {
     capture_running: std::sync::atomic::AtomicBool,
     kovaak_process_present: std::sync::atomic::AtomicBool,
@@ -634,6 +641,16 @@ struct CaptureDiagnostics {
     last_wm_input_seen_ms: std::sync::atomic::AtomicI64,
     last_probe_ok_at_ms: std::sync::atomic::AtomicI64,
     probe_failures: std::sync::atomic::AtomicU64,
+    // 最近一次发放的盖章值：单调钳制的下限；i64::MIN = 尚未发放。
+    last_issued_stamp_ms: std::sync::atomic::AtomicI64,
+    // [perf RS-2 2026-10-11] snapshot.snapshot_error_code 是否属于可被
+    // clear_runtime_failure 清除的失败码集合。输入线程每条 WM_INPUT 都要
+    // 判断「当前错误可否清除」，1kHz 下与快照线程/状态读者逐事件争用同一
+    // 把 snapshot 锁是纯开销；快路径改为原子 load，零可清失败时免锁返回。
+    // 真值由所有写 snapshot_error_code 的路径（record_snapshot_failure /
+    // record_snapshot_success / clear_runtime_failure）同步维护，锁内
+    // matches! 复核仍是权威判定，标志陈旧最多多取一次锁，无正确性影响。
+    clearable_runtime_failure: std::sync::atomic::AtomicBool,
     snapshot: Mutex<SnapshotStatus>,
     clock_anchor: CaptureClockAnchor,
 }
@@ -654,6 +671,8 @@ impl CaptureDiagnostics {
             last_wm_input_seen_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             last_probe_ok_at_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             probe_failures: std::sync::atomic::AtomicU64::new(0),
+            last_issued_stamp_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            clearable_runtime_failure: std::sync::atomic::AtomicBool::new(false),
             snapshot: Mutex::new(SnapshotStatus::default()),
             clock_anchor: capture_clock_anchor(),
         }
@@ -664,8 +683,17 @@ impl CaptureDiagnostics {
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
+    // 盖章 = 墙钟直读 + 单调钳制：锚+QPC 采样域与局窗口（墙钟）系统性错位
+    // 会把整局轨迹丢光；墙钟回拨由 last_issued 下限吸收，fetch_max 原子
+    // 写回保证并发发放仍单调不减。
     fn capture_timestamp_ms(&self) -> i64 {
-        capture_clock_now_ms(&self.clock_anchor)
+        let last_issued = self
+            .last_issued_stamp_ms
+            .load(std::sync::atomic::Ordering::Acquire);
+        let stamped = clamp_wall_stamp(last_issued, wall_now_precise_ms());
+        self.last_issued_stamp_ms
+            .fetch_max(stamped, std::sync::atomic::Ordering::AcqRel)
+            .max(stamped)
     }
 
     fn record_capture_stopped(&self) {
@@ -710,9 +738,9 @@ impl CaptureDiagnostics {
             .fetch_max(now_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn record_wm_input_seen(&self) {
+    fn record_wm_input_seen(&self, timestamp_ms: i64) {
         self.last_wm_input_seen_ms
-            .fetch_max(self.capture_timestamp_ms(), std::sync::atomic::Ordering::Relaxed);
+            .fetch_max(timestamp_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn record_probe_ok(&self) {
@@ -733,6 +761,10 @@ impl CaptureDiagnostics {
             snapshot.snapshot_error_code = None;
             snapshot.snapshot_error_at_ms = None;
             snapshot.snapshot_error = None;
+            // 标志在锁内置位：与 snapshot_error_code 的写入同临界区，读者
+            // 看到 true 时必然能看到已写入的错误码（Release/Acquire + 锁序）。
+            self.clearable_runtime_failure
+                .store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -742,6 +774,10 @@ impl CaptureDiagnostics {
             snapshot.snapshot_error_code = Some(code.to_string());
             snapshot.snapshot_error_at_ms = Some(now_ms());
             snapshot.snapshot_error = Some(error);
+            self.clearable_runtime_failure.store(
+                failure_code_is_clearable(code),
+                std::sync::atomic::Ordering::Release,
+            );
         }
     }
 
@@ -752,17 +788,25 @@ impl CaptureDiagnostics {
 
     #[cfg(windows)]
     fn clear_runtime_failure(&self) {
+        // [perf RS-2 2026-10-11] 原子快路径：无待清失败时零锁返回。锁内
+        // matches! 复核保持权威（标志陈旧时最多白取一次锁）。
+        if !self
+            .clearable_runtime_failure
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
         if let Ok(mut snapshot) = self.snapshot.lock() {
             if matches!(
                 snapshot.snapshot_error_code.as_deref(),
-                Some("kovaak_process_probe_failed")
-                    | Some("raw_input_data_failed")
-                    | Some("raw_input_registration_failed")
+                Some(code) if failure_code_is_clearable(code)
             ) {
                 snapshot.snapshot_error_code = None;
                 snapshot.snapshot_error_at_ms = None;
                 snapshot.snapshot_error = None;
             }
+            self.clearable_runtime_failure
+                .store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -1195,11 +1239,23 @@ impl WindowsBackend {
         use std::sync::atomic::Ordering;
         self.stop.store(true, Ordering::Release);
         wake_raw_input_thread(&self.thread_id);
+        // [rb P1-9 工程半边 2026-10-11] 关窗同步退出链的这一腿加 join 硬上
+        // 限：泵线程（250ms 有界等待）与快照线程（秒级 flush）正常都在上限
+        // 内退出；deadline 只防异常挂死（消息泵/盘卡死）把关窗永久拖住。
+        // 超时即脱离句柄并 dlog 留痕，超时后的行为与强杀等价，UX 不变。
         if let Some(join) = self.capture_join.take() {
-            let _ = join.join();
+            if !crate::join_thread_with_deadline(join, RAW_INPUT_THREAD_JOIN_TIMEOUT) {
+                crate::dlog!(
+                    "[raw-input] capture pump thread did not exit within {RAW_INPUT_THREAD_JOIN_TIMEOUT:?}; detached"
+                );
+            }
         }
         if let Some(join) = self.snapshot_join.take() {
-            let _ = join.join();
+            if !crate::join_thread_with_deadline(join, RAW_INPUT_THREAD_JOIN_TIMEOUT) {
+                crate::dlog!(
+                    "[raw-input] snapshot worker thread did not exit within {RAW_INPUT_THREAD_JOIN_TIMEOUT:?}; detached"
+                );
+            }
         }
     }
 }
@@ -1259,6 +1315,23 @@ fn snapshot_worker(
                     RingPushOutcome::ExpiredOldest(timestamp_ms) => {
                         diagnostics.record_expired(1, timestamp_ms)
                     }
+                }
+            }
+            // 未来戳防御：旧锚+QPC 域快照与墙钟错位，直接并入会把整局轨迹
+            // 判成未来而全丢；整体隔离后走空环重建（restarted_from_invalid
+            // 的干净文件路径）。
+            if let Some(latest) = ring.points.back() {
+                if latest.timestamp_ms > now_ms() + SNAPSHOT_FUTURE_TOLERANCE_MS {
+                    diagnostics.record_snapshot_failure(
+                        "trace_snapshot_clock_domain_stale",
+                        format!(
+                            "raw input snapshot tail {} is ahead of wall clock",
+                            latest.timestamp_ms
+                        ),
+                    );
+                    let _ = isolate_invalid_snapshot(&snapshot_path);
+                    restarted_from_invalid = true;
+                    ring = empty_raw_ring();
                 }
             }
             (ring, migrated_v1 && !restarted_from_invalid)
@@ -1366,7 +1439,7 @@ fn snapshot_worker(
                                     .ring_expired_through_epoch_ms
                                     .load(std::sync::atomic::Ordering::Acquire),
                             ),
-                            clock_source: diagnostics.clock_anchor.clock_source,
+                            clock_source: CAPTURE_STAMP_CLOCK_SOURCE,
                             timebase_version: diagnostics.clock_anchor.timebase_version,
                         }
                     },
@@ -1464,6 +1537,35 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+// 盖章主时钟：墙钟毫秒。Windows 直调 GetSystemTimePreciseAsFileTime，
+// 不用 SystemTime::now（其精度/粒度随工具链变化，高频盖章会成片重复）；
+// winapi 的 sysinfoapi feature 未启用，在此内联声明 kernel32 导入。
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetSystemTimePreciseAsFileTime(lp_system_time_as_file_time: *mut i64);
+}
+
+#[cfg(windows)]
+fn wall_now_precise_ms() -> i64 {
+    // FILETIME 为 1601 起的 100ns 计数，先换算 Unix epoch 再取整毫秒。
+    const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;
+    let mut filetime: i64 = 0;
+    unsafe { GetSystemTimePreciseAsFileTime(&mut filetime) };
+    filetime.saturating_sub(FILETIME_TO_UNIX_EPOCH_100NS) / 10_000
+}
+
+#[cfg(not(windows))]
+fn wall_now_precise_ms() -> i64 {
+    now_ms()
+}
+
+// 盖章单调钳制：墙钟回拨（NTP 校正、休眠唤醒）不得让时间戳倒退，
+// 以最近一次发放值为下限。
+fn clamp_wall_stamp(last_issued_ms: i64, wall_ms: i64) -> i64 {
+    wall_ms.max(last_issued_ms)
 }
 
 #[cfg(windows)]
@@ -1747,7 +1849,12 @@ unsafe fn capture_raw_mouse(
 
     // [fix 2026-10-07 W3] 通过门的最近 WM_INPUT 时刻：与 gate_discarded /
     // last_probe_ok 组成三元组，钉死「门误判 vs 消息未送达」。
-    diagnostics.record_wm_input_seen();
+    // [perf RS-3 2026-10-11] 每事件只取一次墙钟（原路径入口与盖章各直读
+    // 一次 GetSystemTimePreciseAsFileTime）；seen 櫂与点时间戳共用同一次
+    // 采样。盖章的单调钳制不受影响：事件在本线程顺序处理，fetch_max
+    // 语义等价，时间戳取样点整体前移微秒级（更贴近事件到达时刻）。
+    let timestamp_ms = diagnostics.capture_timestamp_ms();
+    diagnostics.record_wm_input_seen(timestamp_ms);
 
     let handle = lparam as HRAWINPUT;
     let mut size: UINT = 0;
@@ -1764,7 +1871,18 @@ unsafe fn capture_raw_mouse(
     if size == 0 {
         return Ok(());
     }
-    let mut bytes = vec![0u8; size as usize];
+    // [perf RS-1 2026-10-11] 鼠标 RAWINPUT 报文 = RAWINPUTHEADER + RAWMOUSE
+    // （x64 约 48B），500Hz–1kHz 回报率下逐事件 Vec 堆分配是纯开销；栈上
+    // 定长缓冲吸收常规报文，异常超尺寸（非常规 HID 组合设备）才回退堆。
+    const RAW_INPUT_STACK_BUFFER_BYTES: usize = 256;
+    let mut stack_buffer = [0u8; RAW_INPUT_STACK_BUFFER_BYTES];
+    let mut heap_buffer: Vec<u8>;
+    let bytes: &mut [u8] = if (size as usize) <= stack_buffer.len() {
+        &mut stack_buffer
+    } else {
+        heap_buffer = vec![0u8; size as usize];
+        &mut heap_buffer
+    };
     if GetRawInputData(
         handle,
         RID_INPUT,
@@ -1784,7 +1902,6 @@ unsafe fn capture_raw_mouse(
     let flags = std::ptr::read_unaligned(mouse.add(4) as *const u16);
     let dx = std::ptr::read_unaligned(mouse.add(12) as *const i32);
     let dy = std::ptr::read_unaligned(mouse.add(16) as *const i32);
-    let timestamp_ms = diagnostics.capture_timestamp_ms();
     let transitions = [
         (flags & RI_MOUSE_LEFT_BUTTON_DOWN != 0).then_some(ButtonTransition::Press(1)),
         (flags & RI_MOUSE_LEFT_BUTTON_UP != 0).then_some(ButtonTransition::Release(1)),
@@ -1942,32 +2059,89 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn clear_runtime_failure_only_clears_transient_codes() {
+        // [perf RS-2] 原子快路径不得改变清除语义：粘滞码（trace_snapshot_*）
+        // 对 clear 免疫，可清码（探测/数据/注册失败）被清空。
+        let diagnostics = CaptureDiagnostics::new();
+        diagnostics.record_snapshot_failure("trace_snapshot_failed", "disk full".to_string());
+        diagnostics.clear_runtime_failure();
+        assert_eq!(
+            diagnostics.status().snapshot_error_code.as_deref(),
+            Some("trace_snapshot_failed")
+        );
+        diagnostics.record_runtime_failure(RawInputFailure::ProcessProbe);
+        assert_eq!(
+            diagnostics.status().snapshot_error_code.as_deref(),
+            Some("kovaak_process_probe_failed")
+        );
+        diagnostics.clear_runtime_failure();
+        assert_eq!(diagnostics.status().snapshot_error_code, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn wm_quit_stops_raw_thread_and_allows_registration_cleanup() {
         assert!(should_stop_for_message(RAW_INPUT_WM_QUIT));
         assert!(!should_stop_for_message(0));
     }
 
     #[test]
-    fn capture_clock_mapping_preserves_epoch_delta_without_changing_acri_shape() {
-        let anchor = CaptureClockAnchor {
-            utc_epoch_ms: 10_000,
-            monotonic_elapsed_ns: 5_000_000_000,
-            clock_source: "test",
-            timebase_version: "time_alignment.v2",
-        };
-        assert_eq!(clock_sample_to_utc_ms(&anchor, 5_125_000_000), 10_125);
-        assert_eq!(clock_sample_to_utc_ms(&anchor, 4_875_000_000), 9_875);
+    fn clamp_wall_stamp_clamps_regression_and_passes_fresh_values() {
+        // 回拨：墙钟小于最近发放值时取发放值。
+        assert_eq!(clamp_wall_stamp(1_000, 900), 1_000);
+        // 正常推进：墙钟原样透传。
+        assert_eq!(clamp_wall_stamp(1_000, 1_100), 1_100);
+        // 首次发放（尚未有 last_issued）：i64::MIN 不抬高首值。
+        assert_eq!(clamp_wall_stamp(i64::MIN, 1_000), 1_000);
     }
 
     #[test]
-    fn capture_clock_mapping_clamps_epoch_overflow() {
-        let anchor = CaptureClockAnchor {
-            utc_epoch_ms: i64::MAX,
-            monotonic_elapsed_ns: 0,
-            clock_source: "test",
-            timebase_version: "time_alignment.v2",
-        };
-        assert_eq!(clock_sample_to_utc_ms(&anchor, u128::MAX), i64::MAX);
+    fn capture_timestamp_ms_is_monotonic_and_tracks_wall_clock() {
+        let diagnostics = CaptureDiagnostics::new();
+        let mut previous = i64::MIN;
+        for _ in 0..1_000 {
+            let stamped = diagnostics.capture_timestamp_ms();
+            assert!(stamped >= previous);
+            previous = stamped;
+        }
+        // 与墙钟偏差放宽到 60s，防 CI 调度抖动误报。
+        assert!((diagnostics.capture_timestamp_ms() - now_ms()).abs() < 60_000);
+    }
+
+    #[test]
+    fn validate_snapshot_points_tolerates_small_span_slack() {
+        let base = 1_000_000;
+        let within = [
+            MousePoint {
+                timestamp_ms: base,
+                dx: 0,
+                dy: 0,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: base + MAX_SNAPSHOT_SPAN_MS + 4_000,
+                dx: 1,
+                dy: 0,
+                buttons: 1,
+            },
+        ];
+        assert!(validate_snapshot_points(&within).is_ok());
+        let beyond = [
+            MousePoint {
+                timestamp_ms: base,
+                dx: 0,
+                dy: 0,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: base + MAX_SNAPSHOT_SPAN_MS + 6_000,
+                dx: 1,
+                dy: 0,
+                buttons: 1,
+            },
+        ];
+        let error = validate_snapshot_points(&beyond).unwrap_err();
+        assert!(error.to_string().contains("retention window"));
     }
 
     #[test]
@@ -2477,7 +2651,7 @@ mod tests {
             queue_drop_last_epoch_ms: Some(1_300),
             ring_expired_points: 0,
             ring_expired_through_epoch_ms: None,
-            clock_source: "utc_epoch_ms+qpc",
+            clock_source: "utc_epoch_ms+qpc_guard",
             timebase_version: "time_alignment.v2",
         };
 
@@ -2809,6 +2983,112 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn snapshot_worker_isolates_v2_file_whose_tail_exceeds_wall_clock_tolerance() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-v2-future-stamp-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        // 尾点在墙钟未来 10s：旧锚+QPC 域快照的特征，启动必须整体隔离。
+        let future_bytes = encode_snapshot(&[MousePoint {
+            timestamp_ms: now_ms() + SNAPSHOT_FUTURE_TOLERANCE_MS + 5_000,
+            dx: 1,
+            dy: 1,
+            buttons: 1,
+        }]);
+        fs::write(&path, &future_bytes).unwrap();
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (sender, receiver) = sync_channel(1);
+        let worker_path = path.clone();
+        let worker_diagnostics = Arc::clone(&diagnostics);
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let isolated = path.with_file_name(format!(
+            "{}.invalid",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !isolated.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fs::read(&isolated).unwrap(), future_bytes);
+        // 失败码会被随后的干净写成功清零（既有 record_snapshot_success 行为），
+        // 与 v1 overflow 测试同理只断言失败计数；code 串在 record 调用点编译固定。
+        assert!(diagnostics.status().snapshot_failures >= 1);
+
+        // 隔离后走 restarted_from_invalid 的干净文件路径：ring 空、继续服务。
+        let (ack, ack_receiver) = sync_channel(1);
+        sender
+            .send(CaptureMessage::Barrier {
+                covered_through_ms: now_ms(),
+                ack,
+            })
+            .unwrap();
+        let receipt = ack_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.point_count, 0);
+        assert!(decode_snapshot(&fs::read(&path).unwrap()).unwrap().is_empty());
+
+        drop(sender);
+        worker.join().unwrap();
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&isolated);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_worker_keeps_normal_v2_tail_near_wall_clock() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-v2-normal-tail-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        // 尾点在墙钟过去 1s：正常文件不得被未来戳防御误伤。
+        // buttons 置 0：带按键沿会被正则化拆成同毫秒两条记录，干扰点数断言。
+        let points = [MousePoint {
+            timestamp_ms: now_ms() - 1_000,
+            dx: 1,
+            dy: 1,
+            buttons: 0,
+        }];
+        fs::write(&path, encode_snapshot(&points)).unwrap();
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (sender, receiver) = sync_channel(1);
+        let worker_path = path.clone();
+        let worker_diagnostics = Arc::clone(&diagnostics);
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let (ack, ack_receiver) = sync_channel(1);
+        sender
+            .send(CaptureMessage::Barrier {
+                covered_through_ms: now_ms() - 1,
+                ack,
+            })
+            .unwrap();
+        let receipt = ack_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.point_count, 1);
+        assert_eq!(diagnostics.status().snapshot_error_code, None);
+
+        drop(sender);
+        worker.join().unwrap();
+        let _ = fs::remove_file(&path);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn enqueue_snapshot_barrier_is_nonblocking_when_busy_or_disconnected() {
         use std::sync::mpsc::sync_channel;
 
@@ -2859,7 +3139,7 @@ mod tests {
         assert!(receipt.covered_through_ms > 0);
         assert!(receipt.snapshot_at_ms >= receipt.covered_through_ms);
         assert_eq!(receipt.point_count, points.len());
-        assert_eq!(receipt.clock_source, "utc_epoch_ms+qpc");
+        assert_eq!(receipt.clock_source, "utc_epoch_ms+qpc_guard");
         assert_eq!(receipt.timebase_version, "time_alignment.v2");
 
         state.shutdown();

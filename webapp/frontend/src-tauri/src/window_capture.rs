@@ -47,6 +47,16 @@ pub const REPLAY_TOLERATED_GAP_100NS: i64 = 2_500_000;
 pub const SOFTWARE_INPUT_INTERVAL_100NS: i64 = 10_000_000 / 30;
 pub const SOFTWARE_FRAME_DURATION_100NS: i64 = 10_000_000 / 30;
 
+// [rb P1-8 2026-10-11] WGC worker join 的 deadline 上限。启动失败/启动超时
+// 分支的 join 只兜「worker 已回报但清理段挂死」的尾巴（正常即返），5s 足够；
+// stop 的 join 要覆盖导出收尾（导出等待合同 60s）+ 帧排空 + 会话关闭的正
+// 常最坏耗时，取 65s 与控制面在途连接上限（capture_coordinator 的
+// CONTROL_CONNECTION_JOIN_TIMEOUT）同参。超时即脱离句柄：worker 线程在挂
+// 死解除后自退或随进程收尾，调用方 dlog 留痕，绝不无限阻塞——GPU 驱动挂
+// 死（TDR）不再能把持锁的 monitor 线程/关窗主线程一起永久拖死。
+const WGC_START_FAILURE_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const WGC_STOP_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(65);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureClockMetadata {
@@ -2456,14 +2466,27 @@ impl WindowCaptureState {
                     Ok(self.status())
                 }
                 Ok(Err(error)) => {
-                    let _ = join.join();
+                    // [rb P1-8] worker 已回报失败，join 只等清理段退出；带
+                    // deadline 防清理段挂死（GPU TDR 族）把调用线程一起拖死。
+                    if !crate::join_thread_with_deadline(join, WGC_START_FAILURE_JOIN_TIMEOUT) {
+                        crate::dlog!(
+                            "[window-capture] start-failure worker did not exit within {WGC_START_FAILURE_JOIN_TIMEOUT:?}; detached"
+                        );
+                    }
                     // 快照本体由采集线程写入共享槽位；此处只兜底防空。
                     self.ensure_start_failure_snapshot(error.clone());
                     Err(error)
                 }
                 Err(error) => {
                     stop.store(true, Ordering::Release);
-                    let _ = join.join();
+                    // [rb P1-8] 启动超时分支：worker 若在启动段挂死（本路径
+                    // 的成因），join 不设上限就是把持锁调用方永久冻结。超时
+                    // 脱离 = worker 自行退出或随进程收尾，dlog 留痕。
+                    if !crate::join_thread_with_deadline(join, WGC_START_FAILURE_JOIN_TIMEOUT) {
+                        crate::dlog!(
+                            "[window-capture] startup-timeout worker ignored the stop flag within {WGC_START_FAILURE_JOIN_TIMEOUT:?}; detached"
+                        );
+                    }
                     let message = format!("window capture startup timed out: {error}");
                     self.ensure_start_failure_snapshot(message.clone());
                     Err(message)
@@ -2483,7 +2506,16 @@ impl WindowCaptureState {
         if let Some(mut worker) = self.worker.take() {
             worker.stop.store(true, Ordering::Release);
             if let Some(join) = worker.join.take() {
-                let _ = join.join();
+                // [rb P1-9 工程半边 2026-10-11] 关窗同步退出链的这一腿加
+                // join 硬上限：覆盖导出收尾（60s 合同）+ 帧排空 + 会话关闭
+                // 的正常最坏耗时；GPU 驱动挂死（TDR）不再能把关窗主线程/
+                // 持锁的 monitor 线程永久拖死。超时脱离后 worker 自行收尾
+                // 或随进程退出（与用户强杀等价），dlog 留痕，UX 行为不变。
+                if !crate::join_thread_with_deadline(join, WGC_STOP_JOIN_TIMEOUT) {
+                    crate::dlog!(
+                        "[window-capture] stop join timed out after {WGC_STOP_JOIN_TIMEOUT:?}; worker detached (export drain or GPU hang suspected)"
+                    );
+                }
             }
         }
         self.enabled = false;
@@ -3848,26 +3880,98 @@ impl HardwareH264Encoder {
 
 // BT.601 有限范围的 CPU BGRA→NV12 转换。WGC 帧为 B8G8R8A8 交错布局，
 // NV12 为全尺寸 Y 平面 + 2x2 平均的 UV 交错平面；行内计算避免逐行拷贝。
-#[cfg(windows)]
+//
+// [perf RS-4 2026-10-11] 重构为三件：
+// 1. 行进（row_pitch）+ 复用输出缓冲变体 `bgra8_to_nv12_into`，软编路径
+//    直接在 staging 映射内存上转换——省掉原路径每帧 ~8.3MB 的 BGRA 中间
+//    拷贝与同尺寸堆分配（30fps 下 >500MB/s 的内存流量）；
+// 2. x86_64 上 Y 平面 SSE2 向量化（4 像素/迭代；SSE2 是 x86_64 基线，无需
+//    运行时检测）。Y 数学全部落在 u16 通道（66r+129g+25b ≤ 56100 <
+//    u16::MAX），(y+128)>>8 与标量 /256 逐字节等价，[16,235] 的 clamp 由
+//    构造保证为 no-op；UV 平面保持标量——2x2 均值与有符号截断除法的边缘
+//    语义集中地，不值得为它冒位级偏差的风险；
+// 3. 标量参考 `bgra8_to_nv12_scalar_into`（非 x86_64 回退 + 差分测试基
+//    准）：数学与原实现逐字节等价（行距独立于宽度）。
+// 等价性由 bgra8_to_nv12_simd_matches_scalar 差分测试锁死（随机尺寸 ×
+// 随机字节，向量化输出与标量参考逐字节相等）。
+/// 紧凑行距的入口（现仅测试消费：生产路径走 bgra8_to_nv12_into 直接在
+/// staging 映射内存上转换）。保持与原实现同形，作为 BT.601 合同的文档锚。
+#[cfg(all(windows, test))]
 fn bgra8_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut nv12 = Vec::new();
+    bgra8_to_nv12_into(
+        bgra,
+        width as usize * FRAME_PIXEL_BYTES,
+        width,
+        height,
+        &mut nv12,
+    );
+    nv12
+}
+
+/// 软编路径入口：按行距读取 BGRA（staging 映射内存的行距可以大于行宽），
+/// 就地填充调用方复用的 NV12 缓冲。
+#[cfg(windows)]
+fn bgra8_to_nv12_into(bgra: &[u8], row_pitch: usize, width: u32, height: u32, nv12: &mut Vec<u8>) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        bgra8_to_nv12_simd_into(bgra, row_pitch, width, height, nv12);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        bgra8_to_nv12_scalar_into(bgra, row_pitch, width, height, nv12);
+    }
+}
+
+/// 标量参考实现（非 x86_64 的真实回退路径 + x86_64 上的差分测试基准）。
+#[cfg(all(windows, any(test, not(target_arch = "x86_64"))))]
+fn bgra8_to_nv12_scalar_into(
+    bgra: &[u8],
+    row_pitch: usize,
+    width: u32,
+    height: u32,
+    nv12: &mut Vec<u8>,
+) {
     let width = width as usize;
     let height = height as usize;
-    // 奇数尺寸按 ceil 计算色度平面（MFCalculateImageSize 的 NV12 合同）；
-    // 3/2 的截断公式只对偶数尺寸成立。
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
-    let mut nv12 = vec![0u8; width * height + chroma_width * chroma_height * 2];
+    nv12.clear();
+    nv12.resize(width * height + chroma_width * chroma_height * 2, 0);
     for row in 0..height {
+        let src = &bgra[row * row_pitch..row * row_pitch + width * FRAME_PIXEL_BYTES];
         for col in 0..width {
-            let offset = (row * width + col) * FRAME_PIXEL_BYTES;
-            let blue = bgra[offset] as u32;
-            let green = bgra[offset + 1] as u32;
-            let red = bgra[offset + 2] as u32;
+            let offset = col * FRAME_PIXEL_BYTES;
+            let blue = src[offset] as u32;
+            let green = src[offset + 1] as u32;
+            let red = src[offset + 2] as u32;
             let luma = (66 * red + 129 * green + 25 * blue + 128) / 256 + 16;
             nv12[row * width + col] = luma.clamp(16, 235) as u8;
         }
     }
-    let uv_plane = width * height;
+    bgra8_chroma_scalar_into(
+        bgra,
+        row_pitch,
+        width,
+        height,
+        width * height,
+        chroma_width,
+        nv12,
+    );
+}
+
+/// UV 平面标量转换（Y/SIMD 两路共用）：奇数尺寸的边缘复制补齐语义只在
+/// 这一处实现，保证两条路径位级一致。
+#[cfg(windows)]
+fn bgra8_chroma_scalar_into(
+    bgra: &[u8],
+    row_pitch: usize,
+    width: usize,
+    height: usize,
+    uv_plane: usize,
+    chroma_width: usize,
+    nv12: &mut [u8],
+) {
     for row in (0..height).step_by(2) {
         for col in (0..width).step_by(2) {
             let mut red = 0u32;
@@ -3878,7 +3982,7 @@ fn bgra8_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
             for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
                 let sample_row = (row + dy).min(height - 1);
                 let sample_col = (col + dx).min(width - 1);
-                let offset = (sample_row * width + sample_col) * FRAME_PIXEL_BYTES;
+                let offset = sample_row * row_pitch + sample_col * FRAME_PIXEL_BYTES;
                 blue += bgra[offset] as u32;
                 green += bgra[offset + 1] as u32;
                 red += bgra[offset + 2] as u32;
@@ -3895,7 +3999,99 @@ fn bgra8_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
             nv12[index + 1] = chroma_v.clamp(16, 240) as u8;
         }
     }
-    nv12
+}
+
+/// x86_64 路径：Y 平面 SSE2 向量化 + UV 标量（共用同一 chroma 实现）。
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn bgra8_to_nv12_simd_into(
+    bgra: &[u8],
+    row_pitch: usize,
+    width: u32,
+    height: u32,
+    nv12: &mut Vec<u8>,
+) {
+    let width = width as usize;
+    let height = height as usize;
+    let chroma_width = width.div_ceil(2);
+    let chroma_height = height.div_ceil(2);
+    nv12.clear();
+    nv12.resize(width * height + chroma_width * chroma_height * 2, 0);
+    for row in 0..height {
+        let src = &bgra[row * row_pitch..row * row_pitch + width * FRAME_PIXEL_BYTES];
+        let dst = &mut nv12[row * width..(row + 1) * width];
+        fill_luma_row(src, dst);
+    }
+    bgra8_chroma_scalar_into(
+        bgra,
+        row_pitch,
+        width,
+        height,
+        width * height,
+        chroma_width,
+        nv12,
+    );
+}
+
+/// Y 平面单行：4 像素/迭代 SSE2，行尾不足 4 像素的尾巴走同一标量公式。
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn fill_luma_row(src: &[u8], dst: &mut [u8]) {
+    let mut src_quads = src.chunks_exact(FRAME_PIXEL_BYTES * 4);
+    let mut dst_quads = dst.chunks_exact_mut(4);
+    for (src, dst) in src_quads.by_ref().zip(dst_quads.by_ref()) {
+        // SAFETY: SSE2 是 x86_64 基线；src 恰为 16B（4 像素）、dst 恰为
+        // 4B，由 chunks_exact 的定长切分保证。
+        unsafe {
+            fill_luma_quad_sse2(src, dst);
+        }
+    }
+    for (src, dst) in src_quads
+        .remainder()
+        .chunks_exact(FRAME_PIXEL_BYTES)
+        .zip(dst_quads.into_remainder().iter_mut())
+    {
+        let blue = src[0] as u32;
+        let green = src[1] as u32;
+        let red = src[2] as u32;
+        let luma = (66 * red + 129 * green + 25 * blue + 128) / 256 + 16;
+        *dst = luma.clamp(16, 235) as u8;
+    }
+}
+
+/// 4 像素 BGRA → 4 字节 Y（BT.601 有限范围）。位级等价性论证见
+/// bgra8_to_nv12 顶注；差分测试 bgra8_to_nv12_simd_matches_scalar 锁死。
+#[cfg(all(windows, target_arch = "x86_64"))]
+unsafe fn fill_luma_quad_sse2(src: &[u8], dst: &mut [u8]) {
+    use std::arch::x86_64::*;
+    let px = _mm_loadu_si128(src.as_ptr().cast::<__m128i>());
+    let mask_ff = _mm_set1_epi32(0x0000_00FF);
+    // u32 通道抽取后按 u16 通道乘加：u32 [b,0,0,0] 通道视作 u16 [b,0] 对，
+    // 空奇通道的乘加贡献为 0。66r+129g+25b ≤ 56100，u16 无溢出。
+    let blue32 = _mm_and_si128(px, mask_ff);
+    let green32 = _mm_and_si128(_mm_srli_epi32(px, 8), mask_ff);
+    let red32 = _mm_and_si128(_mm_srli_epi32(px, 16), mask_ff);
+    let y16 = _mm_add_epi16(
+        _mm_add_epi16(
+            _mm_mullo_epi16(blue32, _mm_set1_epi16(25)),
+            _mm_mullo_epi16(green32, _mm_set1_epi16(129)),
+        ),
+        _mm_mullo_epi16(red32, _mm_set1_epi16(66)),
+    );
+    // (y+128)>>8 即标量路径的 /256（均非负，移位=截断除法）；结果域
+    // [16,235] 由构造保证，标量的 clamp 在此为 no-op，无需再钳。
+    let luma16 = _mm_add_epi16(
+        _mm_srli_epi16(_mm_add_epi16(y16, _mm_set1_epi16(128)), 8),
+        _mm_set1_epi16(16),
+    );
+    // pack 后偶数字节为 Y、奇数字节为空通道（值 16），取 4 个偶数字节。
+    let mut packed = [0u8; 16];
+    _mm_storeu_si128(
+        packed.as_mut_ptr().cast::<__m128i>(),
+        _mm_packus_epi16(luma16, luma16),
+    );
+    dst[0] = packed[0];
+    dst[1] = packed[2];
+    dst[2] = packed[4];
+    dst[3] = packed[6];
 }
 
 // 软件 H.264 编码器（Microsoft H264 Encoder MFT）第三层回退路径。
@@ -3918,6 +4114,10 @@ struct SoftwareH264Encoder {
     height: u32,
     context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
     staging: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    // [perf RS-4 2026-10-11] 逐帧复用的 NV12 转换缓冲：1080p 约 3.1MB，
+    // 原路径每帧新分配（30fps ≈ 100MB/s 分配器流量）。尺寸在同一会话内
+    // 不变（width/height 定格于构造），复用退化为一次 resize 判等。
+    nv12_buffer: Vec<u8>,
     _mf_platform: MediaFoundationPlatform,
 }
 
@@ -4141,6 +4341,7 @@ impl SoftwareH264Encoder {
                     height: encode_height,
                     context: context.clone(),
                     staging,
+                    nv12_buffer: Vec::new(),
                     _mf_platform: MediaFoundationPlatform,
                 });
             }
@@ -4190,44 +4391,40 @@ impl SoftwareH264Encoder {
                     "software input row byte size overflow",
                 )
             })?;
-        let total_bytes = row_bytes.checked_mul(self.height as usize).ok_or_else(|| {
-            HardwareEncoderError::new(
-                HardwareEncoderFailure::InvalidPacket,
-                "software input frame byte size overflow",
-            )
-        })?;
-        let pixels = if mapped.pData.is_null() || mapped.RowPitch < row_bytes as u32 {
+        let staging_span = (mapped.RowPitch as usize)
+            .checked_mul(self.height as usize)
+            .ok_or_else(|| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::InvalidPacket,
+                    "software input staging span overflow",
+                )
+            })?;
+        // [perf RS-4 2026-10-11] 原路径把映射内存整帧拷进 8.3MB 的中间
+        // BGRA Vec 再转换；现直接在 staging 映射内存上转 NV12（映射在
+        // Unmap 前有效），行距按 mapped.RowPitch 处理两种 pitch 形态，
+        // 输出写入逐帧复用的 nv12_buffer——每帧省 ~8.3MB 拷贝与两笔
+        // 大分配（NV12 复用 + BGRA 免分配）。
+        let converted = if mapped.pData.is_null() || (mapped.RowPitch as usize) < row_bytes {
             Err(HardwareEncoderError::new(
                 HardwareEncoderFailure::InvalidPacket,
                 "software input staging returned an invalid mapping",
             ))
-        } else if mapped.RowPitch == row_bytes as u32 {
-            let mut pixels = vec![0u8; total_bytes];
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    mapped.pData.cast::<u8>(),
-                    pixels.as_mut_ptr(),
-                    total_bytes,
-                );
-            }
-            Ok(pixels)
         } else {
-            let mut pixels = vec![0u8; total_bytes];
-            for row in 0..self.height as usize {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        (mapped.pData as *const u8).add(row * mapped.RowPitch as usize),
-                        pixels.as_mut_ptr().add(row * row_bytes),
-                        row_bytes,
-                    );
-                }
-            }
-            Ok(pixels)
+            let staging =
+                unsafe { std::slice::from_raw_parts(mapped.pData.cast::<u8>(), staging_span) };
+            bgra8_to_nv12_into(
+                staging,
+                mapped.RowPitch as usize,
+                self.width,
+                self.height,
+                &mut self.nv12_buffer,
+            );
+            Ok(())
         };
         unsafe { self.context.Unmap(&self.staging, 0) };
-        let pixels = pixels?;
+        converted?;
+        let nv12: &[u8] = &self.nv12_buffer;
 
-        let nv12 = bgra8_to_nv12(&pixels, self.width, self.height);
         let buffer = unsafe { MFCreateMemoryBuffer(nv12.len() as u32) }.map_err(|error| {
             HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderRuntimeFailure,
@@ -8811,6 +9008,52 @@ mod tests {
         let uv = (width * height) as usize;
         assert_eq!(nv12[uv], 128);
         assert_eq!(nv12[uv + 1], 128);
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn bgra8_to_nv12_simd_matches_scalar() {
+        // [perf RS-4] 差分锁：向量化路径（Y 平面 SSE2 + 标量 UV）与标量参考
+        // 必须逐字节相等。随机尺寸（含奇数/极小/行尾不满 4 像素）× 随机字
+        // 节 × 两种行距（紧凑行 / 带 padding 的 staging 行距）。
+        let mut seed = 0x5eed_1234_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let dimensions: &[(u32, u32)] = &[
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 2),
+            (5, 3),
+            (7, 5),
+            (8, 8),
+            (16, 9),
+            (17, 4),
+            (31, 7),
+            (33, 3),
+            (320, 240),
+        ];
+        for &(width, height) in dimensions {
+            for &pitch_padding in &[0usize, 64usize] {
+                let row_pitch = width as usize * FRAME_PIXEL_BYTES + pitch_padding;
+                let mut bgra = vec![0u8; row_pitch * height as usize];
+                for byte in bgra.iter_mut() {
+                    *byte = (next() & 0xFF) as u8;
+                }
+                let mut simd = Vec::new();
+                bgra8_to_nv12_simd_into(&bgra, row_pitch, width, height, &mut simd);
+                let mut scalar = Vec::new();
+                bgra8_to_nv12_scalar_into(&bgra, row_pitch, width, height, &mut scalar);
+                assert_eq!(
+                    simd, scalar,
+                    "SIMD output diverged from scalar at {width}x{height} pitch+{pitch_padding}"
+                );
+            }
+        }
     }
 
     #[cfg(windows)]

@@ -66,14 +66,16 @@ pub struct RuntimeLayout {
 struct RuntimeLaunch {
     layout: RuntimeLayout,
     app_data_dir: PathBuf,
-    capture_control: CaptureControlConnection,
+    // None = 控制通道 bind 降级：不注入 capture env，后端按既有合同
+    // （env 缺席 → native_status=None）自降级，禁止注入空值伪装可用。
+    capture_control: Option<CaptureControlConnection>,
 }
 
 impl RuntimeProcess {
     pub fn start(
         layout: &RuntimeLayout,
         app_data_dir: &Path,
-        capture_control: &CaptureControlConnection,
+        capture_control: Option<&CaptureControlConnection>,
     ) -> Result<Self, String> {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
@@ -87,23 +89,15 @@ impl RuntimeProcess {
         let mut command = Command::new(&layout.backend_program);
         command
             .args(&layout.backend_args)
-            .current_dir(&layout.working_dir)
-            .env(TOKEN_ENV, &token)
-            .env(
-                CAPTURE_CONTROL_ADDRESS_ENV,
-                capture_control.address.to_string(),
-            )
-            .env(CAPTURE_CONTROL_SECRET_ENV, &capture_control.secret)
-            .env(WATCH_PARENT_STDIN_ENV, "1")
-            .env("DATA_ROOT", app_data_dir)
-            .env("VIDEO_TMP_DIR", app_data_dir)
-            .env(COACH_SIDECAR_URL_ENV, &coach_sidecar_url)
-            .env(
-                "CORS_ORIGINS",
-                // 3001 = 旁路端口开发（3000 被占时 Next dev --port 3001 + devUrl 覆盖）；
-                // 本地单用户应用的 localhost 开发源，无跨站暴露面。
-                "http://localhost:3000,http://localhost:3001,http://tauri.localhost,tauri://localhost",
-            )
+            .current_dir(&layout.working_dir);
+        configure_backend_env(
+            &mut command,
+            &token,
+            app_data_dir,
+            &coach_sidecar_url,
+            capture_control,
+        );
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -128,7 +122,10 @@ impl RuntimeProcess {
         let stderr = child.stderr.take();
 
         if let Some(stderr) = stderr {
-            let stderr_secrets = vec![token.clone(), capture_control.secret.clone()];
+            let mut stderr_secrets = vec![token.clone()];
+            if let Some(capture_control) = capture_control {
+                stderr_secrets.push(capture_control.secret.clone());
+            }
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                     crate::dlog!(
@@ -267,7 +264,7 @@ impl RuntimeState {
     pub fn launch(
         layout: RuntimeLayout,
         app_data_dir: PathBuf,
-        capture_control: CaptureControlConnection,
+        capture_control: Option<CaptureControlConnection>,
     ) -> Self {
         let supervisor = Arc::new(RuntimeSupervisor {
             runtime: Mutex::new(None),
@@ -409,7 +406,7 @@ fn restart_runtime(supervisor: &RuntimeSupervisor, exit_reason: String) {
     match RuntimeProcess::start(
         &supervisor.launch.layout,
         &supervisor.launch.app_data_dir,
-        &supervisor.launch.capture_control,
+        supervisor.launch.capture_control.as_ref(),
     ) {
         Ok(runtime) if !supervisor.shutdown_requested.load(Ordering::SeqCst) => {
             // 重启成功即刷新稳定期起点，后续 tick 据此归还重启预算。
@@ -496,7 +493,7 @@ fn development_runtime_layout(
     }
 }
 
-fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String> {
+fn packaged_runtime_layout(resource_dir: &Path) -> RuntimeLayout {
     let runtime_root = resource_dir.join("runtime");
     let backend_program = runtime_root
         .join("aiming-cookie-runtime")
@@ -537,7 +534,7 @@ fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String>
             );
         }
     }
-    Ok(RuntimeLayout {
+    RuntimeLayout {
         working_dir: runtime_root.clone(),
         backend_program: backend_program.into_os_string(),
         backend_args: Vec::new(),
@@ -548,17 +545,51 @@ fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String>
         pi_source_dir: None,
         pi_tsconfig: None,
         resource_root: Some(runtime_root),
-    })
+    }
 }
 
-pub fn runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String> {
+/// [rb P1-7 2026-10-11] 布局构造不再返回 Err：dev 布局本就不失败；打包布局
+/// 资源校验已按修D降级（缺失只落日志），Result 合同只剩不可达的 Ok 形态。
+/// 改为直接返回 layout，杜绝 setup 里最后一个 `?` 残留 panic 入口；
+/// resource_dir 解析失败由 lib.rs 侧降级为占位根接管。
+pub fn runtime_layout(resource_dir: &Path) -> RuntimeLayout {
     if cfg!(debug_assertions) {
-        Ok(development_runtime_layout(
-            &project_root(),
-            std::env::var_os("AIMING_COOKIE_PYTHON"),
-        ))
+        development_runtime_layout(&project_root(), std::env::var_os("AIMING_COOKIE_PYTHON"))
     } else {
         packaged_runtime_layout(resource_dir)
+    }
+}
+
+/// 组装后端子进程 env：本次启动 token、capture 控制通道、数据根与 CORS。
+/// capture_control 为 None（bind 降级）时两个 capture env 都不注入——
+/// 后端对 env 缺席的既有合同是 native_status=None，不注入即自动复用；
+/// 禁止注入空值伪装控制面可用。
+fn configure_backend_env(
+    command: &mut Command,
+    token: &str,
+    app_data_dir: &Path,
+    coach_sidecar_url: &str,
+    capture_control: Option<&CaptureControlConnection>,
+) {
+    command
+        .env(TOKEN_ENV, token)
+        .env(WATCH_PARENT_STDIN_ENV, "1")
+        .env("DATA_ROOT", app_data_dir)
+        .env("VIDEO_TMP_DIR", app_data_dir)
+        .env(COACH_SIDECAR_URL_ENV, coach_sidecar_url)
+        .env(
+            "CORS_ORIGINS",
+            // 3001 = 旁路端口开发（3000 被占时 Next dev --port 3001 + devUrl 覆盖）；
+            // 本地单用户应用的 localhost 开发源，无跨站暴露面。
+            "http://localhost:3000,http://localhost:3001,http://tauri.localhost,tauri://localhost",
+        );
+    if let Some(capture_control) = capture_control {
+        command
+            .env(
+                CAPTURE_CONTROL_ADDRESS_ENV,
+                capture_control.address.to_string(),
+            )
+            .env(CAPTURE_CONTROL_SECRET_ENV, &capture_control.secret);
     }
 }
 
@@ -900,6 +931,47 @@ mod tests {
     #[cfg(unix)]
     use std::time::Instant;
 
+    #[test]
+    fn backend_env_omits_capture_control_when_channel_is_absent() {
+        use std::ffi::OsStr;
+        use std::net::SocketAddr;
+        use std::process::Command;
+
+        // bind 降级（capture_control=None）时两个 capture env 都不得注入：
+        // 后端对 env 缺席的既有合同是 native_status=None，注入空值会伪装
+        // 控制面可用。
+        let build = |capture_control: Option<super::CaptureControlConnection>| {
+            let mut command = Command::new("backend-env-probe");
+            super::configure_backend_env(
+                &mut command,
+                "test-token",
+                Path::new(r"C:\data"),
+                "http://127.0.0.1:43129",
+                capture_control.as_ref(),
+            );
+            command
+        };
+
+        let absent = build(None);
+        assert!(absent.get_envs().all(|(key, _)| {
+            key != OsStr::new(super::CAPTURE_CONTROL_ADDRESS_ENV)
+                && key != OsStr::new(super::CAPTURE_CONTROL_SECRET_ENV)
+        }));
+
+        let present = build(Some(crate::capture_coordinator::CaptureControlConnection {
+            address: SocketAddr::from(([127_u8, 0, 0, 1], 0_u16)),
+            secret: "test-secret".to_string(),
+        }));
+        assert!(present.get_envs().any(|(key, value)| {
+            key == OsStr::new(super::CAPTURE_CONTROL_ADDRESS_ENV)
+                && value == Some(OsStr::new("127.0.0.1:0"))
+        }));
+        assert!(present.get_envs().any(|(key, value)| {
+            key == OsStr::new(super::CAPTURE_CONTROL_SECRET_ENV)
+                && value == Some(OsStr::new("test-secret"))
+        }));
+    }
+
     #[cfg(unix)]
     #[test]
     fn shutdown_closes_stdin_before_sending_signals() {
@@ -1025,7 +1097,7 @@ mod tests {
         std::fs::write(&coach, b"coach").unwrap();
         std::fs::write(&prompt, b"prompt").unwrap();
 
-        let layout = packaged_runtime_layout(&temp).unwrap();
+        let layout = packaged_runtime_layout(&temp);
         assert_eq!(layout.working_dir, runtime_root);
         assert_eq!(layout.backend_program, backend.as_os_str());
         assert!(layout.backend_args.is_empty());
@@ -1052,8 +1124,8 @@ mod tests {
         // 「Failed to setup app」panic 闪退（exit 101，杀软隔离 runtime exe 的
         // 真实形态）。正确路径 = 照常返回 layout，由后台拉起 spawn 失败 →
         // 3 次重启预算 → runtime.failed → 前端失败卡（不闪退、可导诊断包）。
-        let layout = packaged_runtime_layout(&temp)
-            .expect("missing resources must not fail layout construction");
+        // [rb P1-7] 布局构造已整体去 Result 化，Err 形态不复存在。
+        let layout = packaged_runtime_layout(&temp);
         assert!(layout
             .backend_program
             .to_string_lossy()
@@ -1190,10 +1262,10 @@ mod tests {
         let state = RuntimeState::launch(
             layout,
             temp.join("data"),
-            crate::capture_coordinator::CaptureControlConnection {
+            Some(crate::capture_coordinator::CaptureControlConnection {
                 address: std::net::SocketAddr::from(([127_u8, 0, 0, 1], 0_u16)),
                 secret: "test-secret".to_string(),
-            },
+            }),
         );
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut terminal = false;
@@ -1240,10 +1312,10 @@ mod tests {
                 launch: super::RuntimeLaunch {
                     layout: development_runtime_layout(Path::new(r"C:\src\Aiming-cookie"), None),
                     app_data_dir: PathBuf::from(r"C:\src\Aiming-cookie"),
-                    capture_control: crate::capture_coordinator::CaptureControlConnection {
+                    capture_control: Some(crate::capture_coordinator::CaptureControlConnection {
                         address: SocketAddr::from(([127_u8, 0, 0, 1], 0_u16)),
                         secret: "test-secret".to_string(),
-                    },
+                    }),
                 },
                 shutdown_requested: AtomicBool::new(false),
                 restart_attempts: Mutex::new(attempts),

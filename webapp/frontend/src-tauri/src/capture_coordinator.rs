@@ -22,6 +22,15 @@ const CONTROL_EXPORT_TIMEOUT: Duration = Duration::from_secs(60);
 // 退出收尾时等待在途控制连接（最重的是 60s 导出）的硬上限；
 // 超过即放弃剩余连接，保证进程退出永远不会被单个连接卡死。
 const CONTROL_CONNECTION_JOIN_TIMEOUT: Duration = Duration::from_secs(65);
+// [rb P1-9 工程半边 2026-10-11] 关窗同步退出链各腿的 join 硬上限，只防
+// 异常挂死（线程卡在系统调用/锁上）把主线程永久拖住；deadline 取值都
+// 高于对应线程的合法最坏耗时，正常路径行为不变：
+// - accept 线程：非阻塞 accept + 20ms 轮询，正常 ≤ 一个轮询周期内退出，
+//   5s 纯防御；
+// - monitor 线程：合法最长 tick = resize 重建里的 stop join（65s 导出上
+//   限）+ WGC 启动 ready 5s + 启动失败 join 5s + 500ms 间隔，上限取 80s。
+const CONTROL_ACCEPT_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+const MONITOR_JOIN_TIMEOUT: Duration = Duration::from_secs(80);
 const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
 // Snapshot-worker death / sticky snapshot_error leaves capture_healthy false.
 // Wait longer than one snapshot retry (5s) so a transient write failure can
@@ -133,6 +142,11 @@ pub struct CaptureSourceStatus {
 /// 病灶 A：硬编 letterbox 跟随生效时的 video 子状态 reason（稳定码，
 /// 对齐 capture_resized_unsupported 的字符串风格）。
 const CAPTURE_RESIZED_FOLLOWING: &str = "capture_resized_following";
+
+/// 控制通道建服失败的降级 cause 裸码（杀软拦 socket / Winsock 损坏族）：
+/// 固定码满足控制面 reason 合同 ^[a-z][a-z0-9_]{0,63}$，原文错误只进 dlog，
+/// 采集整体禁用而壳照常启动。
+const CAPTURE_CONTROL_BIND_FAILED: &str = "capture_control_bind_failed";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -739,6 +753,11 @@ pub struct CaptureCoordinatorState {
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
+    // 控制通道建服失败的降级标记：非 None 表示控制面缺席，采集整体禁用
+    // 而壳照常启动，值固定为 CAPTURE_CONTROL_BIND_FAILED。Mutex 因为
+    // ControlServer::bind 需要 coordinator 的 Weak，bind 结果只能发生在
+    // Arc 构建之后，降级信息经内部可变性回填。
+    control_bind_failure: Mutex<Option<String>>,
 }
 
 /// 失败 dlog 限频判据：首条必发，之后每 30s 放行一条。
@@ -771,16 +790,49 @@ fn raw_health_restart_event(status: &CaptureCoordinatorStatus) -> CaptureDiagnos
 }
 
 impl CaptureCoordinatorState {
+    /// [rb P1-7 2026-10-11] 构造不再返回 Err（原 Err 链路经 setup `?` 会变
+    /// 成 tauri「Failed to setup app」panic，exit 101 闪退——与 0f6a0362
+    /// 修D（packaged_runtime_layout 资源校验降级）同治理原则：绝不在 setup
+    /// 主线程 panic）。真实失败面全部就地降级并由对应路径的 cause 码/日志
+    /// 承载：数据根建目录失败（盘满/杀软勒索防护族）落 dlog 后继续构造，
+    /// 后续每次写入按既有失败路径显式报错；bind 失败维持「采集禁用 +
+    /// CAPTURE_CONTROL_BIND_FAILED」降级合同。
     pub fn new(
         data_root: PathBuf,
         raw_input: Arc<RawInputState>,
         window_capture: Arc<Mutex<WindowCaptureState>>,
-    ) -> Result<Arc<Self>, String> {
+    ) -> Arc<Self> {
+        Self::new_inner(data_root, raw_input, window_capture, |coordinator| {
+            ControlServer::bind(Arc::downgrade(coordinator))
+        })
+    }
+
+    /// bind 结果可注入的构造内部函数：真实路径传 ControlServer::bind，测试
+    /// 注入 Err 验证降级合同。控制面建服失败（杀软拦 socket / Winsock 损坏
+    /// 生产先例）不阻塞启动：dlog 记原文错误，采集降级禁用并记固定 cause
+    /// 码，壳照常启动且不向 runtime 注入 capture env。
+    fn new_inner(
+        data_root: PathBuf,
+        raw_input: Arc<RawInputState>,
+        window_capture: Arc<Mutex<WindowCaptureState>>,
+        bind: impl FnOnce(&Arc<Self>) -> Result<ControlServer, String>,
+    ) -> Arc<Self> {
         if !data_root.is_absolute() {
-            return Err("capture data root must be absolute".to_string());
+            // 上游只从 app_data_dir / 绝对临时目录构造，此分支按不可达维护；
+            // 降级不 panic：相对根的各写入失败会在使用点显式暴露。
+            crate::dlog!(
+                "[capture-coordinator] capture data root is not absolute: {} —— continuing; per-path failures surface at use sites",
+                data_root.display()
+            );
         }
-        fs::create_dir_all(&data_root)
-            .map_err(|error| format!("capture data root creation failed: {error}"))?;
+        if let Err(error) = fs::create_dir_all(&data_root) {
+            // [rb P1-7] 建目录失败（盘满/杀软勒索防护）不得让 setup 返回
+            // Err 闪退：dlog 留痕后照常构造，开关持久化/回执落盘等写入在
+            // 各自路径上失败并带 cause/日志，观测性不静默。
+            crate::dlog!(
+                "[capture-coordinator] capture data root creation failed: {error} —— continuing; per-path failures surface at use sites"
+            );
+        }
         let coordinator = Arc::new(Self {
             data_root,
             raw_input,
@@ -802,14 +854,42 @@ impl CaptureCoordinatorState {
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
+            control_bind_failure: Mutex::new(None),
         });
-        let server = ControlServer::bind(Arc::downgrade(&coordinator))?;
+        match bind(&coordinator) {
+            Ok(server) => match coordinator.control.lock() {
+                Ok(mut control) => {
+                    control.replace(server);
+                }
+                Err(_) => {
+                    // [rb P1-7] 槽位中毒不 panic：与 bind 失败同合同降级。
+                    // 先干净关闭已建服的 accept 线程再落降级标记。
+                    crate::dlog!(
+                        "[capture-coordinator] capture control state poisoned after bind, capture degraded disabled"
+                    );
+                    server.shutdown();
+                    if let Ok(mut failure) = coordinator.control_bind_failure.lock() {
+                        *failure = Some(CAPTURE_CONTROL_BIND_FAILED.to_string());
+                    }
+                }
+            },
+            Err(error) => {
+                crate::dlog!("[capture-control] {error}, capture degraded disabled");
+                if let Ok(mut failure) = coordinator.control_bind_failure.lock() {
+                    *failure = Some(CAPTURE_CONTROL_BIND_FAILED.to_string());
+                }
+            }
+        }
         coordinator
-            .control
+    }
+
+    /// 控制面降级 cause（None = 控制通道正常）；槽位中毒按无降级处理，
+    /// 宁可少一道拦截，不让采集面 panic。
+    fn control_bind_failure_code(&self) -> Option<String> {
+        self.control_bind_failure
             .lock()
-            .map_err(|_| "capture control state is unavailable".to_string())?
-            .replace(server);
-        Ok(coordinator)
+            .ok()
+            .and_then(|failure| failure.clone())
     }
 
     pub fn control_connection(&self) -> Result<CaptureControlConnection, String> {
@@ -858,7 +938,8 @@ impl CaptureCoordinatorState {
     }
 
     pub fn status(&self) -> CaptureCoordinatorStatus {
-        self.status
+        let mut status = self
+            .status
             .lock()
             .map(|status| status.clone())
             .unwrap_or_else(|_| CaptureCoordinatorStatus {
@@ -876,7 +957,15 @@ impl CaptureCoordinatorState {
                     state: CaptureSourceState::Unavailable,
                     reason: Some("coordinator_state_unavailable".to_string()),
                 },
-            })
+            });
+        // 控制面降级时禁用态必须携带 cause 码：设置页轮询据此呈现
+        // 「采集不可用」，而不是无声的普通 disabled。
+        if !status.enabled && status.reason.is_none() {
+            if let Some(code) = self.control_bind_failure_code() {
+                status.reason = Some(code);
+            }
+        }
+        status
     }
 
     pub fn diagnostic_events(&self) -> Vec<CaptureDiagnosticEvent> {
@@ -901,6 +990,11 @@ impl CaptureCoordinatorState {
                 self.persist_capture_enabled(false);
             }
             return Ok(self.status());
+        }
+        if let Some(code) = self.control_bind_failure_code() {
+            // 控制面缺席禁止假开启：否则 UI 开着但后端拿不到轨迹（静默
+            // 降级），必须以与启动降级一致的稳定码显式拒绝。
+            return Err(code);
         }
         let next_status = {
             let status = self
@@ -1595,7 +1689,14 @@ impl CaptureCoordinatorState {
         }
         if let Ok(mut monitor) = self.monitor.lock() {
             if let Some(join) = monitor.take() {
-                let _ = join.join();
+                // [rb P1-9 工程半边] monitor 合法最长 tick 以 resize 重建的
+                // stop join（65s 导出上限）为顶；deadline 高于它，正常路径
+                // 行为不变，只防异常挂死把关窗主线程永久拖住。
+                if !crate::join_thread_with_deadline(join, MONITOR_JOIN_TIMEOUT) {
+                    crate::dlog!(
+                        "[capture-coordinator] monitor thread did not exit within {MONITOR_JOIN_TIMEOUT:?}; detached"
+                    );
+                }
             }
         }
     }
@@ -1696,6 +1797,12 @@ fn join_control_connections(connection_joins: &Mutex<Vec<JoinHandle<()>>>, deadl
         }
         if join.is_finished() {
             let _ = join.join();
+        } else {
+            // [rb P1-9 UX 半边] 超时放弃在途控制连接（最重的是 60s 导出）：
+            // 降级必须可观测——dlog 留痕后线程脱离，随进程退出收尾。
+            crate::dlog!(
+                "[capture-coordinator] control connection did not exit by shutdown deadline; detached (in-flight export suspected)"
+            );
         }
     }
 }
@@ -1795,7 +1902,13 @@ impl ControlServer {
     fn shutdown(mut self) {
         self.shutdown.store(true, Ordering::Release);
         if let Some(join) = self.join.take() {
-            let _ = join.join();
+            // accept 线程是非阻塞 accept + 20ms 轮询，正常即时退出；这里
+            // 的 deadline 是关窗链上的防御上限，不改变正常耗时。
+            if !crate::join_thread_with_deadline(join, CONTROL_ACCEPT_JOIN_TIMEOUT) {
+                crate::dlog!(
+                    "[capture-control] accept thread did not exit within {CONTROL_ACCEPT_JOIN_TIMEOUT:?}; detached"
+                );
+            }
         }
         // 先 join accept 线程保证不再有新连接，再等待在途连接收尾。
         join_control_connections(
@@ -3116,12 +3229,77 @@ mod tests {
         let raw = crate::raw_input::RawInputState::new(data_root.join("raw-input.bin"));
         let window_capture =
             WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).expect("window capture state");
+        // [rb P1-7] 构造不再返回 Err（setup 主线程 panic 残留入口治理）。
         CaptureCoordinatorState::new(
             data_root,
             Arc::new(raw),
             Arc::new(Mutex::new(window_capture)),
         )
-        .expect("coordinator")
+    }
+
+    #[test]
+    fn coordinator_construction_survives_data_root_creation_failure() {
+        // [rb P1-7] 数据根建目录失败（盘满/杀软勒索防护族；这里用同名文件
+        // 占位做最可控的复现）不得让构造失败——原 Err 经 setup `?` 会变成
+        // tauri「Failed to setup app」panic（exit 101 闪退）。正确路径 =
+        // dlog 留痕后照常构造，写入路径的失败在使用点显式暴露。
+        let data_root = std::env::temp_dir().join(format!(
+            "aiming-cookie-coordinator-root-file-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&data_root);
+        fs::write(&data_root, b"occupied by a file, not a directory").expect("plant file");
+        let raw = crate::raw_input::RawInputState::new(data_root.join("raw-input.bin"));
+        let window_capture =
+            WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).expect("window capture state");
+        let coordinator = CaptureCoordinatorState::new(
+            data_root.clone(),
+            Arc::new(raw),
+            Arc::new(Mutex::new(window_capture)),
+        );
+        // 照常构造且保持禁用态（不假开启）；关闭路径照常可用。
+        assert!(!coordinator.status().enabled);
+        coordinator.shutdown();
+        let _ = fs::remove_file(&data_root);
+    }
+
+    #[test]
+    fn control_bind_failure_degrades_to_disabled_with_cause_code() {
+        // 控制通道建服失败（杀软拦 socket / Winsock 损坏族）不得阻塞启动：
+        // 协调器照常构造，采集整体禁用并携带固定 cause 码；显式开启被同一
+        // 稳定码拒绝（UI 开着但后端拿不到轨迹的静默假开启必须可见）。
+        let data_root = std::env::temp_dir().join(format!(
+            "aiming-cookie-coordinator-bind-failure-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&data_root);
+        let raw = crate::raw_input::RawInputState::new(data_root.join("raw-input.bin"));
+        let window_capture =
+            WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).expect("window capture state");
+        let coordinator = CaptureCoordinatorState::new_inner(
+            data_root,
+            Arc::new(raw),
+            Arc::new(Mutex::new(window_capture)),
+            |_| Err("simulated loopback bind failure".to_string()),
+        );
+
+        // 控制面缺席：连接句柄显式 Err，不得返回不可用地址。
+        assert!(coordinator.control_connection().is_err());
+        // 禁用态回填固定 cause 码（稳定裸码，满足控制面 reason 合同）。
+        let status = coordinator.status();
+        assert!(!status.enabled);
+        assert_eq!(
+            status.reason.as_deref(),
+            Some("capture_control_bind_failed")
+        );
+        // 显式开启必须被稳定码拒绝，不得 start_monitor 假开启。
+        assert_eq!(
+            coordinator.set_enabled(true).unwrap_err(),
+            "capture_control_bind_failed"
+        );
+        // 关闭路径照常可用；退出清理不 panic。
+        coordinator.set_enabled(false).expect("disable succeeds");
+        coordinator.shutdown();
     }
 
     fn capturing_status_fixture(session: &str) -> CaptureCoordinatorStatus {

@@ -14,8 +14,12 @@
 //! 迁移由**迁移记录**驱动（`storage-migration.json`，与指针同在默认根）：设置
 //! 页改位置时记下 source（当时的生效根，数据实际所在）与 target（新位置），重启
 //! 时按记录执行搬迁。这样「恢复默认位置」也能知道数据原来在哪个自定义根，而不
-//! 必从指针反推。搬迁口径：逐顶层条目「比对目标 → 缺失就整体重拷 → 逐文件对账
-//! （文件数 + 字节数）→ 通过才删源」；**绝不删源除非校验通过**。单条目失败分两
+//! 必从指针反推。搬迁口径：逐顶层条目「逐文件比对（mtime 新者胜：目标缺失或源
+//! 更新才拷，拷走原子替换）→ 逐文件对账（文件数 + 字节数；字节数不符但目标
+//! mtime 不比源旧算目标胜，记入 superseded_files）→ 通过才删源」。迁移 pending
+//! 期间生效根已是目标根，**目标侧新写入是权威**（mtime 新者胜；已知边界：FAT/
+//! exFAT 的 mtime 粒度是 2 秒，同粒度内的先后无法区分，一律按目标胜处理），绝不
+//! 拿旧源回滚目标的新数据；**对账不过绝不删源**。单条目失败分两
 //! 类：文件被占用（os error 32/33，共享冲突/字节锁，自家后端与侧车常态持有）
 //! 只把该条目留在 pending 继续搬其余，收尾时 pending 非空即 `partial`（下次启动
 //! 续迁）；其他失败仍整体停机（`failed`），源原样保留。
@@ -70,6 +74,12 @@ const MIGRATION_SKIP_ENTRIES: &[&str] = &[
     STORAGE_LOCATION_FILE_NAME,
     STORAGE_MIGRATION_FILE_NAME,
 ];
+/// 原子拷贝的 temp 文件后缀：temp 命名为 `.{目标文件名}.acmigration-tmp`，与
+/// 目标同目录；写失败即清理，崩溃残留由 `cleanup_migration_temps` 续迁开始扫除。
+const MIGRATION_TEMP_SUFFIX: &str = ".acmigration-tmp";
+/// superseded_files（目标胜清单）的条数上限：迁移记录文件被设置页轮询与反复
+/// 序列化，不能被异常多的并发改写撑爆；超出上限的只体现在 diag 汇总的计数里。
+const SUPERSEDED_FILES_LIMIT: usize = 200;
 
 pub const MIGRATION_PHASE_PLANNED: &str = "planned";
 pub const MIGRATION_PHASE_RUNNING: &str = "running";
@@ -323,6 +333,11 @@ pub struct StorageMigrationState {
     pub phase: String,
     pub moved_entries: Vec<String>,
     pub pending_entries: Vec<String>,
+    /// 迁移期间保留目标侧更新版本的文件清单（`条目名/条目内相对路径`）。目标胜
+    /// 是新者胜口径的正常结果，不是失败；有界（`SUPERSEDED_FILES_LIMIT`），旧记录
+    /// 文件缺该字段时按空清单补齐。
+    #[serde(default)]
+    pub superseded_files: Vec<String>,
     /// 源数据总字节数（预检与进度用）。
     pub total_bytes: u64,
     pub copied_bytes: u64,
@@ -411,18 +426,48 @@ fn total_bytes(files: &[(PathBuf, u64)]) -> u64 {
     files.iter().map(|(_, size)| *size).sum()
 }
 
-fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
+/// 原子拷贝：先写到目标同目录的确定性 temp（`.{文件名}.acmigration-tmp`）再原子
+/// 替换落位。两个目的：崩了不会在目标路径留半份文件（半份只在 temp 名下，续迁
+/// 开始扫除）；落位是原子 rename，读方看到的目标路径要么是旧内容要么是完整新
+/// 内容。保留源 mtime：已拷文件 mtime == 源 mtime，天然成为断点续迁判据（同
+/// mtime = 上轮已拷完）。返回是否真的拷贝落位：false = rename 前复查发现目标
+/// 已被并发写成更新版本（目标胜），放弃覆盖。
+fn copy_file(source: &Path, destination: &Path) -> io::Result<bool> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(source, destination)?;
-    // 让目标文件带上源修改时间：搬迁不改变「最近使用」排序。
-    if let Ok(metadata) = fs::metadata(source) {
-        if let Ok(modified) = metadata.modified() {
-            let _ = filetime_set(destination, modified);
+    let file_name = destination
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = destination.with_file_name(format!(".{file_name}{MIGRATION_TEMP_SUFFIX}"));
+    let outcome = (|| -> io::Result<bool> {
+        fs::copy(source, &temp)?;
+        // 给 temp 带上源修改时间：搬迁不改变「最近使用」排序，同时 mtime 是续迁判据。
+        let source_modified = fs::metadata(source)
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        if let Some(modified) = source_modified {
+            let _ = filetime_set(&temp, modified);
         }
-    }
-    Ok(())
+        // rename 前复查目标 mtime，缩小「比对之后目标被改写」的竞态窗：目标已
+        // 更新 → 目标胜，放弃覆盖（源 mtime 不可读时同样保守放弃）。
+        let superseded_by_target = match source_modified {
+            Some(source_time) => fs::metadata(destination)
+                .and_then(|metadata| metadata.modified())
+                .map(|target_time| target_time >= source_time)
+                .unwrap_or(false),
+            None => true,
+        };
+        if superseded_by_target {
+            return Ok(false);
+        }
+        crate::atomic_replace(&temp, destination)?;
+        Ok(true)
+    })();
+    // 成功时 temp 已被改名走，这里的删除是幂等空操作；失败/放弃时清掉半份拷贝。
+    let _ = fs::remove_file(&temp);
+    outcome
 }
 
 /// Windows 共享冲突（32）/ 字节范围锁冲突（33）：文件正被别的句柄占用。
@@ -459,17 +504,34 @@ impl MigrationEntryError {
 
 /// 逐文件对账（任务口径：文件数 + 字节数）：源清单里每个文件都必须在目标存在
 /// 且字节数一致。只比对源清单，目标多出来的文件（迁移期间子进程新写的）不影响
-/// 结论——否则并发写入会让迁移永远无法通过校验。
-fn verify_copy(source: &Path, destination: &Path) -> Result<(u64, u64), String> {
+/// 结论——否则并发写入会让迁移永远无法通过校验。例外：字节数不符但目标 mtime
+/// 不比源旧（迁移窗口内目标侧被并发改写），按新者胜口径算目标胜——豁免并把该
+/// 相对路径记入返回的 superseded 清单（源随后随条目整体删除）；其余不符保持
+/// Err（fail-closed，源原样保留）。
+fn verify_copy(source: &Path, destination: &Path) -> Result<(u64, u64, Vec<String>), String> {
     let files = relative_files(source, source).map_err(|error| format!("scan: {error}"))?;
     let mut missing_relative: Option<PathBuf> = None;
     let mut mismatched: Option<(PathBuf, u64, u64)> = None;
+    let mut superseded: Vec<String> = Vec::new();
     for (relative, size) in &files {
         let target = destination.join(relative);
         match fs::metadata(&target) {
             Ok(metadata) if metadata.len() == *size => {}
             Ok(metadata) => {
-                mismatched.get_or_insert((relative.clone(), *size, metadata.len()));
+                let source_time = fs::metadata(source.join(relative))
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                let target_time = metadata.modified().ok();
+                let target_won = match (source_time, target_time) {
+                    (Some(source_time), Some(target_time)) => target_time >= source_time,
+                    // mtime 不可读时无法证明目标更新：保持 fail-closed。
+                    _ => false,
+                };
+                if target_won {
+                    superseded.push(relative.to_string_lossy().into_owned());
+                } else {
+                    mismatched.get_or_insert((relative.clone(), *size, metadata.len()));
+                }
             }
             Err(_) => {
                 missing_relative.get_or_insert(relative.clone());
@@ -485,59 +547,121 @@ fn verify_copy(source: &Path, destination: &Path) -> Result<(u64, u64), String> 
     if let Some(relative) = missing_relative {
         return Err(format!("missing at target: {}", relative.display()));
     }
-    Ok((files.len() as u64, total_bytes(&files)))
+    Ok((files.len() as u64, total_bytes(&files), superseded))
 }
 
-/// 把源目录搬进目标：逐文件补齐 → 逐文件对账 → 通过才删源。
+/// 把源目录搬进目标：逐文件补齐（mtime 新者胜）→ 逐文件对账 → 通过才删源。
 ///
 /// 目标目录**只增不删**：迁移是重启时后台跑的，同一进程的子进程已经把新数据写进
-/// 目标根（新会话、新日志、新的 run），清整目录会把它们一起删掉。所以这里只覆盖
-/// 「源里有、而目标缺失或字节数对不上」的文件，源文件始终是权威版本。
-fn migrate_entry(source: &Path, destination: &Path) -> Result<u64, MigrationEntryError> {
+/// 目标根（新会话、新日志、新的 run），清整目录会把它们一起删掉。迁移期间**目标
+/// 侧新写入是权威**（mtime 新者胜）：目标缺失或源 mtime 更新才拷贝覆盖；目标同
+/// mtime 或更新就保留目标——同 mtime 同字节数视为上轮已拷完（`copy_file` 保留源
+/// mtime），字节数不同的由 `verify_copy` 统一豁免并记入 superseded 清单。已知
+/// 边界：FAT/exFAT 的 mtime 粒度是 2 秒，同粒度内的先后无法区分，一律按目标胜
+/// 处理——宁可少覆盖，不回滚目标的新数据。
+fn migrate_entry(
+    source: &Path,
+    destination: &Path,
+) -> Result<(u64, Vec<String>), MigrationEntryError> {
     let files = relative_files(source, source)
         .map_err(|error| MigrationEntryError::from_io("scan", &error))?;
-    for (relative, size) in &files {
+    for (relative, _) in &files {
         let target = destination.join(relative);
-        // 断点续迁：目标已有同名同字节数的文件就跳过（上一轮拷完的结果）。
-        if fs::metadata(&target).is_ok_and(|metadata| metadata.len() == *size) {
-            continue;
+        // 断点续迁判据（mtime 新者胜）：目标缺失或源更新才拷；目标同 mtime 或
+        // 更新一律不动目标。
+        if let Ok(target_metadata) = fs::metadata(&target) {
+            let source_time = fs::metadata(source.join(relative))
+                .and_then(|metadata| metadata.modified())
+                .ok();
+            let target_time = target_metadata.modified().ok();
+            let source_wins = match (source_time, target_time) {
+                (Some(source_time), Some(target_time)) => source_time > target_time,
+                // mtime 不可读：无证据不覆盖，保守按目标胜处理。
+                _ => false,
+            };
+            if !source_wins {
+                continue;
+            }
         }
-        copy_file(&source.join(relative), &target).map_err(|error| {
+        // false = rename 前复查发现目标已更新（目标胜），由下方对账豁免记录。
+        let _copied = copy_file(&source.join(relative), &target).map_err(|error| {
             MigrationEntryError::from_io(&format!("copy {}", relative.display()), &error)
         })?;
     }
-    let (_, bytes) = verify_copy(source, destination).map_err(MigrationEntryError::other)?;
-    // 校验通过（文件数 + 字节数逐文件对上）才允许删源；失败就在这里停，源原样保留。
-    // 删源也可能撞上仍被持有的句柄（如正开着的数据库）→ 同样按锁定类留在 pending。
+    let (_, bytes, superseded) =
+        verify_copy(source, destination).map_err(MigrationEntryError::other)?;
+    // 对账通过（字节数逐文件对上，目标侧改写的已按目标胜豁免）才允许删源；失败
+    // 就在这里停，源原样保留。删源也可能撞上仍被持有的句柄（如正开着的数据库）
+    // → 同样按锁定类留在 pending。
     fs::remove_dir_all(source)
         .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
-    Ok(bytes)
+    Ok((bytes, superseded))
 }
 
-/// 单文件条目的搬迁：同样先校验后删源。
-fn migrate_file(source: &Path, destination: &Path) -> Result<u64, MigrationEntryError> {
-    let size = fs::metadata(source)
-        .map_err(|error| MigrationEntryError::from_io("stat", &error))?
-        .len();
-    if let Ok(metadata) = fs::metadata(destination) {
-        if metadata.len() == size {
+/// 单文件条目的搬迁：同样新者胜判据，先对账后删源。返回 (字节数, 目标胜清单
+/// ——单文件条目就是文件名本身)。
+fn migrate_file(
+    source: &Path,
+    destination: &Path,
+) -> Result<(u64, Vec<String>), MigrationEntryError> {
+    let source_metadata = fs::metadata(source)
+        .map_err(|error| MigrationEntryError::from_io("stat", &error))?;
+    let size = source_metadata.len();
+    let source_time = source_metadata.modified().ok();
+    let name = source
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let Ok(target_metadata) = fs::metadata(destination) {
+        let target_time = target_metadata.modified().ok();
+        let source_wins = match (source_time, target_time) {
+            (Some(source_time), Some(target_time)) => source_time > target_time,
+            // mtime 不可读：无证据不覆盖，保守按目标胜处理。
+            _ => false,
+        };
+        if !source_wins {
+            // 同 mtime 同字节数 = 上轮已拷完（copy_file 保留源 mtime）：只补删源。
+            if target_metadata.len() == size {
+                fs::remove_file(source)
+                    .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
+                return Ok((size, Vec::new()));
+            }
+            // 目标侧更新（或同 mtime 内容不同）：目标胜，不覆盖、记入清单。
             fs::remove_file(source)
                 .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
-            return Ok(size);
+            return Ok((size, vec![name]));
         }
     }
-    copy_file(source, destination).map_err(|error| MigrationEntryError::from_io("copy", &error))?;
-    let copied = fs::metadata(destination)
-        .map_err(|error| MigrationEntryError::from_io("verify", &error))?
-        .len();
-    if copied != size {
+    // false = rename 前复查发现目标已更新（目标胜），保留目标、删源。
+    let copied = copy_file(source, destination)
+        .map_err(|error| MigrationEntryError::from_io("copy", &error))?;
+    if !copied {
+        fs::remove_file(source)
+            .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
+        return Ok((size, vec![name]));
+    }
+    let target_metadata = fs::metadata(destination)
+        .map_err(|error| MigrationEntryError::from_io("verify", &error))?;
+    if target_metadata.len() != size {
+        // 拷完后目标又被并发改写：目标 mtime 不比源旧 → 目标胜，保留新内容并删
+        // 源；否则对不上账，fail-closed（源原样保留）。
+        let target_won = match (source_time, target_metadata.modified().ok()) {
+            (Some(source_time), Some(target_time)) => target_time >= source_time,
+            _ => false,
+        };
+        if target_won {
+            fs::remove_file(source)
+                .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
+            return Ok((size, vec![name]));
+        }
         return Err(MigrationEntryError::other(format!(
-            "byte mismatch: expected {size}, found {copied}"
+            "byte mismatch: expected {size}, found {}",
+            target_metadata.len()
         )));
     }
     fs::remove_file(source)
         .map_err(|error| MigrationEntryError::from_io("remove source", &error))?;
-    Ok(size)
+    Ok((size, Vec::new()))
 }
 
 /// 目标盘可用空间（字节）。取不到返回 None（跳过预检，不阻塞迁移）。
@@ -630,6 +754,22 @@ fn merge_legacy_logs(source_root: &Path, target_root: &Path) {
     }
 }
 
+/// 扫除目标树里崩溃残留的原子拷贝 temp（`.名字.acmigration-tmp`）：temp 与目标
+/// 同目录，可能嵌在任何子层级。删不掉就留着（隐藏文件，不参与对账，无碍）。
+fn cleanup_migration_temps(root: &Path) {
+    let Ok(files) = collect_files(root) else {
+        return;
+    };
+    for (path, _) in files {
+        let is_temp = path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(MIGRATION_TEMP_SUFFIX));
+        if is_temp {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 /// 执行迁移（重启时在后台线程调用）。
 pub fn run_migration(
     default_root: &Path,
@@ -657,6 +797,8 @@ pub fn run_migration(
     if let Err(error) = fs::create_dir_all(target_root) {
         return fail(state, format!("target_unavailable: {error}"));
     }
+    // 续迁开始先扫掉上次崩溃残留在目标侧的半份拷贝 temp（原子拷贝的落点）。
+    cleanup_migration_temps(target_root);
     if let Err((required, available)) = precheck_free_space(source_root, target_root) {
         return fail(
             state,
@@ -680,6 +822,7 @@ pub fn run_migration(
     state.total_bytes = entries_total_bytes(&entries);
     state.copied_bytes = 0;
     state.moved_entries = Vec::new();
+    state.superseded_files = Vec::new();
     state.error = None;
     state.updated_at = now_iso_like();
     if let Err(error) = write_migration_state(default_root, &state) {
@@ -688,6 +831,7 @@ pub fn run_migration(
 
     let mut moved: Vec<String> = Vec::new();
     let mut copied_bytes = 0u64;
+    let mut superseded_count = 0usize;
     for path in &entries {
         let name = path
             .file_name()
@@ -700,9 +844,22 @@ pub fn run_migration(
             migrate_file(path, &destination)
         };
         match result {
-            Ok(bytes) => {
+            Ok((bytes, entry_superseded)) => {
                 copied_bytes += bytes;
                 moved.push(name.clone());
+                // 目标胜清单：条目名做前缀定位到顶层条目；有界，超出上限的只进
+                // diag 汇总计数。
+                superseded_count += entry_superseded.len();
+                for relative in entry_superseded {
+                    if state.superseded_files.len() < SUPERSEDED_FILES_LIMIT {
+                        state.superseded_files.push(
+                            Path::new(&name)
+                                .join(relative)
+                                .to_string_lossy()
+                                .into_owned(),
+                        );
+                    }
+                }
             }
             // 文件被占用（os error 32/33）：条目留在 pending、继续搬其余。
             // 0929 真机的教训：第一个条目失败就全盘放弃，流程每次启动必失败。
@@ -741,6 +898,17 @@ pub fn run_migration(
                 target_root.display()
             ));
         }
+    }
+
+    // 目标胜汇总：全量清单在迁移记录里（有界），diag 只落一条有界摘要。
+    if superseded_count > 0 {
+        let samples: Vec<String> = state.superseded_files.iter().take(8).cloned().collect();
+        crate::diag_log::write_line(&format!(
+            "storage-migration: {} file(s) kept the newer target version (target wins on mtime): {}{}",
+            superseded_count,
+            samples.join(", "),
+            if state.superseded_files.len() > 8 { ", ..." } else { "" }
+        ));
     }
 
     // 仍有被占用而搬不动的条目：phase=partial，指针保持 set_location 写下的
@@ -982,6 +1150,7 @@ impl StorageLocationState {
             },
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1266,6 +1435,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1319,6 +1489,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1348,17 +1519,25 @@ mod tests {
         fs::create_dir_all(source.join("runs/7")).expect("mkdir");
         fs::write(source.join("runs/7/meta.json"), b"meta").expect("write");
         fs::write(source.join("runs/7/video.mp4"), vec![b'v'; 64]).expect("write");
-        // 上次中断留下的半份目标：字节数对不上的重拷，目标独有的文件不动。
+        // 上一轮已拷完的文件（copy_file 保留源 mtime）：同 mtime 同字节数 → 跳过不重拷。
         fs::create_dir_all(target.join("runs/7")).expect("mkdir");
-        fs::write(target.join("runs/7/meta.json"), b"stale").expect("write");
-        fs::write(target.join("runs/7/video.mp4"), vec![b'v'; 64]).expect("write");
-        // 同字节数但内容不同：跳过重拷（口径是文件数 + 字节数对账）。
+        copy_file(&source.join("runs/7/video.mp4"), &target.join("runs/7/video.mp4"))
+            .expect("precopy");
+        // 断点处目标被并发改写（内容更新、mtime 更晚）：目标胜，保留目标新内容。
+        fs::write(target.join("runs/7/meta.json"), b"stale-but-newer").expect("write");
+        let newer = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        filetime_set(&target.join("runs/7/meta.json"), newer).expect("set newer mtime");
+        // 目标独有文件：不参与对账，更不许被清掉。
         fs::write(target.join("runs/7/partial.tmp"), b"partial").expect("write");
         // 已搬完但未删源的条目：只补删源目录。
         fs::create_dir_all(source.join("analyses")).expect("mkdir");
         fs::write(source.join("analyses/overview.json"), b"overview").expect("write");
         fs::create_dir_all(target.join("analyses")).expect("mkdir");
-        fs::write(target.join("analyses/overview.json"), b"overview").expect("write");
+        copy_file(
+            &source.join("analyses/overview.json"),
+            &target.join("analyses/overview.json"),
+        )
+        .expect("precopy");
         // 迁移期间子进程写进目标的新文件：不参与对账，更不许被清掉。
         fs::create_dir_all(target.join("sessions")).expect("mkdir");
         fs::write(target.join("sessions/1.json"), b"fresh").expect("write");
@@ -1369,6 +1548,7 @@ mod tests {
             phase: MIGRATION_PHASE_RUNNING.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1377,9 +1557,23 @@ mod tests {
         let finished = run_migration(&root, &source, &target, state);
 
         assert_eq!(finished.phase, MIGRATION_PHASE_DONE, "{:?}", finished.error);
+        // 同 mtime 同字节数（上轮已拷完）：跳过，内容原样。
+        assert_eq!(
+            fs::read(target.join("runs/7/video.mp4")).expect("read"),
+            vec![b'v'; 64]
+        );
+        // 目标被改写的文件保留目标侧新内容，不被旧源回滚。
         assert_eq!(
             fs::read(target.join("runs/7/meta.json")).expect("read"),
-            b"meta"
+            b"stale-but-newer"
+        );
+        assert!(
+            finished
+                .superseded_files
+                .iter()
+                .any(|path| path.ends_with("meta.json")),
+            "superseded must record the target-won file: {:?}",
+            finished.superseded_files
         );
         // 目标目录只增不删：新会话写进去的数据与「目标独有」的文件都原样保留。
         assert_eq!(
@@ -1389,6 +1583,92 @@ mod tests {
         assert!(target.join("runs/7/partial.tmp").exists());
         assert!(!source.join("runs").exists());
         assert!(!source.join("analyses").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_migration_keeps_newer_target_files_and_records_them_as_superseded() {
+        // 核心回归：迁移 pending 期间生效根已是目标根，子进程往目标写新数据。
+        // 源里的同名文件是旧内容，续迁绝不能拿旧源覆盖目标的新文件（mtime 新者胜）。
+        let root = scratch("target-wins");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(source.join("sessions")).expect("mkdir");
+        fs::write(source.join("sessions/meta.json"), br#"{"v":1}"#).expect("write");
+        fs::create_dir_all(target.join("sessions")).expect("mkdir");
+        // 目标内容更新且字节数不同：旧判据（同字节数跳过、否则覆盖）会拿旧源
+        // 回滚目标——这正是本回归要钉死的缺陷。
+        fs::write(target.join("sessions/meta.json"), br#"{"v":2,"bigger":true}"#)
+            .expect("write");
+        // mtime 显式拨晚 1 小时：免疫文件系统时间戳粒度，保证「目标严格更新」。
+        let newer = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        filetime_set(&target.join("sessions/meta.json"), newer).expect("set newer mtime");
+
+        let state = StorageMigrationState {
+            source_root: source.to_string_lossy().into_owned(),
+            target_root: target.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_RUNNING.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 0,
+            copied_bytes: 0,
+            error: None,
+            updated_at: String::new(),
+        };
+        let finished = run_migration(&root, &source, &target, state);
+
+        assert_eq!(finished.phase, MIGRATION_PHASE_DONE, "{:?}", finished.error);
+        // 目标新内容原样保留，没被旧源覆盖；源随条目搬迁删除。
+        assert_eq!(
+            fs::read(target.join("sessions/meta.json")).expect("read"),
+            br#"{"v":2,"bigger":true}"#
+        );
+        assert!(!source.join("sessions").exists());
+        // 目标胜清单（条目名/相对路径）落进完成态记录。
+        assert!(
+            finished
+                .superseded_files
+                .iter()
+                .any(|path| path.ends_with("meta.json")),
+            "superseded must contain the target-won file: {:?}",
+            finished.superseded_files
+        );
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.superseded_files, finished.superseded_files);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_migration_sweeps_crash_leftover_temp_files_from_target() {
+        // 原子拷贝的 temp 与目标同目录；崩溃残留（任意嵌套层级）在续迁开始时清掉。
+        let root = scratch("temp-cleanup");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(source.join("runs")).expect("mkdir");
+        fs::write(source.join("runs/meta.json"), b"meta").expect("write");
+        fs::create_dir_all(target.join("runs")).expect("mkdir");
+        fs::write(target.join("runs/.meta.json.acmigration-tmp"), b"half").expect("write");
+        fs::write(target.join(".orphan.acmigration-tmp"), b"half").expect("write");
+
+        let state = StorageMigrationState {
+            source_root: source.to_string_lossy().into_owned(),
+            target_root: target.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_RUNNING.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 0,
+            copied_bytes: 0,
+            error: None,
+            updated_at: String::new(),
+        };
+        let finished = run_migration(&root, &source, &target, state);
+
+        assert_eq!(finished.phase, MIGRATION_PHASE_DONE, "{:?}", finished.error);
+        assert!(!target.join("runs/.meta.json.acmigration-tmp").exists());
+        assert!(!target.join(".orphan.acmigration-tmp").exists());
+        assert_eq!(fs::read(target.join("runs/meta.json")).expect("read"), b"meta");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1406,6 +1686,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1452,6 +1733,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1526,6 +1808,7 @@ mod tests {
             phase: MIGRATION_PHASE_RUNNING.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1640,6 +1923,7 @@ mod tests {
             phase: MIGRATION_PHASE_RUNNING.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1668,6 +1952,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
@@ -1709,6 +1994,7 @@ mod tests {
             phase: MIGRATION_PHASE_PLANNED.to_string(),
             moved_entries: Vec::new(),
             pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
             total_bytes: 0,
             copied_bytes: 0,
             error: None,
