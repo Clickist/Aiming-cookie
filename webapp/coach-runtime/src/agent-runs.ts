@@ -815,6 +815,18 @@ export function hasActiveAgentRunForSession(threadId: number): boolean {
   return false;
 }
 
+/**
+ * Whether any run record (any status) is still in memory for this thread.
+ * 进程死亡会清空 runs Map：无记录 ⟺ 回合是被重启/进程死亡打断的；有记录
+ * （哪怕 queued/终态）说明回合在本进程内结束（用户停止/失败），不是重启。
+ */
+export function hasRunRecordForSession(threadId: number): boolean {
+  for (const record of runs.values()) {
+    if (record.threadId === threadId) return true;
+  }
+  return false;
+}
+
 export function decideConfirmation(
   _ownerId: string,
   _confirmationRef: string,

@@ -28,7 +28,7 @@ import {
   type ConversationMeta,
   type SessionMessage,
 } from "./session-repo.ts";
-import { hasActiveAgentRunForSession } from "./agent-runs.ts";
+import { hasActiveAgentRunForSession, hasRunRecordForSession } from "./agent-runs.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,9 +198,12 @@ export async function getCoachSessionDetail(
   // 活跃 run 期间，末尾「有工具/思考活动但尚无正文」的 assistant 回合是正常
   // 进行中的中间态：若照常合成空 stopped 标记，前端刷新会误挂「回答已停止」
   // 徽标（0915 CDP 真机实测；run 落定后徽标自行消失）。更早回合的真停止
-  // 标记必须保留，故只抑制尾部这一条。
+  // 标记必须保留，故只抑制尾部这一条。内存里有该会话的 run 记录（任意状态）
+  // → 尾部回合在本进程内结束，不算重启打断；无记录（进程死亡清空 Map）→
+  // 合成标记带 interrupted=true，前端据实呈现并给重试。
   const entries = await readSessionMessagesForUi(sessionId, {
     ...(hasActiveAgentRunForSession(sessionId) ? { suppressTrailingInterruptMarker: true } : {}),
+    ...(hasRunRecordForSession(sessionId) ? { trailingTurnInProcess: true } : {}),
   });
   const base = shapeSession(ownerId, sessionId, meta, entries);
   const messages = entries.map((entry, index) => ({
@@ -210,6 +213,7 @@ export async function getCoachSessionDetail(
     created_at: entry.timestamp,
     legacy_session_id: null,
     ...(entry.stopped ? { stopped: true } : {}),
+    ...(entry.interrupted ? { interrupted: true } : {}),
   }));
   return { ...base, analysis_refs: analysisRefsFromMeta(meta), messages };
 }

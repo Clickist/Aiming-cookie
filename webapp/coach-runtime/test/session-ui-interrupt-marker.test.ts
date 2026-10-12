@@ -20,6 +20,10 @@ test.after(() => {
 const label = (message: { role: string; content: string; stopped?: boolean }) =>
   `${message.role}:${message.content}${message.stopped ? "#stopped" : ""}`;
 
+// 新用例的 label：额外区分「重启/进程死亡打断」标记。
+const labelEx = (message: { role: string; content: string; stopped?: boolean; interrupted?: boolean }) =>
+  `${message.role}:${message.content}${message.stopped ? "#stopped" : ""}${message.interrupted ? "#interrupted" : ""}`;
+
 // 会话末尾是「有工具活动但无正文」的 assistant 回合；前面另有一个真停止回合。
 async function seedOngoingTrailingTurn(threadId: number): Promise<void> {
   const session = await ensureSession(threadId);
@@ -81,5 +85,85 @@ test("getCoachSessionDetail suppresses the trailing marker while a run is active
   assert.deepEqual(
     settled.messages.map((message) => label(message as { role: string; content: string; stopped?: boolean })),
     ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:#stopped"],
+  );
+});
+
+test("without any run record, synthesized markers are interrupted and real aborted text is only stopped", async () => {
+  const threadId = 833;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  const text = (role: string, value: string) =>
+    session.appendMessage({ role, content: [{ type: "text", text: value }], timestamp: stamp });
+  await text("user", "u0");
+  // 真实 aborted 消息：带正文的半截回复，只有 stopped、无 interrupted。
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "half" }],
+    stopReason: "aborted",
+    timestamp: stamp,
+  });
+  // 尾部：有工具活动无正文的回合，重启后无内存 run 结算 → 合成标记 interrupted。
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "call-tail", name: "read", arguments: {} }],
+    timestamp: stamp,
+  });
+
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map(labelEx),
+    ["user:u0", "assistant:half#stopped", "assistant:#stopped#interrupted"],
+  );
+});
+
+test("with an in-process run record, trailingTurnInProcess clears interrupted only on the trailing marker", async () => {
+  const threadId = 834;
+  await seedOngoingTrailingTurn(threadId);
+
+  // 用一个 stopped run 造「本进程内结束」的记录（终态记录留在 runs Map）。
+  const run = createAgentRun("marker-owner-b", "帮我热身", { sessionId: threadId });
+  await waitForTask(run.run_ref);
+  await stopAgentRun("marker-owner-b", run.run_ref);
+
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId, { trailingTurnInProcess: true })).map(labelEx),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+  );
+});
+
+test("trailingTurnInProcess bypasses the ui stat cache in both directions", async () => {
+  // 正向：默认 opts 先读（写缓存）→ 带标志读必须反映标志，不被缓存钉死。
+  const threadId = 835;
+  await seedOngoingTrailingTurn(threadId);
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map(labelEx),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
+  );
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId, { trailingTurnInProcess: true })).map(labelEx),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+  );
+
+  // 反向：带标志读先行且不得写缓存 → 随后的默认读不得吃到带标志的合成结果。
+  const freshId = 836;
+  await seedOngoingTrailingTurn(freshId);
+  assert.deepEqual(
+    (await readSessionMessagesForUi(freshId, { trailingTurnInProcess: true })).map(labelEx),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped"],
+  );
+  assert.deepEqual(
+    (await readSessionMessagesForUi(freshId)).map(labelEx),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
+  );
+});
+
+test("getCoachSessionDetail marks the trailing tool-only turn as interrupted after a restart", async () => {
+  // 无内存 run（模拟重启后）：detail 须对无正文的尾部回合如实带 interrupted。
+  const threadId = 837;
+  await seedOngoingTrailingTurn(threadId);
+
+  const detail = await getCoachSessionDetail("marker-owner-d", threadId);
+  assert.deepEqual(
+    detail.messages.map((message) => labelEx(message as { role: string; content: string; interrupted?: boolean; stopped?: boolean })),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped#interrupted", "user:u2", "assistant:#stopped#interrupted"],
   );
 });

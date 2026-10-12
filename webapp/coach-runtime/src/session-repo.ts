@@ -51,6 +51,8 @@ export type SessionMessage = {
   timestamp: string;
   /** 被用户停止的半截回复（stopReason=aborted）：前端据实在消息上挂「已停止」。 */
   stopped?: boolean;
+  /** 应用重启/进程死亡打断的合成标记；用户主动停止只有 stopped。 */
+  interrupted?: boolean;
 };
 
 // ── Pi repo access ───────────────────────────────────────────────────────
@@ -499,15 +501,22 @@ export async function readSessionMessages(threadId: number): Promise<SessionMess
  * `suppressTrailingInterruptMarker`：调用方已知该会话有活跃 run 时置位。
  * 此时末尾「有工具/思考活动但尚无正文」的回合是正常的进行中中间态，
  * 不是被停止；只跳过这一条尾标记，更早回合的真停止标记照常保留。
+ *
+ * `trailingTurnInProcess`：调用方已知尾部回合在本进程内（内存里有 run 记录）
+ * 时置位——合成尾标记不算「重启打断」。该标志随 run 生命周期变化但不改
+ * 文件 stat，读写都绕过 stat 缓存，避免标签被旧解析结果钉死。
  */
 export async function readSessionMessagesForUi(
   threadId: number,
-  opts: { suppressTrailingInterruptMarker?: boolean } = {},
+  opts: {
+    suppressTrailingInterruptMarker?: boolean;
+    trailingTurnInProcess?: boolean;
+  } = {},
 ): Promise<SessionMessage[]> {
   // TS-4：无抑制位的常规读取（会话列表轮询）按文件 stat 缓存——文件未变时
   // 直接复用上次解析结果，3s/10s 轮询不再对每会话全量解析 JSONL。缓存数组
   // 视为只读（消费方 shapeSession/detail 只读遍历）。
-  if (!opts.suppressTrailingInterruptMarker) {
+  if (!opts.suppressTrailingInterruptMarker && !opts.trailingTurnInProcess) {
     const filePath = metadataByThread.get(threadId)?.path
       ?? (() => {
         const legacy = join(getConversationsDir(), `${threadId}.jsonl`);
@@ -533,13 +542,17 @@ export async function readSessionMessagesForUi(
 
 async function readSessionMessagesForUiUncached(
   threadId: number,
-  opts: { suppressTrailingInterruptMarker?: boolean } = {},
+  opts: {
+    suppressTrailingInterruptMarker?: boolean;
+    trailingTurnInProcess?: boolean;
+  } = {},
 ): Promise<SessionMessage[]> {
   const session = await openSession(threadId);
   if (session) {
     return messagesFromSession(session, {
       withInterruptMarkers: true,
       ...(opts.suppressTrailingInterruptMarker ? { suppressTrailingInterruptMarker: true } : {}),
+      ...(opts.trailingTurnInProcess ? { trailingTurnInProcess: true } : {}),
     });
   }
   return readLegacyMessages(threadId);
@@ -559,7 +572,11 @@ type VisibleMessage = { message: SessionMessage; keepThroughIndex: number };
 
 function collectVisibleMessages(
   entries: SessionEntryLike[],
-  opts: { withInterruptMarkers?: boolean; suppressTrailingInterruptMarker?: boolean } = {},
+  opts: {
+    withInterruptMarkers?: boolean;
+    suppressTrailingInterruptMarker?: boolean;
+    trailingTurnInProcess?: boolean;
+  } = {},
 ): VisibleMessage[] {
   const visible: VisibleMessage[] = [];
   // 自上一条可见消息以来，本轮是否出现过 assistant 工具/思考活动而始终
@@ -586,6 +603,10 @@ function collectVisibleMessages(
           content: "",
           timestamp: lastTimestamp || new Date().toISOString(),
           stopped: true,
+          // 尾部标记且该回合在本进程内（内存里有 run 记录）→ 只是本进程内的
+          // 未完中间态，不算被打断；其余合成标记（含历史边界结算的）都视作
+          // 重启/进程死亡打断。
+          interrupted: !(nextStart === null && opts.trailingTurnInProcess === true),
         },
         keepThroughIndex: -1,
       });
@@ -634,7 +655,11 @@ function collectVisibleMessages(
 
 async function messagesFromSession(
   session: SessionLike,
-  opts: { withInterruptMarkers?: boolean; suppressTrailingInterruptMarker?: boolean } = {},
+  opts: {
+    withInterruptMarkers?: boolean;
+    suppressTrailingInterruptMarker?: boolean;
+    trailingTurnInProcess?: boolean;
+  } = {},
 ): Promise<SessionMessage[]> {
   const entries = await session.getBranch();
   return collectVisibleMessages(entries, opts).map((item) => item.message);
