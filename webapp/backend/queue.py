@@ -859,29 +859,35 @@ async def list_storage_sessions(user_id: str) -> list[dict]:
 
 
 async def list_sessions(user_id: str, *, locale: str = "zh-CN") -> list[dict]:
-    out: list[dict] = []
-    for session in _all_sessions(user_id):
-        item = dict(session)
-        item["created_at"] = timestamp_to_wire_utc(item.get("created_at")) or ""
-        item["started_at"] = timestamp_to_wire_utc(item.get("started_at"))
-        item["finished_at"] = timestamp_to_wire_utc(item.get("finished_at"))
-        snapshot = item.get("input_snapshot")
-        snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
-        item["scenario"] = snapshot_scenario if snapshot_scenario is not None else item.get("run_scenario")
-        _flatten_snapshot_sources(item, snapshot)
-        item["training_at"] = _resolve_training_at(item)
-        item["summary_label"] = item.pop("_summary_label", None)
-        projected = history_trends.analysis_list_item(item)
-        projected["training_at"] = item["training_at"]
-        projected["analysis_completed_at"] = projected.get("finished_at")
-        projected["presentation_label"] = build_record_presentation_label(
-            scenario=projected.get("scenario"),
-            training_at=projected["training_at"],
-            analysis_completed_at=projected["analysis_completed_at"],
-            locale=locale,
-        )
-        out.append(projected)
-    return out
+    def _build() -> list[dict]:
+        out: list[dict] = []
+        for session in _all_sessions(user_id):
+            item = dict(session)
+            item["created_at"] = timestamp_to_wire_utc(item.get("created_at")) or ""
+            item["started_at"] = timestamp_to_wire_utc(item.get("started_at"))
+            item["finished_at"] = timestamp_to_wire_utc(item.get("finished_at"))
+            snapshot = item.get("input_snapshot")
+            snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
+            item["scenario"] = snapshot_scenario if snapshot_scenario is not None else item.get("run_scenario")
+            _flatten_snapshot_sources(item, snapshot)
+            item["training_at"] = _resolve_training_at(item)
+            item["summary_label"] = item.pop("_summary_label", None)
+            projected = history_trends.analysis_list_item(item)
+            projected["training_at"] = item["training_at"]
+            projected["analysis_completed_at"] = projected.get("finished_at")
+            projected["presentation_label"] = build_record_presentation_label(
+                scenario=projected.get("scenario"),
+                training_at=projected["training_at"],
+                analysis_completed_at=projected["analysis_completed_at"],
+                locale=locale,
+            )
+            out.append(projected)
+        return out
+
+    # [perf PY-2 2026-10-11] 整段（目录 stat 扫描 + 逐会话 run 读 + 投影）是
+    # 纯读组合，与 run 侧 list_kovaak_run_summaries 同待遇放线程池：History
+    # 5s 轮询不再把同步 IO 串到 worker/心跳共用的事件循环上。
+    return await asyncio.to_thread(_build)
 
 
 def _flatten_snapshot_sources(item: dict, snapshot: object) -> None:
@@ -915,15 +921,15 @@ def _resolve_training_at(item: dict) -> str | None:
     if run_id is None:
         return None
     from . import kovaak_run_store
-    from .kovaak_run_projection import _training_at_from_source_key
-    run = kovaak_run_store._load_run(int(run_id))
+    from .kovaak_run_projection import training_at_from_source_key
+    run = kovaak_run_store.load_run(int(run_id))
     if run is None:
         return None
     # 与 /kovaak-runs 同一口径：优先从文件名词干解析对局本地时间，解析失败回退
     # 批次发现时间（created_at）。否则同一局在 /sessions、/tasks 与 /kovaak-runs
     # 训练时间不同源（0911「重复卡」假象）。
     return (
-        _training_at_from_source_key(run.get("source_key"))
+        training_at_from_source_key(run.get("source_key"))
         or timestamp_to_wire_utc(run.get("created_at"))
     )
 
@@ -1039,6 +1045,99 @@ async def reconcile_analysis_deletions() -> dict[str, int]:
         "processed": len(tombstones),
         "cleaned": cleaned,
         "failed": failed,
+    }
+
+
+def _remove_orphan_workspaces() -> tuple[list[int], int]:
+    """清掉 sessions 根下的孤立分析工作区（目录在、记录文件已不存在）。
+
+    [ac P0-5 2026-10-11] 级联删除与总量上限清理共用的兜底：记录被删但工作区
+    清理失败的遗留物无任何用户可见入口，按无主产物收敛。移除前重查记录：
+    扫描与移除之间新出现的记录（并发入队）一律跳过——宁可留下次收敛，不冒
+    删掉活工作区的险。返回 (移除的 session_id 列表, 释放字节数)。
+    """
+    removed: list[int] = []
+    freed = 0
+    for directory in file_store.list_subdirs(_SESSIONS_DIR):
+        try:
+            session_id = int(directory.name)
+        except ValueError:
+            continue
+        if file_store.stat_json(_session_path(session_id)) is not None:
+            continue
+        size = workspace_size_bytes(session_id)
+        try:
+            if remove_session_workspace(session_id):
+                removed.append(session_id)
+                freed += size
+        except OSError:
+            log.warning("orphan workspace removal failed session=%s", session_id)
+    return removed, freed
+
+
+async def delete_sessions_for_run(run_id: int, user_id: str) -> dict:
+    """Run 删除级联（[ac P0-5 2026-10-11] 点点拍板三层清理，层 1）。
+
+    删除训练记录时连带删除该 Run 的全部分析产物：done/failed 分析的记录、
+    工作区与 profile 贡献（与单删一条 Analysis 同语义），外加 sessions 根下
+    的孤立工作区。活动分析（uploading/queued/running）仍拒绝——级联绝不打断
+    在途工作，等完成或失败后重试即可收敛。Run-owned 录像与 Raw 不在此处：
+    它们由 kovaak_run_store.delete_kovaak_run 的证据墓碑链负责。
+    """
+    active_ids: list[int] = []
+    terminal: list[dict] = []
+    for session in _all_sessions(user_id):
+        if session.get("kovaak_run_id") != run_id:
+            continue
+        if (session.get("status") or "") in ("uploading", "queued", "running"):
+            active_ids.append(int(session["id"]))
+        else:
+            terminal.append(session)
+    if active_ids:
+        raise SessionNotDeletable(
+            code="run_analysis_active",
+            message="该训练记录还有进行中的分析，请等完成或失败后再删除",
+        )
+
+    removed_session_ids: list[int] = []
+    reclaimed = 0
+    cleanup_failed: list[int] = []
+    for session in terminal:
+        session_id = int(session["id"])
+        size = workspace_size_bytes(session_id)
+        async with _QUEUE_LOCK:
+            fresh = _load_session(session_id)
+            if fresh is not None and fresh.get("user_id") != user_id:
+                continue
+            if fresh is not None:
+                _delete_session_file(session_id)
+                # 记录墓碑：与单删 Analysis 同一条对账路径。
+                tombstones = file_store.read_json(_ANALYSES_TOMBSTONES) or []
+                tombstones.append({
+                    "analysis_session_id": session_id,
+                    "owner_id": user_id,
+                })
+                file_store.write_json(_ANALYSES_TOMBSTONES, tombstones)
+        try:
+            await _invalidate_profile_for_deleted_analysis(session_id, user_id)
+        except Exception as exc:
+            log.warning(
+                "profile invalidation unavailable session=%s error=%s",
+                session_id, type(exc).__name__,
+            )
+        try:
+            remove_session_workspace(session_id)
+            reclaimed += size
+            removed_session_ids.append(session_id)
+        except OSError:
+            cleanup_failed.append(session_id)
+
+    orphan_ids, orphan_bytes = _remove_orphan_workspaces()
+    return {
+        "removed_session_ids": removed_session_ids,
+        "orphan_workspaces_removed": orphan_ids,
+        "reclaimed_bytes": reclaimed + orphan_bytes,
+        "cleanup_failed": cleanup_failed,
     }
 
 

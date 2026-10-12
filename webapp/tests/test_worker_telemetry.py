@@ -385,8 +385,13 @@ async def _run_process_one(
         ),
         # 视频合同校验（冻结 MP4 指纹）不在本测范围（另有专测）；job 里的
         # video_path 只是“可回退 CV”的标记。
+        # [perf P0-1 2026-10-11] 视频合同校验 seam 改为基线定约 + stat 复核。
         "video_contract": patch(
-            "webapp.backend.worker._assert_managed_video_matches_snapshot",
+            "webapp.backend.worker._establish_managed_video_baseline",
+            return_value=None,
+        ),
+        "video_contract_recheck": patch(
+            "webapp.backend.worker._assert_managed_video_matches_snapshot_with_baseline",
             return_value=None,
         ),
         "evidence_commit": patch(
@@ -738,7 +743,10 @@ async def test_telemetry_without_video_records_missing_mp4_and_partial_outcome()
     ), patch(
         "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
     ), patch(
-        "webapp.backend.worker._assert_managed_video_matches_snapshot",
+        "webapp.backend.worker._establish_managed_video_baseline",
+        return_value=None,
+    ), patch(
+        "webapp.backend.worker._assert_managed_video_matches_snapshot_with_baseline",
         return_value=None,
     ), patch(
         "webapp.backend.worker.run_native_analysis",

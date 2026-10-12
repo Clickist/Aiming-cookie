@@ -695,15 +695,19 @@ def test_diagnostics_reports_live_child_log_tails_and_session_outputs(
     diag = service.diagnostics()
     assert diag["child_log_tail"] is not None
     assert "附着失败" in diag["child_log_tail"]["target"]
+    # input_log_bytes（P1-15 加性字段）：僵尸通道（文件在但字节停涨）的指纹。
     assert diag["session_outputs"] == {
         "target_files": 0,
         "camera_files": 0,
         "input_log": False,
+        "input_log_bytes": 0,
     }
 
     # input 产出件出现后清单如实反映。
     (session_dir / "input_log.jsonl").write_text("", encoding="utf-8")
-    assert service.diagnostics()["session_outputs"]["input_log"] is True
+    outputs = service.diagnostics()["session_outputs"]
+    assert outputs["input_log"] is True
+    assert outputs["input_log_bytes"] == 0
 
     service.stop()
 
@@ -845,3 +849,149 @@ def test_request_run_cut_rejection_writes_run_meta_receipt(
     assert stored["telemetry_cut_error"] == "no_session_outputs"
 
     service.stop()
+
+
+# ------------------------------------------------------- [rb P1-16 2026-10-11]
+
+def _manual_session_service(
+    tmp_path: Path, stub_scripts: Path, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[TelemetryCaptureService, Path]:
+    """不起监控线程的服务实例：死亡→拉起簿记全部同步驱动，无竞态。
+
+    （返回 (service, session_dir)。）
+    """
+    game_state = {"procs": []}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    service.sessions_root.mkdir(parents=True, exist_ok=True)
+    session_dir = service.sessions_root / "session-261011-120000"
+    session_dir.mkdir()
+    service._session_dir = session_dir
+    service._children = {"target": _FakeChild(pid=500)}
+    return service, session_dir
+
+
+def test_child_death_restarts_in_same_session_within_budget(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """通道死亡 → 预算内自动拉起：同 role 同会话目录，死亡登记清除。"""
+    service, session_dir = _manual_session_service(
+        tmp_path, stub_scripts, monkeypatch,
+    )
+    dead = service._children["target"]
+    dead.returncode = 1
+    service._check_children_alive()
+
+    # 拉起发生：新替身入列（fake_spawn 按 spawned 数分配 pid），死亡登记与
+    # 尾部缓存清空，pids 落盘。
+    restarted = service._children["target"]
+    assert restarted is not dead
+    assert restarted.pid != dead.pid
+    assert "target" not in service._dead_children
+    assert "target" not in service._child_log_tails
+    assert (session_dir / "pids.json").is_file()
+    # 拉起 argv 指向同一会话目录（增量切窗/退场收尾继续看到该通道产出件）。
+    restart_argv = service.spawn_log[-1]  # type: ignore[attr-defined]
+    assert restart_argv[1].endswith("target_poll2.py")
+    assert str(session_dir) in restart_argv
+    # 簿记：窗口内 1 次，诊断可见。
+    assert service._restarts_total == 1
+    diagnostics = service.diagnostics()
+    assert diagnostics["restart_exhausted"] is False
+    assert diagnostics["child_restarts_total"] == 1
+    last = diagnostics["last_child_restart"]
+    assert last["role"] == "target" and last["ok"] is True and last["cause"] is None
+    # 拉起成功不改写 child_exited 的既有 _last_error（死亡现场仍可诊断）。
+    assert "child_exited" in str(diagnostics["last_error"])
+
+
+def test_child_death_exhausts_restart_budget_and_stays_down(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """60s 窗最多拉起 2 次：第 3 次死亡不再拉起，明确失败（稳定 cause 码 +
+    诊断投影 restart_exhausted=True），绝不静默降级。"""
+    service, _session_dir = _manual_session_service(
+        tmp_path, stub_scripts, monkeypatch,
+    )
+    for round_index in range(3):
+        current = service._children["target"]
+        current.returncode = 1
+        service._check_children_alive()
+        if round_index < 2:
+            assert service._children["target"] is not current
+        else:
+            # 预算耗尽：第 3 具尸体原地保留，不再拉起。
+            assert service._children["target"] is current
+    diagnostics = service.diagnostics()
+    assert diagnostics["restart_exhausted"] is True
+    assert diagnostics["child_restarts_total"] == 2
+    assert "restart_exhausted" in str(diagnostics["last_error"])
+    # 死亡现场日志尾部仍可诊断（死亡登记不被超限抹掉）。
+    assert "target" in service._dead_children
+
+
+def test_restart_budget_resets_with_new_session(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """预算按会话计：耗尽后新会话（_spawn_session）重新获得完整预算。"""
+    service, _session_dir = _manual_session_service(
+        tmp_path, stub_scripts, monkeypatch,
+    )
+    service._restart_epochs = [time.time(), time.time()]
+    service._restart_exhausted = True
+    assert service._spawn_session() is True
+    assert service._restart_exhausted is False
+    assert service._restart_epochs == []
+
+
+def test_restart_window_slides_old_attempts_expire(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """滑动窗防抖：窗外的拉起时刻过期不占预算（60s 前的拉起不算数）。"""
+    service, _session_dir = _manual_session_service(
+        tmp_path, stub_scripts, monkeypatch,
+    )
+    service._restart_epochs = [time.time() - service_mod._RESTART_WINDOW_SECONDS - 1]
+    service._restarts_total = 1
+    service._children["target"].returncode = 1
+    service._check_children_alive()
+    # 窗内只有本次 → 拉起放行。
+    assert service.diagnostics()["restart_exhausted"] is False
+    assert service._restarts_total == 2
+    assert len(service._restart_epochs) == 1
+
+
+def test_failed_restart_attempts_consume_budget(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """拉起本身失败（OSError）同样占预算：不同通道各失败一次即耗尽预算，
+    进入明确失败状态；失败通道保持死亡登记（不重试同一具尸体）。"""
+    game_state = {"procs": []}
+    service = _make_service(tmp_path, stub_scripts, game_state, monkeypatch)
+    service.sessions_root.mkdir(parents=True, exist_ok=True)
+    session_dir = service.sessions_root / "session-261011-120000"
+    session_dir.mkdir()
+    service._session_dir = session_dir
+    service._children = {
+        "target": _FakeChild(pid=500),
+        "camera": _FakeChild(pid=501),
+    }
+
+    def failing_spawn(
+        self, argv: list[str], session_dir: Path, role: str,
+    ) -> _FakeChild:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(TelemetryCaptureService, "_spawn_process", failing_spawn)
+    service._children["target"].returncode = 1
+    service._children["camera"].returncode = 1
+    service._check_children_alive()
+
+    diagnostics = service.diagnostics()
+    assert diagnostics["restart_exhausted"] is True
+    assert diagnostics["child_restarts_total"] == 2
+    assert "restart_exhausted" in str(diagnostics["last_error"])
+    last = diagnostics["last_child_restart"]
+    assert last["ok"] is False and "disk full" in str(last["cause"])
+    # 失败通道不重试同一具尸体：死亡登记保留，monitor 轮询不会热循环。
+    assert service._dead_children == {"target", "camera"}
+    assert set(service._children) == {"target", "camera"}

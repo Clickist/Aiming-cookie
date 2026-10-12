@@ -346,8 +346,11 @@ class KovaaKCaptureFinalizer:
                 if healed is not None:
                     run = healed
                 else:
+                    # 已有细分终态判词的局不被粗判词覆盖（heal-from-disk
+                    # 优先级不变）；pending/none 照旧翻转。
                     run = await kovaak_run_store.mark_mouse_trace_unavailable(
                         run["id"], self._user_id, "trace_snapshot_out_of_coverage",
+                        preserve_fine_verdict=True,
                     ) or run
             run = await kovaak_run_store.mark_run_video_unavailable(
                 run["id"], self._user_id, "video_replay_expired",

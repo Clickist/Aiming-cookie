@@ -51,6 +51,7 @@ from .kovaak_snapshot_codec import (
     SNAPSHOT_HEADER_SIZE,
     SNAPSHOT_MAGIC,
     SNAPSHOT_RECORD_SIZE,
+    SNAPSHOT_SPAN_TOLERANCE_MS,
     SNAPSHOT_VERSION,
     SUPPORTED_BUTTON_MASK,
     SUPPORTED_SNAPSHOT_VERSIONS,
@@ -58,6 +59,7 @@ from .kovaak_snapshot_codec import (
     _decode_mouse_snapshot_bytes_with_version,
     _has_valid_mouse_snapshot_header,
     _validate_snapshot_points,
+    count_mouse_snapshot_points_around_window,
     decode_mouse_snapshot_bytes,
     extract_mouse_snapshot_window,
     read_mouse_snapshot,
@@ -127,6 +129,28 @@ _RUN_META_CACHE: dict[int, tuple[tuple[int, int], dict]] = {}
 # user_id / kovaak_run_id 两个字段，按 (mtime_ns, size) 指纹校验后复用，
 # 不再每次全量解析全部 session JSON（热态 ~8.7MB/次）。
 _SESSION_LIGHT_CACHE: dict[str, tuple[tuple[int, int], tuple[object, object]]] = {}
+
+# 冻结遥测旁车的指纹轻缓存（[perf P0-3 2026-10-11]）：就绪轮询
+# （0.4s × 15s 窗）与快照构建会对同一批冻结副本反复做全文件 SHA256
+# （frames 几十 MB + 旁车，15s 窗累计 GB 级读）。(size, mtime_ns) 未变
+# 即复用上次 sha256/size；漂移即对该文件重哈希一次（mtime 非严格稳定，
+# 见 worker_source_validation 同款语义），绝不把漂移文件当未变放行。
+_FILE_FINGERPRINT_CACHE: dict[str, tuple[tuple[int, int], dict[str, object]]] = {}
+
+
+def _file_fingerprint_cached(path: Path) -> dict[str, object]:
+    try:
+        observed = path.stat()
+    except OSError:
+        _FILE_FINGERPRINT_CACHE.pop(str(path), None)
+        raise
+    fingerprint = (observed.st_size, observed.st_mtime_ns)
+    cached = _FILE_FINGERPRINT_CACHE.get(str(path))
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    result = _file_fingerprint(path)
+    _FILE_FINGERPRINT_CACHE[str(path)] = (fingerprint, result)
+    return result
 
 # ---- run 存储台账（storage ledger）----
 # 每个 run 目录的内容摘要持久化在 meta.json 的 storage_ledger 字段：
@@ -211,6 +235,11 @@ def _load_run(run_id: int) -> Optional[dict]:
     return dict(data)
 
 
+# [边界收紧 2026-10-11] 公有名：queue 的 /sessions training_at 消费走这里
+# （同一函数对象），不再 import 私有 _load_run。
+load_run = _load_run
+
+
 def _save_run(run: dict) -> None:
     rel = _run_meta_path(run["id"])
     file_store.write_json(rel, run)
@@ -257,6 +286,11 @@ def _all_runs(user_id: str | None = None) -> list[dict]:
 
 def _get_analysis_count_for_run(run_id: int, user_id: str) -> int:
     return _analysis_counts_by_run(user_id).get(run_id, 0)
+
+
+# [边界收紧 2026-10-11] 公有名：analysis_service 的 run 投影消费走这里
+# （同一函数对象），不再 import 私有 _get_analysis_count_for_run。
+get_analysis_count_for_run = _get_analysis_count_for_run
 
 def _analysis_counts_by_run(user_id: str) -> dict[int, int]:
     """One pass over the sessions directory yielding run_id -> analysis count.
@@ -747,7 +781,7 @@ def _external_telemetry_source(
         "external_run_id": meta.get("external_run_id"),
         "round": origin.get("round"),
         "frames_path": (
-            str((file_store._data_root() / str(frames_rel)).resolve())
+            str((file_store.data_root() / str(frames_rel)).resolve())
             if isinstance(frames_rel, str) and frames_rel
             else None
         ),
@@ -763,14 +797,14 @@ def _external_telemetry_source(
         "pairing_confidence": pairing.get("pair_confidence"),
     })
 
-    data_root = file_store._data_root()
+    data_root = file_store.data_root()
     frames_stale = False
     frames_missing = True
     if isinstance(frames_rel, str) and frames_rel:
         frozen_frames = data_root / frames_rel
         if frozen_frames.is_file():
             frames_missing = False
-            observed = _file_fingerprint(frozen_frames)
+            observed = _file_fingerprint_cached(frozen_frames)
             frames_stale = (
                 observed["sha256"] != fingerprints.get("round_sha256")
                 or observed["size"] != fingerprints.get("round_size")
@@ -790,7 +824,7 @@ def _external_telemetry_source(
             if not frozen.is_file():
                 sidecars_stale = True
                 break
-            observed = _file_fingerprint(frozen)
+            observed = _file_fingerprint_cached(frozen)
             if (
                 observed["sha256"] != record["sha256"]
                 or observed["size"] != record["size"]
@@ -1044,7 +1078,13 @@ async def attach_mouse_trace_snapshot_window(
         or covered_through_epoch_ms < end_ms
     ):
         if within_retention:
-            await mark_mouse_trace_waiting(run["id"], user_id)
+            await mark_mouse_trace_waiting(
+                run["id"], user_id,
+                pending_echo={
+                    "coveredThroughEpochMs": covered_through_epoch_ms,
+                    "window_end_epoch_ms": end_ms,
+                },
+            )
             raise RetryableIngestionError(
                 "trace_pending: Raw Input snapshot coverage is not ready",
                 code="trace_pending",
@@ -1054,7 +1094,10 @@ async def attach_mouse_trace_snapshot_window(
         ) or run
     if not raw_input_snapshot_path or not Path(raw_input_snapshot_path).is_file():
         if within_retention:
-            await mark_mouse_trace_waiting(run["id"], user_id)
+            await mark_mouse_trace_waiting(
+                run["id"], user_id,
+                pending_echo={"snapshotFilePresent": False},
+            )
             raise RetryableIngestionError(
                 "trace_pending: waiting for Raw Input snapshot", code="trace_pending",
             )
@@ -1077,9 +1120,16 @@ async def attach_mouse_trace_snapshot_window(
             target,
         )
     except (OSError, ValueError) as error:
+        # echo 合同禁止路径：IO 失败只回固定码；结构异常回 codec 消息
+        # （截 200 字符），供支持侧区分坏文件与读失败。
+        if isinstance(error, OSError):
+            extract_echo: dict[str, object] = {"extractError": "extract_io_error"}
+        else:
+            extract_echo = {"extractError": str(error)[:200]}
         if within_retention:
             await mark_mouse_trace_waiting(
                 run["id"], user_id, expected_pending_trace_path=target,
+                pending_echo=extract_echo,
             )
             raise RetryableIngestionError(
                 "trace_pending: Raw Input snapshot is not ready",
@@ -1088,9 +1138,13 @@ async def attach_mouse_trace_snapshot_window(
         return await mark_mouse_trace_unavailable(
             run["id"], user_id, "trace_snapshot_failed",
             expected_pending_trace_path=target,
+            pending_echo=extract_echo,
         ) or run
     if not count:
         bounds = snapshot_bounds(raw_input_snapshot_path)
+        histogram = count_mouse_snapshot_points_around_window(
+            raw_input_snapshot_path, start_ms, end_ms,
+        )
         if bounds is not None and bounds[1] >= end_ms:
             # 快照尾点已越过窗口尾仍切不出点：窗口内从未有过输入事件
             # （输入到达率过低的机器），等满 retention 只会拖时间。
@@ -1099,6 +1153,7 @@ async def attach_mouse_trace_snapshot_window(
                 expected_pending_trace_path=target,
                 pending_echo=_pending_diagnostic_echo(
                     bounds, start_ms=start_ms, end_ms=end_ms,
+                    histogram=histogram,
                 ),
             ) or run
         if within_retention:
@@ -1106,6 +1161,7 @@ async def attach_mouse_trace_snapshot_window(
                 run["id"], user_id, expected_pending_trace_path=target,
                 pending_echo=_pending_diagnostic_echo(
                     bounds, start_ms=start_ms, end_ms=end_ms,
+                    histogram=histogram,
                 ),
             )
             raise RetryableIngestionError(
@@ -1132,18 +1188,25 @@ def _pending_diagnostic_echo(
     *,
     start_ms: int,
     end_ms: int,
+    histogram: dict[str, int] | None = None,
 ) -> dict[str, object]:
     # 切窗 0 点时的诊断回显：快照点数与首/尾时间戳 + 局窗口（不含路径与
     # 会话密钥），供支持侧区分「快照还没覆盖到窗口尾」与「窗口内无输入」。
-    # bounds 为 None（快照结构异常/读取失败）时原样透传缺失。
+    # bounds 为 None（快照结构异常/读取失败）时原样透传缺失；histogram
+    # 为 None 时整体省略窗前后 5s 直方图键，不写半截数据。
     first_ms, last_ms, point_count = bounds if bounds is not None else (None, None, None)
-    return {
+    echo: dict[str, object] = {
         "snapshotFirstPointMs": first_ms,
         "snapshotLastPointMs": last_ms,
         "snapshotPointCount": point_count,
         "window_start_epoch_ms": start_ms,
         "window_end_epoch_ms": end_ms,
     }
+    if histogram is not None:
+        echo["pointsBeforeWindow5s"] = histogram["before_margin"]
+        echo["pointsInWindow"] = histogram["in_window"]
+        echo["pointsAfterWindow5s"] = histogram["after_margin"]
+    return echo
 
 
 def _receipt_diagnostic_echo(
@@ -1215,9 +1278,14 @@ def _raw_snapshot_receipt_quality(
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             return "trace_quality_insufficient", None
         values[key] = value
+    clock_source = receipt.get("clockSource")
+    if clock_source == "utc_epoch_ms+qpc":
+        # 旧盖章机制（混合核机器已知系统性失谐）：质量不可判，不再走质量
+        # 路径判死，只回既有 legacy cause 码。
+        return "trace_legacy_quality_unknown", None
     if (
         values["coveredThroughEpochMs"] > values["snapshotAtEpochMs"]
-        or receipt.get("clockSource") != "utc_epoch_ms+qpc"
+        or clock_source != "utc_epoch_ms+qpc_guard"
         or receipt.get("timebaseVersion") != "time_alignment.v2"
     ):
         return "trace_quality_insufficient", None
@@ -1447,6 +1515,22 @@ async def ingest_discovery(
         # 终点=stats 事件终点优先、0 杀局用场景 Timelimit−Time Remaining 兜底；
         # 暂停局走既有 pause_unsupported fail-closed（对账证明公式不可恢复）。
         # tl 缺源（.sce/场景表都没有）时 fail-closed duration_missing，不许猜。
+        # 起点锚时区确定性（2026-10-10）：复用既有 stats_local_to_utc.v1 mapping
+        # 合同——同 source_key 的已 resolved run 存有上次实际使用的 offset，
+        # 重导入/重分析时注入复用，窗口不随分析机器本机时区漂移。perf 路径
+        # 不适用：它的 offset 锚在 run 时刻，语义正确。
+        persisted_mapping = None
+        if (
+            existing
+            and existing.get("alignment_state") == "resolved"
+            and isinstance(existing.get("alignment_summary"), dict)
+        ):
+            candidate = existing["alignment_summary"].get("stats_local_to_utc_mapping")
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("version") == "stats_local_to_utc.v1"
+            ):
+                persisted_mapping = candidate
         try:
             alignment_window = resolve_time_window_stats_only(
                 stats_challenge_start=(
@@ -1460,6 +1544,7 @@ async def ingest_discovery(
                 time_remaining_seconds=_summary_float(stats_summary, "Time Remaining"),
                 pause_count=stats_pause_count,
                 pause_duration_seconds=_summary_float(stats_summary, "Pause Duration") or 0.0,
+                stats_local_to_utc_mapping=persisted_mapping,
             )
         except TimeAlignmentError as error:
             alignment_error = str(error)
@@ -2333,18 +2418,24 @@ async def delete_kovaak_run(
     user_id: str,
     data_root: str | Path,
 ) -> dict[str, object]:
-    """删除整个 run：证据文件（走证据墓碑，失败留待对账）→ source_key 抑制
-    → 移除 run 目录。已产生分析的 run 拒绝（ValueError）：分析是更贵的产物，
-    误删连带不可回退，提示先删分析。"""
+    """删除整个 run（[ac P0-5 2026-10-11] 点点拍板三层清理后为级联语义）：
+    关联分析产物级联删除（done/failed 的分析记录+工作区+孤立工作区；活动分析
+    仍拒绝）→ 证据文件（走证据墓碑，失败留待对账）→ source_key 抑制 → 移除
+    run 目录。Run-owned 录像与 Raw 只随本动作（用户手动删记录）删除。"""
     run = _load_run(run_id)
     if run is None:
         raise LookupError("kovaak run not found")
     if run.get("user_id") != user_id:
         raise PermissionError("kovaak run is not owned by this user")
-    if _get_analysis_count_for_run(run_id, user_id) > 0:
-        raise ValueError("kovaak run has analyses; delete them first")
 
-    reclaimed = 0
+    # 级联层先走：活动分析在此拒绝（queue.SessionNotDeletable），done/failed
+    # 的分析记录+工作区+孤立工作区连带移除。queue 惰性导入（queue 顶层只反向
+    # 惰性引用本模块，避免加载环）。
+    from . import queue as analysis_queue
+
+    cascade = await analysis_queue.delete_sessions_for_run(run_id, user_id)
+
+    reclaimed = int(cascade.get("reclaimed_bytes", 0))
     for evidence_kind in ("video", "raw"):
         removal = await remove_run_evidence(run_id, user_id, evidence_kind, data_root)
         reclaimed += int(removal.get("reclaimed_bytes", 0))
@@ -2965,10 +3056,20 @@ async def mark_mouse_trace_unavailable(
     expected_pending_trace_path: str | Path | None = None,
     receipt_echo: dict[str, object] | None = None,
     pending_echo: dict[str, object] | None = None,
+    preserve_fine_verdict: bool = False,
 ) -> Optional[dict]:
     run = _load_run(run_id)
     if run is None or run.get("user_id") != user_id:
         return None
+    if (
+        preserve_fine_verdict
+        and run.get("trace_state") == "unavailable"
+        and run.get("trace_error")
+        and run.get("trace_error") != "trace_waiting_snapshot"
+    ):
+        # 补跑预判 sweep 场景：已有细分终态判词（heal-from-disk 语义）不
+        # 被粗判词覆盖；pending/none 照旧写。
+        return run
     if expected_pending_trace_path is not None:
         if run.get("trace_state") != "pending":
             return run

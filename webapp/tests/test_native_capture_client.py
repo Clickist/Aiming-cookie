@@ -433,6 +433,46 @@ def test_native_client_flushes_raw_snapshot_with_strict_coverage_receipt() -> No
     assert exc_info.value.code == "raw_snapshot_busy"
 
 
+def test_native_client_barrier_accepts_stamping_transition_clock_sources() -> None:
+    """盖章切换双收：qpc_guard 新串与旧 qpc 串都过 barrier 校验；
+    其余 clockSource（如非 Windows monotonic 串）仍拒。"""
+    def response(clock_source: str) -> dict:
+        return {
+            "type": "flushRawSnapshotResult",
+            "ok": True,
+            "captureSessionId": "session-1",
+            "snapshot": {
+                "receiptVersion": "raw_snapshot_receipt.v2",
+                "captureSessionStartEpochMs": 1_000,
+                "coveredThroughEpochMs": 2_000,
+                "snapshotAtEpochMs": 2_001,
+                "pointCount": 17,
+                "queueDroppedPoints": 0,
+                "queueDropFirstEpochMs": None,
+                "queueDropLastEpochMs": None,
+                "ringExpiredPoints": 0,
+                "ringExpiredThroughEpochMs": None,
+                "clockSource": clock_source,
+                "timebaseVersion": "time_alignment.v2",
+            },
+        }
+
+    for clock_source in ("utc_epoch_ms+qpc", "utc_epoch_ms+qpc_guard"):
+        address, _captured, thread = _serve_once(_json_line(response(clock_source)))
+        snapshot = NativeCaptureClient(address, "a" * 64).flush_raw_snapshot(
+            "session-1",
+        )
+        thread.join(timeout=1)
+        assert snapshot["clockSource"] == clock_source
+
+    address, _captured, thread = _serve_once(
+        _json_line(response("utc_epoch_ms+monotonic_guard")),
+    )
+    with pytest.raises(NativeCaptureProtocolError, match="schema"):
+        NativeCaptureClient(address, "a" * 64).flush_raw_snapshot("session-1")
+    thread.join(timeout=1)
+
+
 def test_native_client_classifies_terminal_codes_and_transport_failures() -> None:
     address, _captured, thread = _serve_once(_json_line({
         "type": "exportReplayResult",

@@ -1003,10 +1003,41 @@ async def test_process_one_happy_path_writes_analysis_result_v2():
         "model": None,
         "usage": None,
     }
+
     assert "timeline" not in result
     assert len(result["deterministic"]["timeline"]) == 2
     assert result["created_at"].endswith("Z")
     assert result["completed_at"].endswith("Z")
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_partial_decode_marks_limitation_and_warning():
+    """[rb P1-4 2026-10-11] 视频中途解码失败（extras.timeline_status=partial）：
+    deterministic.limitations 与 warnings 都要带 video_timeline_partial，
+    禁止静默输出看似完整的报告；complete 时不带。"""
+    fake_report = {"diagnosis": {}, "figures": {}, "narration": None, "notes": []}
+    base_extras = {
+        "fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": [],
+    }
+
+    for status, expect_partial in (("partial", True), ("complete", False)):
+        sid = await queue.enqueue("u-partial", "/tmp/v.mp4", "/tmp/s.csv")
+        with patch(
+            "webapp.backend.worker.run_analysis",
+            return_value=({}, {**base_extras, "timeline_status": status}),
+        ), patch(
+            "webapp.backend.worker.run_report", return_value=fake_report,
+        ):
+            await worker.process_one()
+        session = await queue.get_session(sid)
+        deterministic = session["result"]["deterministic"]
+        limitation_codes = deterministic.get("limitations") or []
+        warning_codes = [
+            item.get("code") for item in session["result"].get("warnings") or []
+        ]
+        assert ("video_timeline_partial" in limitation_codes) is expect_partial
+        assert ("video_timeline_partial" in warning_codes) is expect_partial
+        assert "raw_input_not_used" in limitation_codes
 
 
 def test_video_fallback_explicit_manual_override_wins_over_legacy_flat_values():
@@ -4718,7 +4749,7 @@ async def test_managed_video_verification_does_not_block_heartbeat():
              patch("webapp.backend.queue.mark_done", new=AsyncMock(return_value=True)), \
              patch("webapp.backend.worker.run_native_analysis", return_value=_native_adapter_result()), \
              patch(
-                 "webapp.backend.worker._assert_managed_video_matches_snapshot",
+                 "webapp.backend.worker._establish_managed_video_baseline",
                  side_effect=blocking_verifier,
              ):
             process_task = asyncio.create_task(worker.process_one())
@@ -4733,7 +4764,9 @@ async def test_managed_video_verification_does_not_block_heartbeat():
         if process_task is not None and not process_task.done():
             await process_task
 
-    assert verification_calls == 2
+    # [perf P0-1 2026-10-11] 旧实现定约+收尾各调一次全量校验（=2）；改为
+    # job 起始一次基线定约（=1），后续复核走 stat 基线，不再经过本 seam。
+    assert verification_calls == 1
 
 
 @pytest.mark.asyncio

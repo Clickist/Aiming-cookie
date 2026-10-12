@@ -81,6 +81,27 @@ class StorageResponse(BaseModel):
     sessions: list[StorageSessionItem]
 
 
+class AnalysisCleanupSettingsUpdate(BaseModel):
+    """[ac P0-5 2026-10-11] 分析产物总量上限清理设置（PUT 请求体）。"""
+
+    enabled: bool
+    limit_bytes: int
+
+
+class AnalysisCleanupSettingsResponse(BaseModel):
+    """分析产物总量上限清理设置 + 最近一次自动清理留痕（GET/PUT 响应）。
+
+    last_run 为 analysis_cleanup_run.v1 快照（removed 明细含 session_id/orphan/
+    bytes）；null = 从未触发。current_bytes 不在本响应（前端与 /api/storage 同
+    页读取 analysis_artifacts_bytes，不做重复全量扫描）。
+    """
+
+    schema_version: Literal["analysis_cleanup_settings.v1"]
+    enabled: bool
+    limit_bytes: int
+    last_run: Optional[dict] = None
+
+
 class RunEvidenceRemovalResponse(BaseModel):
     run_ref: str
     evidence_kind: Literal["video", "raw"]

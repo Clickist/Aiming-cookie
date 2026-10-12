@@ -43,6 +43,11 @@ def _training_at_from_source_key(source_key: object) -> str | None:
     return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# [边界收紧 2026-10-11] 公有名：queue 的 /sessions training_at 消费走这里
+# （同一函数对象），不再 import 私有 _training_at_from_source_key。
+training_at_from_source_key = _training_at_from_source_key
+
+
 def _run_score(run: dict) -> float | None:
     """单局 Challenge 分数（KovaaK Challenge Completion Stats summary 块的
     Score 键）。存量行在 ingest 时已把 summary 原样存进 stats_summary（键值

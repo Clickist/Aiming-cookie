@@ -17,6 +17,10 @@ SNAPSHOT_RECORD_SIZE = 20
 MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
 MAX_SNAPSHOT_POINTS = 1_000_000
 MAX_SNAPSHOT_SPAN_MS = 10 * 60 * 1000
+# 盖章机制切换（墙钟 + clockSource=utc_epoch_ms+qpc_guard）过渡容差：旧
+# QPC 盖章在混合核机器上的系统性失谐可让名义跨度略超上限，校验放宽 5s
+# 只吸收该过渡偏差，不改变 10 分钟保留窗语义。
+SNAPSHOT_SPAN_TOLERANCE_MS = 5_000
 SUPPORTED_BUTTON_MASK = 0b111
 
 
@@ -42,7 +46,7 @@ def _validate_snapshot_points(points: list[dict[str, int]]) -> list[dict[str, in
             raise ValueError("raw input timestamps are not monotonic")
         if first_timestamp is None:
             first_timestamp = timestamp_ms
-        elif timestamp_ms - first_timestamp > MAX_SNAPSHOT_SPAN_MS:
+        elif timestamp_ms - first_timestamp > MAX_SNAPSHOT_SPAN_MS + SNAPSHOT_SPAN_TOLERANCE_MS:
             raise ValueError("raw input snapshot exceeds time span limit")
         previous_timestamp = timestamp_ms
         normalized.append({
@@ -175,6 +179,54 @@ def snapshot_bounds(path: str | Path) -> tuple[int, int, int] | None:
     first = struct.unpack_from("<q", first_bytes, 0)[0]
     last = struct.unpack_from("<q", last_bytes, 0)[0]
     return first, last, count
+
+
+def count_mouse_snapshot_points_around_window(
+    path: str | Path,
+    start_ms: int,
+    end_ms: int,
+    *,
+    margin_ms: int = 5_000,
+) -> dict[str, int] | None:
+    """统计切窗 [start_ms, end_ms) 前后各 margin_ms 内的点数直方图。
+
+    一遍流式读取记录，不落全量点表；供零点切窗分支区分「窗前 5s 内有输入、
+    尾部还没刷出来」与「窗口前后都没有输入」。结构异常或读取失败返回 None，
+    调用方省略直方图键。
+    """
+    source = Path(path)
+    try:
+        size = source.stat().st_size
+        if size < SNAPSHOT_HEADER_SIZE or size > MAX_SNAPSHOT_BYTES:
+            return None
+        with source.open("rb") as stream:
+            header = stream.read(SNAPSHOT_HEADER_SIZE)
+            if len(header) != SNAPSHOT_HEADER_SIZE or header[:4] != SNAPSHOT_MAGIC:
+                return None
+            if header[4] not in SUPPORTED_SNAPSHOT_VERSIONS or header[5:8] != b"\0\0\0":
+                return None
+            count = struct.unpack_from("<I", header, 8)[0]
+            if SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_RECORD_SIZE != size:
+                return None
+            before = in_window = after = 0
+            for _ in range(count):
+                record = stream.read(SNAPSHOT_RECORD_SIZE)
+                if len(record) != SNAPSHOT_RECORD_SIZE:
+                    return None
+                timestamp_ms = struct.unpack_from("<q", record, 0)[0]
+                if start_ms <= timestamp_ms < end_ms:
+                    in_window += 1
+                elif start_ms - margin_ms <= timestamp_ms < start_ms:
+                    before += 1
+                elif end_ms <= timestamp_ms < end_ms + margin_ms:
+                    after += 1
+    except OSError:
+        return None
+    return {
+        "before_margin": before,
+        "in_window": in_window,
+        "after_margin": after,
+    }
 
 
 def read_mouse_snapshot_with_version(

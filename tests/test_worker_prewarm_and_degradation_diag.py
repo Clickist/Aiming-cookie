@@ -119,8 +119,14 @@ def test_continuous_tracking_degradation_warning_includes_cause(
 
     # 只保留被测路径需要的真实逻辑，其余旁路 mock（与该分支直接相关）。
     monkeypatch.setattr(worker, "_heartbeat_loop", _no_op_async)
+    # [perf P0-1 2026-10-11] 视频合同校验 seam 改为基线定约 + stat 复核。
     monkeypatch.setattr(
-        worker, "_assert_managed_video_matches_snapshot", lambda *a, **k: None,
+        worker, "_establish_managed_video_baseline", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_assert_managed_video_matches_snapshot_with_baseline",
+        lambda *a, **k: None,
     )
     monkeypatch.setattr(
         worker,

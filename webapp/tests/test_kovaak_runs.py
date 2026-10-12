@@ -1680,7 +1680,11 @@ def test_acri_v1_reader_rejects_invalid_resource_and_event_semantics(tmp_path: P
         "unsupported-button": snapshot([(200, 1, 1, 8)]),
         "span-limit": snapshot([
             (0, 1, 1, 0),
-            (kovaak_run_store.MAX_SNAPSHOT_SPAN_MS + 1, 1, 1, 0),
+            (
+                kovaak_run_store.MAX_SNAPSHOT_SPAN_MS
+                + kovaak_run_store.SNAPSHOT_SPAN_TOLERANCE_MS + 1,
+                1, 1, 0,
+            ),
         ]),
     }
     for name, contents in invalid_cases.items():
@@ -1688,6 +1692,37 @@ def test_acri_v1_reader_rejects_invalid_resource_and_event_semantics(tmp_path: P
         path.write_bytes(contents)
         with pytest.raises(ValueError):
             kovaak_run_store.read_mouse_snapshot(path)
+
+
+def test_snapshot_span_tolerates_stamping_transition_within_5s(tmp_path: Path):
+    """盖章切换过渡容差：跨度超旧上限但在 5s 容差内照常解码；超容差 1ms 拒。"""
+    def snapshot(points: list[tuple[int, int, int, int]]) -> bytes:
+        payload = bytearray(b"ACRI\x02\x00\x00\x00")
+        payload.extend(struct.pack("<I", len(points)))
+        for point in points:
+            payload.extend(struct.pack("<qiiI", *point))
+        return bytes(payload)
+
+    tolerance_edge = (
+        kovaak_run_store.MAX_SNAPSHOT_SPAN_MS
+        + kovaak_run_store.SNAPSHOT_SPAN_TOLERANCE_MS
+    )
+    within = tmp_path / "within.bin"
+    within.write_bytes(snapshot([
+        (0, 1, 1, 0),
+        (tolerance_edge - 1, 1, 1, 0),
+    ]))
+    assert [
+        point["timestamp_ms"] for point in kovaak_run_store.read_mouse_snapshot(within)
+    ] == [0, tolerance_edge - 1]
+
+    beyond = tmp_path / "beyond.bin"
+    beyond.write_bytes(snapshot([
+        (0, 1, 1, 0),
+        (tolerance_edge + 1, 1, 1, 0),
+    ]))
+    with pytest.raises(ValueError, match="exceeds time span"):
+        kovaak_run_store.read_mouse_snapshot(beyond)
 
 
 @pytest.mark.asyncio
@@ -4044,29 +4079,82 @@ async def test_delete_run_removes_directory_evidence_and_suppresses_reimport(
 
 
 @pytest.mark.asyncio
-async def test_delete_run_rejects_missing_owner_mismatch_and_analyzed(
+async def test_delete_run_rejects_missing_owner_and_active_analysis(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """[ac P0-5 2026-10-11] 级联语义后的拒绝面：缺记录/非属主照旧；有分析不再
+    拒绝（改为级联），只有**进行中**的分析仍拒绝（级联不打断在途工作）。"""
     data_root, run, *_ = await _seed_removable_run(tmp_path)
 
     with pytest.raises(LookupError):
         await kovaak_run_store.delete_kovaak_run(run["id"] + 999, "u1", data_root)
     with pytest.raises(PermissionError):
         await kovaak_run_store.delete_kovaak_run(run["id"], "other-owner", data_root)
-    with monkeypatch.context() as m:
-        m.setattr(
-            kovaak_run_store, "_get_analysis_count_for_run", lambda rid, uid: 1,
-        )
-        with pytest.raises(ValueError, match="analyses"):
-            await kovaak_run_store.delete_kovaak_run(run["id"], "u1", data_root)
-    # 拒绝路径不产生副作用：run 记录与证据原样保留。
+
+    # 挂一个进行中的分析（queued）：run 删除必须拒绝且无副作用。
+    from webapp.backend import queue as analysis_queue
+    from webapp.backend import workspace as workspace_mod
+
+    active_id = await analysis_queue.enqueue(
+        "u1", "", "", status="queued", kovaak_run_id=run["id"],
+    )
+    with pytest.raises(analysis_queue.SessionNotDeletable, match="进行中的分析"):
+        await kovaak_run_store.delete_kovaak_run(run["id"], "u1", data_root)
     persisted = await kovaak_run_store.get_kovaak_run(run["id"], "u1")
     assert persisted is not None
     assert persisted["video_state"] == "attached"
     assert kovaak_run_store.is_kovaak_run_source_deleted(
         "u1", "removable-u1",
     ) is False
+    assert await analysis_queue.get_session(active_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_run_cascades_all_run_products(
+    tmp_path: Path,
+) -> None:
+    """级联删除完整性（[ac P0-5 2026-10-11] 层 1）：删训练记录后四类产物全
+    消失——Run 录像 MP4、Raw trace、关联 Analysis 工作区、孤立分析工作区。"""
+    data_root, run, stats, performance, trace, receipt = await _seed_removable_run(
+        tmp_path,
+    )
+    from webapp.backend import file_store
+    from webapp.backend import queue as analysis_queue
+    from webapp.backend import workspace as workspace_mod
+
+    video_bytes = Path(run["video_path"]).stat().st_size
+    trace_bytes = trace.stat().st_size
+    # done 分析一条（带工作区）+ 孤立工作区一个（目录在、记录已删）。
+    done_id = await analysis_queue.enqueue(
+        "u1", "", "", status="done", kovaak_run_id=run["id"],
+    )
+    workspace_mod.session_dir(done_id).mkdir(parents=True, exist_ok=True)
+    (workspace_mod.session_dir(done_id) / "video.mp4").write_bytes(b"artifact")
+    orphan_id = done_id + 1
+    orphan_dir = workspace_mod.session_dir(orphan_id)
+    orphan_dir.mkdir(parents=True, exist_ok=True)
+    (orphan_dir / "stats.csv").write_bytes(b"orphan")
+
+    result = await kovaak_run_store.delete_kovaak_run(run["id"], "u1", data_root)
+
+    # 1) Run 录像 MP4 + 2) Raw trace（证据墓碑链）。
+    assert not Path(run["video_path"]).exists()
+    assert not Path(run["mouse_trace_path"]).exists()
+    # 3) 关联 Analysis：记录 + 工作区都消失。
+    assert await analysis_queue.get_session(done_id) is None
+    assert not workspace_mod.session_dir(done_id).exists()
+    # 4) 孤立分析工作区消失。
+    assert not orphan_dir.exists()
+    # run 目录与抑制清单照旧。
+    assert not (data_root / "runs" / str(run["id"])).exists()
+    assert kovaak_run_store.is_kovaak_run_source_deleted("u1", "removable-u1") is True
+    # 回收字节覆盖四类（工作区 + 证据）。
+    assert result["reclaimed_bytes"] >= (
+        video_bytes + trace_bytes + len(b"artifact") + len(b"orphan")
+    )
+    # 墓碑登记了被级联的分析（对账路径与单删 Analysis 一致）。
+    tombstones = file_store.read_json(analysis_queue._ANALYSES_TOMBSTONES) or []
+    assert any(t.get("analysis_session_id") == done_id for t in tombstones)
 
 
 def test_snapshot_bounds_reads_first_last_and_count(tmp_path: Path) -> None:
@@ -4148,6 +4236,10 @@ async def test_trace_zero_points_after_window_tail_marks_no_points_terminal(
         "snapshotPointCount": 2,
         "window_start_epoch_ms": 1_000,
         "window_end_epoch_ms": 2_000,
+        # 窗前后 5s 直方图：900 在窗前 5s 内、2100 在窗后 5s 内。
+        "pointsBeforeWindow5s": 1,
+        "pointsInWindow": 0,
+        "pointsAfterWindow5s": 1,
     }
 
 
@@ -4183,7 +4275,148 @@ async def test_trace_zero_points_before_window_tail_keeps_waiting_with_echo(
         "snapshotPointCount": 1,
         "window_start_epoch_ms": 1_000,
         "window_end_epoch_ms": 2_000,
+        # 800 在窗前 5s 内；窗后 5s 内无点。
+        "pointsBeforeWindow5s": 1,
+        "pointsInWindow": 0,
+        "pointsAfterWindow5s": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_raw_snapshot_receipt_clock_source_three_state_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """盖章切换三态合同：旧串（混合核机器已知系统性失谐）只回既有 legacy
+    cause，不判质量不足；新串照走全部质量检查并可正常 attach。"""
+    from webapp.backend import config
+
+    raw_snapshot = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw_snapshot, [
+        {"timestamp_ms": 1_500, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+
+    def receipt(clock_source: str) -> dict[str, object]:
+        return {
+            "receiptVersion": "raw_snapshot_receipt.v2",
+            "captureSessionStartEpochMs": 0,
+            "coveredThroughEpochMs": 2_000,
+            "snapshotAtEpochMs": 2_001,
+            "pointCount": 1,
+            "queueDroppedPoints": 0,
+            "queueDropFirstEpochMs": None,
+            "queueDropLastEpochMs": None,
+            "ringExpiredPoints": 0,
+            "ringExpiredThroughEpochMs": None,
+            "clockSource": clock_source,
+            "timebaseVersion": "time_alignment.v2",
+        }
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="receipt-clock",
+    )
+    stored = await kovaak_run_store.set_run_alignment(
+        run["id"], "u1", state="resolved",
+        summary={"timebase_version": "time_alignment.v2"},
+        start_epoch_ms=1_000, end_epoch_ms=2_000,
+    )
+
+    legacy = await kovaak_run_store.attach_mouse_trace_snapshot_window(
+        stored, user_id="u1",
+        raw_input_snapshot_path=raw_snapshot,
+        raw_snapshot_receipt=receipt("utc_epoch_ms+qpc"),
+    )
+    assert legacy["trace_state"] == "unavailable"
+    assert legacy["trace_error"] == "trace_legacy_quality_unknown"
+
+    guarded = await kovaak_run_store.attach_mouse_trace_snapshot_window(
+        legacy, user_id="u1",
+        raw_input_snapshot_path=raw_snapshot,
+        raw_snapshot_receipt=receipt("utc_epoch_ms+qpc_guard"),
+    )
+    assert guarded["trace_state"] == "attached"
+    assert guarded["trace_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_trace_extract_structural_error_surfaces_codec_message_in_echo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """跨度超容差的坏快照在切窗时抛 codec ValueError：等待侧不静默，
+    pending echo 带回 codec 消息（截断、不含路径），供支持侧判别坏文件。"""
+    from webapp.backend import config
+
+    performance = tmp_path / "Scenario Performance.perf"
+    performance.write_bytes(b"performance")
+    raw_snapshot = tmp_path / "raw.bin"
+    span_edge = (
+        kovaak_run_store.MAX_SNAPSHOT_SPAN_MS
+        + kovaak_run_store.SNAPSHOT_SPAN_TOLERANCE_MS
+    )
+    payload = bytearray(b"ACRI\x02\x00\x00\x00")
+    payload.extend(struct.pack("<I", 2))
+    payload.extend(struct.pack("<qiiI", 0, 1, 1, 0))
+    payload.extend(struct.pack("<qiiI", span_edge + 1, 1, 1, 0))
+    raw_snapshot.write_bytes(payload)
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_500)
+    monkeypatch.setattr(
+        kovaak_run_store,
+        "parse_performance_file",
+        lambda _path: PerformanceData(
+            header=PerformanceHeader(
+                scenario_name="Scenario",
+                challenge_start_utc=1_000,
+                challenge_profile=ChallengeProfile(time_limit=1.0),
+            ),
+        ),
+    )
+
+    with pytest.raises(kovaak_run_store.RetryableIngestionError, match="trace_pending"):
+        await kovaak_run_store.ingest_discovery(
+            KovaaKFileDiscovery(stem="bad-span", performance_path=performance),
+            user_id="u1",
+            raw_input_snapshot_path=raw_snapshot,
+            raw_snapshot_covered_through_epoch_ms=2_500,
+        )
+
+    pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+    assert pending["trace_state"] == "pending"
+    assert pending["trace_error"] == "trace_waiting_snapshot"
+    assert pending["trace_pending_echo"] == {
+        "extractError": "raw input snapshot exceeds time span limit",
+    }
+
+
+@pytest.mark.asyncio
+async def test_mark_mouse_trace_unavailable_preserve_fine_verdict(tmp_path: Path):
+    """preserve_fine_verdict：已有细分终态判词不被粗判词覆盖；
+    pending 标记照常覆盖（补跑预判 sweep 语义）。"""
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="preserve-verdict",
+    )
+    await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_no_points_in_window",
+    )
+
+    kept = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_snapshot_out_of_coverage",
+        preserve_fine_verdict=True,
+    )
+    assert kept["trace_state"] == "unavailable"
+    assert kept["trace_error"] == "trace_no_points_in_window"
+
+    await kovaak_run_store.begin_mouse_trace_attach(
+        run["id"], "u1", tmp_path / "trace-new.bin",
+    )
+    overwritten = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_snapshot_out_of_coverage",
+        preserve_fine_verdict=True,
+    )
+    assert overwritten["trace_state"] == "unavailable"
+    assert overwritten["trace_error"] == "trace_snapshot_out_of_coverage"
 
 
 @pytest.mark.asyncio
@@ -4192,7 +4425,8 @@ async def test_stats_only_ingest_resolves_csv_only_alignment_window():
 
     真实 fixture CSV（Challenge Start=23:43:51.211，词干=2026.06.23-23.44.51，
     114 杀最后一击≈59.5s）。终点=stats 事件终点（production 同语义）；CSV Hash
-    与 .perf scenario_hash 同源同值，判型复判链由此取 hash。
+    与 .perf scenario_hash 同源同值，判型复判链由此取 hash。起点锚断言按
+    「实际使用的 mapping 偏移」对墙钟，不依赖分析机器本机时区（2026-10-10）。
     """
     fixture = Path(
         "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
@@ -4208,8 +4442,17 @@ async def test_stats_only_ingest_resolves_csv_only_alignment_window():
     assert run["alignment_summary"]["end_source"] == "stats_event"
     from datetime import datetime, timedelta, timezone
 
+    mapping = run["alignment_summary"]["stats_local_to_utc_mapping"]
+    assert mapping is not None
+    assert mapping["version"] == "stats_local_to_utc.v1"
+    assert mapping["source"] == "analysis_machine_local"
+    assert run["alignment_summary"]["stats_anchor_status"] == "machine_local_timezone"
+    assert "csv_only_anchor_timezone_from_analysis_machine" in (
+        run["alignment_summary"]["warnings"]
+    )
     start = datetime.fromtimestamp(
-        run["window_start_epoch_ms"] / 1000, tz=timezone(timedelta(hours=8)),
+        run["window_start_epoch_ms"] / 1000,
+        tz=timezone(timedelta(minutes=mapping["utc_offset_minutes"])),
     )
     assert start.strftime("%Y-%m-%d %H:%M:%S.%f") == "2026-06-23 23:43:51.211000"
     assert run["window_end_epoch_ms"] > run["window_start_epoch_ms"]
@@ -4217,6 +4460,54 @@ async def test_stats_only_ingest_resolves_csv_only_alignment_window():
         run["stats_summary"]["scenario_hash"]
         == "7378a811f430b6072d052a75896afb98"
     )
+
+
+@pytest.mark.asyncio
+async def test_stats_only_reingest_reuses_persisted_mapping_from_existing_run():
+    """CSV-only 重分析确定性：已 resolved run 存有上次的实际 mapping，重导入时
+    注入复用，窗口不随分析机器本机时区漂移（stats_local_to_utc.v1 既有合同，
+    与 perf 路径 _stats_time_mapping_for_performance 同一字段名）。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stem = "1wall 6targets small - Challenge - 2026.06.23-23.44.51"
+    seed = await kovaak_run_store.upsert_kovaak_run(
+        user_id="desktop-local",
+        source_key=stem,
+        stats_path=str(fixture),
+    )
+    persisted = {
+        "version": "stats_local_to_utc.v1",
+        "source": "analysis_machine_local",
+        "utc_offset_minutes": -300,
+    }
+    await kovaak_run_store.set_run_alignment(
+        seed["id"],
+        "desktop-local",
+        state="resolved",
+        summary={
+            "timebase_version": "time_alignment.v2",
+            "stats_local_to_utc_mapping": persisted,
+        },
+        start_epoch_ms=1_782_276_231_211,
+        end_epoch_ms=1_782_276_290_711,
+    )
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem=stem, stats_path=fixture),
+    )
+    assert run["alignment_state"] == "resolved"
+    assert run["alignment_summary"]["stats_anchor_status"] == "persisted_mapping"
+    assert run["alignment_summary"]["stats_local_to_utc_mapping"] == persisted
+    assert "csv_only_anchor_timezone_from_analysis_machine" not in (
+        run["alignment_summary"]["warnings"]
+    )
+    start = datetime.fromtimestamp(
+        run["window_start_epoch_ms"] / 1000, tz=timezone(timedelta(hours=-5)),
+    )
+    assert start.strftime("%Y-%m-%d %H:%M:%S.%f") == "2026-06-23 23:43:51.211000"
 
 
 @pytest.mark.asyncio

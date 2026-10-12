@@ -694,6 +694,8 @@ from .worker_source_validation import (  # noqa: F401 (re-export for backward co
     _read_frozen_source_bytes,
     _managed_video_contract,
     _assert_managed_video_matches_snapshot,
+    _establish_managed_video_baseline,
+    _assert_managed_video_matches_snapshot_with_baseline,
 )
 
 
@@ -2984,6 +2986,7 @@ def _build_video_fallback_result_v2(
     created_at: str,
     completed_at: str,
     narration_status: str,
+    video_timeline_status: str | None = None,
 ) -> dict:
     from .kovaak_run_store import public_analysis_input_snapshot
 
@@ -3083,6 +3086,14 @@ def _build_video_fallback_result_v2(
         ),
     ]
     narration = report.get("narration") if narration_status == "available" else None
+    result_warnings = [{"code": "raw_input_not_used"}]
+    deterministic_limitations = ["raw_input_not_used"]
+    # [rb P1-4 2026-10-11] 视频中途解码失败 → CV 管线用截断轨迹打分：结果层
+    # 必须带 partial 标注（对齐 native 路径 timeline_status 语义），禁止静默
+    # 输出看似完整的报告。
+    if video_timeline_status == "partial":
+        deterministic_limitations.append("video_timeline_partial")
+        result_warnings.append({"code": "video_timeline_partial"})
     provenance = {
         "adapter": "video_flicking_fair_summary",
         "adapter_version": ANALYSIS_VERSION,
@@ -3114,7 +3125,7 @@ def _build_video_fallback_result_v2(
             "diagnosis": report.get("diagnosis", {}),
             "figures": report.get("figures", {}),
             "timeline": timeline,
-            "limitations": ["raw_input_not_used"],
+            "limitations": deterministic_limitations,
         },
         artifact_manifest=build_artifact_manifest_v2(
             external_inputs=external_inputs,
@@ -3133,7 +3144,7 @@ def _build_video_fallback_result_v2(
         input_snapshot=public_snapshot,
         created_at=created_at,
         completed_at=completed_at,
-        warnings=[{"code": "raw_input_not_used"}],
+        warnings=result_warnings,
         errors=[],
     )
     result["narration"] = {
@@ -3177,8 +3188,12 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
         # True = visual_result 来自遥测 producer：tracking 证据提交走本进程
         # （CV 子进程 import 链拉起 cv2，遥测路径不得依赖它）。
         telemetry_visual_used = False
-        await asyncio.to_thread(
-            _assert_managed_video_matches_snapshot,
+        # [perf P0-1 2026-10-11] 单次分析对托管视频只做一次全量读+SHA256 定约；
+        # 后续阶段复核走 (size, mtime_ns) stat 基线（漂移即回退重哈希，语义见
+        # worker_source_validation）。旧实现每个分支/收尾各付一次全量哈希，
+        # happy path 一段几百 MB 视频被完整读 2-4 次，全部串在消费循环上。
+        video_source_baseline = await asyncio.to_thread(
+            _establish_managed_video_baseline,
             job,
             raw_input_mode,
         )
@@ -3248,9 +3263,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     error, "telemetry_unavailable_code", telemetry_unavailable_code,
                 )
                 await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot,
+                    _assert_managed_video_matches_snapshot_with_baseline,
                     job,
                     raw_input_mode,
+                    video_source_baseline,
                 )
                 limitation = (
                     error.code
@@ -3420,9 +3436,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     error, "telemetry_unavailable_code", telemetry_unavailable_code,
                 )
                 await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot,
+                    _assert_managed_video_matches_snapshot_with_baseline,
                     job,
                     raw_input_mode,
+                    video_source_baseline,
                 )
                 visual_result = error.visual_result
                 visual_validation = dict(visual_result.get("safe_summary") or {})
@@ -3473,9 +3490,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     error, "telemetry_unavailable_code", telemetry_unavailable_code,
                 )
                 await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot,
+                    _assert_managed_video_matches_snapshot_with_baseline,
                     job,
                     raw_input_mode,
+                    video_source_baseline,
                 )
                 limitation = (
                     error.code
@@ -3796,9 +3814,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 )
 
                 await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot,
+                    _assert_managed_video_matches_snapshot_with_baseline,
                     job,
                     raw_input_mode,
+                    video_source_baseline,
                 )
                 telemetry_unavailable_code = getattr(
                     error, "telemetry_unavailable_code", telemetry_unavailable_code,
@@ -3900,9 +3919,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             error, "telemetry_unavailable_code", telemetry_unavailable_code,
                         )
                         await asyncio.to_thread(
-                            _assert_managed_video_matches_snapshot,
+                            _assert_managed_video_matches_snapshot_with_baseline,
                             job,
                             raw_input_mode,
+                            video_source_baseline,
                         )
                         if isinstance(error, VisualPreprocessingUnavailable):
                             limitation = error.code
@@ -3935,13 +3955,21 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             "status": "available",
                             "timeline": _build_timeline(visual_extras, _job_locale(job)),
                         }
+                        # [rb P1-4 2026-10-11] 视频中途解码失败 → 截断轨迹
+                        # 打分：visual_validation 与 warnings 都要可观测。
+                        if isinstance(visual_extras, Mapping) and (
+                            visual_extras.get("timeline_status") == "partial"
+                        ):
+                            visual_validation["timeline_status"] = "partial"
+                            warnings.append({"code": "video_timeline_partial"})
                     except SourceSnapshotChangedError:
                         raise
                     except Exception:
                         await asyncio.to_thread(
-                            _assert_managed_video_matches_snapshot,
+                            _assert_managed_video_matches_snapshot_with_baseline,
                             job,
                             raw_input_mode,
+                            video_source_baseline,
                         )
                         log.warning("multimodal video validation unavailable session=%s", sid)
                         video_availability = "unavailable"
@@ -4027,9 +4055,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                     )
             except Exception as error:
                 await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot,
+                    _assert_managed_video_matches_snapshot_with_baseline,
                     job,
                     raw_input_mode,
+                    video_source_baseline,
                 )
                 log.warning(
                     "video fallback analysis unavailable session=%s error=%s",
@@ -4038,9 +4067,10 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 )
                 raise RuntimeError("video fallback analysis failed") from None
             await asyncio.to_thread(
-                _assert_managed_video_matches_snapshot,
+                _assert_managed_video_matches_snapshot_with_baseline,
                 job,
                 raw_input_mode,
+                video_source_baseline,
             )
             summary = dict(summary)
             sparc_distribution = summary.get("sparc")
@@ -4077,15 +4107,20 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 created_at=created_at_iso,
                 completed_at=completed_at_iso,
                 narration_status="not_requested",
+                video_timeline_status=(
+                    extras.get("timeline_status")
+                    if isinstance(extras, Mapping) else None
+                ),
             )
         if telemetry_unavailable_code:
             # producer 失败但会话带可用遥测源：无论最终走 CV 还是 outcome_only，
             # 结果层都要可观测地标记来源降级（history/前端可区分）。
             result = _mark_telemetry_fallback(result, telemetry_unavailable_code)
         await asyncio.to_thread(
-            _assert_managed_video_matches_snapshot,
+            _assert_managed_video_matches_snapshot_with_baseline,
             job,
             raw_input_mode,
+            video_source_baseline,
         )
         await queue.set_task_phase(sid, "generating_diagnostics", worker_id=WORKER_ID)
         if (

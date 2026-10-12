@@ -206,7 +206,8 @@ def _validate_snapshot_barrier(value: object) -> dict[str, object]:
     _strict_int(snapshot.get("pointCount"), "response", minimum=0)
     if covered_through > snapshot_at:
         raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
-    if snapshot.get("clockSource") != "utc_epoch_ms+qpc":
+    # 盖章机制切换双收：新盖章（墙钟+guard）与旧盖章在切换期并存。
+    if snapshot.get("clockSource") not in {"utc_epoch_ms+qpc", "utc_epoch_ms+qpc_guard"}:
         raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
     if snapshot.get("timebaseVersion") != "time_alignment.v2":
         raise NativeCaptureProtocolError("capture_control_response_schema_invalid")

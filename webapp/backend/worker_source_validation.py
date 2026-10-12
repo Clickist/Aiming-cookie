@@ -128,3 +128,50 @@ def _assert_managed_video_matches_snapshot(job: dict, input_mode: str) -> None:
         raise SourceSnapshotChangedError(
             "source_unavailable: managed video revision changed"
         )
+
+
+def _managed_video_stat_fingerprint(path: str) -> tuple[int, int] | None:
+    try:
+        observed = os.stat(path)
+    except OSError:
+        return None
+    return (observed.st_size, observed.st_mtime_ns)
+
+
+def _establish_managed_video_baseline(
+    job: dict, input_mode: str,
+) -> tuple[int, int] | None:
+    """Job 起始验证：全量读+SHA256 定约一次，并固定该刻的 (size, mtime_ns)。
+
+    返回 None = 无托管视频合同（无基线可言），或定约期间 stat 指纹漂移
+    （此时后续复核一律走全量哈希路径，语义与旧实现一致）。
+    """
+    contract = _managed_video_contract(job, input_mode)
+    if contract is None:
+        return None
+    path = contract[0]
+    before = _managed_video_stat_fingerprint(path)
+    _assert_managed_video_matches_snapshot(job, input_mode)
+    after = _managed_video_stat_fingerprint(path)
+    if before is not None and before == after:
+        return before
+    return None
+
+
+def _assert_managed_video_matches_snapshot_with_baseline(
+    job: dict, input_mode: str, baseline: tuple[int, int] | None,
+) -> None:
+    """基线后的阶段复核：stat 命中基线即零读通过；漂移回退一次全量哈希。
+
+    mtime_ns 非严格稳定（见本模块 :51-54 注释），所以语义是「漂移即触发
+    一次重哈希」而不是宣称 stat 等价于内容校验；文件由冻结步骤一次写入、
+    无人合法改写，未漂移即与基线全量哈希时的内容一致。
+    """
+    contract = _managed_video_contract(job, input_mode)
+    if contract is None:
+        return
+    if baseline is not None:
+        observed = _managed_video_stat_fingerprint(contract[0])
+        if observed == baseline:
+            return
+    _assert_managed_video_matches_snapshot(job, input_mode)

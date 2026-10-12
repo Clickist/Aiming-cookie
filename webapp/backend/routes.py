@@ -79,6 +79,8 @@ from .schemas import (
     KovaaKAnalysisRequest,
     CalibrationProfileOut,
     CalibrationProfileUpdateRequest,
+    AnalysisCleanupSettingsResponse,
+    AnalysisCleanupSettingsUpdate,
     IncompleteCaptureListResponse,
     IncompleteCaptureRemovalResponse,
     StorageRevealRequest,
@@ -404,6 +406,57 @@ async def remove_incomplete_capture_storage(
     if result is None:
         raise HTTPException(404, "Incomplete capture item is unavailable")
     return IncompleteCaptureRemovalResponse(**result)
+
+
+@router.get(
+    "/storage/analysis-cleanup",
+    response_model=AnalysisCleanupSettingsResponse,
+)
+async def get_analysis_cleanup_settings(
+    _: None = Depends(require_desktop_token),
+):
+    """[ac P0-5 2026-10-11] 分析产物总量上限清理：设置 + 最近一次留痕。
+
+    明示留痕合同：自动清理不静默——设置里可见可关，last_run 快照回答「上次
+    自动删了哪些、释放多少」。"""
+    from . import analysis_artifacts_cleaner
+
+    settings = analysis_artifacts_cleaner.get_cleanup_settings()
+    return AnalysisCleanupSettingsResponse(
+        schema_version="analysis_cleanup_settings.v1",
+        enabled=bool(settings["enabled"]),
+        limit_bytes=int(settings["limit_bytes"]),
+        last_run=analysis_artifacts_cleaner.get_last_run(),
+    )
+
+
+@router.put(
+    "/storage/analysis-cleanup",
+    response_model=AnalysisCleanupSettingsResponse,
+)
+async def save_analysis_cleanup_settings(
+    body: AnalysisCleanupSettingsUpdate,
+    _: None = Depends(require_desktop_token),
+):
+    """保存清理设置并立即对账一次（调低上限即刻生效，不等下次启动/完成）。"""
+    from . import analysis_artifacts_cleaner
+
+    try:
+        settings = analysis_artifacts_cleaner.save_cleanup_settings(
+            enabled=body.enabled, limit_bytes=body.limit_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    last_run = await asyncio.to_thread(
+        analysis_artifacts_cleaner.enforce_analysis_artifacts_cap,
+        settings=settings,
+    )
+    return AnalysisCleanupSettingsResponse(
+        schema_version="analysis_cleanup_settings.v1",
+        enabled=bool(settings["enabled"]),
+        limit_bytes=int(settings["limit_bytes"]),
+        last_run=last_run,
+    )
 
 
 def _reveal_in_explorer(path: FilePath) -> None:
@@ -1180,8 +1233,9 @@ async def delete_kovaak_run_by_id(
     run_id: int = Path(...),
     _: None = Depends(require_desktop_token),
 ):
-    """删除整个 run：证据文件走证据墓碑，source_key 写抑制清单防止随源 CSV
-    重新导入；已产生分析的 run 拒绝（先删分析），误删不可回退。"""
+    """删除整个 run（级联语义，[ac P0-5 2026-10-11] 点点拍板）：done/failed 的
+    关联分析记录+工作区+孤立工作区级联删除，证据文件走证据墓碑，source_key
+    写抑制清单防止随源 CSV 重新导入。仍有进行中分析的 run 拒绝（等完成或失败）。"""
     try:
         result = await kovaak_run_store.delete_kovaak_run(
             run_id,
@@ -1192,6 +1246,10 @@ async def delete_kovaak_run_by_id(
         raise HTTPException(404, _error_detail("kovaak.run_not_found")) from exc
     except PermissionError as exc:
         raise HTTPException(403, _error_detail("kovaak.run_forbidden")) from exc
+    except SessionNotDeletable as exc:
+        raise HTTPException(
+            409, _error_detail("kovaak.run_delete_blocked", message=exc.message)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             409, _error_detail("kovaak.run_delete_blocked", message=str(exc))
@@ -1796,10 +1854,14 @@ def _current_external_watcher_snapshot(request: Request) -> Optional[dict]:
 def _current_telemetry_capture_summary(request: Request) -> Optional[dict]:
     """遥测整理（run cut）服务摘要（capture-status 附加投影）。
 
-    照 _current_external_watcher_snapshot 先例读 diagnostics()，但只取三个
-    聚合字段；session/children 等敏感明细不进公开响应（脱敏口径同
+    照 _current_external_watcher_snapshot 先例读 diagnostics()，但只取聚合
+    字段；session/children 等敏感明细不进公开响应（脱敏口径同
     telemetry_capture_service._persist_diagnostics）。服务未初始化或读取
     失败返回 None，不影响主状态投影。
+    [rb P1-16 2026-10-11] 加性：拉起预算耗尽（restart_exhausted）透出公开
+    投影——采集通道死亡且不再拉起是用户必须看见的明确失败（设置页状态点
+    据此转红），不进投影就还是「活 UI 恒绿」的审计伤口。只透布尔与计数，
+    role/cause 细节留在诊断包（脱敏口径不变）。
     """
     service = getattr(request.app.state, "telemetry_capture_service", None)
     diagnostics = getattr(service, "diagnostics", None)
@@ -1815,12 +1877,19 @@ def _current_telemetry_capture_summary(request: Request) -> Optional[dict]:
     state = snapshot.get("state")
     in_flight = snapshot.get("run_cuts_in_flight")
     total = snapshot.get("run_cuts_total")
+    restarts_total = snapshot.get("child_restarts_total")
     return {
         "state": state if isinstance(state, str) else None,
         "run_cuts_in_flight": (
             in_flight if isinstance(in_flight, int) and not isinstance(in_flight, bool) else None
         ),
         "run_cuts_total": total if isinstance(total, int) and not isinstance(total, bool) else None,
+        "child_restarts_total": (
+            restarts_total
+            if isinstance(restarts_total, int) and not isinstance(restarts_total, bool)
+            else None
+        ),
+        "restart_exhausted": snapshot.get("restart_exhausted") is True,
     }
 
 

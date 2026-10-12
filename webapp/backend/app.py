@@ -58,6 +58,22 @@ async def lifespan(app: FastAPI):
         stale_uploads["cleaned"],
         stale_uploads["failed"],
     )
+    # [ac P0-5 2026-10-11] 分析产物总量上限清理（默认 10GB，设置可调可关）：
+    # 启动即对账一次；fail-soft——清理失败只进日志，绝不阻断对外服务。
+    from . import analysis_artifacts_cleaner
+
+    try:
+        cleanup_run = await asyncio.to_thread(
+            analysis_artifacts_cleaner.enforce_analysis_artifacts_cap,
+        )
+        if cleanup_run.get("triggered"):
+            log.info(
+                "analysis artifacts cap enforcement at startup: removed=%d reclaimed=%d",
+                len(cleanup_run.get("removed") or []),
+                sum(int(item.get("bytes") or 0) for item in cleanup_run.get("removed") or []),
+            )
+    except Exception:
+        log.exception("analysis artifacts cap enforcement failed at startup")
     yield
 
 

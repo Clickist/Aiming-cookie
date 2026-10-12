@@ -162,7 +162,7 @@ class FakeNativeCaptureClient:
             "queueDropLastEpochMs": self.raw_snapshot_queue_drop_last_epoch_ms,
             "ringExpiredPoints": self.raw_snapshot_ring_expired_points,
             "ringExpiredThroughEpochMs": self.raw_snapshot_ring_expired_through_epoch_ms,
-            "clockSource": "utc_epoch_ms+qpc",
+            "clockSource": "utc_epoch_ms+qpc_guard",
             "timebaseVersion": "time_alignment.v2",
         }
 
@@ -1487,6 +1487,42 @@ async def test_finalizing_session_without_coverage_still_waits_for_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_zero_point_finalize_echo_carries_window_margin_histogram(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """切窗 0 点的 finalize 路径把窗前后 5s 直方图透传进 run meta：
+    500 在窗前 5s 内、窗内与窗后 5s 均无点，尾部未覆盖维持 pending。"""
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_001)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 500, "dx": 1, "dy": 0, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    with pytest.raises(RetryableIngestionError, match="trace_pending"):
+        await finalizer.finalize(KovaaKFileDiscovery(
+            stem="zero-histogram",
+            stats_path=stats,
+            performance_path=performance,
+        ))
+
+    pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+    assert pending["trace_state"] == "pending"
+    echo = pending["trace_pending_echo"]
+    assert echo["snapshotFirstPointMs"] == 500
+    assert echo["pointsBeforeWindow5s"] == 1
+    assert echo["pointsInWindow"] == 0
+    assert echo["pointsAfterWindow5s"] == 0
+
+
+@pytest.mark.asyncio
 async def test_finalize_fires_telemetry_cut_hook_with_challenge_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1783,6 +1819,44 @@ async def test_stale_rebuild_heals_trace_quarantined_to_orphans(
     healed_path = Path(rerun["mouse_trace_path"])
     assert healed_path.is_file()
     assert orphans not in healed_path.parents, "认领件应拷回本局目录，不留在孤儿仓"
+
+
+@pytest.mark.asyncio
+async def test_stale_rebuild_preserves_fine_trace_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """补跑预判 sweep 只补粗判词：已有细分终态（trace_no_points_in_window）
+    不被 trace_snapshot_out_of_coverage 覆盖；video_replay_expired 照常落盘。"""
+    stale_start = int(time.time() * 1000) - 600_000  # 窗口 [now-10min, now-9min]
+    _configure_parsers(monkeypatch, start_epoch_ms=stale_start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    discovery = KovaaKFileDiscovery(
+        stem="preserve-verdict",
+        stats_path=stats,
+        performance_path=performance,
+    )
+
+    run = await _finalizer(tmp_path, client).finalize(discovery)
+    assert run["trace_error"] == "trace_snapshot_out_of_coverage"
+
+    # 支持侧细判：窗口内从未有过输入事件（细分终态判词）。
+    fine = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"], "u1", "trace_no_points_in_window",
+    )
+    assert fine["trace_error"] == "trace_no_points_in_window"
+
+    rerun = await _finalizer(tmp_path, client).finalize(discovery)
+
+    assert rerun["id"] == run["id"]
+    assert rerun["trace_state"] == "unavailable"
+    assert rerun["trace_error"] == "trace_no_points_in_window"
+    assert rerun["video_error"] == "video_replay_expired"
+    assert rerun["finalization_error"] == "video_replay_expired"
 
 
 def test_capture_window_invalid_maps_to_replay_range_code() -> None:

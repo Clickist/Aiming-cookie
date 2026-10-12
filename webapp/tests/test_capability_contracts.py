@@ -775,3 +775,35 @@ async def test_tasks_route_groups_attempts_and_never_returns_input_paths(tmp_pat
     assert [item["attempt_number"] for item in body["tasks"][0]["attempt_history"]] == [1, 2]
     assert f"analysis:{retry['id']}" == body["tasks"][0]["analysis_ref"]
     assert str(tmp_path) not in json.dumps(body)
+
+
+# --- [边界收紧 2026-10-11] backend 不越层 import kovaak_tracker 私有符号 ---
+
+def test_backend_imports_no_kovaak_tracker_private_symbols():
+    """审计 B1：backend 越层 import kovaak_tracker 私有符号（如
+    scenario_profiles._family_baseline_resolution）会在内部重构时静默破坏
+    backend。静态 AST 扫描锁定：kovaak_tracker 的下划线符号不得进 backend；
+    稳定合同先在 owner 模块提升公有名（family_baseline_resolution /
+    FAMILY_BASELINE_LIMITATIONS）。"""
+    import ast
+    from pathlib import Path
+
+    backend_dir = Path(__file__).resolve().parent.parent / "backend"
+    offenders: list[str] = []
+    for path in sorted(backend_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.split(".")[0] != "kovaak_tracker":
+                    continue
+                for alias in node.names:
+                    if alias.name.startswith("_"):
+                        offenders.append(f"{path.name}:{node.lineno} {alias.name}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    if parts[0] == "kovaak_tracker" and parts[-1].startswith("_"):
+                        offenders.append(f"{path.name}:{node.lineno} {alias.name}")
+    assert offenders == [], (
+        "backend 不得 import kovaak_tracker 私有符号: " + "; ".join(offenders)
+    )

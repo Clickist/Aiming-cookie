@@ -975,3 +975,26 @@ async def test_delete_queued_session_rejected():
 
     with pytest.raises(SessionNotDeletable):
         await queue.delete_session(sid, "u1")
+
+
+# --- [perf PY-2 2026-10-11] /sessions 投影不跑在事件循环线程上 ---
+
+@pytest.mark.asyncio
+async def test_list_sessions_projection_runs_off_event_loop(monkeypatch):
+    import threading
+
+    loop_tid = threading.get_ident()
+    seen_tids = []
+    real_all_sessions = queue._all_sessions
+
+    def spy_all_sessions(user_id=None):
+        seen_tids.append(threading.get_ident())
+        return real_all_sessions(user_id)
+
+    monkeypatch.setattr(queue, "_all_sessions", spy_all_sessions)
+    rows = await queue.list_sessions("nobody-history-offloop")
+    assert isinstance(rows, list)
+    assert seen_tids, "_all_sessions 未被调用"
+    assert all(tid != loop_tid for tid in seen_tids), (
+        "History /sessions 的同步目录扫描+run 读仍在事件循环线程上执行",
+    )

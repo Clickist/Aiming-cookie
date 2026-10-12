@@ -60,6 +60,13 @@ _CUT_POST_MARGIN_S = 5.0        # 后垫：死亡/收尾余量
 _CUT_INPUT_EXTRA_MARGIN_S = 15.0  # 输入通道再放宽（对齐互相关的点击邻域）
 _INCR_SUBDIR = "incr"
 
+# [rb P1-16 2026-10-11] 采集子进程死亡自动拉起（点点拍板「可以救」）：滑动窗
+# 防抖——60 秒窗口内最多拉起 2 次；超限或拉起本身失败即明确失败（稳定 cause
+# 码 + 日志 + 诊断投影，设置页状态点据此转红），绝不静默降级、也不无限重启
+# （崩溃循环会烧 CPU 且每轮都产生半截原始件）。
+_RESTART_WINDOW_SECONDS = 60.0
+_RESTART_MAX_IN_WINDOW = 2
+
 # 在途按局切窗登记（进程级）：分析侧据此给导入一个有界落地窗口。
 _RUN_CUT_EVENTS: dict[int, threading.Event] = {}
 _RUN_CUT_LOCK = threading.Lock()
@@ -233,6 +240,12 @@ class TelemetryCaptureService:
         # [fix 病灶B 2026-10-06] 最近一次拒绝的根因说明（原因 → "<role>:<cause>"）。
         # no_session_outputs（附着从未成功被误标为零产出）的机读归因。
         self._run_cut_rejection_details: dict[str, str] = {}
+        # [rb P1-16 2026-10-11] 自动拉起簿记：滑动窗内的拉起时刻、生命周期累计、
+        # 当前会话是否已耗尽预算（耗尽 = 该会话不再拉起，明确失败状态）。
+        self._restart_epochs: list[float] = []
+        self._restarts_total = 0
+        self._restart_exhausted = False
+        self._last_restart: dict[str, object] | None = None
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -316,6 +329,14 @@ class TelemetryCaptureService:
             # [perf 2026-10-06 C] 切窗增量读的全量回退累计（乱序守卫/毒化文件/
             # 截断），回退绝不静默。
             "freeze_full_scan_fallbacks": _freeze_full_scan_fallbacks(),
+            # [rb P1-16 2026-10-11] 自动拉起簿记（additive）：生命周期累计、最近
+            # 一次拉起尝试、预算是否耗尽。耗尽 = 死亡通道将缺席到下一会话，
+            # 公开投影与设置页状态点据此明确转红，不做恒绿假象。
+            "child_restarts_total": self._restarts_total,
+            "last_child_restart": (
+                dict(self._last_restart) if self._last_restart else None
+            ),
+            "restart_exhausted": self._restart_exhausted,
         }
 
     def _record_run_cut_rejection(self, reason: str) -> None:
@@ -328,6 +349,11 @@ class TelemetryCaptureService:
             "target_files": 0,
             "camera_files": 0,
             "input_log": False,
+            # [fix P1-15 2026-10-11] is_file() 对僵尸通道失明：input_logger 落盘
+            # 失败停通道后文件仍在（恒 True），只有字节停涨能暴露"活着但零产出"。
+            # 加性字段：input_log_bytes 供指纹对比（两次采样不涨 + 进程活着 =
+            # 僵尸），input_log 布尔保留不动。
+            "input_log_bytes": 0,
         }
         if self._session_dir is not None:
             counts["target_files"] = sum(
@@ -336,7 +362,12 @@ class TelemetryCaptureService:
             counts["camera_files"] = sum(
                 1 for _ in self._session_dir.glob(_CAMERA_GLOB)
             )
-            counts["input_log"] = (self._session_dir / _INPUT_NAME).is_file()
+            input_path = self._session_dir / _INPUT_NAME
+            counts["input_log"] = input_path.is_file()
+            try:
+                counts["input_log_bytes"] = input_path.stat().st_size
+            except OSError:
+                counts["input_log_bytes"] = 0
         return counts
 
     def _collect_child_log_tails(self) -> dict[str, str] | None:
@@ -388,12 +419,15 @@ class TelemetryCaptureService:
                 self._persist_diagnostics()
 
     def _check_children_alive(self) -> None:
-        """采集子进程死亡的可见性（只记录不重启）。
+        """采集子进程死亡可见性 + 自动拉起（滑动窗预算内）。
 
         [fix 2026-09-30] 子进程 stdout/stderr 已合并落会话目录 {role}.log（此前
         DEVNULL 吞掉一切未捕获异常，rc=1 无从定位）；死亡时把该日志尾部（≤8000
-        字符）记入 diagnostics 的 child_log_tail，设置页诊断可见。重启语义需产品
-        决定，不在此处自动重启。
+        字符）记入 diagnostics 的 child_log_tail，设置页诊断可见。
+        [rb P1-16 2026-10-11] 重启语义已由产品拍板（自动拉起，60s 窗最多 2 次）：
+        预算内即按同 role、同会话目录重新拉起（脚本自带 --wait，拉起不需要游戏
+        在场）；预算耗尽或拉起本身失败 → 明确失败（restart_exhausted 稳定 cause
+        码 + error 日志 + 诊断投影），设置页状态点据此转红，绝不静默降级。
         """
         for role, child in self._children.items():
             if role in self._dead_children:
@@ -413,7 +447,82 @@ class TelemetryCaptureService:
                 "telemetry capture child exited role=%s pid=%s returncode=%s",
                 role, child.pid, returncode,
             )
+            self._restart_child(role, returncode)
             self._persist_diagnostics()
+
+    def _restart_child(self, role: str, returncode: int) -> None:
+        """死亡通道的预算内自动拉起；超限/失败折损为稳定 cause 码（不抛出）。"""
+        if self._restart_exhausted:
+            # 会话预算已耗尽：保持明确失败状态，不再尝试（cause 码维持可诊断）。
+            self._last_error = f"restart_exhausted: {role} rc={returncode}"
+            return
+        now = time.time()
+        self._restart_epochs = [
+            epoch for epoch in self._restart_epochs
+            if now - epoch < _RESTART_WINDOW_SECONDS
+        ]
+        if len(self._restart_epochs) >= _RESTART_MAX_IN_WINDOW:
+            self._restart_exhausted = True
+            self._last_error = f"restart_exhausted: {role} rc={returncode}"
+            log.error(
+                "telemetry capture restart budget exhausted role=%s rc=%s "
+                "window_s=%.0f max=%d; channel stays down until next session",
+                role, returncode, _RESTART_WINDOW_SECONDS, _RESTART_MAX_IN_WINDOW,
+            )
+            return
+        session_dir = self._session_dir
+        if session_dir is None:
+            # 无会话目录则无处落 {role}.log 与产出件；按拉起失败记因（有界：
+            # 计入预算，不让 monitor 线程每轮空转重试）。
+            self._record_restart_attempt(role, returncode, now, ok=False,
+                                         cause="restart_failed_no_session")
+            return
+        try:
+            child = self._spawn_process(
+                self._child_command(role, session_dir),
+                session_dir=session_dir, role=role,
+            )
+        except OSError as error:
+            self._record_restart_attempt(
+                role, returncode, now, ok=False,
+                cause=f"restart_failed: {error}",
+            )
+            return
+        self._children[role] = child
+        self._dead_children.discard(role)
+        self._child_log_tails.pop(role, None)
+        self._record_restart_attempt(role, returncode, now, ok=True, cause=None)
+        self._write_pids_file()
+
+    def _record_restart_attempt(
+        self, role: str, returncode: int, epoch: float, *, ok: bool, cause: str | None,
+    ) -> None:
+        """记账一次拉起尝试（成功与失败都占预算——失败重试同样不能热循环）。"""
+        self._restart_epochs.append(epoch)
+        self._restarts_total += 1
+        self._last_restart = {
+            "role": role,
+            "epoch_s": epoch,
+            "child_returncode": returncode,
+            "ok": ok,
+            "cause": cause,
+        }
+        if ok:
+            log.info(
+                "telemetry capture child restarted role=%s window_used=%d/%d",
+                role, len(self._restart_epochs), _RESTART_MAX_IN_WINDOW,
+            )
+        else:
+            self._last_error = cause
+            log.error(
+                "telemetry capture child restart failed role=%s cause=%s "
+                "window_used=%d/%d",
+                role, cause, len(self._restart_epochs), _RESTART_MAX_IN_WINDOW,
+            )
+            if len(self._restart_epochs) >= _RESTART_MAX_IN_WINDOW:
+                # 失败也吃预算：预算被失败尝试打满时同样进入明确失败状态。
+                self._restart_exhausted = True
+                self._last_error = f"restart_exhausted: {role} ({cause})"
 
     def _run_finalize(self) -> None:
         try:
@@ -647,24 +756,11 @@ class TelemetryCaptureService:
             return False
         spawned: dict[str, subprocess.Popen] = {}
         try:
-            spawned["target"] = self._spawn_process(
-                self._child_argv("target_poll2.py") + [
-                    "--run", "--wait", "--out-dir", str(session_dir),
-                ],
-                session_dir=session_dir, role="target",
-            )
-            spawned["camera"] = self._spawn_process(
-                self._child_argv("camera_probe.py") + [
-                    "--run", "--wait", "--out-dir", str(session_dir),
-                ],
-                session_dir=session_dir, role="camera",
-            )
-            spawned["input"] = self._spawn_process(
-                self._child_argv("input_logger.py") + [
-                    str(session_dir / _INPUT_NAME),
-                ],
-                session_dir=session_dir, role="input",
-            )
+            for role in ("target", "camera", "input"):
+                spawned[role] = self._spawn_process(
+                    self._child_command(role, session_dir),
+                    session_dir=session_dir, role=role,
+                )
         except OSError as error:
             self._last_error = f"spawn_failed: {error}"
             for child in spawned.values():
@@ -673,6 +769,11 @@ class TelemetryCaptureService:
         self._children = spawned
         self._dead_children = set()
         self._child_log_tails = {}
+        # [rb P1-16] 新会话重新获得完整拉起预算：滑动窗时刻与耗尽标记一并清零
+        # （累计计数保留——它是进程生命周期诊断值，不是预算）。
+        self._restart_epochs = []
+        self._restart_exhausted = False
+        self._last_restart = None
         self._session_dir = session_dir
         self._write_pids_file()
         log.info(
@@ -680,6 +781,22 @@ class TelemetryCaptureService:
             session_dir.name, {role: child.pid for role, child in spawned.items()},
         )
         return True
+
+    def _child_command(self, role: str, session_dir: Path) -> list[str]:
+        """单通道采集子进程的固定 argv（初拉起与死亡重启共用同一拼装）。"""
+        if role == "target":
+            return self._child_argv("target_poll2.py") + [
+                "--run", "--wait", "--out-dir", str(session_dir),
+            ]
+        if role == "camera":
+            return self._child_argv("camera_probe.py") + [
+                "--run", "--wait", "--out-dir", str(session_dir),
+            ]
+        if role == "input":
+            return self._child_argv("input_logger.py") + [
+                str(session_dir / _INPUT_NAME),
+            ]
+        raise ValueError(f"unknown capture role: {role}")
 
     def _spawn_process(
         self, argv: list[str], session_dir: Path, role: str,

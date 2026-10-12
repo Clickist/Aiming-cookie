@@ -14,6 +14,11 @@ def _data_root() -> Path:
     return Path(config.DATA_ROOT)
 
 
+# [边界收紧 2026-10-11] 公有名：跨模块消费走 data_root()（同一函数对象），
+# 不再 import 私有 _data_root。
+data_root = _data_root
+
+
 def data_root_ready() -> bool:
     """Return True if DATA_ROOT exists and is writable."""
     try:

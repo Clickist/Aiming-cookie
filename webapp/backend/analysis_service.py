@@ -144,7 +144,7 @@ async def get_run(owner_id: str, run_id: int) -> dict[str, Any]:
 def _public_run_projection(run: dict[str, Any], owner_id: str) -> dict[str, Any]:
     """Project one run with its live analysis count (matches list summaries)."""
     projected = dict(run)
-    projected["analysis_count"] = kovaak_run_store._get_analysis_count_for_run(
+    projected["analysis_count"] = kovaak_run_store.get_analysis_count_for_run(
         int(run["id"]), owner_id,
     )
     return _safe_run(projected)
@@ -572,11 +572,11 @@ def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, A
         return snapshot
     coach_confirmed = override.get("confirmed_by") == "coach"
     from kovaak_tracker.scenario_profiles import (
-        _FAMILY_BASELINE_LIMITATIONS,
-        _family_baseline_resolution,
+        FAMILY_BASELINE_LIMITATIONS,
+        family_baseline_resolution,
     )
 
-    next_resolution = _family_baseline_resolution(
+    next_resolution = family_baseline_resolution(
         scenario_hash=scenario_hash,
         display_name=resolution.get("display_name"),
         registry_version=resolution["registry_version"],
@@ -594,7 +594,7 @@ def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, A
                 if coach_confirmed
                 else "scenario_override_is_a_user_confirmed_family_not_an_identity"
             ),
-            *_FAMILY_BASELINE_LIMITATIONS,
+            *FAMILY_BASELINE_LIMITATIONS,
         ],
     )
     next_snapshot = dict(snapshot)
@@ -1046,12 +1046,12 @@ async def create_analysis_from_run(
             resolution.get("classification_source") != "scenario_override"
         ):
             from kovaak_tracker.scenario_profiles import (
-                _FAMILY_BASELINE_LIMITATIONS,
-                _family_baseline_resolution,
+                FAMILY_BASELINE_LIMITATIONS,
+                family_baseline_resolution,
             )
 
             snapshot = dict(snapshot)
-            snapshot["scenario_resolution"] = _family_baseline_resolution(
+            snapshot["scenario_resolution"] = family_baseline_resolution(
                 scenario_hash=(
                     resolution.get("scenario_hash")
                     if isinstance(resolution, Mapping) else None
@@ -1075,7 +1075,7 @@ async def create_analysis_from_run(
                 target_motion={"model": "unknown", "target_count_model": "unknown"},
                 limitations=[
                     "coach_specified_is_a_coach_judged_family_not_an_identity",
-                    *_FAMILY_BASELINE_LIMITATIONS,
+                    *FAMILY_BASELINE_LIMITATIONS,
                 ],
             )
     if reclassified and not force:

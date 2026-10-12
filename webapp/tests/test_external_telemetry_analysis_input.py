@@ -516,3 +516,43 @@ async def test_wait_for_in_flight_telemetry_cut_times_out_cleanly(
 
     with telemetry_capture_service._RUN_CUT_LOCK:
         telemetry_capture_service._RUN_CUT_EVENTS.pop(777, None)
+
+
+# --- [perf P0-3 2026-10-11] 就绪轮询指纹轻缓存 ---
+
+@pytest.mark.asyncio
+async def test_readiness_poll_reuses_fingerprint_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """就绪轮询反复全量哈希冻结旁车 → (size, mtime_ns) 指纹未变即零哈希复用；
+    冻结侧被改写（stat 漂移）→ 重哈希一次并按合同 fail-closed。"""
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="fp-cache-run",
+    )
+    _write_paired_external_run(
+        run["id"], "u1", external_run_id="ext-fpcache1",
+        imported_at="2026-08-31T00:00:00Z",
+    )
+    kovaak_run_store._FILE_FINGERPRINT_CACHE.clear()
+    calls = {"n": 0}
+    real_fingerprint = kovaak_run_store._file_fingerprint
+
+    def counting_fingerprint(path):
+        calls["n"] += 1
+        return real_fingerprint(path)
+
+    monkeypatch.setattr(kovaak_run_store, "_file_fingerprint", counting_fingerprint)
+
+    assert kovaak_run_store.external_telemetry_ready(run["id"], "u1") is True
+    first_round_hashes = calls["n"]
+    assert first_round_hashes >= 1
+
+    # 第二轮轮询：stat 指纹未变 → 不再付任何全文件 SHA256。
+    assert kovaak_run_store.external_telemetry_ready(run["id"], "u1") is True
+    assert calls["n"] == first_round_hashes
+
+    # 冻结 frames 被改写 → 指纹漂移 → 恰好重哈希一次，判 sidecars_stale。
+    frozen = store.file_store._data_root() / store.frames_path("ext-fpcache1")
+    frozen.write_bytes(b'{"ev":"frame","t":9.9}\n')
+    assert kovaak_run_store.external_telemetry_ready(run["id"], "u1") is False
+    assert calls["n"] == first_round_hashes + 1
