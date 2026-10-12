@@ -309,7 +309,7 @@ Provider 列表至少显示：
 
 - provider 名称、认证方式、当前 model；
 - `未配置 / 可用 / 测试中 / 连接失败 / 已停用`；仅对需要认证的 Provider 增加 `需要认证 / 认证过期 / 需要重新认证`；
-- credential 来源，例如 API key、OAuth、环境变量或本地服务；只显示来源和末尾掩码，不回显 secret；
+- credential 来源，例如 API key、OAuth、环境变量或本地服务；列表只显示来源和末尾掩码；
 - 当前是否为 Coach 默认 provider；
 - 最近一次连接测试结果和时间。
 
@@ -324,7 +324,7 @@ Provider 列表至少显示：
 
 交互边界：
 
-- API key 输入默认隐藏，保存后不可再次读回，只能替换或删除；
+- API key 输入默认掩码显示，保存后允许用户通过显式操作（点眼睛）查看完整值；API key 以明文存储于本机配置文件（桌面单用户产品，安全边界为本机）；用户可随时替换或删除；
 - OAuth/device-code 认证显示等待浏览器或 device code、取消、超时、成功和需要重新认证状态；
 - Provider profile 与 credential 分开删除；移除 profile 前说明是否同时移除 credential；
 - 未配置 Provider 时，Coach 入口只作为激活入口，可恢复首次 onboarding 或进入 Provider Settings；此时不提供 Coach 对话、解释、长期档案、训练计划或产品命令，也不显示升级、订阅、额度墙或产品登录；
@@ -358,13 +358,15 @@ Analysis、Run、Raw Input trace、自动 Run-owned MP4、用户 Stats / Perform
 | 对象 | 用户可见归属 | 删除或移除时的 UX 边界 |
 |---|---|---|
 | Analysis | 某次基于固定 evidence 生成的诊断 | 只影响该 Analysis 及其自有输出；不连带删除 Run、trace 或用户源文件。Coach 历史消息保留，相关引用显示已删除或不可用 |
-| Run metadata | 一次训练记录的组织入口 | 与 Analysis 和来源文件分开处理；删除前列出仍关联的 Analysis 与 evidence，不能用“删除训练”暗示会清理所有数据 |
-| Raw Input trace | 本地捕获并关联到 Run 的 evidence | 与开关、Run metadata 和 Analysis 分开管理；是否清理必须使用独立动作和明确确认。关闭捕获不应被界面描述为已经删除历史 trace |
+| Run metadata | 一次训练记录的组织入口 | 删除训练记录 = 级联删除该 Run 的全部产物：自动 MP4、Raw trace、关联 Analysis artifacts（含孤立分析产物）一并移除，活动中的 Analysis 仍拒绝（等完成或失败）；确认 UI 必须说明连带删除范围，完成后通知确认 |
+| Raw Input trace | 本地捕获并关联到 Run 的 evidence | 与开关、Run metadata 和 Analysis 分开管理；随 Run 删除级联移除，也可在 Storage 中独立移除（独立动作和明确确认）。关闭捕获不应被界面描述为已经删除历史 trace |
 | 用户 Stats / Performance | 用户拥有的原始来源 | Aiming Cookie 不自动删除用户源文件；从应用中移除引用或删除 Run 时，必须明确说明原文件仍保留 |
-| 自动 MP4 | Run-owned 的本地 managed evidence | 不随 Analysis 删除；用户可在 Storage 中独立移除，删除后回放和视觉引用变为不可用 |
+| 自动 MP4 | Run-owned 的本地 managed evidence | 不随 Analysis 删除；随 Run 删除级联移除，也可在 Storage 中独立移除，删除后回放和视觉引用变为不可用 |
 | 手动 MP4 managed copy | 为 fallback Analysis 管理的本地副本 | 与用户原始录像分开说明；删除 managed copy 不等于删除用户原文件，删除后依赖它的视觉证据和回放会变为不可用 |
 
 第一版不提供模糊的“一键清空所有数据”，也不自动删除最旧 Run。Storage 显示总占用以及 Run 录像、Raw trace、Analysis artifacts、未完成采集数据的分类占用；用户可按 Run 分别移除自动 MP4、Raw trace 或未完成采集数据，手动 UI 确认或 Coach 主动提议前必须说明对未来 Analysis mode、回放和既有引用的影响；当前 Coach 消息已明确指定的已注册删除操作不再重复确认。Run metadata、Analysis 记录和用户 Stats / Performance 原文件保留。精确事务与恢复由后续 implementation plan 冻结。
+
+Analysis artifacts 的合法清理路径（2026-10-11 点点拍板，补本节原空白）有二：**随 Run 删除级联**（见上表 Run metadata 行）与**总量上限自动清理**——分析产物目录总占用默认上限 10GB，超限从最旧的分析产物开始删除；上限可在设置调整或整体关闭，每次自动清理写日志（删了哪些、释放多少）并在设置留痕展示。上限自动清理只删 Analysis artifacts（含无记录的孤立分析产物，进行中的分析永不触碰），绝不静默清 Run 录像与 Raw trace——那些是用户证据，只有用户手动删除动作才能移除。
 
 ## 4. Coach 主工作区与会话 rail
 

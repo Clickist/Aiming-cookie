@@ -4,7 +4,7 @@
 
 ## 1. 架构结论
 
-Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、History、Coach 关系、长期 profile 和主要数据留在用户机器。产品不建立云端 LLM 代理或账号型同步。
+Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、History、Coach 关系、长期 profile 和主要数据留在用户机器，跨设备迁移目前使用显式导出/导入（§4.1）。产品已上线并运营两条可选的官方在线服务（2026-10-11 拍板承认既成事实；产品语义以 PRD §9.1 为准）：自有会员体系（accounts Worker：登录、订阅、额度与试用发放，唯一承载用户身份的官方在线表面）与官方会员 AI 中转（member-gateway：官方托管档的 LLM 请求代理）；二者只服务模型供给，不承载产品云身份，训练档案、Coach 资料与本地凭据不进入该边界。产品使用不以注册登录为前提，默认本地免登录、自带 Key 路径完整可用。
 
 ```text
 Desktop Client (Next.js UI in Tauri)
@@ -17,16 +17,20 @@ Desktop Client (Next.js UI in Tauri)
   └─ Local canonical data and managed artifacts
              │
              ├── User-selected LLM Provider or local model
+             ├── Official membership tier (opt-in): accounts Worker
+             │    (login / subscription / quota / trial grant)
+             │    + member-gateway AI proxy (official hosted model service)
              └── Online Surfaces
                  ├─ landing / documentation
-                 ├─ release distribution
+                 ├─ release distribution (dl.aimingcookie.com download counting)
                  ├─ optional versioned equipment catalog
-                 └─ affiliate link service (affiliate.example.invalid)
+                 ├─ affiliate link service (affiliate.example.invalid)
+                 └─ capture diagnostics bundle upload (logs.aimingcookie.com)
 ```
 
 当前仓库也可以用 Web 方式开发和验证共享 UI/API，但 Web 验证形态不能反向引入产品账号或云端数据所有权，也不能替代 Desktop 发布验收。
 
-### 1.1 五个职责域
+### 1.1 六个职责域
 
 | 职责域 | 负责 | 不负责 |
 |---|---|---|
@@ -34,9 +38,10 @@ Desktop Client (Next.js UI in Tauri)
 | **Local Analysis Runtime** | Capture Coordinator、job、worker、KovaaK Run finalization、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
 | **Coach Agent Runtime** | 本地长期 Coach 关系、Agent run/event、与本地 profile 能力对齐的产品命令编排、上下文衔接 | 重新定义确定性诊断、绕过本地 ownership/capability、直接拥有 `KovaaKRun` 或分析文件 |
 | **Client Surfaces** | Desktop/Web UI、onboarding、交互状态、Provider 认证状态呈现、native bridge | 数据真相、业务规则、密钥持久化 |
-| **Online Distribution Surfaces** | landing、文档、release 分发、可选外设目录和透明联盟转链服务（`affiliate.example.invalid`，持有淘宝联盟/拼多多密钥，被 Coach `purchase_links.lookup` 消费） | Coach、History、训练档案或 LLM 请求代理 |
+| **Online Distribution Surfaces** | landing、文档、release 分发（`dl.aimingcookie.com` 下载计数前置，ac-downloads Worker）、可选外设目录和透明联盟转链服务（`affiliate.example.invalid`，持有淘宝联盟/拼多多密钥，被 Coach `purchase_links.lookup` 消费）、诊断包上传接收（`logs.aimingcookie.com/upload`，ac-logs Worker：token 轻门禁、R2 14 天生命周期 + D1 台账；客户端上传失败降级本地导出） | Coach、History、训练档案或 LLM 请求代理 |
+| **Official Hosted Membership Service**（官方托管模型服务，可选订阅） | 官方托管档的账号体系与 AI 请求代理（2026-10-11 补账）：accounts Worker（客户端基址 `accounts.example.invalid`，真实域经构建期注入、不入库）负责登录、订阅与退款、额度池与试用发放，会员权益由 `/api/me` 实时下发；member-gateway（客户端端点 `member-gateway.example.invalid:8443`）验 JWT 后按池注入中转令牌并 OpenAI 兼容透传，模型锁 `deepseek-v4-flash`；JWT 存于本地 relay 档 credential（见 §5.2） | 训练档案、Coach 资料、History、本地凭据保管；不承载产品云身份，不对产品能力设付费墙 |
 
-依赖方向应面向领域合同：UI 和 runtime 适配 Domain Core；Provider 与在线分发表面通过明确边界接入，不让领域逻辑依赖 FastAPI、Tauri、具体 LLM provider 或远端身份。
+依赖方向应面向领域合同：UI 和 runtime 适配 Domain Core；Provider 与在线分发表面通过明确边界接入，不让领域逻辑依赖 FastAPI、Tauri、具体 LLM provider 或远端身份。任何新增在线表面必须先在本节登记后才能落地（2026-10-11 补账时确立）。
 
 ## 2. 运行形态
 
@@ -103,7 +108,7 @@ evidence provenance and limitations.
 
 ## 3. 稳定数据合同
 
-合同必须 versioned、可序列化、可在 Web/Desktop 间复用；消费者不得依赖内部 Python 对象或未声明字段。
+合同必须 versioned、可序列化、可在 Web/Desktop 间复用；消费者不得依赖内部 Python 对象或未声明字段。前后端 wire 类型的承载机制是**手写镜像 + parity 测试**（2026-10-11 承认现状）：`webapp/frontend/lib/types.ts` 手工镜像后端 Python dataclass 字段（snake_case 对齐 wire JSON），`api-types.generated.ts` 的唯一消费方是 parity 回归测试，sidecar `/v1` 边界没有 OpenAPI 生成源。在把生成物提升为消费源之前，镜像一致性由 parity 测试执行，不靠生成流程保证。
 
 ### 3.1 Analysis Result
 
@@ -215,7 +220,7 @@ KovaaKRun
   `parameters_digest` 不得被后到写入替换；应用层先查后写即使发生竞态也必须在写入点
   返回稳定 conflict；同 digest 的后到 reservation claimant 必须 replay 已有记录，
   不能再次执行副作用；confirmed write 的 reservation conflict 必须回滚 confirmation 消费；
-- 不建立账号型云同步；跨设备迁移使用显式导出 / 导入，任何未来远端备份都必须先由新的产品决策重新冻结；
+- 跨设备迁移使用显式导出 / 导入；
 - 文件写入、删除与崩溃恢复必须可测试、幂等，并按 tombstone / reconciliation 顺序收敛，
   失败时不得留下半写入状态或 orphan workspace。
 
@@ -329,7 +334,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
 - 命令处理器独立执行 ownership、capability、state transition、stable-ref reachability、idempotency 和 audit 校验；
 - secret/credential 输入、OAuth/device-code 交互、系统/隐私权限、文件选择、现实训练和主观事实不进入 Agent execution，只能由可信 UI 接收并由 Coach 等待验证；
-- Coach 可使用受限文件工具读写当前 `DATA_ROOT`（`read` / `ls` / 非受管文件的 `write`），不得逃逸到任意路径，也不得用 `write` 改写受管产品状态（训练计划、教学会话、场景记忆、校准、外设配置、KovaaK 连接）。这些状态必须走已注册 typed product command。不存在 shell、任意 HTTP、任意 Tauri invoke 或模拟输入等通用权限。
+- Coach 可使用受限文件工具读写当前 `DATA_ROOT`（`read` / `ls` / `edit` / `grep` / `find` / 非受管文件的 `write`），不得逃逸到任意路径，也不得用 `write` 改写受管产品状态（训练计划、教学会话、场景记忆、校准、外设配置、KovaaK 连接）。这些状态必须走已注册 typed product command。在此之上，产品注册通用工具 `bash` 与联网工具 `web_search` / `fetch_page`（2026-10-10 拍板：本地单用户安全尺度下接受为合法工具面）。随之的已知接受面：`bash` 可读宿主任意文件（含 `config/provider.json` 的明文 Provider key 与会员 JWT，其明文持久化本身是 §5.2 已接受的 local-first 权衡），`fetch_page` 可向任意地址发 HTTP——均按本地单用户桌面应用尺度对待，不做云服务级隔离；任意 Tauri invoke 与模拟输入仍不注册。
 
 Guidance 层只做确定性的产品编排（引导用户到正确的 UI 控件、预填非敏感值、等待并验证状态），不是第二个 Agent runtime。
 
@@ -339,7 +344,8 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 稳定边界：
 
-- pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；
+- pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；内置档的可选集在此基础上叠加「发现层」：配置了凭证的 built-in Provider 用该凭证实时读取其官方 `/models`，发现的 id 持久化到本地 `config/discovered-builtin-models.json` 并合并进目录（元数据仍按 id 从 pinned Pi 目录继承，未命中按默认能力），不构成第二份人工维护的 allow-list（2026-10-10 点点拍板，magpie 式动态名单）；
+- 产品 catalog 在上述来源之外固定注入一条官方会员档 `Aiming Cookie（推荐）`（`aiming-cookie-relay`，契约 2026-09-19 冻结、WP-C 落地；2026-10-11 补账）：浏览器登录 + deep-link 换票取得 JWT，存入该档 credential（沿用 `config/provider.json` 既有明文本地合同，前端全程不接触 JWT 明文）；AI 请求固定指向 member-gateway 的 OpenAI 兼容会员入口，模型锁定 `deepseek-v4-flash`；会员权益（订阅/额度池/试用）以 accounts Worker `/api/me` 实时下发为准，不得从 JWT 内容或 URL 推断。该档是并列供给选项，不是对 built-in 目录的裁剪或第二份 allow-list；旧官方中转按 key 计费的余额端点已退役为 `@deprecated` 兼容路径，会员档额度改由 `/api/me` 下发；
 - 自定义 profile 使用显式 `OpenAI-compatible` 或 `Anthropic-compatible` 协议，至少保存 provider name、base URL、API key 配置状态和 model ID；协议不得从 URL 文本猜测。Anthropic-compatible 的 base URL 是服务根地址，Pi 负责附加 `/v1` 路径；历史输入末尾的 `/v1` 在保存和运行时规范化为根地址。连接前可以用对应协议短暂读取模型列表，但 API key 不得进入公开响应、日志或浏览器存储；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
 - API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 `config/provider.json`；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
 - UI/API 允许 set/replace/delete/read credential；本地应用中 API key 可读回以便用户确认配置。仍返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态；
@@ -348,7 +354,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
 - provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - 首次 onboarding 和每次创建 Analysis 前都必须存在已测试的 selected Provider；Provider 后续请求失败时保留已保存记录，由 Coach 显示错误并引导 Settings 修复，不转为本地无 Provider 分析；Provider-to-Provider fallback 暂不启用；
-- Pi coding-agent、shell、通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；产品只注册上述受限 app-data 文件工具与 typed product command；
+- Pi coding-agent 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；产品只注册经过显式拍板的集合：受限 app-data 文件工具、typed product command，以及 `bash` / `web_search` / `fetch_page`（见 §5.1，2026-10-10 拍板）；
 - 首次启动以不可跳过的 Provider onboarding 为主路径；Provider 与 Windows Raw Input/窗口回放采集授权、启用都是进入主工作区的硬门槛。后续 Provider 失效不回退 onboarding，Coach 对话提供错误和 Settings 恢复入口。
 
 ## 6. 本地归属与安全

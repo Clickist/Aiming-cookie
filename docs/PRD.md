@@ -282,8 +282,8 @@ Onboarding 完成后首次进入 Coach 时，自动创建并打开「开场分�
 - 首次 Provider onboarding：价值 / 成本 / 数据边界说明、连接、测试、跳过与恢复
 - Settings 中填写、编辑、测试、选择和移除 LLM provider/model；完整暴露 pinned Pi built-in catalog，并支持由 provider name、base URL、API key、model ID 组成的自定义 OpenAI-compatible profile
 - 本地 history（趋势 + 列表 + 删 / 导出 / 导入）
-- Storage 显示总占用和 Run 录像、Raw trace、Analysis artifact、未完成采集数据的分类占用；用户手动管理，不静默自动清理 Run-owned evidence
-- 无 Aiming Cookie 注册、登录、账号或产品鉴权服务器
+- Storage 显示总占用和 Run 录像、Raw trace、Analysis artifact、未完成采集数据的分类占用；用户手动管理，不静默自动清理 Run-owned evidence（Run 录像与 Raw 只有用户手动动作才删；Analysis artifacts 随 Run 删除级联清理，并有可调可关的总量上限自动清理——默认 10GB，只清 Analysis artifacts，2026-10-11 拍板）
+- 产品使用不以注册登录为前提；官方托管账号服务为可选（2026-10-11 承认既成事实，见 §9.1）
 - 开源发布，全部产品能力免费
 - 完成通知 + 失败态
 - 日志（本地 CV / agent / provider 请求各层）
@@ -291,7 +291,7 @@ Onboarding 完成后首次进入 Coach 时，自动创建并打开「开场分�
 ### B 阶段（Coach 闭环深化）
 - 长期表现 / 特点档案与跨上下文衔接的质量提升
 - 训练计划、证据定位和复测体验深化
-- 本地长期档案的导出 / 导入与迁移恢复；不建立账号型云同步
+- 本地长期档案的导出 / 导入与迁移恢复
 - 第三方知识包：本地导入、整库替换与档切换（官方知识库为默认常驻档，坏包 fail-closed 回退官方档）；配套知识包 SDK（格式规范 / 模板 / 校验器）面向第三方瞄准作者，置于 `sdk/knowledge-pack/`；在线知识商店后置
 
 ### C 阶段（推荐与生态成熟）
@@ -352,6 +352,7 @@ Aiming Cookie 的发布与教学在线表面不依赖用户身份；官方托管
 | 桌面安装包分发 | 版本化对象存储或 release 托管 | 支持校验、回滚和目标地区可用性验证 |
 | 可选外设目录 | 静态版本化数据或无身份服务 | 只提供商品事实、适配信息、商业披露和联盟链接，不保存用户训练档案 |
 | 官方托管模型服务（可选订阅） | 自建服务器 | 承载可选账号的注册登录、订阅套餐与模型额度管理；只服务模型供给与订阅，不保存用户训练档案、Coach 资料或本地凭据 |
+| 诊断包上传 | 静态 Worker + 对象存储（14 天生命周期） | 承载用户主动提交的诊断/报障包；带轻量上传 token 门禁，失败时客户端降级为本地导出 |
 | 域名 | 合规注册与解析 | 不把规避备案作为产品目标 |
 
 Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/local callback 或 Provider 官方流程完成；不得以此为由建立 Aiming Cookie 用户账号、中心 credential broker 或鉴权服务器。具体托管、地区可用性和合规义务在发布前复核。
@@ -420,9 +421,9 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 
 ## 14. 决策日志（关键选择 + 为什么）
 
-- **桌面 hybrid 而非纯 web**：省 CV 服务器成本 + 解并发；LLM 使用用户选择的 Provider 或本地模型；产品不建立账号、登录、鉴权服务器或账号型同步；资产演进不浪费
+- **桌面 hybrid 而非纯 web**：省 CV 服务器成本 + 解并发；LLM 支持用户自带 Provider、本地模型与官方托管服务（2026-09 起上线，见 §9.1）；账号体系随官方托管服务上线并运营（2026-10-11 拍板承认既成事实），不做账号型云同步；资产演进不浪费
 - **开源免费 + 透明联盟佣金**（2026-07-13）：分析、Coach、History、训练计划和产品命令不设付费墙；用户自行承担其所选第三方 provider 的可能费用。只有当证据与上下文支持外设可能成为限制时才可推荐商品，官方联盟链接可产生佣金，但佣金不得影响诊断、推荐触发或排序
-- **History 与 Coach 档案长期本地优先**：本地 profile 是 canonical owner；导出 / 导入负责显式迁移，不建立账号型云同步
+- **History 与 Coach 档案长期本地优先**：本地 profile 是 canonical owner；导出 / 导入负责显式迁移
 - **透明联盟链接提前落地**（2026-09-11）：原定 C 阶段的「透明联盟链接」提前实施——自建 affiliate-links Worker 部署于 `affiliate.example.invalid`（淘宝联盟/拼多多转链，联盟密钥只存 Worker Secrets），经 Coach `purchase_links.lookup` 在证据支持外设可能成为限制时按需接入；佣金不影响诊断、推荐触发或排序的原则不变。本条目记录该能力相对阶段划分的前移，不改动阶段划分正文
 - **训练事实写入不加确认门**（2026-09-13）：Coach 经原生命令（training_plan.item.add / execution.record / retest.record）可直接写训练事实，不设独立的 confirmation/grant 硬门；写入纪律由 teaching skill 的阶段合同与提示词约束。此前文档声称的 trusted instruction grant 机制从未实现，本条确认按现状维持、不补建。
 - **scenario.open 同意门保持在提示词层**（2026-09-13）：「打开 KovaaK 场景前必须先征得用户同意」由工具描述与教学提示词约束，不加代码层强制拦截（不做过度工程）；防线单层是已知并接受的取舍。

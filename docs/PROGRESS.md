@@ -1,6 +1,14 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-05. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-10. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-10 — 内置 Provider 模型列表动态化（magpie 方案，代码完工未提交/未发版）
+
+- **背景与定案**：用户反馈模型列表不新。排查定案三条模型链只有自定义档是动态的——会员档锁死 `deepseek-v4-flash`（契约 §0，产品决策不动）、内置第三方档吃 vendored pi 静态快照（随底座升级才更新）。点点拍板按 magpie（yetone/magpie）方案走：名单实时问 Provider 官方 `/models`，元数据按 id 回 pinned Pi 目录继承，快照兜底；ARCHITECTURE §稳定边界已补合同句（发现层不构成第二份 allow-list）。
+- **实现**（coach-runtime）：`provider-models.ts` 新增发现层——`config/discovered-builtin-models.json` 原子落盘（空应答不覆盖旧名单）；`discoverBuiltinProviderLive` 复用 probe 的端点/凭证/协议解析链；目录出口叠加发现层（目录 id 不重复、目录外 id 追加，元数据 `projectCustomModelReasoning` 补齐，name=id 兜底）；`resolveBuiltinProfile` 白名单门放宽到发现层（create/PUT/切换三处门经 `resolveProviderModel` 自动生效）；`probeBuiltinProvider` 改为连通即落盘（原先拉完即弃），`ProviderProfileError` 保留原样透传保住 `model_unavailable` 分类。`sidecar-server.ts`：GET catalog 挂 `kickBuiltinCatalogRefresh()`（6h TTL fire-and-forget，失败仅记 cause 日志），新增 POST `/v1/providers/catalog/refresh` 强制逐家刷新（会员档跳过、单家失败不影响他家）。
+- **前端**：`api.ts` 新增 `refreshProviderCatalog()`；设置页/向导内置档 ⟳获取模型按钮改走强制刷新端点；Onboarding 两处探针成功后重拉目录让模型下拉立即出现实时名单。i18n 沿用现有文案。
+- **验证**：新增 `test/builtin-model-discovery.test.ts` 6 测试全绿（发现+落盘+合并/门放行与回落/探针落盘与 HTTP 401 透传/空应答保留旧名单/refresh 目标筛选与失败隔离/TTL 节流）；coach-runtime 全量 **604 tests：602 pass / 2 skip / 0 fail**（期间抓出并修复 probe 错误分类回归：draft 探针 unknown_provider 须保持 `model_unavailable`）；前端 tsc 净、unit 224 + contracts 354 全绿。
+- **挂账**：真机走查未做（真实 key ⟳ 刷新出新模型可选可聊、断网优雅回落）；随下版客户端发布生效；发现层只增不筛（OpenAI 类端点会带回历史 snapshot，列表变长，精选留待真实反馈）；OAuth 型 Provider（Copilot/Vertex 类）`/models` 非标准时自动回落快照。会员档多模型属另一条产品决策线未动。
 
 ## 2026-10-05（晚） — v1.4.0：转火家族 + 双源融合 + WHJ 退役（发版进行中）
 
