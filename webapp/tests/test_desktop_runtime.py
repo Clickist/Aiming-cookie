@@ -1243,3 +1243,46 @@ def test_acquire_runtime_lock_allows_first_and_refuses_second(tmp_path) -> None:
     holder2.wait(timeout=30)
     assert desktop_runtime.acquire_runtime_lock(tmp_path) is True
     release()
+
+
+# ------------------------------------------------- [fix cp1252 2026-10-13]
+
+def test_force_utf8_stdio_reconfigures_cp1252_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """冻结 bootloader 按系统 locale 初始化 stdio 且无视 PYTHONIOENCODING
+    （1013 巴西报障分诊）：helper 必须把 cp1252 流改写为 utf-8。"""
+    monkeypatch.setattr(
+        sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"),
+    )
+    monkeypatch.setattr(
+        sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"),
+    )
+    desktop_runtime.force_utf8_stdio()
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stderr.encoding == "utf-8"
+
+
+def test_kovaaks_settings_inject_chinese_print_survives_cp1252_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """主进程实弹回归：kovaaks_settings_inject 的中文 print 在 cp1252 locale
+    下由 main() 首行的 force_utf8_stdio 救回（1013 巴西报障：启动调用 + 每 45s
+    复查路径无 try 包裹）。走纯打印路径 print_pus_diff（removed 键必打中文
+    「删除」），断言不抛 UnicodeEncodeError 且字节可按 utf-8 解码。"""
+    from webapp.backend import kovaaks_settings_inject
+
+    section = next(iter(kovaaks_settings_inject.PUS_SECTIONS))
+    prefix = kovaaks_settings_inject.SECTION_PREFIX[section]
+    old = {section: {f"{prefix}LegacyKey": 1}}
+    new: dict = {section: {}}
+    out_buf = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(out_buf, encoding="cp1252"))
+    monkeypatch.setattr(
+        sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"),
+    )
+    desktop_runtime.force_utf8_stdio()  # 与 main() 首行同款启动顺序
+    count = kovaaks_settings_inject.print_pus_diff(old, new)
+    sys.stdout.flush()
+    assert count == 1
+    assert "删除" in out_buf.getvalue().decode("utf-8")

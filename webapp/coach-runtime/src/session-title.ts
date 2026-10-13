@@ -44,6 +44,8 @@ export type SessionTitleProviders = {
 export function sanitizeSessionTitle(raw: string, maxChars: number = TITLE_MAX_CHARS_ZH): string | null {
   const firstLine = raw.trim().split(/\r?\n/, 1)[0] ?? "";
   const cleaned = firstLine
+    // 流损坏指纹（成片 █/U+FFFD）不入标题：先剥掉，剥空则走既有的空结果放弃。
+    .replace(/[\u2588\uFFFD]/g, "")
     .replace(/^[「『"'《<（(【[]+/, "")
     .replace(/[」』"'》>）)】\]]+$/, "")
     .replace(/^(?:关于|对话|标题|About|Conversation|Title)\s*[:：]?\s*/i, "")

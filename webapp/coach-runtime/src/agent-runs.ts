@@ -107,6 +107,27 @@ export class AgentRunError extends Error {
   }
 }
 
+// ── FFFD 输入权威拦截（2026-10 █/FFFD 野外案，输入侧）──────────────────
+// U+FFFD（REPLACEMENT CHARACTER）是编码失败替换符，正常输入法/粘贴几乎不
+// 产生；≥2 视为输入法/剪贴板故障注入，权威拒绝（invalid_encoding）而不是
+// 让乱码进会话历史再触发下游怪象。单个 FFFD 放行：真实文本偶发单个替换
+// 字符不算故障。与 turn.ts 的 █ 流式熔断分属输入/输出两层，判据不混。
+const INVALID_ENCODING_USER_MESSAGE = "输入内容包含异常字符（疑似输入法故障），请重新输入";
+
+/** U+FFFD 出现次数（BMP 字符，charCode 直扫）。 */
+function countReplacementChars(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 0xfffd) count += 1;
+  }
+  return count;
+}
+
+/** FFFD 输入守卫判据：≥2 拒绝，否则放行。 */
+function isInvalidEncoding(text: string): boolean {
+  return countReplacementChars(text) >= 2;
+}
+
 // ── In-memory run store ───────────────────────────────────────────────
 
 interface RunRecord {
@@ -369,6 +390,7 @@ async function runAgentTurn(
           "sequence",
           "kind",
           "state",
+          "message",
           "thinking_text",
           "tool_call_id",
           "tool_name",
@@ -469,7 +491,8 @@ async function runAgentTurn(
       const error = response.error;
       // turn 响应的 error 是 CoachRuntimeError（字段是 category/code，没有
       // domain）。真实可分类的信号只有 code：流中断/网络瞬断/服务过载是网络
-      // 类（turn.ts classifyCoachFailureCode 的稳定 code），其余归 model。
+      // 类（turn.ts classifyCoachFailureCode 的稳定 code），其余归 model
+      // （含 corrupted_stream：上游输出退化成片 █ 是模型问题，不是网络/存储）。
       // 此前读 error.domain 恒为 undefined，所有上游失败都被折叠成 model。
       const failure: AnyDict = error
         ? {
@@ -551,6 +574,9 @@ export function createAgentRun(
 ): AgentRunState {
   if (!content || !content.trim()) {
     throw new AgentRunError("invalid_text", "Coach text is invalid");
+  }
+  if (isInvalidEncoding(content)) {
+    throw new AgentRunError("invalid_encoding", INVALID_ENCODING_USER_MESSAGE);
   }
   const safeContent = content.trim().slice(0, 12_000);
   const threadId = options.sessionId ?? resolveThreadId(ownerId, options.sessionId);
@@ -794,6 +820,11 @@ export async function steerAgentRun(
   if (!record || record.ownerId !== ownerId) return null;
   if (record.state.status !== "running") {
     throw new AgentRunError("run_not_steerable", "Coach agent run is not actively running");
+  }
+  // FFFD 输入守卫与 createAgentRun 同判据：steer/follow-up/next-turn 三个
+  // 队列动词都经这里进 queueCoachTurnMessage，一处拦截全覆盖。
+  if (isInvalidEncoding(request.text)) {
+    throw new AgentRunError("invalid_encoding", INVALID_ENCODING_USER_MESSAGE);
   }
   const result = await queueCoachTurnMessage(runRef, request);
   if (!result.ok) {

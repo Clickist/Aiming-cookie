@@ -30,6 +30,12 @@ import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
 import { useKovaakInstallGuide } from "@/lib/kovaak-install-guide";
 import { KovaakInstallGuideCard } from "@/components/kovaak/KovaakInstallGuideCard";
 import { activeRunRefForSession, clearActiveRunRef, pinActiveRunRef } from "@/lib/coach-run-resume";
+import {
+  countReplacementChars,
+  detectCorruptedReply,
+  COACH_SEND_MIN_REPLACEMENT_CHARS,
+  type CoachDisplayGuardResult,
+} from "@/lib/coach-display-guard";
 import { resolveCoachMessageAnalysisRefs } from "@/lib/coach-timepoints";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
@@ -1021,6 +1027,32 @@ export function CoachPanel({
     () => resolveCoachMessageAnalysisRefs(messages, analysisRefs),
     [messages, analysisRefs],
   );
+
+  // 显示层块字符守卫（lib/coach-display-guard.ts）：对已落库/存量回复渲染时
+  // 派生检测流损坏指纹（成片 █/U+FFFD），命中在该条消息上给标注与「重新回答」
+  // 入口。派生计算不持久化、不写 session 投影层；只扫 assistant 消息。
+  const messageGuardHits = useMemo(() => {
+    const hits = new Map<number, CoachDisplayGuardResult>();
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      const result = detectCorruptedReply(message.content);
+      if (result.hit) hits.set(message.id, result);
+    }
+    return hits;
+  }, [messages]);
+  // 埋点按 messageId 去重只报一次；只报数值指纹（maxRun/density/len），绝不把
+  // █ 正文写进日志。ref 存已报 id：消息滚动出屏再回来不重复上报。
+  const guardReportedIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    for (const [messageId, result] of messageGuardHits) {
+      if (guardReportedIdsRef.current.has(messageId)) continue;
+      guardReportedIdsRef.current.add(messageId);
+      logFrontendError(
+        "coach-display-guard",
+        `message=${messageId} maxRun=${result.maxRun} density=${result.density.toFixed(4)} len=${result.len}`,
+      );
+    }
+  }, [messageGuardHits]);
 
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
@@ -2282,6 +2314,14 @@ export function CoachPanel({
   ): Promise<boolean> => {
     const content = contentRaw.trim();
     if (!content || sendingRef.current) return false;
+    // 出站 FFFD 拦截（所有出站路径的汇聚点在 sendText，不在 composer 单点）：
+    // 输入法故障会吐出 U+FFFD，≥2 个直接挡下——notify 提示 + 原文回填 draft，
+    // 不清空不发送也不进队列 chip，用户看得见坏在哪、可自行删改后重发。
+    if (countReplacementChars(content) >= COACH_SEND_MIN_REPLACEMENT_CHARS) {
+      setDraft(contentRaw);
+      notify(t("api.error.invalidEncoding"));
+      return false;
+    }
     // 结构化引用：chip 路径显式带 refs；普通路径消费当前挂着的引用 chips。
     const refs = opts.refs ?? mentionRefsRef.current.map((ref) => ref.token);
     const refsSnapshot = mentionRefsRef.current;
@@ -3280,10 +3320,27 @@ export function CoachPanel({
                         问题——但只在它是最后一条消息时给按钮，历史回合的旧标记
                         重发会把旧问题追加到会话尾部（重复提问）；找不到前置用户
                         消息只标记不给按钮。run 活跃/创建中禁用，不与在途回合互踩。
-                        stopped=用户主动停止，维持原「已停止」文案。 */}
+                        stopped=用户主动停止，维持原「已停止」文案。
+                        守卫命中（成片 █/U+FFFD，渲染时派生）与两者互斥，优先级
+                        interrupted > guard > stopped：守卫分支完全复用「重新回答」
+                        按钮行为（同前置问题重发 force 路径，仅最后一条消息给按钮）。 */}
                     {message.interrupted ? (
                       <>
                         <span className="task6-message-stopped">{t("coach.message.interrupted")}</span>
+                        {index === messages.length - 1 && interruptedRetryText(index) !== null ? (
+                          <Button
+                            disabled={composerBusy || pendingRunStart}
+                            onClick={() => void sendText(interruptedRetryText(index) ?? "", { force: true })}
+                            size="compact"
+                            variant="secondary"
+                          >
+                            {t("coach.message.interruptedRetry")}
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : messageGuardHits.has(message.id) ? (
+                      <>
+                        <span className="task6-message-stopped">{t("coach.message.corrupted")}</span>
                         {index === messages.length - 1 && interruptedRetryText(index) !== null ? (
                           <Button
                             disabled={composerBusy || pendingRunStart}

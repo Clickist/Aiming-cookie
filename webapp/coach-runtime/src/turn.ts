@@ -31,6 +31,7 @@ import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from 
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
 import { wrapModelsWithResilientFetch } from "./net-resilience.ts";
+import { adaptiveThinkingFetch } from "./adaptive-thinking-fallback.ts";
 import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
 import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
@@ -81,8 +82,11 @@ export type CoachPartialRevision = {
 
 export type CoachActivityUpdate = {
   sequence: number;
-  kind: "thinking" | "tool" | "queue" | "compaction";
-  state: "started" | "completed" | "failed" | "updated";
+  /** stream_guard＝流式重复熔断（█ 野外案）的过程事件；前端未知 kind 忽略。 */
+  kind: "thinking" | "tool" | "queue" | "compaction" | "stream_guard";
+  state: "started" | "completed" | "failed" | "updated" | "retried";
+  /** 用户可见过程文案（stream_guard 等降级事件随 run events 下发）。 */
+  message?: string;
   /** thinking started 专用：上一轮思考段终文（full-replace）。恒带——null＝
      该轮无前置思考段；undefined＝旧版 sidecar（无分段协议）。 */
   thinking_text?: string | null;
@@ -601,10 +605,10 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const role = (message as { role?: unknown })?.role;
           if (role === "user") {
             const text = extractMessageText((message as { content?: unknown })?.content);
-            // B1 空回复重试的 nudge 不落历史：重试请求由 harness 在内存里携带
-            // （runAgentLoop 把 prompt 消息并进 context），持久化反而会在会话
-            // 里留下一条系统口吻的假用户消息。
-            if (text === EMPTY_REPLY_NUDGE) return undefined;
+            // B1 空回复重试与 stream guard 熔断重试的 nudge 都不落历史：重试
+            // 请求由 harness 在内存里携带（runAgentLoop 把 prompt 消息并进
+            // context），持久化反而会在会话里留下一条系统口吻的假用户消息。
+            if (text === EMPTY_REPLY_NUDGE || text === STREAM_GUARD_NUDGE) return undefined;
             const branch = await proxyTarget.getBranch();
             const last = branch[branch.length - 1];
             if (
@@ -858,6 +862,46 @@ const EMPTY_REPLY_NUDGE = "你上一条回复内容为空。请重新给出完�
 /** B1 重试仍空的用户文案（错误文案分层合同 §3.3：用户面中文，诊断串进日志）。 */
 const EMPTY_REPLY_USER_MESSAGE = "模型本次没有返回内容，请稍后重试。";
 
+// ── Stream guard（流式重复熔断，2026-10 █ 野外案）────────────────────────
+// 上游模型偶发输出成片 U+2588（█）——真实用户实例：整条回复成片 █、自动标题
+// 同坏。两层防线的 coach-runtime 输出侧：流式检测 full-replace 文本中连续
+// █ run ≥ 200 即熔断。只检 █ 不检 U+FFFD：FFFD 是输入侧故障（agent-runs
+// 输入守卫权威拦截），█ 是输出侧退化，两层判据不混。kill-switch：env
+// AIMING_COOKIE_STREAM_GUARD=0 时整个检测关闭。
+const STREAM_GUARD_BLOCK_RUN_MIN = 200;
+/** 熔断重试的 nudge 提示词（形态同 B1：同 harness 连续 prompt，不落历史）。 */
+const STREAM_GUARD_NUDGE = "你上一条回复中出现了异常的乱码字符。请重新给出完整、正常的回答，不要复述这条提示。";
+/** 二次熔断的用户文案（错误文案分层合同：用户面中文，诊断串进日志）。 */
+const CORRUPTED_STREAM_USER_MESSAGE = "模型输出出现异常乱码，已自动重试仍未恢复，请重试。";
+/** 熔断自动重试时用户可见的过程消息（经 publishActivity 进 run events）。 */
+const STREAM_GUARD_ACTIVITY_MESSAGE = "检测到异常输出，已自动降档重试";
+
+/** full-replace 文本里最长的连续 U+2588 run 长度（BMP 字符，charCode 直扫）。 */
+function maxBlockRun(text: string): number {
+  let max = 0;
+  let current = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 0x2588) {
+      current += 1;
+      if (current > max) max = current;
+    } else {
+      current = 0;
+    }
+  }
+  return max;
+}
+
+/** 熔断重试前的思考降档：pi 档序 off<minimal<low<medium<high，降一档。
+ *  已在最低档（off/minimal）返回 null＝不降（用户本来就最低档）。 */
+function degradeThinkingLevel(level: string): string | null {
+  switch (level) {
+    case "high": return "medium";
+    case "medium": return "low";
+    case "low": return "minimal";
+    default: return null;
+  }
+}
+
 function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
   return COACH_RUNTIME_TURN_SCHEMA;
 }
@@ -884,6 +928,11 @@ export function classifyCoachFailureCode(error: unknown): string {
   // 等待后可重试——前端初始化卡自动放行走 retryAgentRun，要求 retryable=true。
   // 必须放最前：在途不是 quota/鉴权/网络任何一族，防止被后面的宽 pattern 吞掉。
   if (/provisioning_in_flight/i.test(message)) return "trial_provisioning";
+  // Anthropic 新模型思考协议不兼容（2026-10-12 haiku-5.5 野外案）：新模型家族
+  // 废弃 thinking.type.enabled，目录未收录模型走老协议必 400。fetch 层自愈
+  // （adaptive-thinking-fallback）重发仍被拒才会到这里——确定性失败，换模型
+  // 或等更新，重试无意义。
+  if (/thinking[\s\S]{0,60}not supported for this model/i.test(message)) return "model_protocol_unsupported";
   // 额度类：new-api 网关 403 透传（中转/BYOK 链路）、accounts 网关稳定 type
   // （quota_prehold_insufficient）与 OpenAI 口径。重试无意义。
   if (/insufficient_user_quota|insufficient_quota|quota_exhausted|quota_prehold_insufficient|预扣费额度失败|用户额度不足/i.test(message)) return "quota_exhausted";
@@ -928,6 +977,11 @@ function userFacingErrorMessage(error: unknown, stopped: boolean): string {
   }
   if (error instanceof EmptyAssistantReplyError) {
     return error.fromProviderError ? error.message : EMPTY_REPLY_USER_MESSAGE;
+  }
+  if (/thinking[\s\S]{0,60}not supported for this model/i.test(error instanceof Error ? error.message : String(error ?? ""))) {
+    // model_protocol_unsupported：上游原始 JSON 全文已落 coach-error.log（随报
+    // 障包带出），用户层面给人话指引即可。
+    return "所选模型不支持当前请求格式（模型协议已更新）。请更换模型，或更新应用后重试。";
   }
   return "Coach 暂时无法完成回复，请稍后重试。";
 }
@@ -1020,6 +1074,13 @@ export async function runCoachTurn(
   let activitySequence = 0;
   let lastPartialText: string | null = null;
   let lastPartialAt = 0;
+  // 流式重复熔断状态（stream guard，2026-10 █ 野外案）：text_delta 检测命中
+  // 置位 + fire-and-forget abort；分叉在 prompt resolve 之后（下方 breaker
+  // 分支），恰一次重试，二次命中不再循环。kill-switch：env=0 整体关闭。
+  const streamGuardEnabled = process.env.AIMING_COOKIE_STREAM_GUARD !== "0";
+  let breakerTripped = false;
+  let breakerRetryUsed = false;
+  let breakerMaxRun = 0;
   let firstProviderEventMs: number | null = null;
   let firstTextDeltaMs: number | null = null;
   let firstSafeTextMs: number | null = null;
@@ -1057,6 +1118,8 @@ export async function runCoachTurn(
         setSteeringMode: (mode: CoachDrainMode) => Promise<void>;
         setFollowUpMode: (mode: CoachDrainMode) => Promise<void>;
         compact: (customInstructions?: string) => Promise<unknown>;
+        getThinkingLevel: () => string;
+        setThinkingLevel: (level: string) => Promise<void>;
       };
       InMemorySessionRepo: new () => {
         create: () => Promise<{
@@ -1141,7 +1204,7 @@ export async function runCoachTurn(
       ? Object.assign(Object.create(resolved.models), {
           streamSimple: options.streamFn as PiModels["streamSimple"],
         })
-      : wrapModelsWithResilientFetch(resolved.models);
+      : wrapModelsWithResilientFetch(resolved.models, adaptiveThinkingFetch());
 
     // Create AgentHarness. Provider 请求启用 Pi 内建重试（OpenAI SDK 的
     // 连接/5xx 预流式重试）：代理与上游网络抖动是流中断的常见来源，
@@ -1351,6 +1414,20 @@ export async function runCoachTurn(
       if (eventType === "message_update" && isRecord(event.assistantMessageEvent) && event.assistantMessageEvent.type === "text_delta") {
         firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
         const partialText = extractAssistantText(event.message);
+        // Stream guard（2026-10 █ 野外案）：full-replace 文本连续 █ run 超阈值
+        // 即熔断——fire-and-forget abort（照用户停止的现成写法），prompt 会
+        // resolve stopReason="aborted"，由下方 breakerTripped 分叉接管重试。
+        // 命中后停止重复检测；重试轮靠 breakerRetryUsed 限次。
+        if (streamGuardEnabled && !breakerTripped && partialText !== null) {
+          const maxRun = maxBlockRun(partialText);
+          if (maxRun >= STREAM_GUARD_BLOCK_RUN_MIN) {
+            breakerTripped = true;
+            breakerMaxRun = maxRun;
+            harness.abort().catch((error) => {
+              console.error("[coach] harness abort failed", error);
+            });
+          }
+        }
         await publishPartial(safePartialReply(partialText, secrets));
         return;
       }
@@ -1453,7 +1530,8 @@ export async function runCoachTurn(
     );
     // next_turn 排水：首轮结束后用同一 harness 连续 prompt()，排队的追问依次
     // 成为后续 turn 的用户消息——会话持续、run_id 不变，前端无需新开 run。
-    while (nextTurnTexts.length > 0 && !stopRequested.has(request.run_id)) {
+    // 熔断已命中时不排水：打断轮的恢复优先，排队追问交还下方 breaker 分支。
+    while (nextTurnTexts.length > 0 && !stopRequested.has(request.run_id) && !breakerTripped) {
       replyMessage = await runScopedSkillReads(recordSkillRead, () =>
         harness.prompt(nextTurnTexts.shift()!),
       );
@@ -1508,6 +1586,100 @@ export async function runCoachTurn(
     let isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
     let isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
     let rawReply = extractAssistantText(replyMessage);
+
+    // Stream guard 分叉（2026-10 █ 野外案）。必须先于下方 aborted 判定：
+    // 熔断 abort 后 prompt() resolve stopReason="aborted" 的空消息，不在此
+    // 显式分叉会被吞成「用户主动停止」（谎报已停止，同 2026-10-12 重启事故
+    // 形态）。恰一次重试：先降一档思考（pi setThinkingLevel；重试后必须恢复
+    // 原档，否则静默永久降档），nudge 不落历史（同 B1 空回复重试先例）。
+    if (breakerTripped && !breakerRetryUsed) {
+      breakerRetryUsed = true;
+      breakerTripped = false; // 重试轮重新检测；二次命中走下方 corrupted_stream
+      // 降级可观测合同：诊断行落 coach-error.log（随报障包带出）。
+      try {
+        appendFileSync(
+          join(getDataRoot(), "coach-error.log"),
+          `${new Date().toISOString()} [stream-guard] run=${request.run_id} max_run=${breakerMaxRun} action=abort_retry_degraded\n`,
+          "utf8",
+        );
+      } catch {
+        // best-effort
+      }
+      // run 事件（code=stream_guard_retried）+ 用户可见过程消息。
+      await publishActivity({
+        kind: "stream_guard",
+        state: "retried",
+        message: STREAM_GUARD_ACTIVITY_MESSAGE,
+      });
+      const originalThinkingLevel = harness.getThinkingLevel();
+      const degradedThinkingLevel = degradeThinkingLevel(originalThinkingLevel);
+      if (degradedThinkingLevel !== null && degradedThinkingLevel !== originalThinkingLevel) {
+        try {
+          await harness.setThinkingLevel(degradedThinkingLevel);
+        } catch (thinkingError) {
+          console.error("[coach] stream guard thinking degrade failed", thinkingError);
+        }
+      }
+      replyMessage = await runScopedSkillReads(recordSkillRead, () =>
+        runScopedAnalysisReads(recordAnalysisRead, () => harness.prompt(STREAM_GUARD_NUDGE)),
+      );
+      // 恢复原档必须执行：降档只服务这一次重试，不留静默永久降档。
+      if (degradedThinkingLevel !== null && degradedThinkingLevel !== originalThinkingLevel) {
+        try {
+          await harness.setThinkingLevel(originalThinkingLevel);
+        } catch (thinkingError) {
+          console.error("[coach] stream guard thinking restore failed", thinkingError);
+        }
+      }
+      turnUsage = extractUsage(replyMessage);
+      isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
+      isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
+      // 重试轮复用同一条中断防线（照抄 B1）：断流带半截话仍按可重试失败返回。
+      if (isError && !isAborted) {
+        const interruptedText = extractAssistantText(replyMessage);
+        if (interruptedText !== null) {
+          return failureResponse(
+            makeError({
+              category: "coach_runtime",
+              code: "provider_stream_interrupted",
+              message: "回复流被中断，已生成的部分已保留，可直接重试。",
+              retryable: true,
+            }),
+            [],
+            request.schema_version,
+            collectedToolEvents,
+            safePartialReply(interruptedText, secrets),
+            request.run_id,
+            analysisRefs,
+            deepReadAnalysisRefs,
+            turnUsage,
+          );
+        }
+      }
+      rawReply = extractAssistantText(replyMessage);
+    }
+
+    // 二次熔断（重试输出再次命中，或重试成功后排水轮命中）：不再循环，按
+    // 可重试失败交付；partial 带回已见的 █ 文本过 safePartialReply 清洗。
+    if (breakerTripped) {
+      const corruptedText = extractAssistantText(replyMessage) ?? lastPartialText;
+      return failureResponse(
+        makeError({
+          category: "coach_runtime",
+          code: "corrupted_stream",
+          message: CORRUPTED_STREAM_USER_MESSAGE,
+          retryable: true,
+        }),
+        [],
+        request.schema_version,
+        collectedToolEvents,
+        corruptedText !== null ? safePartialReply(corruptedText, secrets) : null,
+        request.run_id,
+        analysisRefs,
+        deepReadAnalysisRefs,
+        turnUsage,
+      );
+    }
 
     // B1 受控重试（2026-10-01 12 机诊断定罪）：模型偶发正常结束但零正文，
     // 此前直接硬失败。这里照抄 next_turn 排水模式——同一个 harness 连续

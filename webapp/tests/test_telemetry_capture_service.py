@@ -8,6 +8,7 @@ JSONL 三元组，用仓库 telemetry_capture/ 的真实 cleaner.py + merge_chan
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import time
@@ -138,6 +139,30 @@ def test_run_telemetry_child_runs_script_as_main(
     monkeypatch.setenv(service_mod.SCRIPTS_DIR_ENV, str(custom))
     run_telemetry_child("echo_child.py", ["--flag", "x"])
     assert "CHILD" in capsys.readouterr().out
+
+
+def test_run_telemetry_child_survives_cp1252_stdio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[fix cp1252 2026-10-13] 冻结 bootloader 按系统 locale 初始化 stdio 且无视
+    PYTHONIOENCODING（1013 巴西报障分诊）：cp1252 stdout 下打印中文的采集脚本
+    必须被 run_telemetry_child 开头的 stdio 修正救回来，不抛 UnicodeEncodeError，
+    且落进 BytesIO 的字节可按 utf-8 解码出中文原文。
+    """
+    custom = tmp_path / "custom-capture"
+    custom.mkdir()
+    (custom / "tp1.py").write_text("# marker\n", encoding="utf-8")
+    (custom / "cn_child.py").write_text(
+        "print('CHILD 遥测附着成功')\n", encoding="utf-8"
+    )
+    monkeypatch.setenv(service_mod.SCRIPTS_DIR_ENV, str(custom))
+    out_buf = io.BytesIO()
+    err_buf = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(out_buf, encoding="cp1252"))
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(err_buf, encoding="cp1252"))
+    run_telemetry_child("cn_child.py", [])
+    sys.stdout.flush()
+    assert "CHILD 遥测附着成功" in out_buf.getvalue().decode("utf-8")
 
 
 def test_ensure_managed_watch_root_only_when_unset(

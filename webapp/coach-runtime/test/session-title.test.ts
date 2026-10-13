@@ -214,3 +214,14 @@ test("maybeAutoTitleSession：中文消息仍走中文 prompt（行为逐字不�
   assert.match(captured[0]!.userContent, /^学员: /);
   assert.match(captured[0]!.userContent, /\n\n标题:$/);
 });
+
+test("sanitizeSessionTitle 剥掉流损坏指纹（█/U+FFFD），剥空则放弃", () => {
+  // 纯块字符/替换符输出：剥空 → null（不产生损坏标题）。
+  assert.equal(sanitizeSessionTitle("\u2588".repeat(24)), null);
+  assert.equal(sanitizeSessionTitle("\uFFFD".repeat(24)), null);
+  assert.equal(sanitizeSessionTitle("\u2588\uFFFD「压枪节奏诊断」\u2588"), "压枪节奏诊断");
+  // 夹在正文中逐个剥除，其余清洗链（前缀/尾标点）照常生效。
+  assert.equal(sanitizeSessionTitle("关于\uFFFD\uFFFD压枪节奏的问题。"), "压枪节奏的问题");
+  // 引擎输出的单个 █ 不再原样上侧栏。
+  assert.equal(sanitizeSessionTitle("据枪\u2588稳定性诊断"), "据枪稳定性诊断");
+});

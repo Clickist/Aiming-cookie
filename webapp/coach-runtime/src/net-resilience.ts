@@ -341,7 +341,8 @@ export function createResilientFetch(deps: ResilientFetchDeps = {}): FetchLike {
 
 let singleton: FetchLike | null = null;
 
-function coachFetch(): FetchLike {
+// adaptive-thinking-fallback 以此为底座组合（协议自愈在网络救援之外）。
+export function coachFetch(): FetchLike {
   if (!singleton) singleton = createResilientFetch();
   return singleton;
 }
@@ -349,15 +350,16 @@ function coachFetch(): FetchLike {
 /**
  * 包装 PiModels：streamSimple 注入韧性 fetch（pi StreamOptions.fetch 公开
  * 合同）。上层已显式传入 options.fetch 时不覆盖（尊重测试/特殊注入）。
- * 其余 Models 方法原样透传（与 turn.ts 现有 streamFn 包装同构）。
+ * fetchOverride 供协议自愈层（adaptive-thinking-fallback）在韧性 fetch
+ * 之外再包一层。其余 Models 方法原样透传（与 turn.ts 现有 streamFn 包装同构）。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function wrapModelsWithResilientFetch(models: any): any {
+export function wrapModelsWithResilientFetch(models: any, fetchOverride?: FetchLike): any {
   return Object.assign(Object.create(models), {
     streamSimple: (model: unknown, context: unknown, options?: { fetch?: FetchLike } & Record<string, unknown>) =>
       (models as { streamSimple: (m: unknown, c: unknown, o?: unknown) => unknown }).streamSimple(model, context, {
         ...(options ?? {}),
-        fetch: options?.fetch ?? coachFetch(),
+        fetch: options?.fetch ?? fetchOverride ?? coachFetch(),
       }),
   });
 }

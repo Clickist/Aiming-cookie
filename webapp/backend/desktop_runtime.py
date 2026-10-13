@@ -771,7 +771,22 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
                     raise result
 
 
+def force_utf8_stdio() -> None:
+    """把 stdout/stderr 强制为 utf-8（冻结 bootloader 按系统 locale 初始化 stdio
+    且无视 PYTHONIOENCODING，见 1013 巴西报障分诊）。失败只跳过，绝不阻断启动。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            try:
+                stream.reconfigure(
+                    encoding="utf-8", errors="replace", line_buffering=True,
+                )
+            except (AttributeError, OSError, ValueError):
+                pass
+
+
 def main() -> None:
+    force_utf8_stdio()
     configure_file_logging()
     # 远程排障锚点（0912 日志覆盖审计 P1）：backend.log 首行固定打启动环境，
     # 否则远程看到日志无法确认对应哪次安装/哪份数据根。

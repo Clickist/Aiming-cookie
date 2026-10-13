@@ -157,6 +157,7 @@ export const task6En = {
   "coach.message.stopped": "Reply stopped",
   "coach.message.interrupted": "Reply was interrupted by an app restart — you can ask again",
   "coach.message.interruptedRetry": "Ask again",
+  "coach.message.corrupted": "This reply was corrupted — you can regenerate it",
   "coach.error.cardTail": "{message} The part already generated is kept; local analysis, history, and video are unaffected.",
   "coach.error.relogin": "Sign in again",
   "coach.error.topUp": "Top up",
@@ -707,6 +708,12 @@ export const task6En = {
   "api.error.quotaExhausted": "Your quota for this period is used up. Buy a booster pack (never expires) or renew your subscription in the account center.",
   "api.error.providerAuthInvalid": "Model service authentication failed: the API key is invalid or expired. Check Settings → Model service.",
   "api.error.localStorageBusy": "The session log file is locked by another program (often cloud sync or antivirus scanning). Auto-retry did not recover it — press Retry, or whitelist the data folder in that program.",
+  "api.error.modelProtocolUnsupported": "The selected model doesn't support the current request format (its API has changed). Try another model, or update the app and retry.",
+  // Stream corruption tiers: corruptedStream = error card when the sidecar
+  // in-stream breaker/auto-recovery still failed; invalidEncoding = the notify
+  // shown by the sendText outbound FFFD interception (IME glitch).
+  "api.error.corruptedStream": "The model returned corrupted output. An automatic retry was attempted — please ask again.",
+  "api.error.invalidEncoding": "Your input contains corrupted characters (likely an IME glitch) — please retype it.",
 
   // ── SettingsWorkspace.tsx —— performance screen (read-only recording encoder path) ──
   "settings.nav.performance": "Performance",

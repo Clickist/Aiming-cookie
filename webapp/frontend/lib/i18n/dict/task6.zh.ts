@@ -161,6 +161,7 @@ export const task6Zh = {
   "coach.message.stopped": "回答已停止",
   "coach.message.interrupted": "回复被应用重启打断，可重新回答",
   "coach.message.interruptedRetry": "重新回答",
+  "coach.message.corrupted": "本条回复内容异常，可重新回答",
   "coach.error.cardTail": "{message} 已生成的部分已保留；本地分析、历史和视频不受影响。",
   "coach.error.relogin": "重新登录",
   "coach.error.topUp": "去充值",
@@ -708,6 +709,11 @@ export const task6Zh = {
   "api.error.quotaExhausted": "本期额度已用完。可在账号中心购买加油包（永不过期）或续期订阅。",
   "api.error.providerAuthInvalid": "模型服务认证失败：API key 无效或已过期，请在 设置 → 模型服务 中检查。",
   "api.error.localStorageBusy": "会话记录文件正被其他程序占用（常见于同步盘或杀毒软件扫描），已自动重试仍未成功。可点「重试」再试一次，或将数据目录加入占用程序的白名单。",
+  "api.error.modelProtocolUnsupported": "所选模型不支持当前请求格式（模型协议已更新）。请更换模型，或更新应用后重试。",
+  // 流损坏分层：corruptedStream=sidecar 管流内熔断/自动恢复仍失败的错误卡；
+  // invalidEncoding=sendText 出站 FFFD 拦截（输入法故障）的 notify 提示。
+  "api.error.corruptedStream": "回复输出异常，已尝试自动恢复；请重新提问",
+  "api.error.invalidEncoding": "输入内容包含异常字符（疑似输入法故障），请重新输入",
 
   // ── SettingsWorkspace.tsx —— 性能屏（录像编码路径只读展示）─────────────
   "settings.nav.performance": "性能",

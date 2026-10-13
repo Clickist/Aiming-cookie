@@ -113,6 +113,23 @@ def resolve_scripts_dir() -> Path | None:
     return None
 
 
+def _force_utf8_stdio() -> None:
+    """把 stdout/stderr 强制为 utf-8（冻结 bootloader 按系统 locale 初始化 stdio
+    且无视 PYTHONIOENCODING，见 1013 巴西报障分诊）。与
+    ``desktop_runtime.force_utf8_stdio`` 同逻辑的私有副本：desktop_runtime 模块级
+    导入了本模块，反向顶层导入成环、函数内导入又会把 uvicorn/FastAPI 拖进轻量
+    采集子进程，故就地内联；两处逻辑须同步维护。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            try:
+                stream.reconfigure(
+                    encoding="utf-8", errors="replace", line_buffering=True,
+                )
+            except (AttributeError, OSError, ValueError):
+                pass
+
+
 def run_telemetry_child(script_name: str, argv: list[str]) -> None:
     """desktop-runtime-entry 的 ``--telemetry-child`` 模式。
 
@@ -120,6 +137,7 @@ def run_telemetry_child(script_name: str, argv: list[str]) -> None:
     与 --visual-worker 同款先例：主程序以脚本为主入口重新执行。脚本依赖按
     文件名同目录解析（tp1/names），先把目录挂上 sys.path。
     """
+    _force_utf8_stdio()  # telemetry_capture/ 9 个文件的中文 print 依赖 utf-8 stdio
     import runpy
 
     scripts_dir = resolve_scripts_dir()
