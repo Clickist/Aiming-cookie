@@ -1,6 +1,32 @@
 {
   "versions": [
     {
+      "version": "1.4.15",
+      "date": "2026-10-13",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "自带 Key 直连 Anthropic 新模型（如 claude-haiku-5.5）不再报协议错误：遇到不兼容会自动适配重试",
+          "en": "BYOK Anthropic users: newer models like claude-haiku-5.5 no longer fail with a protocol error — the app adapts and retries automatically"
+        },
+        {
+          "type": "fix",
+          "zh": "修复非中文 Windows 上采集子进程闪退的问题（部分海外用户外置遥测失效的根因）",
+          "en": "Fixed telemetry collector crashes on non-Chinese Windows systems (root cause of dead external telemetry for some international users)"
+        },
+        {
+          "type": "fix",
+          "zh": "Coach 新增输出异常防线：检测到模型输出异常时自动降档重试并明确提示；异常回复提供「重新回答」入口",
+          "en": "New guardrail against corrupted model output: automatic retry with a clear notice, plus a regenerate entry on affected replies"
+        },
+        {
+          "type": "fix",
+          "zh": "输入内容含异常字符（疑似输入法故障）时会拦截提示重新输入，避免坏数据进入对话",
+          "en": "Input containing corrupted characters (likely an IME glitch) is caught before sending and returned for retyping"
+        }
+      ]
+    },
+    {
       "version": "1.4.14",
       "date": "2026-10-12",
       "items": [

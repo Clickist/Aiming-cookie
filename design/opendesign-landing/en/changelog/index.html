@@ -243,7 +243,16 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.14</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-12</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.15</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-13</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>BYOK Anthropic users: newer models like claude-haiku-5.5 no longer fail with a protocol error — the app adapts and retries automatically</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed telemetry collector crashes on non-Chinese Windows systems (root cause of dead external telemetry for some international users)</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>New guardrail against corrupted model output: automatic retry with a clear notice, plus a regenerate entry on affected replies</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Input containing corrupted characters (likely an IME glitch) is caught before sending and returned for retyping</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.14</h2><span class="cl-date">2026-10-12</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>No more black flash on startup: the window now appears only after the first frame is painted</span></li>
           </ul>

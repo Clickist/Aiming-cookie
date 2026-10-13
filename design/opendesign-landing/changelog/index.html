@@ -243,7 +243,16 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.14</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-12</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.15</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-13</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>自带 Key 直连 Anthropic 新模型（如 claude-haiku-5.5）不再报协议错误：遇到不兼容会自动适配重试</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复非中文 Windows 上采集子进程闪退的问题（部分海外用户外置遥测失效的根因）</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>Coach 新增输出异常防线：检测到模型输出异常时自动降档重试并明确提示；异常回复提供「重新回答」入口</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>输入内容含异常字符（疑似输入法故障）时会拦截提示重新输入，避免坏数据进入对话</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.14</h2><span class="cl-date">2026-10-12</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>启动不再先黑一下：窗口等界面第一帧画好才显示，启动更顺眼</span></li>
           </ul>
