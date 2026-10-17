@@ -1026,6 +1026,10 @@ class TelemetryCaptureService:
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                # 子进程出口已统一为 UTF-8（1.4.15）；父进程读管道不指定 encoding 时
+                # GBK 机器按 locale 解码，收尾中文输出会 UnicodeDecodeError 打死 reader。
+                encoding="utf-8",
+                errors="replace",
                 timeout=_FINALIZE_TIMEOUT_SECONDS,
                 creationflags=flags,
             )
