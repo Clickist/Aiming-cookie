@@ -104,7 +104,11 @@ Worker/stale-job 恢复、Coach 对话继续/停止/失败轮次隔离均按已�
 
 - 本地档案的显式导出 / 导入、迁移与恢复；
 - 经验证的外设目录、推荐解释、商业披露和联盟链接治理；
-- 未来视觉模型、跨平台/通用采集、手部摄像头、多游戏等远期能力。
+- 未来视觉模型、跨平台/通用采集、手部摄像头等远期能力。
+
+### P3 — Aim Lab 接入（2026-10-12 拍板，动作学全量档）
+
+多游戏从远期非目标改为 Aim Lab 先行纳入，定位动作学全量档（目标轨迹 + 玩家相机轨迹 + 事件流）；真值来源为 Aim Lab 本地只读文件（成绩 SQLite + 每局 replay avro），逆向已通（报告 `.zcode/aimlab-re-1012/aimlab-re-report-20261012.md`），数据合同按既有 R08 触发式迁移（versioned `run_ref` + `source_kind`、独立 source adapter，不塞进 KovaaK parser）。不阻塞 v1 首发；Aim Lab 之外的其它游戏仍在远期。施工顺序（Spike 1 真机新局验证 → source adapter → 新 family Gate）待排期时细化。
 
 ## 3. 下一可执行切片
 

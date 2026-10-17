@@ -1,6 +1,16 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-10. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-12. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-12 — Aim Lab 逆向完成（静态+动态）+ PRD 拍板纳入（动作学全量档）
+
+- **静态逆向**：Il2CppDumper v6.7.46 全量 dump Aim Lab（IL2CPP v31，`dump.cs` 199 万行）+ 自研 fastavro 解码器。**推翻 1010 可行性报告的三条核心结论**——Aim Lab 每局成绩与完整动作学时间线均落本地只读文件：成绩 SQLite `AppData\LocalLow\Statespace\aimlab_tb\Users\<id>\LocalDB\Klutch.bytes`（33 表，`TaskData` 1495 行含 score/accuracy/timePerKill/playId/performance JSON）；每局 `Replay/<playId>.avro`（schemaless Avro）含准星轨迹、目标位姿时间序列、全量事件流（16 种 `EventType` 枚举已确证）。验收：9/9 旧 replay 字节精确解码 + 事件计数与 DB performance 逐项吻合。
+- **动态逆向**（点点授权，实机 13 局）：启动 Aimlabs **2.0.6.1**（访客模式）实打 13 局 "Aimlabs Flicking 30s"。**关键发现：2.0 的 replay 顶层 schema 变更**——`GameplayData` → **`MultiplayerGameplayData`**（新增 `players[]`+`rsPing`）；用当前构建 schema **13/13 局字节精确解码 + DB shots/hits 逐局对账 PASS**。**新旧格式不兼容**（旧文件只 `GameplayData` 可解、新文件只 `MultiplayerGameplayData` 可解）→ AC 需双 schema 适配层 + fail-closed。另实测：游戏运行中 DB **无独占锁**（可只读打开/复制）、写入时机 avro +1.5s / DB +3.3s、13 局全保留（未触发 LRU 淘汰）、`level.mrle` 破解为 Base64 编码二进制网格（version=3，129 网格，占用值浮点；**生成端仍未逆向**）。窗口标题实测 = `aimlab_tb`。
+- **关键配方**（复现必读）：schema 重建须做内联去重（首现内联、后续名字引用）；`.avro` 无容器头；`TARGET_HIT.receiverID` 可 join `TargetData.id`（235/235 全中），`TARGET_KILL` 含第二 ID 空间（击杀方）；**DB `targetsTotal` 恒比 avro `TARGET_SPAWN` 多 3**（疑初始靶）；局末最后一发 DB 计入 miss 但事件流可能漏记（边界效应，≤1 发）。详见报告 `.zcode/aimlab-re-1012/aimlab-re-report-20261012.md`。
+- **准星采样模式（实测钉死 + 一次结论修正）**：旧 v1.27 = 定频连续采样（含静止帧，60s/3259 点 ≈56Hz）；新 v2.0 = **自适应采样**（**运动期间 60Hz 全速记录**，实测运动段中位间隔 16.9ms=59.2Hz；完全静止期不写）。**运动数据不丢**——真人的手持续微动，采样全程 60Hz，SPARC/减速段等运动学指标可正常计算；2.0 的收益是存储效率。**⚠️ 测试方法教训**：自动化脚本（程序化鼠标）在点击间物理完全静止，产生"零采样"假象（脚本局 16s 仅 37 点），曾致本报告误判"静态任务数据稀疏"，经点点纠正 + 运动段采样率复核后修正——评估数据质量不能用脚本局做样本。
+- **⚠️ 测试事故记录**：批量脚本 `batch_play.py` 坐标漂移，把 5 局垃圾对局（-6000~-8400 空局）写进**真实登录账号**（TaskData 1495→1500 行，已提交云端）；点点拍板**保留不清理**。教训：批量自动化不得在登录态账号运行，动态测试只走访客模式（`UserDefault/`）。
+- **产品拍板**（点点 2026-10-12）：① PRD 可修订；② Aim Lab 定位**动作学全量档**（目标轨迹 + 玩家相机轨迹 + 事件流，非 outcome-only）。已回写：`docs/PRD.md` §5.3/§7/§11/§14、`docs/ROADMAP.md` 新增 P3 段。数据合同按既有 R08 触发式迁移（versioned `run_ref` + `source_kind`、独立 source adapter、不塞进 KovaaK parser）。
+- **挂账**：`cacheMaxSize` 阈值数值（13 局未触发淘汰，需运行时调试器读）；对账语义（本地 DB+avro 双源是否满足"不可伪造外部真值对账"铁律）建议在接入验收标准里闭环；`level.mrle` 写端（生成）未逆向，v0 自创场景维持不做。
 
 ## 2026-10-10 — 内置 Provider 模型列表动态化（magpie 方案，代码完工未提交/未发版）
 

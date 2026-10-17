@@ -92,7 +92,7 @@
 2. **闭环可靠性与共同设计语言**：状态/失败/恢复、通知、日志、History 支撑，以及统一 token 和基础组件；
 3. **本地视觉预处理与质量 Gate**：Raw Input 负责输入运动学；目标/准星相对误差等目标侧数值证据首选由配对外部遥测真值投影生成（不经 MP4），当前 MP4 由本地确定性预处理为视觉/准星/误差和事件数值证据，作为遥测不可用时的回退与行为细节来源，并受质量 Gate 约束。未来若让视觉模型读取片段，必须另立版本化、显式授权且有预算上限的合同；
 4. **运营与生态能力**：开源发布、Provider / 认证接入、显式导出 / 导入、经验证的外设目录、商业关系披露和联盟链接治理；
-5. **远期扩展**：手部摄像头、多游戏和超出 KovaaK 输入合同的本地采集。
+5. **多游戏扩展**（2026-10-12 拍板，见 §14）：KovaaK's 之后接入 **Aim Lab**，定位**动作学全量档**（目标轨迹 + 玩家相机轨迹 + 事件流），真值来源为 Aim Lab 本地只读文件（成绩 SQLite + 每局 replay），不依赖内存读取与非官方云 API；数据合同按既有 R08 触发式迁移（versioned `run_ref` + `source_kind`、独立 source adapter，不塞进 KovaaK parser）。Aim Lab 接入不阻塞 v1 首发；手部摄像头与超出既有输入合同的本地采集仍在远期。
 
 桌面应用不是排在远期的独立 feature，而是当前产品交付形态；installer、签名、公证、更新等发布工程的顺序由 Roadmap 决定。
 
@@ -300,8 +300,8 @@ Onboarding 完成后首次进入 Coach 时，自动创建并打开「开场分�
 
 ### 远期（不并入当前，留扩展位）
 - 手部摄像头（握姿 / 发力 / 微颤 / 疲劳）
-- 跨平台录屏和通用鼠标采集；当前只承诺 Windows Desktop 的 KovaaK process-gated Raw Input 与 KovaaK 窗口录制
-- 多游戏支持
+- 跨平台录屏和通用鼠标采集；当前只承诺 Windows Desktop 的进程 gate（KovaaK's + Aim Lab）Raw Input 与训练窗口录制
+- Aim Lab 之外的其它游戏接入
 
 ## 8. 关键 UIUX 决策
 
@@ -390,9 +390,9 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - Dashboard 独立页（合并进 history 趋势卡）
 - Academy（有真实训练内容前不进导航）
 - 强制账号与账号型云身份（账号仅为官方托管模型服务的可选项；产品使用不以注册登录为前提，History / Coach 资料不做账号云同步）
-- 多游戏（先 KovaaK's）
+- 多游戏支持：KovaaK's 之外的游戏接入属远期；**唯一例外是 Aim Lab**（2026-10-12 拍板纳入，动作学全量档，见 §5.3 与 §14）
 - 手部摄像头 v1（远期）
-- Raw Input 目前不扩展到键盘、桌面绝对坐标、后台任意应用或非 KovaaK 进程
+- Raw Input 目前不扩展到键盘、桌面绝对坐标或后台任意应用；进程 gate 从 KovaaK's 扩展到 Aim Lab（2026-10-12 拍板，见 §5.3），其它非训练进程仍不采集
 - Raw Input 本身不直接替代目标/准星视觉证据；目标侧结论只能出自配对外部遥测真值或通过质量 Gate 的本地视觉预处理，没有可靠来源时不输出目标相对误差、视觉反应时刻等结论
 - 桌面发布工程细节（Python bundling、installer、签名、公证、自动更新，另 plan）
 - 能力付费墙，以及把产品能力绑定为订阅条件的做法（官方托管模型套餐作为可选的模型供给服务除外）
@@ -446,6 +446,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **自动证据层级 Coach 分析**（2026-08-10，取代 2026-08-09 的固定多源决定）：新 Run 由服务端按 `multimodal > input_native > video_fallback` 自动选择最高可用路径；三档都必须按来源分层并显示 limitations，不把单一来源过度解释为完整视觉测量。
 - **场景分派泛化：任何图走大类管线**（2026-08-15）：删除「仅 4 个精确审核 hash 可完整分析，其余一律 outcome-only」的白名单门槛。任何场景按多级识别进入对应大类分析管线（exact hash 加速通道 → `.sce` 结构 → 挑战形态候选（challenge_shape）→ 名称关键词候选 → static clicking 兜底并标记 family 未解析）；识别来源（exact_reviewed / structure_verified / challenge_shape / name_heuristic / family_default）随结果分层展示。精确视觉标定仍是大类内视觉结论的唯一许可：名称与统计形态只是候选、不构成身份，缺精确标定走 baseline 运动学分析并显式保留 limitations；确无可分析数据（如 movement aiming 无移动遥测）才保持 outcome-only。分析完成且 Provider 可用时自动为该分析开讲一次（每个 Analysis 一次，用户可无视）。
 - **类型知识的最终裁判是用户+Coach**（2026-08-15）：多因素分类保持灵活，由 Coach 结合图名、指标形态与对话上下文判断；Coach 发现类型标注可疑（形态与标注矛盾、用户纠正、缩写歧义如 1w4ts = one wall four targets small 而非 switching）时向用户确认一次，确认结果按场景哈希经 `scenario_memory.set` 写入持久记忆（`config/scenario-overrides.json`），终身有效并进入识别链高位（仅次于 exact 审核识别，覆盖 `.sce`/形态/名称各层）。该层只授予用户确认的大类 baseline，不构成场景身份或视觉结论许可。用户纠正改变了某一局的类型时，Coach 提议并经同意用正确类型重新分析该局：同一 Run 可保留多条分析，已 done 的分析仅在分类记忆改变其大类分派时才让位给新分析（同 family 确认或 exact 审核优先时仍复用旧分析，不产生重复）。
+- **Aim Lab 纳入且定位动作学全量档**（2026-10-12 拍板）：多游戏从"远期非目标"改为"Aim Lab 先行纳入"，定位为**动作学全量档**——目标轨迹 + 玩家相机（准星）轨迹 + 事件流全量接入，而非 outcome-only/视觉降级。依据：2026-10-12 本机逆向（报告 `.zcode/aimlab-re-1012/aimlab-re-report-20261012.md`）确认 Aim Lab 每局成绩与完整动作学时间线均落本地只读文件（成绩 SQLite `Klutch.bytes`；每局 `Replay/<playId>.avro` 含准星轨迹 ~60Hz、目标位姿时间序列、全量事件流；9/9 文件字节精确解码并与 DB 逐项对账）。真值链为**只读文件解析**，不依赖 ReadProcessMemory、不依赖非官方云 API——比 KovaaK 现有 RPM 线更省事且无版本漂移。数据合同按既有 R08 触发式迁移执行：新 contract version 引入 source-agnostic `run_ref` + `source_kind`（旧 v2/KovaaK reader 永久可读）；Aim Lab 独立 source adapter（不得塞进 KovaaK parser）；新 family 全套 Gate 随接入交付。轨迹层为易失源（游戏内 LRU 清理），成绩层长期保留；捕获策略与降级可观测性随实施 spec 冻结。Aim Lab 接入不阻塞 v1 首发。
 - **Raw Input canonical 运动上限固定为 1000 Hz**（2026-08-04）：不改变鼠标硬件 polling rate；native layer 继续接收 Windows Raw Input，但进入 canonical trace 前按 1 ms 聚合运动增量。同毫秒 `dx/dy` 分别求和，按钮边沿按顺序单独保留，因此不会因限频丢失每毫秒 X/Y 净位移或点击边沿；亚毫秒路径形状明确不属于产品分析事实。新语义必须版本化，旧 trace 保持只读兼容，不允许在同一未标版本中混用两种采样语义。
 - **自动采集统一主路径**（2026-07-18，2026-07-19 暂停裁决）：应用不依赖实时 Challenge hook，而是在 KovaaK 进程 gate 内统一采集 Raw Input，并以硬件编码维护仅 KovaaK 窗口最近 300 秒的有界回放缓冲；Stats / Performance 到达后按 Challenge 时间窗事后切成独立 Run。v1 仅为 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 MP4；`Pause Count > 0` 的暂停局 fail closed，证据只能保留为 partial/unavailable，不能声明 canonical Raw/Performance 对齐。超过 300 秒、长时间中断或来源覆盖不完整时明确降级。Analysis 最低条件为 `Stats AND (MP4 OR (Raw + Performance))`；单局确认、多局选一条，其余保留待分析；手动 `MP4 + Stats` 是独立 fallback。
 - **Run-owned evidence 由用户手动管理**（2026-07-17）：自动 Raw 和自动切分 MP4 随 Run 保存，不随 Analysis 删除。Settings 显示分类占用，用户可分别移除大体积 evidence；不静默自动清理、不自动删除最旧 Run，也不连带删除 Run metadata、Analysis 或用户源文件。
