@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import ctypes
 import json
 import logging
@@ -52,6 +54,10 @@ _KNOWN_ATTACH_CAUSES = frozenset({"open_process_denied", "open_process_failed"})
 _ATTACH_CAUSE_RE = re.compile(r"cause=([A-Za-z0-9_]+)")
 _FINALIZE_TIMEOUT_SECONDS = 300.0
 _TERMINATE_TIMEOUT_SECONDS = 5.0
+# [fix 2026-10-17 评审#1] 切窗回执投递回 runtime 事件循环的有界等待。回执必须
+# 在 completion barrier 之前生效，但切窗线程不得无限等 loop（shutdown/卡死时
+# 有界返回）。
+_CUT_RECEIPT_TIMEOUT_SECONDS = 5.0
 # 按局增量切窗（2026-09-29）：stats 局窗口 → 冻结活文件窗口切片 → cleaner/merge
 # 增量产物落 cleaned/incr/<cut-id>/，watcher 增量索引入库——游戏不退场也能出
 # 深度遥测（对齐 mp4/raw-input 的按局收尾语义）。全量收尾仍在退场时兜底。
@@ -264,6 +270,18 @@ class TelemetryCaptureService:
         self._restarts_total = 0
         self._restart_exhausted = False
         self._last_restart: dict[str, object] | None = None
+        # [fix 2026-10-17 评审#1] 切窗回执的落盘事件循环（desktop_runtime 启动
+        # 时经 set_receipt_loop 登记），使 run meta 读改写收敛到 loop 线程。
+        self._receipt_loop: asyncio.AbstractEventLoop | None = None
+
+    def set_receipt_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """登记切窗回执写 run meta 的目标事件循环（desktop_runtime 启动时调用）。
+
+        kovaak_run_store 的其余 run meta 写方全部在 runtime 事件循环线程上，
+        此前唯一的 off-loop 写方是切窗线程的整份读改写，旧快照会覆盖 loop 上
+        已落的新状态；登记后回执投递回 loop 执行，恢复单写方不变量。
+        """
+        self._receipt_loop = loop
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -554,17 +572,93 @@ class TelemetryCaptureService:
     def _report_cut_state(
         self, run_id: int, state: str, error: str | None = None,
     ) -> None:
-        # [fix 2026-10-07 W4] 切窗状态回写 run meta（拒绝/受理/完成），让
-        # 单局可回答「动作层为何缺失」，而不是只留服务级聚合计数。回写失败
+        # [fix 2026-10-07 W4] 切窗状态回写 run meta（拒绝/受理/完成）。回写失败
         # 只记日志，不碍切窗主链路。
+        # [fix 2026-10-17 评审#1] 已登记 receipt loop 时经单次投递回 loop 落盘
+        # （与其余 run meta 写方串行）；未附 loop（独立测试/无 runtime）保持
+        # 旧直写。
         try:
             from . import kovaak_run_store
 
+            if self._deliver_cut_receipt_on_loop(run_id, state, error, kovaak_run_store):
+                return
             kovaak_run_store.set_run_telemetry_cut_state_sync(
                 run_id, config.DESKTOP_LOCAL_PROFILE, state, error,
             )
         except Exception:
             log.exception("telemetry cut state writeback failed run=%s", run_id)
+
+    def _deliver_cut_receipt_on_loop(
+        self,
+        run_id: int,
+        state: str,
+        error: str | None,
+        kovaak_run_store,
+    ) -> bool:
+        """把回执投递到 receipt loop 并有界等待；返回 True 表示已按 loop 路径
+        处置，调用方不得再跨线程直写。
+
+        单投递语义：提交失败（loop 已关）与等待超时（回执仍挂在 loop 队列稍
+        后执行）都绝不直写兜底——直写会重新引入丢更新与后到双写。失败按因分
+        类记 error 日志：delivery_loop_unavailable / delivery_pending /
+        write_failed（callback 已执行但写盘异常），不静默装正常。
+        """
+        loop = self._receipt_loop
+        if loop is None:
+            return False
+        try:
+            current: asyncio.AbstractEventLoop | None = (
+                asyncio.get_running_loop()
+            )
+        except RuntimeError:
+            current = None
+        if current is loop:
+            # 已在事件循环上（request_run_cut 的拒绝/受理路径）：同步落盘。
+            kovaak_run_store.set_run_telemetry_cut_state_sync(
+                run_id, config.DESKTOP_LOCAL_PROFILE, state, error,
+            )
+            return True
+        outcome: dict[str, str] = {}
+        done: concurrent.futures.Future[None] = concurrent.futures.Future()
+
+        def apply_on_loop() -> None:
+            try:
+                kovaak_run_store.set_run_telemetry_cut_state_sync(
+                    run_id, config.DESKTOP_LOCAL_PROFILE, state, error,
+                )
+                outcome["result"] = "written"
+            except Exception as exc:
+                outcome["result"] = "write_failed"
+                outcome["cause"] = str(exc)
+            finally:
+                if not done.done():
+                    done.set_result(None)
+
+        try:
+            loop.call_soon_threadsafe(apply_on_loop)
+        except RuntimeError as exc:
+            log.error(
+                "telemetry cut receipt NOT written run=%s state=%s "
+                "cause=delivery_loop_unavailable (%s)", run_id, state, exc,
+            )
+            return True
+        try:
+            done.result(timeout=_CUT_RECEIPT_TIMEOUT_SECONDS)
+        except TimeoutError:
+            log.error(
+                "telemetry cut receipt NOT confirmed run=%s state=%s "
+                "cause=delivery_pending; delivery stays queued on the runtime "
+                "loop (single posting, no cross-thread fallback write)",
+                run_id, state,
+            )
+            return True
+        if outcome.get("result") == "write_failed":
+            log.error(
+                "telemetry cut state writeback failed on loop run=%s "
+                "state=%s cause=write_failed (%s)",
+                run_id, state, outcome.get("cause"),
+            )
+        return True
 
     def request_run_cut(
         self, run_id: int, window_start_ms: int, window_end_ms: int,
@@ -652,6 +746,11 @@ class TelemetryCaptureService:
             log.exception("telemetry run cut failed run=%s", run_id)
         finally:
             self._run_cuts[run_id] = outcome
+            # [fix 2026-10-17 评审#1] 正常路径回执先于 completion barrier 生效：
+            # 已附 receipt loop 时 _report_cut_state 阻塞到 loop 落盘完成才返
+            # 回，之后的登记清除 + event.set 放行的分析等待必然看到本次回执。
+            # 降级例外：loop 不可投递/超时/write_failed 时不写，只留 cause 级
+            # error 日志（receipt 缺失可查、不静默），barrier 照常有界放行。
             self._report_cut_state(
                 run_id, "ok" if outcome == "ok" else "failed",
                 None if outcome == "ok" else str(outcome),

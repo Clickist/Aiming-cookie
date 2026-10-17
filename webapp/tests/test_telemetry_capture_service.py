@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -695,6 +697,14 @@ def test_run_cut_rejection_reasons_are_counted(
     assert service.diagnostics()["run_cut_rejections"] == {
         "game_absent": 1, "no_session_outputs": 1,
     }
+    # [fix 2026-10-17 全量 teardown error] 受理即登记的切窗线程是 fire-and-forget
+    # 后台线程，finally 里还要落盘 diagnostics；测试不等它就返回时，fixture 收尾
+    # （monkeypatch 还原真实 file_store + isolated_db rmtree）会与其 mkstemp/
+    # replace 竞争（tmp 在 rmtree 列目后被 replace 消失 → unlink 失败）。用生产
+    # 等待门真实等线程收尾：event 在 diagnostics 落盘与登记清除之后才 set，返回
+    # False（=已完成并清除登记）即本线程的写入已全部结束。
+    assert service_mod.wait_run_cut(2, 10.0) is False
+    assert service._run_cuts.get(2) == "no_target_data"  # 线程 outcome 已落账
 
     service.stop()
 
@@ -1020,3 +1030,227 @@ def test_failed_restart_attempts_consume_budget(
     # 失败通道不重试同一具尸体：死亡登记保留，monitor 轮询不会热循环。
     assert service._dead_children == {"target", "camera"}
     assert set(service._children) == {"target", "camera"}
+
+
+# ---------------------------------------------------------------------------
+# 系统评审 2026-10-16 #1 回归：切窗回执与 run meta 读改写并发。
+# 生产合同：run meta 的读改写全部收敛到 runtime 事件循环线程（切窗线程的
+# 回执经单次投递回环执行、有界等待生效后才放行 completion barrier）；投递
+# 失败/超时绝不回退跨线程直写（那会重新引入丢更新与 queued future 后到双
+# 写），只记明确 cause——pending 未写必须可见，不静默装正常。
+# ---------------------------------------------------------------------------
+
+
+def test_cut_receipt_from_worker_thread_never_loses_loop_update(
+    tmp_path: Path, stub_scripts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """切窗线程回执 vs 事件循环 finalization 强制交错：两组字段都必须保留。
+
+    旧实现回执在切窗线程整份读改写 run meta：先读到旧快照、被 loop 的
+    finalization 抢先落盘后再整份写回 → finalization_state 被倒回。测试用
+    write_json 钩子（按线程身份识别切窗线程的写）把「旧快照写回」钉在
+    「loop finalization 落盘」之前，确定性复现丢更新。
+    """
+    import asyncio
+
+    from webapp.backend import config, file_store, kovaak_run_store
+
+    run_id = 990001
+    profile = config.DESKTOP_LOCAL_PROFILE
+    meta_rel = f"runs/{run_id}/meta.json"
+    file_store.write_json(meta_rel, {
+        "id": run_id, "user_id": profile, "finalization_state": "discovered",
+    })
+
+    real_write = file_store.write_json
+    worker_ident: dict[str, int] = {}
+    save_reached = threading.Event()
+    release = threading.Event()
+    worker_done = threading.Event()
+
+    def intercepting_write(relative_path: str, payload: object) -> None:
+        if (relative_path == meta_rel
+                and threading.get_ident() == worker_ident.get("id")):
+            save_reached.set()
+            release.wait(timeout=5.0)
+        real_write(relative_path, payload)
+
+    monkeypatch.setattr(file_store, "write_json", intercepting_write)
+
+    service = TelemetryCaptureService(
+        data_root=tmp_path / "data",
+        scripts_dir=stub_scripts,
+        game_processes_fn=lambda: [],
+    )
+
+    def worker() -> None:
+        worker_ident["id"] = threading.get_ident()
+        try:
+            service._report_cut_state(run_id, "ok", None)
+        finally:
+            worker_done.set()
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        # 修前无 set_receipt_loop（直写路径=被测缺陷）；修后附真环走投递路径。
+        if hasattr(service, "set_receipt_loop"):
+            service.set_receipt_loop(loop)
+        thread = threading.Thread(
+            target=worker, name="telemetry-cut", daemon=True)
+        thread.start()
+        forced_interleave = await asyncio.to_thread(save_reached.wait, 2.0)
+        if forced_interleave:
+            # 切窗线程已持有旧快照并被钉住：loop 此刻完成 finalization 落盘，
+            # 再放行旧快照写回——旧行为在这之后把 finalized 倒回 discovered。
+            await kovaak_run_store.set_run_finalization_state(
+                run_id, profile, "finalized")
+            release.set()
+        await asyncio.to_thread(worker_done.wait, 10.0)
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "切窗回执不得挂死工作线程"
+        if not forced_interleave:
+            # 回执已先经事件循环生效（future 返回即已落盘），finalization 后行。
+            await kovaak_run_store.set_run_finalization_state(
+                run_id, profile, "finalized")
+
+    asyncio.run(scenario())
+
+    meta = file_store.read_json(meta_rel)
+    assert meta["telemetry_cut_state"] == "ok"
+    assert meta["finalization_state"] == "finalized", (
+        "切窗回执的旧快照写回不得覆盖 loop 已落的 finalization 状态")
+
+
+def test_cut_run_window_receipt_applied_before_completion_barrier(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """护栏：completion barrier（登记清除 + event.set）放行时回执必须已生效。"""
+    import asyncio
+
+    from webapp.backend import config, file_store, kovaak_run_store
+
+    run_id = 990002
+    profile = config.DESKTOP_LOCAL_PROFILE
+    file_store.write_json(f"runs/{run_id}/meta.json", {
+        "id": run_id, "user_id": profile, "finalization_state": "discovered",
+    })
+    monkeypatch.setattr(
+        TelemetryCaptureService, "_cut_run_window_inner",
+        lambda self, rid, start, end: "ok",
+    )
+    service = TelemetryCaptureService(
+        data_root=tmp_path / "data",
+        scripts_dir=stub_scripts,
+        game_processes_fn=lambda: [],
+    )
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        if hasattr(service, "set_receipt_loop"):
+            service.set_receipt_loop(loop)
+        # loop 侧先完成 finalization，再起切窗线程：barrier 放行时两者都在。
+        await kovaak_run_store.set_run_finalization_state(
+            run_id, profile, "finalized")
+        event = threading.Event()
+        thread = threading.Thread(
+            target=service._cut_run_window,
+            args=(run_id, 0, 1, event), name="telemetry-cut", daemon=True,
+        )
+        thread.start()
+        finished = await asyncio.to_thread(event.wait, 10.0)
+        thread.join(timeout=5.0)
+        assert finished and not thread.is_alive()
+
+    asyncio.run(scenario())
+
+    meta = file_store.read_json(f"runs/{run_id}/meta.json")
+    assert meta["telemetry_cut_state"] == "ok"
+    assert meta["finalization_state"] == "finalized"
+    assert service_mod.run_cut_pending(run_id) is False
+
+
+def test_cut_receipt_never_falls_back_to_direct_write_when_loop_unavailable(
+    tmp_path: Path, stub_scripts: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """loop 不可投递（已关/未运行/写失败）＝按因分类记录、绝不跨线程直写、
+    也不挂死。
+
+    loop 关闭不证明无并发写方（shutdown 线程仍在途）；超时说明回执仍挂在
+    loop 队列稍后执行——直写会造成 queued future 后到双写。三种情况都必须：
+    工作线程有界返回、run meta 无本次回执键、error 日志带明确 cause
+    （delivery_loop_unavailable / delivery_pending / write_failed）。
+    """
+    import asyncio
+
+    from webapp.backend import config, file_store, kovaak_run_store
+
+    profile = config.DESKTOP_LOCAL_PROFILE
+
+    def run_case(loop, *, expected_cause: str, timeout_patched: bool,
+                 fail_write: bool = False) -> None:
+        file_store.write_json("runs/990003/meta.json", {
+            "id": 990003, "user_id": profile,
+            "finalization_state": "discovered",
+        })
+        service = TelemetryCaptureService(
+            data_root=tmp_path / "data",
+            scripts_dir=stub_scripts,
+            game_processes_fn=lambda: [],
+        )
+        if hasattr(service, "set_receipt_loop"):
+            service.set_receipt_loop(loop)
+        if timeout_patched:
+            monkeypatch.setattr(service_mod, "_CUT_RECEIPT_TIMEOUT_SECONDS", 0.2)
+        if fail_write:
+            def failing_write(*args, **kwargs):
+                raise OSError("simulated meta write failure on loop")
+            monkeypatch.setattr(
+                kovaak_run_store, "set_run_telemetry_cut_state_sync",
+                failing_write)
+        done = threading.Event()
+
+        def worker() -> None:
+            try:
+                service._report_cut_state(990003, "ok", None)
+            finally:
+                done.set()
+
+        with caplog.at_level("ERROR", logger="webapp.backend.telemetry_capture_service"):
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+            thread.join(timeout=5.0)
+        assert not thread.is_alive(), "投递失败必须有界返回，不挂死切窗线程"
+        meta = file_store.read_json("runs/990003/meta.json")
+        assert "telemetry_cut_state" not in meta, (
+            "投递失败不得跨线程直写 run meta（重新引入丢更新/双写）")
+        assert meta["finalization_state"] == "discovered"
+        assert expected_cause in caplog.text, (
+            f"必须以 cause={expected_cause} 明确记损，不静默装正常")
+
+    with caplog.at_level("ERROR"):
+        closed_loop = asyncio.new_event_loop()
+        closed_loop.close()
+        run_case(closed_loop, expected_cause="delivery_loop_unavailable",
+                 timeout_patched=False)
+
+        stalled_loop = asyncio.new_event_loop()  # 从不 run_forever：投递永挂
+        try:
+            run_case(stalled_loop, expected_cause="delivery_pending",
+                     timeout_patched=True)
+        finally:
+            stalled_loop.close()
+
+        live_loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(
+            target=live_loop.run_forever, daemon=True)
+        loop_thread.start()
+        try:
+            run_case(live_loop, expected_cause="write_failed",
+                     timeout_patched=False, fail_write=True)
+        finally:
+            live_loop.call_soon_threadsafe(live_loop.stop)
+            loop_thread.join(timeout=5.0)
+            live_loop.close()

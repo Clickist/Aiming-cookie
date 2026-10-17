@@ -636,6 +636,10 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     # 钩子要从它取（构造顺序在 finalizer 之前）。
     telemetry_capture_service.ensure_managed_watch_root()
     capture_service = telemetry_capture_service.create_telemetry_capture_service()
+    if capture_service is not None:
+        # [fix 2026-10-17 评审#1] 切窗回执落 run meta 收敛到本事件循环：
+        # 切窗线程不再整份读改写，与 loop 上的其余 run meta 写方串行。
+        capture_service.set_receipt_loop(asyncio.get_running_loop())
     app.state.telemetry_capture_service = capture_service
     finalizer = create_kovaak_capture_finalizer(
         telemetry_cut_hook=(

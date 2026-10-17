@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
+import tempfile
 from pathlib import Path
 
 from . import config
@@ -69,17 +71,29 @@ def _sanitize_json_value(value):
 def write_json(relative_path: str, data) -> None:
     """Write a JSON file atomically, creating parent dirs.
 
-    Write to a sibling ``.tmp`` file first, then ``os.replace`` it over the
-    target so a crash mid-write never leaves a truncated JSON file behind.
+    Write to a unique sibling ``.tmp`` file first, then ``os.replace`` it over
+    the target so a crash mid-write never leaves a truncated JSON file behind.
+    The tmp name is unique per call (``tempfile.mkstemp``), so two threads
+    writing the same target never contend on a shared tmp file (系统评审
+    2026-10-16 #1：固定 ``.{name}.tmp`` 在切窗线程与事件循环并发写 run meta
+    时 120 次出现 46 次文件占用/权限异常)；写或 replace 失败时清掉本次 tmp，
+    不留残留。与分析侧 ``analysis_service.mkstemp`` 原子写先例同款。
     """
     path = _data_root() / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.tmp")
-    tmp_path.write_text(
-        json.dumps(_sanitize_json_value(data), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    payload = json.dumps(_sanitize_json_value(data), ensure_ascii=False, indent=2)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp",
     )
-    os.replace(tmp_path, path)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(payload)
+        os.replace(tmp_path, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
+        raise
 
 
 def read_jsonl(relative_path: str) -> list[dict]:
