@@ -1033,6 +1033,147 @@ def test_failed_restart_attempts_consume_budget(
 
 
 # ---------------------------------------------------------------------------
+# 系统评审 2026-10-16 #3 回归：按局冻结必须保留 flag 补采行（真实 freeze +
+# 真实 cleaner 交叉对照，不是白名单镜像断言）。
+# ---------------------------------------------------------------------------
+
+
+def test_freeze_windowed_jsonl_keeps_flag_and_death_rows_for_target_channel(
+    tmp_path: Path,
+) -> None:
+    """坐标缺席帧的 flag 补采行必须与 frame/death 同样放行。
+
+    cleaner 的死亡账本以 flag 行为步证来源（_dc_walk 步进匹配）；冻结丢 flag
+    会让同 tick 的 death 行失去步证 → 生命边界被并段。blind_watch/scale 等
+    旁线行维持既有过滤不动。
+    """
+    from webapp.backend.telemetry_capture_service import _freeze_windowed_jsonl
+
+    epoch = 1_700_000_000.0
+    src = tmp_path / "target_poll_out_0906_120000.jsonl"
+    lines = [
+        json.dumps({"ev": "clock_map", "t": epoch}),
+        json.dumps({"ev": "frame", "t": 4.5,
+                    "targets": [[0x1000, 1.0, 2.0, 3.0, 100, 0]]}),
+        json.dumps({"ev": "flag", "t": 5.0, "addr": 0x1000, "hp": 0, "dc": 1}),
+        json.dumps({"ev": "death", "t": 5.0, "addr": 0x1000, "dc": 1}),
+        json.dumps({"ev": "blind_watch", "t": 5.0, "addr": 0x1000,
+                    "phase": "suspect"}),
+        json.dumps({"ev": "scale", "t": 5.0, "addr": 0x1000,
+                    "s": [1.0, 1.0, 1.0]}),
+        json.dumps({"ev": "frame", "t": 5.5,
+                    "targets": [[0x1000, 1.0, 2.0, 3.0, 25, 1]]}),
+    ]
+    src.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    dst = tmp_path / "frozen.jsonl"
+
+    kept = _freeze_windowed_jsonl(src, dst, "target", epoch + 4.0, epoch + 6.0)
+
+    assert kept == 5  # 锚 + 两帧 + flag + death；blind_watch/scale 照旧丢弃
+    events = [
+        json.loads(line)["ev"]
+        for line in dst.read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == ["clock_map", "frame", "flag", "death", "frame"]
+
+
+def _write_flag_repro_target(path: Path, epoch: float) -> None:
+    """坐标缺席间隙 + 同 tick flag/death 的最小复现局（50Hz，8s）。
+
+    0x1000：t<4.0 在场（帧条目第 6 列 dc=0）；t∈[4.0,4.4] 坐标读不到（帧条
+    目缺席，仅 flag 行补 dc=1）；t=4.0 同 tick 发 death 行；t>4.4 重生在场
+    （dc=1）。死亡步证只有 flag 行能背书（dc 0→1 步进恰好落在 t=4.0，容差
+    DEATH_ROW_TOL=0.1s）；帧列的下一观测在 t=4.42，距 death 行 0.42s 出容
+    差。形态对齐 target_poll2.py 的 flag_rows 分支（坐标读失败但 hp/dc 可
+    读）。
+    """
+    gap_lo, gap_hi = 4.0, 4.4
+    with path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"ev": "clock_map", "t": epoch}) + "\n")
+        for i in range(int(8.0 * _HZ)):
+            t = i / _HZ
+            if gap_lo <= t <= gap_hi:
+                # 0x1000 坐标缺席：由移动填充目标补位帧流。填充必须能活过
+                # cleaner 的静态幽灵门（path > MIN_MOVE），否则会被先丢、间隙
+                # 变全灭（> DEAD_GAP 0.05s）而把局切成两轮——生命边界断言就
+                # 不在同一轮里了。填充不写 dc 列（4 列条目），不进 dc 账本。
+                targets = [[0x9000, 1000 + 600 * (t - gap_lo), 2000.0, 700.0]]
+            else:
+                targets = [[0x1000, 500 + 300 * t, 1000.0, 700.0,
+                            100 if t < gap_lo else 25, 0 if t < gap_lo else 1]]
+            f.write(json.dumps({"ev": "frame", "t": t, "targets": targets}) + "\n")
+            if t == gap_lo:
+                f.write(json.dumps(
+                    {"ev": "flag", "t": t, "addr": 0x1000, "hp": 0, "dc": 1}
+                ) + "\n")
+                f.write(json.dumps(
+                    {"ev": "death", "t": t, "addr": 0x1000, "dc": 1}
+                ) + "\n")
+
+
+def _run_real_cleaner(src: Path, outdir: Path) -> dict:
+    scripts = resolve_scripts_dir()
+    assert scripts is not None, "repo telemetry_capture/ must exist"
+    completed = subprocess.run(  # noqa: S603 - 固定仓库脚本
+        [sys.executable, str(scripts / "cleaner.py"), str(src),
+         "--outdir", str(outdir)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return json.loads(
+        (outdir / "rounds_index.json").read_text(encoding="utf-8"))
+
+
+def test_cut_freeze_preserves_flag_backed_death_boundary_for_cleaner(
+    tmp_path: Path,
+) -> None:
+    """同一窗口：原始件与冻结件进入真实 cleaner 的死亡步证与生命边界一致。
+
+    全量路径（原始件）与按局路径（真实 _freeze_windowed_jsonl 冻结件）分别
+    跑仓库真实 cleaner CLI。冻结丢 flag 时：death 行在（白名单里有 death），
+    但 dc 账本缺 t=4.0 步进 → cleaner 判 unbacked → 生命段并回一条、
+    reorg_audit.ok 翻 false——正是评审复现的受损形态。deaths_summary.total
+    两路都是 1（受损的是生命边界/计数与 T2K 证据，不是官方击杀总数）。
+    """
+    from webapp.backend.telemetry_capture_service import _freeze_windowed_jsonl
+
+    epoch = 1_760_000_000.0
+    raw = tmp_path / "target_poll_out_0906_120000.jsonl"
+    _write_flag_repro_target(raw, epoch)
+
+    frozen = tmp_path / "frozen" / raw.name
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    kept = _freeze_windowed_jsonl(raw, frozen, "target", epoch - 1.0, epoch + 20.0)
+    # 全窗冻结：403 = 锚 + 400 帧 + flag + death（丢 flag 的旧实现是 402）。
+    assert kept == 403, "整窗冻结必须逐行保留 flag 补采行"
+
+    index_full = _run_real_cleaner(raw, tmp_path / "cleaned-full")
+    index_cut = _run_real_cleaner(frozen, tmp_path / "cleaned-cut")
+    full = index_full["sources"][0]
+    cut = index_cut["sources"][0]
+
+    assert full["deaths_source"] == "flag"
+    stats_full = full["per_addr_cut_stats"]["0x1000"]
+    stats_cut = cut["per_addr_cut_stats"]["0x1000"]
+    # 全量路径基线：死亡行有步证、落成生命边界。
+    assert stats_full["reorg_ok"] is True
+    assert stats_full["death_rows_rejected_unbacked"] == 0
+    assert stats_full["reorg_lives"] == 2
+    # 交叉对照：冻结件进 cleaner 必须得到同一结论（修复点）。
+    assert cut["deaths_source"] == "flag"
+    assert stats_cut["reorg_ok"] is True
+    assert stats_cut["death_rows_rejected_unbacked"] == 0
+    assert stats_cut["reorg_lives"] == stats_full["reorg_lives"]
+    lives_full = full["rounds"][0]["targets"][0]["lives"]
+    lives_cut = cut["rounds"][0]["targets"][0]["lives"]
+    assert [life["death_event"] for life in lives_full] == [True, False]
+    assert lives_cut == lives_full  # 权威死亡边界 t_end=4.0 两路一致
+    # 口径边界：减法口径死亡总数不受 flag 丢弃影响，两路一致。
+    assert cut["deaths_summary"]["total"] == full["deaths_summary"]["total"] == 1
+
+
+# ---------------------------------------------------------------------------
 # 系统评审 2026-10-16 #1 回归：切窗回执与 run meta 读改写并发。
 # 生产合同：run meta 的读改写全部收敛到 runtime 事件循环线程（切窗线程的
 # 回执经单次投递回环执行、有界等待生效后才放行 completion barrier）；投递

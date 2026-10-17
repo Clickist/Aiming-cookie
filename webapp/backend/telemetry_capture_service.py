@@ -1400,8 +1400,14 @@ def _freeze_windowed_jsonl(
                                 if complete:
                                     last_nl = pos
                                 continue
-                            # death 行（目标死亡边沿，flag 路径）与 frame 同域同锚，放行
-                            if channel == "target" and ev not in (None, "frame", "death"):
+                            # death 行（死亡边沿）与 flag 行（坐标缺席帧的 dc
+                            # 补采，cleaner 死亡账本的步证来源）与 frame 同域
+                            # 同锚，放行。[fix 2026-10-17 评审#3] 白名单此前漏
+                            # flag：冻结件丢掉 dc 0→1 步进，cleaner 把同 tick
+                            # 的 death 行判 unbacked → 生命边界并段、
+                            # reorg_audit.ok 翻 false、T2K 失真。
+                            if channel == "target" and ev not in (
+                                    None, "frame", "death", "flag"):
                                 if complete:
                                     last_nl = pos
                                 continue
