@@ -243,7 +243,19 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.15</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-13</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.16</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-17</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>补上 1.4.15 编码修复的漏网环节：训练收尾读取采集输出也可能因系统编码差异崩溃，现已一并修复</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复按局深度遥测冻结切片丢失 flag 步证、导致目标生命边界统计失真的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复极端时序下训练记录状态可能被旧快照覆盖回退的问题（收尾状态并发写入）</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>「停止生成」如实呈现：等待回合真正结束期间显示「正在停止」，不再把仍在生成的回合误标成已停止</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复排队消息跨会话串台：在 A 会话排队的内容不会再被发送到 B 会话</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>存储位置迁移有未完成记录时明确阻止再次更改位置，并给出恢复指引（解决文件占用后重启即可续迁）</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>遥测合成轨迹的来源与坏行跳过标注现在完整透传到每条指标与总览，不再只留在顶层</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.15</h2><span class="cl-date">2026-10-13</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>自带 Key 直连 Anthropic 新模型（如 claude-haiku-5.5）不再报协议错误：遇到不兼容会自动适配重试</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复非中文 Windows 上采集子进程闪退的问题（部分海外用户外置遥测失效的根因）</span></li>

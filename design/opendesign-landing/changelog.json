@@ -1,6 +1,47 @@
 {
   "versions": [
     {
+      "version": "1.4.16",
+      "date": "2026-10-17",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "补上 1.4.15 编码修复的漏网环节：训练收尾读取采集输出也可能因系统编码差异崩溃，现已一并修复",
+          "en": "Completed the 1.4.15 encoding fix: reading collector output during training finalization could still crash on non-Chinese Windows — now fixed as well"
+        },
+        {
+          "type": "fix",
+          "zh": "修复按局深度遥测冻结切片丢失 flag 步证、导致目标生命边界统计失真的问题",
+          "en": "Fixed a per-run telemetry freeze bug that dropped flag rows and skewed target life-boundary statistics"
+        },
+        {
+          "type": "fix",
+          "zh": "修复极端时序下训练记录状态可能被旧快照覆盖回退的问题（收尾状态并发写入）",
+          "en": "Fixed a rare race where a training record's state could be rolled back by a stale snapshot during concurrent finalization writes"
+        },
+        {
+          "type": "fix",
+          "zh": "「停止生成」如实呈现：等待回合真正结束期间显示「正在停止」，不再把仍在生成的回合误标成已停止",
+          "en": "Honest stop states: while a turn is still winding down the UI shows a stopping state instead of falsely marking it stopped"
+        },
+        {
+          "type": "fix",
+          "zh": "修复排队消息跨会话串台：在 A 会话排队的内容不会再被发送到 B 会话",
+          "en": "Queued messages no longer leak across sessions — content queued in chat A can no longer be sent to chat B"
+        },
+        {
+          "type": "fix",
+          "zh": "存储位置迁移有未完成记录时明确阻止再次更改位置，并给出恢复指引（解决文件占用后重启即可续迁）",
+          "en": "An unfinished storage migration now blocks changing the location again, with clear recovery guidance (free the locked files and restart to resume)"
+        },
+        {
+          "type": "fix",
+          "zh": "遥测合成轨迹的来源与坏行跳过标注现在完整透传到每条指标与总览，不再只留在顶层",
+          "en": "Provenance notes for telemetry-derived traces (source and skipped rows) now reach every metric and the overview instead of staying top-level only"
+        }
+      ]
+    },
+    {
       "version": "1.4.15",
       "date": "2026-10-13",
       "items": [
