@@ -378,6 +378,7 @@ export const task6Zh = {
   "settings.storage.location.errorNested": "不能在应用数据目录内部或它的上级目录选择位置，请换一个独立文件夹。",
   "settings.storage.location.errorWriteFailed": "存储位置未能保存，请重试。",
   "settings.storage.location.errorMigrationInProgress": "数据迁移正在进行，完成前不能再次更改位置。",
+  "settings.storage.location.errorMigrationUnfinished": "上次迁移未完成，旧位置还有没迁完的数据（可能是文件被占用或目标盘不可用）。请先解决文件占用或磁盘问题，再重启应用继续迁移；迁移完成前不能更改位置。",
   "settings.storage.location.errorInsufficientSpace": "目标位置可用空间不足：需要 {required}，当前可用 {available}。请清理空间或换一个盘。",
   "settings.storage.location.errorInsufficientSpaceUnknown": "目标位置可用空间不足，请清理空间或换一个盘。",
   "settings.storage.location.errorUnknown": "存储位置设置未完成，请重试。",

@@ -374,6 +374,7 @@ export const task6En = {
   "settings.storage.location.errorNested": "The location can't be inside the app data directory or its parent; pick a separate folder.",
   "settings.storage.location.errorWriteFailed": "The storage location could not be saved. Please try again.",
   "settings.storage.location.errorMigrationInProgress": "A data migration is running; the location can't be changed until it finishes.",
+  "settings.storage.location.errorMigrationUnfinished": "A previous migration didn't finish — the old location still has data waiting to move (files may be in use, or the target disk is unavailable). Resolve file or disk issues first, then restart the app to resume; the location can't be changed until the migration finishes.",
   "settings.storage.location.errorInsufficientSpace": "Not enough free space at the target: {required} required, {available} available. Free up space or pick another drive.",
   "settings.storage.location.errorInsufficientSpaceUnknown": "Not enough free space at the target. Free up space or pick another drive.",
   "settings.storage.location.errorUnknown": "The storage location was not set. Please try again.",

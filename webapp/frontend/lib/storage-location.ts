@@ -56,6 +56,7 @@ const STORAGE_LOCATION_ERROR_KEYS: Record<string, MessageKey> = {
   "storage_location.nested": "settings.storage.location.errorNested",
   "storage_location.write_failed": "settings.storage.location.errorWriteFailed",
   "storage_location.migration_in_progress": "settings.storage.location.errorMigrationInProgress",
+  "storage_location.migration_unfinished": "settings.storage.location.errorMigrationUnfinished",
   "storage_location.insufficient_space": "settings.storage.location.errorInsufficientSpace",
 };
 

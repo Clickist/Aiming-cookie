@@ -1000,6 +1000,35 @@ pub struct StorageLocationStatus {
     pub migration: Option<StorageMigrationState>,
 }
 
+/// 未完成记录下改目标是否安全：只有数据仍全部在 source（source == 当前生效根）
+/// 时覆盖记录才不丢续迁入口、不把旧目标错当权威。
+fn retargeting_is_safe(record: &StorageMigrationState, effective_root: &Path) -> bool {
+    let source_matches_effective = same_path(Path::new(&record.source_root), effective_root);
+    match record.phase.as_str() {
+        // 还没重启生效过：数据全在 source，改目标只是改主意。
+        MIGRATION_PHASE_PLANNED => source_matches_effective,
+        // 目标侧预检类失败（建目标目录失败 / 目标盘空间不足）发生在任何条目搬迁
+        // 之前，且只有从未进过搬迁循环的记录才会带这类 error：进过循环的记录
+        // 收尾时 pending = 全部条目（至少含失败条目），后续预检失败只覆盖 error
+        // 不清 pending。所以 moved 与 pending 都空 + 预检类 error = 任何一轮都
+        // 没进过循环，旧目标至多是空目录，source 完整。moved 非空（旧目标已有
+        // 权威数据）、pending 非空（上轮可能有部分拷贝）或 source != 生效根
+        // （重启后新写入已落旧目标）都不能放行；source_missing 因前缀不符天然
+        // 被挡（源目录缺失时无法证明数据还在 source）。
+        MIGRATION_PHASE_FAILED => {
+            source_matches_effective
+                && record.moved_entries.is_empty()
+                && record.pending_entries.is_empty()
+                && record.error.as_deref().is_some_and(|error| {
+                    error.starts_with("target_unavailable")
+                        || error.starts_with("insufficient_space")
+                })
+        }
+        // partial / running：目标已被写入或正在写入，一律走续迁，不放行。
+        _ => false,
+    }
+}
+
 /// 壳内单例：默认根、生效根与迁移现场。
 pub struct StorageLocationState {
     default_root: PathBuf,
@@ -1111,6 +1140,22 @@ impl StorageLocationState {
             return Err(StorageLocationError::code(
                 "storage_location.migration_in_progress",
             ));
+        }
+        // 未完成的迁移记录挡住改位置（含恢复默认）：记录的 source_root 指向仍有
+        // 待迁数据的旧根，覆盖记录会让旧数据失去续迁入口。两类例外（数据都还没
+        // 离开 source，覆盖记录才安全）：planned 且 source == 当前生效根（还没
+        // 重启生效过）；failed 且 source == 当前生效根、错误是目标侧预检类、
+        // moved 与 pending 都空（任何一轮都没进过搬迁循环，判定见
+        // retargeting_is_safe）。其余（source_missing、已搬过条目、上轮进过循环、
+        // source != 生效根）一律仍挡。done 代表旧源已清空，不挡。
+        if let Some(record) = read_migration_state(&self.default_root) {
+            if record.phase != MIGRATION_PHASE_DONE
+                && !retargeting_is_safe(&record, &self.effective_root)
+            {
+                return Err(StorageLocationError::code(
+                    "storage_location.migration_unfinished",
+                ));
+            }
         }
         if let Some(problem) = read_pointer(&self.default_root).1 {
             // 坏指针不阻止用户覆盖写入新位置（新指针会把坏文件原子替换掉）。
@@ -1910,6 +1955,453 @@ mod tests {
         assert!(!root.join(STORAGE_LOCATION_FILE_NAME).exists());
         assert!(!state.status().restart_required);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn set_location_keeps_an_unfinished_partial_record_instead_of_overwriting_it() {
+        // 2026-10-16 review 第 5 条：A→B 迁移重启切到 B 后仍有条目被占用留在 A
+        //（phase=partial）。此时 B→C 或恢复默认都必须被拒：覆盖记录会让 A 的
+        // 待迁条目失去续迁入口。
+        let root = scratch("retarget-partial");
+        let old_source = custom_root_outside("retarget-partial-a");
+        let current = custom_root_outside("retarget-partial-b");
+        let next = custom_root_outside("retarget-partial-c");
+        fs::create_dir_all(old_source.join("runs")).expect("mkdir");
+        fs::write(old_source.join("runs/meta.json"), b"meta").expect("write");
+        fs::create_dir_all(&current).expect("mkdir");
+        // 重启切到 B 后的现场：指针指向 B（生效根 = B），partial 记录指向旧源 A。
+        write_pointer_json(&root, Some(&current.to_string_lossy()));
+        let partial = StorageMigrationState {
+            source_root: old_source.to_string_lossy().into_owned(),
+            target_root: current.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_PARTIAL.to_string(),
+            // 与上方 fixture 一致：A 只有 runs 一个数据条目，整条被占用留 pending。
+            moved_entries: Vec::new(),
+            pending_entries: vec!["runs".to_string()],
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 0,
+            error: Some("locked_entries: runs".to_string()),
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &partial).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+        assert!(same_path(state.effective_root(), &current));
+
+        // B→C 被拒，记录与指针原样保留。
+        let error = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .unwrap_err();
+        assert_eq!(error.code, "storage_location.migration_unfinished");
+        assert_eq!(read_migration_state(&root).expect("record"), partial);
+        assert_eq!(
+            read_pointer(&root)
+                .0
+                .and_then(|pointer| pointer.custom_root),
+            Some(current.to_string_lossy().into_owned())
+        );
+        // 恢复默认走同一道门。
+        let restore = state.set_location(None).unwrap_err();
+        assert_eq!(restore.code, "storage_location.migration_unfinished");
+        assert_eq!(read_migration_state(&root).expect("record"), partial);
+        for path in [&old_source, &current, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_keeps_a_failed_record_even_when_pending_entries_are_empty() {
+        // 源缺失 failed（外置盘曾拔出）：pending_entries 为空不能证明旧源没有
+        // 数据（盘插回来就有了），不得凭空清单放行覆盖。
+        let root = scratch("retarget-failed");
+        let old_source = custom_root_outside("retarget-failed-a");
+        let current = custom_root_outside("retarget-failed-b");
+        let next = custom_root_outside("retarget-failed-c");
+        fs::create_dir_all(old_source.join("runs")).expect("mkdir");
+        fs::write(old_source.join("runs/meta.json"), b"meta").expect("write");
+        fs::create_dir_all(&current).expect("mkdir");
+        write_pointer_json(&root, Some(&current.to_string_lossy()));
+        let failed = StorageMigrationState {
+            source_root: old_source.to_string_lossy().into_owned(),
+            target_root: current.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_FAILED.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 0,
+            error: Some(format!("source_missing: {}", old_source.display())),
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &failed).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+
+        let error = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .unwrap_err();
+        assert_eq!(error.code, "storage_location.migration_unfinished");
+        assert_eq!(read_migration_state(&root).expect("record"), failed);
+        for path in [&old_source, &current, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_allows_retargeting_when_a_precheck_failed_migration_never_moved_data() {
+        // 真实路径：计划 A→B 后目标位置被占成文件（盘拔出/路径被占的确定性形态），
+        // 重启解析生效根回落 A，迁移在目标预检处失败、一条没搬。此时换目标/恢复
+        // 默认必须放行——一刀切会堵死用户绕开坏目标的出路。
+        let root = scratch("retarget-precheck-fail");
+        let broken = custom_root_outside("retarget-precheck-fail-b");
+        let next = custom_root_outside("retarget-precheck-fail-c");
+        fs::create_dir_all(root.join("runs")).expect("mkdir");
+        fs::write(root.join("runs/meta.json"), b"meta").expect("write");
+        let planner = StorageLocationState::initialize(root.clone());
+        planner
+            .set_location(Some(broken.to_string_lossy().into_owned()))
+            .expect("plan A -> B");
+        // 目标位置此后被占成普通文件。
+        fs::remove_dir(&broken).expect("drop target dir");
+        fs::write(&broken, b"blocked").expect("occupy target with a file");
+        // 重启：生效根回落 A（B 已不可用）。
+        let state = Arc::new(StorageLocationState::initialize(root.clone()));
+        assert!(same_path(state.effective_root(), &root));
+
+        state.start_pending_migration();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if read_migration_state(&root)
+                .is_some_and(|record| record.phase == MIGRATION_PHASE_FAILED)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let failed = read_migration_state(&root).expect("record");
+        assert_eq!(failed.phase, MIGRATION_PHASE_FAILED);
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("target_unavailable")),
+            "{:?}",
+            failed.error
+        );
+        assert!(failed.moved_entries.is_empty());
+        // 数据原样留在 A。
+        assert!(root.join("runs/meta.json").is_file());
+
+        // 换目标放行：新记录 planned，source 仍是 A，指针指向新目标。
+        let status = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .expect("retarget past a precheck failure");
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PLANNED);
+        assert!(same_path(Path::new(&record.source_root), &root));
+        assert!(same_path(Path::new(&record.target_root), &next));
+        assert_eq!(
+            read_pointer(&root)
+                .0
+                .and_then(|pointer| pointer.custom_root),
+            Some(next.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            status.migration.map(|migration| migration.phase),
+            Some(MIGRATION_PHASE_PLANNED.to_string())
+        );
+        // 恢复默认同样放行（planned 未生效现场）。
+        let restored = state.set_location(None).expect("restore default");
+        assert_eq!(
+            restored.migration.map(|migration| migration.phase),
+            Some(MIGRATION_PHASE_DONE.to_string())
+        );
+        for path in [&broken, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_allows_retargeting_a_space_precheck_failure_that_moved_nothing() {
+        // 空间预检失败同样是搬迁前的失败：一条没搬、source==生效根 → 允许换目标。
+        let root = scratch("retarget-space-fail");
+        let current = custom_root_outside("retarget-space-fail-b");
+        let next = custom_root_outside("retarget-space-fail-c");
+        fs::create_dir_all(&current).expect("mkdir");
+        write_pointer_json(&root, Some(&current.to_string_lossy()));
+        let failed = StorageMigrationState {
+            source_root: current.to_string_lossy().into_owned(),
+            target_root: custom_root_outside("retarget-space-fail-t")
+                .to_string_lossy()
+                .into_owned(),
+            phase: MIGRATION_PHASE_FAILED.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 0,
+            error: Some(
+                "insufficient_space: need 4 bytes + headroom, available 0 bytes".to_string(),
+            ),
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &failed).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+
+        let status = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .expect("retarget past a space precheck failure");
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PLANNED);
+        assert!(same_path(Path::new(&record.source_root), &current));
+        assert!(same_path(Path::new(&record.target_root), &next));
+        assert_eq!(
+            status.migration.map(|migration| migration.phase),
+            Some(MIGRATION_PHASE_PLANNED.to_string())
+        );
+        for path in [&current, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_blocks_a_failed_migration_that_already_moved_entries() {
+        // failed 且已搬走部分条目：旧目标已有权威数据。pending 为空也不能放行
+        //——放行判据是 moved 清单与 source==生效根，不是 pending 空不空。
+        let root = scratch("retarget-failed-moved");
+        let current = custom_root_outside("retarget-failed-moved-b");
+        let next = custom_root_outside("retarget-failed-moved-c");
+        let abandoned = custom_root_outside("retarget-failed-moved-t");
+        fs::create_dir_all(&current).expect("mkdir");
+        write_pointer_json(&root, Some(&current.to_string_lossy()));
+        let failed = StorageMigrationState {
+            source_root: current.to_string_lossy().into_owned(),
+            target_root: abandoned.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_FAILED.to_string(),
+            moved_entries: vec!["sessions".to_string()],
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 4,
+            error: Some("analyses: byte mismatch at analyses/overview.json".to_string()),
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &failed).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+
+        let error = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .unwrap_err();
+        assert_eq!(error.code, "storage_location.migration_unfinished");
+        assert_eq!(read_migration_state(&root).expect("record"), failed);
+        for path in [&current, &abandoned, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_blocks_a_failed_record_that_once_entered_the_migration_loop() {
+        // 上轮进过搬迁循环（首个条目内部分拷贝后硬失败收尾：pending = 全部条目、
+        // moved 空），随后一次预检失败把 error 覆盖成 target_unavailable——
+        // pending 非空仍要挡：旧目标可能有上轮的部分拷贝，不能凭 moved 空放行。
+        let root = scratch("retarget-loop-failed");
+        let next = custom_root_outside("retarget-loop-failed-c");
+        let failed = StorageMigrationState {
+            source_root: root.to_string_lossy().into_owned(),
+            target_root: custom_root_outside("retarget-loop-failed-t")
+                .to_string_lossy()
+                .into_owned(),
+            phase: MIGRATION_PHASE_FAILED.to_string(),
+            moved_entries: Vec::new(),
+            pending_entries: vec!["runs".to_string()],
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 0,
+            error: Some("target_unavailable: access denied".to_string()),
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &failed).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+
+        let error = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .unwrap_err();
+        assert_eq!(error.code, "storage_location.migration_unfinished");
+        assert_eq!(read_migration_state(&root).expect("record"), failed);
+        for path in [&next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_still_allows_retargeting_a_planned_migration_that_never_started() {
+        // planned 且数据仍全在源（source == 当前生效根）：改目标 / 恢复默认合法，
+        // 这是「还没重启就反悔」的正常路径，不能被未完成门误伤。
+        let root = scratch("retarget-planned");
+        let first = custom_root_outside("retarget-planned-b");
+        let second = custom_root_outside("retarget-planned-c");
+        let state = StorageLocationState::initialize(root.clone());
+        state
+            .set_location(Some(first.to_string_lossy().into_owned()))
+            .expect("plan A -> B");
+
+        let status = state
+            .set_location(Some(second.to_string_lossy().into_owned()))
+            .expect("retarget before restart");
+        assert!(status.restart_required);
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PLANNED);
+        assert!(same_path(Path::new(&record.source_root), &root));
+        assert!(same_path(Path::new(&record.target_root), &second));
+        // 恢复默认同样允许。
+        let restored = state.set_location(None).expect("restore");
+        assert_eq!(
+            restored.migration.map(|migration| migration.phase),
+            Some(MIGRATION_PHASE_DONE.to_string())
+        );
+        for path in [&first, &second, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn set_location_allows_changing_location_again_after_a_done_migration() {
+        // done 记录：旧源已清空，改位置不受未完成门限制；新记录 source 是当前生效根。
+        let root = scratch("retarget-done");
+        let current = custom_root_outside("retarget-done-b");
+        let next = custom_root_outside("retarget-done-c");
+        fs::create_dir_all(&current).expect("mkdir");
+        write_pointer_json(&root, Some(&current.to_string_lossy()));
+        let done = StorageMigrationState {
+            source_root: root.to_string_lossy().into_owned(),
+            target_root: current.to_string_lossy().into_owned(),
+            phase: MIGRATION_PHASE_DONE.to_string(),
+            moved_entries: vec!["sessions".to_string()],
+            pending_entries: Vec::new(),
+            superseded_files: Vec::new(),
+            total_bytes: 4,
+            copied_bytes: 4,
+            error: None,
+            updated_at: String::new(),
+        };
+        write_migration_state(&root, &done).expect("write record");
+        let state = StorageLocationState::initialize(root.clone());
+
+        state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .expect("set C after done");
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PLANNED);
+        assert!(same_path(Path::new(&record.source_root), &current));
+        assert!(same_path(Path::new(&record.target_root), &next));
+        for path in [&current, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn set_location_blocks_retarget_until_a_locked_migration_finishes_resuming() {
+        // 组合行为（走真实路径，不手工拼状态）：真实文件锁让 A→B 迁移留 partial
+        // → 改目标被拒且记录原样 → 释放锁后 start_pending_migration 续迁到 done
+        // → 再改目标恢复允许。
+        use std::os::windows::io::AsRawHandle;
+        use winapi::shared::ntdef::HANDLE;
+        use winapi::um::fileapi::LockFileEx;
+        use winapi::um::minwinbase::{
+            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, OVERLAPPED,
+        };
+
+        let root = scratch("retarget-resume");
+        let target = custom_root_outside("retarget-resume-b");
+        let next = custom_root_outside("retarget-resume-c");
+        fs::create_dir_all(root.join("runs")).expect("mkdir");
+        fs::write(root.join("runs/meta.json"), b"meta").expect("write");
+        // 模拟自家后端持有的字节范围锁：runs/meta.json 首字节排他锁。
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .open(root.join("runs/meta.json"))
+            .expect("open");
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let handle = held.as_raw_handle() as HANDLE;
+        let locked = unsafe {
+            LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut overlapped,
+            )
+        };
+        assert_ne!(locked, 0, "LockFileEx must succeed");
+
+        // 计划 A→B 后按记录执行迁移：runs 被锁 → partial，条目留在源。
+        let state = Arc::new(StorageLocationState::initialize(root.clone()));
+        state
+            .set_location(Some(target.to_string_lossy().into_owned()))
+            .expect("plan A -> B");
+        let planned = read_migration_state(&root).expect("record");
+        let finished = run_migration(&root, &root, &target, planned);
+        assert_eq!(
+            finished.phase, MIGRATION_PHASE_PARTIAL,
+            "{:?}",
+            finished.error
+        );
+        assert_eq!(finished.pending_entries, vec!["runs".to_string()]);
+
+        // partial 现场改目标被拒：旧源 runs 仍有待迁数据，记录不得被覆盖。
+        let error = state
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .unwrap_err();
+        assert_eq!(error.code, "storage_location.migration_unfinished");
+        assert_eq!(
+            read_migration_state(&root).expect("record").phase,
+            MIGRATION_PHASE_PARTIAL
+        );
+
+        // 释放锁后重启入口续迁：runs 搬到 B，记录落 done。
+        drop(held);
+        state.start_pending_migration();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if read_migration_state(&root)
+                .is_some_and(|record| record.phase == MIGRATION_PHASE_DONE)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(
+            read_migration_state(&root).expect("record").phase,
+            MIGRATION_PHASE_DONE
+        );
+        assert!(target.join("runs/meta.json").is_file());
+        assert!(!root.join("runs").exists());
+
+        // done 之后改目标恢复允许：重新 initialize 模拟重启后的壳（续迁完成时
+        // 指针已刷新，生效根 = B），新记录的 source 必须是 B 而不是旧 A。
+        let restarted = StorageLocationState::initialize(root.clone());
+        assert!(same_path(restarted.effective_root(), &target));
+        let status = restarted
+            .set_location(Some(next.to_string_lossy().into_owned()))
+            .expect("set C after resume");
+        let record = read_migration_state(&root).expect("record");
+        assert_eq!(record.phase, MIGRATION_PHASE_PLANNED);
+        assert!(same_path(Path::new(&record.source_root), &target));
+        assert!(same_path(Path::new(&record.target_root), &next));
+        assert_eq!(
+            read_pointer(&root)
+                .0
+                .and_then(|pointer| pointer.custom_root),
+            Some(next.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            status.migration.map(|migration| migration.phase),
+            Some(MIGRATION_PHASE_PLANNED.to_string())
+        );
+        for path in [&target, &next, &root] {
+            let _ = fs::remove_dir_all(path);
+        }
     }
 
     #[test]

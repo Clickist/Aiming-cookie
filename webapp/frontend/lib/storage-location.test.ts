@@ -40,6 +40,7 @@ test("storage location error codes map to localized sentences, never to raw code
     "storage_location.nested",
     "storage_location.write_failed",
     "storage_location.migration_in_progress",
+    "storage_location.migration_unfinished",
   ];
   for (const code of codes) {
     const message = storageLocationErrorMessage(code);
