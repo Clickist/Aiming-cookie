@@ -182,6 +182,30 @@ test("Coach terminal settle guards on the session key, not effect-cleanup cancel
     /if \(cancelled\) return;\s*\n\s*if \(next\.status === "succeeded"\) settleSucceeded\(next\);/,
   );
   // settleKey 在各自 fetchRun 之前捕获（首条 draft→session 落地场景捕获即新键）。
+  // stop/立即打断路径共用同一守卫惯用法（await 后 setRun 前比会话键），
+  // 捕获总数随之增加；这里锁定两条终态路径的捕获不低于既有合同。
   const captures = panel.match(/const settleKey = activeSessionKeyRef\.current;/g) ?? [];
-  assert.equal(captures.length, 2, "两条终态路径各在 await 前捕获一次 settleKey");
+  assert.ok(captures.length >= 2, "两条终态路径各在 await 前捕获一次 settleKey");
+});
+
+test("stop and interrupt-and-send guard both setRun and refresh behind the same session key", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  // stop/「立即」的回包在途时切会话：setRun 种入旧 run 固然错，refresh 同样
+  // 会 abort 新会话在途拉取、把旧会话消息列表写进当前视图——两者必须在
+  // 同一个 settleKey 守卫内，不存在只守其一的半吊子形态。
+  const guarded =
+    panel.match(
+      /if \(activeSessionKeyRef\.current === settleKey\) \{\s*setRun\(stopped\);\s*void refresh\(\)\.catch\(\(\) => \{\}\);\s*\}/g,
+    ) ?? [];
+  assert.equal(guarded.length, 2, "stop 与立即打断两条路径的 setRun+refresh 同守卫");
+  // 守卫之外不得再出现裸的 fire-and-forget refresh 残留（旧闭包写穿）。
+  const stopBody = panel.slice(panel.indexOf("const stop = async"), panel.indexOf("const headerState"));
+  assert.match(stopBody, /const settleKey = activeSessionKeyRef\.current;/);
+  const promoteBody = panel.slice(
+    panel.indexOf("const promoteChipToSendNow"),
+    panel.indexOf("const backfillChipToDraft"),
+  );
+  assert.match(promoteBody, /const settleKey = activeSessionKeyRef\.current;/);
+  assert.doesNotMatch(stopBody, /\}\s*void refresh\(\)/);
+  assert.doesNotMatch(promoteBody, /\}\s*void refresh\(\)/);
 });

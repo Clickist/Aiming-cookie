@@ -24,7 +24,8 @@ test("running-send lands in visible queue chips with a 96-char preview and three
   assert.match(panel, /label=\{t\("coach\.queue\.sendNowLabel"\)\}/);
   assert.match(panel, /task6-queue-chip-now">\{t\("coach\.queue\.sendNow"\)\}</);
   assert.match(panel, /backfillChipToDraft = \(chip: QueuedChip\)/);
-  assert.match(panel, /label=\{t\("coach\.queue\.cancelLabel"\)\}[\s\S]*?removeQueuedChip\(chips, chip\.id\)/);
+  // 逐条取消按会话归属移除（队列按 session 分桶，修复跨会话误消费）。
+  assert.match(panel, /label=\{t\("coach\.queue\.cancelLabel"\)\}[\s\S]*?removeQueuedChipIn\(queueSessionId, chip\.id\)/);
   // 回填编辑后焦点回输入框：编辑目标可直接续写。
   assert.match(panel, /backfillChipToDraft[\s\S]*?textareaRef\.current\?\.focus\(\)/s);
 });
@@ -43,8 +44,9 @@ test("send key morphs by run/draft state; running actions live beside it in a ca
   assert.ok(sendAt !== -1, "send button must exist");
   const clickAt = panel.indexOf("onClick={submitComposer}", sendAt);
   assert.ok(clickAt > sendAt, "send button must submit directly");
-  // Esc 与终止键同功能（0912 点点拍板：旁挂发送选项菜单废弃，无菜单抢占 Esc）。
-  assert.match(panel, /event\.key === "Escape" && composerBusy && !draft\.trim\(\) && quotes\.length === 0\)/);
+  // Esc 与终止键同功能（0912 点点拍板：旁挂发送选项菜单废弃，无菜单抢占 Esc）；
+  // 停止已受理未真终态（!runStopping）不再重复受理。
+  assert.match(panel, /event\.key === "Escape" && composerBusy && !runStopping && !draft\.trim\(\) && quotes\.length === 0\)/);
   // 运行中占位提示随态切换。
   assert.match(panel, /composerBusy\s*\?\s*t\("coach\.composer\.placeholderBusy"\)/);
   // 终止形态样式：同形正圆换 error 底。

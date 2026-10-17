@@ -44,6 +44,7 @@ import {
   buildMentionCandidates,
   coachDraftStorageKey,
   filterMentionCandidates,
+  hasStopRequestedEvent,
   readCoachDraftEnvelope,
   removeQueuedChip,
   stepSentHistory,
@@ -861,12 +862,31 @@ export function CoachPanel({
   }, []);
 
   // ── Composer 编排（digests §11 批 5）───────────────────────────────────
-  // 运行中发送不再静默也不只弹提示：进可见队列 chips（前端权威态，引擎
-  // steer/followUp 无逐条取消动词），每条可视可编辑可删。
-  const [queuedChips, setQueuedChips] = useState<QueuedChip[]>([]);
-  const queuedChipsRef = useRef<QueuedChip[]>([]);
-  queuedChipsRef.current = queuedChips;
+  // 运行中发送进可见队列 chips（前端权威态），每条可视可编辑可删。
+  // 队列按会话归属保存：key＝run.session_id——入列必须有活跃 run，其
+  // session_id 即权威归属（新会话首条发送后 prop sessionId 落地前的窗口也
+  // 正确）。切会话不清空：chip 留在原会话，B 绝不消费 A 的队列，回到 A
+  // 可找回继续。
+  const [queuedChipsBySession, setQueuedChipsBySession] = useState<Record<number, QueuedChip[]>>({});
+  const queuedChipsRef = useRef<Record<number, QueuedChip[]>>({});
+  queuedChipsRef.current = queuedChipsBySession;
   const chipSeqRef = useRef(0);
+  // 展示归属：prop 未落地时回退活跃 run 的会话，chips 不因键切换闪失。
+  const queueSessionId = sessionId ?? run?.session_id ?? null;
+  const queuedChips = queueSessionId != null ? queuedChipsBySession[queueSessionId] ?? [] : [];
+  const enqueueQueuedItem = useCallback((sessionId: number, text: string, refs?: string[]) => {
+    const content = text.trim();
+    if (!content) return;
+    chipSeqRef.current += 1;
+    const id = chipSeqRef.current;
+    setQueuedChipsBySession((chips) => ({
+      ...chips,
+      [sessionId]: [...chips[sessionId] ?? [], { id, text: content, ...(refs?.length ? { refs } : {}) }],
+    }));
+  }, []);
+  const removeQueuedChipIn = useCallback((sessionId: number, id: number) => {
+    setQueuedChipsBySession((chips) => ({ ...chips, [sessionId]: removeQueuedChip(chips[sessionId] ?? [], id) }));
+  }, []);
   // @ 引用下拉（LibreChat Mention 骨架）
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -932,6 +952,27 @@ export function CoachPanel({
     activeRunRef.current = run;
   }, [run]);
   const composerBusy = Boolean(run && ["queued", "running"].includes(run.status));
+
+  // ── 停止中派生 ─────────────────────────────────────────────────────────
+  // 双源：本生命周期点过停止的乐观标记（点击即刻生效，不等 HTTP）＋
+  // run_stop_requested 事件（服务端受理事实，随 run.events 持久，刷新/
+  // 重连/他窗停止可恢复）。status 真终态才解除：runtime 合同是 stop 只挂
+  // 事件，status 保持 queued/running，任务真结束才落 stopped。
+  const [optimisticStopRunRef, setOptimisticStopRunRef] = useState<string | null>(null);
+  const runStopping = Boolean(
+    composerBusy && run && (optimisticStopRunRef === run.run_ref || hasStopRequestedEvent(run.events)),
+  );
+  // await 之后读它，避免闭包里的 runStopping 过期误判。
+  const runStoppingRef = useRef(runStopping);
+  runStoppingRef.current = runStopping;
+  // 渲染期镜像的最新 run（effect 同步的 activeRunRef 慎一拍）：settle 等
+  // 异步回调据此判断「显示位上的 run 是否已被别的 run 接位」。
+  const latestRunRef = useRef<CoachAgentRunV1 | null>(run);
+  latestRunRef.current = run;
+  useEffect(() => {
+    if (optimisticStopRunRef == null) return;
+    if (!run || run.run_ref !== optimisticStopRunRef || !composerBusy) setOptimisticStopRunRef(null);
+  }, [run, composerBusy, optimisticStopRunRef]);
 
   /** 被打断回复的重试原文：该回复之前最近一条用户消息；找不到（理论不可达）返回 null。 */
   const interruptedRetryText = (index: number): string | null => {
@@ -1054,6 +1095,12 @@ export function CoachPanel({
     }
   }, [messageGuardHits]);
 
+  // 乐观气泡的会话归属账（负 ID → 目标会话）：负 ID 气泡本身不带会话信息，
+  // refresh 合并残留时不分会话就会把 A 的气泡拼进 B 的列表（显示残留，落盘
+  // 无污染）。发送路径在 ensureSession 解析出目标会话后登记；回滚路径的 id
+  // 留在账上无害——合并取「现存消息 ∩ 本会话账本」交集。
+  const optimisticOwnerRef = useRef<Map<number, number[]>>(new Map());
+
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
     if (draftSession) {
@@ -1103,7 +1150,10 @@ export function CoachPanel({
       const detail = await getCoachSession(sessionId, { signal: controller.signal });
       if (controller.signal.aborted || revision !== refreshRevisionRef.current) return;
       setMessages((current) => {
-        const optimistic = current.filter((message) => message.id < 0);
+        // 乐观残留只并「账本上属于本会话」的：跨会话的负 ID 气泡绝不拼接
+        //（它们属于各自会话，由那次会话的 refresh 接管）。
+        const ownerIds = new Set(optimisticOwnerRef.current.get(sessionId) ?? []);
+        const optimistic = current.filter((message) => message.id < 0 && ownerIds.has(message.id));
         const backendMessages = detail.messages ?? [];
         const backendKeys = new Set(backendMessages.map((message) => `${message.role}\x00${message.content}`));
         // 乐观气泡已被后端接管（同 role+content）时丢弃，否则它一定比所有
@@ -1645,8 +1695,13 @@ export function CoachPanel({
       nextTurns.set(activeSessionKeyRef.current, { segments: settledSegments });
       setArchivedTurns(nextTurns);
       persistArchivedTurns(nextTurns);
-      clearThinkingStream();
-      setRun(null);
+      // 自动放行/待放行的新 run 可能已在本回合 settle 前接位：清流式段与
+      // run 解除都必须只作用于本回合（run_ref 相同）那份，否则新接位 run 的
+      // 流式段被清空、run 被置空成无 SSE 无停止键的孤儿。
+      if (latestRunRef.current == null || latestRunRef.current.run_ref === next.run_ref) {
+        clearThinkingStream();
+      }
+      setRun((prev) => (prev != null && prev.run_ref === next.run_ref ? null : prev));
     };
 
     // 轮询兜底的有限退避：瞬断不杀轮询（1s→2s→4s…上限 10s），连续失败达到
@@ -2267,15 +2322,6 @@ export function CoachPanel({
     historyBackupRef.current = null;
   }, []);
 
-  /** 队列 chips 入列：前端权威态，逐条可视可编辑可删（丢消息教训）。 */
-  const enqueueQueuedItem = useCallback((text: string, refs?: string[]) => {
-    const content = text.trim();
-    if (!content) return;
-    chipSeqRef.current += 1;
-    const id = chipSeqRef.current;
-    setQueuedChips((chips) => [...chips, { id, text: content, ...(refs?.length ? { refs } : {}) }]);
-  }, []);
-
   const appendOptimisticUserMessage = useCallback((content: string) => {
     const optimisticMessageId = optimisticMessageIdRef.current--;
     stickToBottomRef.current = true;
@@ -2314,6 +2360,13 @@ export function CoachPanel({
   ): Promise<boolean> => {
     const content = contentRaw.trim();
     if (!content || sendingRef.current) return false;
+    // 停止窗口（已受理 stop、真终态未到）禁一切出站：不发送也不转队——
+    // 队列自动放行只跟 succeeded，停止窗口入的 chip 在 stopped 后没有
+    // 放行点，只会假性占队。草稿原地保留，真终态后再动作。
+    if (runStoppingRef.current) {
+      notify(t("coach.send.stoppingBlocked"));
+      return false;
+    }
     // 出站 FFFD 拦截（所有出站路径的汇聚点在 sendText，不在 composer 单点）：
     // 输入法故障会吐出 U+FFFD，≥2 个直接挡下——notify 提示 + 原文回填 draft，
     // 不清空不发送也不进队列 chip，用户看得见坏在哪、可自行删改后重发。
@@ -2329,7 +2382,9 @@ export function CoachPanel({
     if (!opts.force && active && ["queued", "running"].includes(active.status)) {
       // 已受理即清空输入：文本已移入 chip（不是复制），需要改写时走回填编辑。
       // 引用块已随拼装串进入 chip（拍板②降级为纯文本），待拼装引用一并消费。
-      enqueueQueuedItem(content, refs.length ? refs : undefined);
+      // 归属取活跃 run 的 session_id：不跟 prop 时序，chip 永远留在产生它的
+      // 会话里，B 绝不消费 A 的队列。
+      enqueueQueuedItem(active.session_id, content, refs.length ? refs : undefined);
       setDraft("");
       setQuotes([]);
       if (!opts.refs) setMentionRefs([]);
@@ -2365,6 +2420,12 @@ export function CoachPanel({
         notify(t("coach.send.sessionFailed"));
         return false;
       }
+      // 乐观气泡登记目标会话（ensureSession 解析出即登记，force/普通路径同一）：
+      // 负 ID 气泡本身不带会话信息，refresh 合并残留时只认这个账本。
+      const ownerSessionId = (effectiveSessionId ?? sessionId) as number;
+      const owners = optimisticOwnerRef.current.get(ownerSessionId) ?? [];
+      owners.push(optimisticId);
+      optimisticOwnerRef.current.set(ownerSessionId, owners);
       const created = await createCoachAgentRun(
         content,
         {
@@ -2429,30 +2490,46 @@ export function CoachPanel({
 
   /** 队列 chip 上浮：能转则立即 steer 并展示乐观气泡，不能转走可恢复分支。 */
   /**
-   * 排队 chip 的「立即」（0911 点点拍板：立刻打断发送）：停止当前生成并
-   * 立即发出这条排队消息——与旧「上浮立即转向（不打断注入）」不同，语义
-   * 是打断。stop 收敛终态后 force 发送，绕过运行守卫；发送失败 chip 留守。
+   * 队列 chip 的「立即」（0911 点点拍板：立刻打断发送）：停止当前生成并
+   * 立即发出这条排队消息。stop 未真终态前绝不 force 重发（同会话并发门的
+   * 绕行通道）也不复制入队——受理停止即登记 pendingPromote（绑定
+   * run_ref+session，防别的终态误触发），真终态到达后由终态收敛效果恰发
+   * 一次；发送失败或届时 chip 已不在则作废。
    */
+  const pendingPromoteRef = useRef<{ sessionId: number; runRef: string; chipId: number } | null>(null);
+
   const promoteChipToSendNow = async (chip: QueuedChip) => {
+    if (queueSessionId == null) return; // chip 只在会话内渲染，防御不可达路径
+    // 停止已受理未真终态：「立即」不受理新意图（不重发 stop、不改待发
+    // 登记），chip 保留可取消/回填；由已登记的那条在真终态恰发一次。
+    if (runStoppingRef.current) return;
     const active = activeRunRef.current;
     if (!active || !["queued", "running"].includes(active.status)) {
-      if (await sendText(chip.text, { refs: chip.refs })) setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
+      if (await sendText(chip.text, { refs: chip.refs })) removeQueuedChipIn(queueSessionId, chip.id);
       return;
     }
+    const settleKey = activeSessionKeyRef.current;
+    setOptimisticStopRunRef(active.run_ref);
+    pendingPromoteRef.current = { sessionId: active.session_id, runRef: active.run_ref, chipId: chip.id };
     try {
-      setRun(await stopCoachAgentRun(active.run_ref, sessionId == null ? {} : { sessionId }));
+      const stopped = await stopCoachAgentRun(active.run_ref, sessionId == null ? {} : { sessionId });
+      // await 期间可能已切会话：stop 返回的 run 与补拉都属原会话——refresh
+      // 会 abort 新会话在途拉取、把旧会话消息写进当前视图，必须同守卫。
+      if (activeSessionKeyRef.current === settleKey) {
+        setRun(stopped);
+        void refresh().catch(() => {});
+      }
     } catch {
+      pendingPromoteRef.current = null;
+      setOptimisticStopRunRef(null);
       notify(t("coach.send.stopCurrentFailed"));
       return;
     }
-    // 打断的回复落库后刷新会话消息（fire-and-forget，不阻塞下面的立即发送）。
-    void refresh().catch(() => {});
-    const accepted = await sendText(chip.text, { force: true, refs: chip.refs });
-    if (accepted) setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
   };
 
   const backfillChipToDraft = (chip: QueuedChip) => {
-    setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
+    if (queueSessionId == null) return;
+    removeQueuedChipIn(queueSessionId, chip.id);
     setDraft(chip.text);
     if (chip.refs?.length) {
       // 随 chip 排队的引用放回引用 chips（去重）。
@@ -2475,16 +2552,36 @@ export function CoachPanel({
   };
 
   // 成功终态自动放行队首 chip：让排队语义在多轮长对话中自然流转。
+  // 归属按触发 run 的 session_id：B 的成功只消费 B 自己的队列，绝不取别的
+  // 会话排队的队首。「立即打断发送」登记的 pendingPromote 在其绑定的那条
+  // run 真终态（任意终态）时恰发一次。
   const prevStatusRef = useRef<CoachAgentRunV1["status"] | null>(null);
   useEffect(() => {
     const status = run?.status ?? null;
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
-    if (!prev || !["queued", "running"].includes(prev) || status !== "succeeded") return;
-    const first = queuedChipsRef.current[0];
+    if (!prev || !["queued", "running"].includes(prev)) return;
+    if (status == null || ["queued", "running"].includes(status)) return;
+    const runSessionId = run?.session_id;
+    const runRef = run?.run_ref;
+    if (runSessionId == null || runRef == null) return;
+    // 先接住「立即」的待放行：打断语义＝绑定的那条 run 真终态即发送。
+    const pending = pendingPromoteRef.current;
+    if (pending && pending.sessionId === runSessionId && pending.runRef === runRef) {
+      pendingPromoteRef.current = null;
+      const chip = queuedChipsRef.current[runSessionId]?.find((item) => item.id === pending.chipId);
+      if (chip) {
+        void sendText(chip.text, { force: true, refs: chip.refs }).then((accepted) => {
+          if (accepted) removeQueuedChipIn(runSessionId, chip.id);
+        });
+        return;
+      }
+    }
+    if (status !== "succeeded") return; // 常规自动放行只跟成功终态
+    const first = queuedChipsRef.current[runSessionId]?.[0];
     if (!first) return;
     void sendText(first.text, { refs: first.refs }).then((accepted) => {
-      if (accepted) setQueuedChips((chips) => removeQueuedChip(chips, first.id));
+      if (accepted) removeQueuedChipIn(runSessionId, first.id);
     });
   }, [run]);
 
@@ -2754,13 +2851,20 @@ export function CoachPanel({
   trialRetryRef.current = (runRef: string) => { void retry(runRef); };
 
   const stop = async () => {
-    if (!run) return;
+    if (!run || runStoppingRef.current) return; // 已在停止中：不重复受理
+    setOptimisticStopRunRef(run.run_ref);
+    const settleKey = activeSessionKeyRef.current;
     try {
-      setRun(await stopCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
-      // 被打断的半截回复此刻才随终态落库：补一次会话刷新让它在屏幕上出现，
-      // 否则要等下一回合终态才回来（可达分钟级）。
-      void refresh().catch(() => {});
+      const stopped = await stopCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId });
+      // await 期间可能已切会话：返回的 run 与补拉都属原会话——refresh 还会
+      // abort 新会话在途的拉取、把旧会话消息列表写进当前视图，必须同守卫。
+      // 被打断的半截回复随终态落库，切回原会话时由会话切换的刷新拉上屏。
+      if (activeSessionKeyRef.current === settleKey) {
+        setRun(stopped);
+        void refresh().catch(() => {});
+      }
     } catch {
+      setOptimisticStopRunRef(null);
       notify(t("coach.send.stopFailed"));
     }
   };
@@ -2897,14 +3001,15 @@ export function CoachPanel({
           {queuedChips.map((chip) => (
             <div className="task6-queue-chip" key={chip.id} role="listitem">
               <span className="task6-queue-chip-text" title={chip.text}>{truncateQueuePreview(chip.text)}</span>
-              <IconButton label={t("coach.queue.sendNowLabel")} onClick={() => void promoteChipToSendNow(chip)} size="compact" title={t("coach.queue.sendNowTitle")}>
+              {/* 停止已受理未真终态：立即钮禁用（不受理新打断意图），其余操作照常。 */}
+              <IconButton disabled={runStopping} label={t("coach.queue.sendNowLabel")} onClick={() => void promoteChipToSendNow(chip)} size="compact" title={t("coach.queue.sendNowTitle")}>
                 <IconChevronDown className="task6-icon-flip" />
                 <span className="task6-queue-chip-now">{t("coach.queue.sendNow")}</span>
               </IconButton>
               <IconButton label={t("coach.queue.editLabel")} onClick={() => backfillChipToDraft(chip)} size="compact" title={t("coach.queue.editTitle")}>
                 <IconHistory />
               </IconButton>
-              <IconButton label={t("coach.queue.cancelLabel")} onClick={() => setQueuedChips((chips) => removeQueuedChip(chips, chip.id))} size="compact" title={t("coach.queue.cancelTitle")}>
+              <IconButton label={t("coach.queue.cancelLabel")} onClick={() => queueSessionId != null && removeQueuedChipIn(queueSessionId, chip.id)} size="compact" title={t("coach.queue.cancelTitle")}>
                 <IconClose />
               </IconButton>
             </div>
@@ -3006,7 +3111,8 @@ export function CoachPanel({
               }
             }
             // 运行中且输入框为空：Esc＝终止生成，与终止键同功能（0911 点点拍板）。
-            if (event.key === "Escape" && composerBusy && !draft.trim() && quotes.length === 0) {
+            // 停止已受理未真终态时不重复受理（runStopping 守卫）。
+            if (event.key === "Escape" && composerBusy && !runStopping && !draft.trim() && quotes.length === 0) {
               event.preventDefault();
               void stop();
               return;
@@ -3087,13 +3193,21 @@ export function CoachPanel({
           <CoachModelMenu
             onError={(message) => notify(message)}
           />
-          {/* 发送键随运行态变形（0911 点点拍板，取代 09-01 的「恒为提交」）：
-              空闲＝发送；运行中且输入框为空＝终止键（点击/Esc 同功能）；
-              运行中且已输入＝发送（点击/Enter 自动入队）。运行中不再旁挂
-              caret 选项菜单（0912 点点拍板：排队由 Enter/点击自动入队与
-              composer 上方队列 chips 承担，旁挂菜单形态废弃）。 */}
+          {/* 发送键随运行态变形（0911 点点拍板）：空闲＝发送；运行中且输入框
+              为空＝终止键（点击/Esc 同功能）；运行中且已输入＝发送（自动入队）。
+              停止已受理未真终态（runStopping）：让位为禁用「正在停止」键——
+              不放行发送也不重复受理，partial 与草稿原地保留，真终态后恢复。 */}
           <div className="task6-send-actions">
-            {composerBusy && !draft.trim() && quotes.length === 0 ? (
+            {runStopping ? (
+              <button
+                aria-label={t("coach.composer.stoppingLabel")}
+                aria-busy="true"
+                className="task6-composer-send task6-composer-send--stop"
+                disabled
+                title={t("coach.composer.stoppingTitle")}
+                type="button"
+              ><IconStop /></button>
+            ) : composerBusy && !draft.trim() && quotes.length === 0 ? (
               <button
                 aria-label={t("coach.composer.stopLabel")}
                 className="task6-composer-send task6-composer-send--stop"

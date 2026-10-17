@@ -26,6 +26,7 @@ export const task6En = {
   "coach.send.quoteOnly": "A quote alone can't be sent — add your question or request.",
   "coach.send.stopCurrentFailed": "Couldn't stop the current reply. Please try again.",
   "coach.send.stopFailed": "Couldn't stop generation. Please try again.",
+  "coach.send.stoppingBlocked": "The current reply is stopping — please wait until it truly finishes before sending.",
   "coach.run.interruptedMessage": "Reply interrupted: the connection to the local service was lost.",
   "coach.run.interruptedToast": "Reply interrupted",
   "coach.queue.enqueued": "The current reply is still generating, so this message joined the queue above the input box — cancel, edit, or interrupt-and-send it anytime.",
@@ -143,6 +144,8 @@ export const task6En = {
   "coach.composer.sendLabel": "Send",
   "coach.composer.stopLabel": "Stop generating",
   "coach.composer.stopTitle": "Stop generating (same as Esc)",
+  "coach.composer.stoppingLabel": "Stopping",
+  "coach.composer.stoppingTitle": "Stop requested — waiting for the current reply to truly finish…",
 
   // ── CoachPanel.tsx —— 空对话首页 / 讨论条 / 消息区 / 错误卡 ─────────────
   "coach.home.chipsLabel": "Try asking this",

@@ -78,7 +78,7 @@ test("outbound composition funnels enqueue and submit through one gate", async (
     panel.indexOf("const sendText = async ("),
     panel.indexOf("const composeOutgoing"),
   );
-  assert.match(sendTextBody, /enqueueQueuedItem\(content/);
+  assert.match(sendTextBody, /enqueueQueuedItem\(active\.session_id, content/);
   assert.match(sendTextBody, /setMentionRefs\(\[\]\)/);
 });
 

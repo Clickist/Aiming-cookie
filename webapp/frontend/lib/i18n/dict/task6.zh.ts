@@ -28,6 +28,7 @@ export const task6Zh = {
   "coach.send.quoteOnly": "只有引用、没有正文时不能发送，请补充你的问题或要求。",
   "coach.send.stopCurrentFailed": "未能停止当前生成，请重试。",
   "coach.send.stopFailed": "未能停止生成，请重试。",
+  "coach.send.stoppingBlocked": "正在停止当前回复，请等它真正结束后再发送。",
   "coach.run.interruptedMessage": "回复已中断：与本地服务的连接断开。",
   "coach.run.interruptedToast": "回复已中断",
   "coach.queue.enqueued": "当前回复仍在生成中，这条已加入输入框上方队列，可随时取消、编辑或立即打断发送。",
@@ -147,6 +148,8 @@ export const task6Zh = {
   "coach.composer.sendLabel": "发送",
   "coach.composer.stopLabel": "停止生成",
   "coach.composer.stopTitle": "停止生成（Esc 同功能）",
+  "coach.composer.stoppingLabel": "正在停止",
+  "coach.composer.stoppingTitle": "已请求停止，等待当前回复真正结束…",
 
   // ── CoachPanel.tsx —— 空对话首页 / 讨论条 / 消息区 / 错误卡 ─────────────
   "coach.home.chipsLabel": "试试这样问",
