@@ -3,11 +3,13 @@ import { test } from "node:test";
 
 import {
   COACH_DRAFT_DEBOUNCE_MS,
+  RUN_STOP_REQUESTED_CODE,
   activeMentionQuery,
   applyMentionSelection,
   buildMentionCandidates,
   coachDraftStorageKey,
   filterMentionCandidates,
+  hasStopRequestedEvent,
   readCoachDraft,
   readCoachDraftEnvelope,
   stepSentHistory,
@@ -158,4 +160,20 @@ test("sent history stepping walks from newest to oldest and returns past both en
   assert.equal(stepSentHistory(3, 1, "down"), 2);
   assert.equal(stepSentHistory(3, 2, "down"), null); // 回到原草稿
   assert.equal(stepSentHistory(0, null, "up"), null);
+});
+
+// 停止中派生：stop 受理以 type=status / code=run_stop_requested 事件表达，
+// status 保持 queued/running 直到真终态；事件随 run.events 持久可恢复。
+
+test("stop-requested detection keys on status events carrying the stop code", () => {
+  const stopEvent = { type: "status", code: RUN_STOP_REQUESTED_CODE };
+  assert.equal(hasStopRequestedEvent([stopEvent]), true);
+  assert.equal(hasStopRequestedEvent([{ type: "status", code: "other" }, stopEvent]), true);
+  // 同码但非 status 类型（如 phase/tool）不算停止受理
+  assert.equal(hasStopRequestedEvent([{ type: "phase", code: RUN_STOP_REQUESTED_CODE }]), false);
+  assert.equal(hasStopRequestedEvent([]), false);
+  assert.equal(
+    hasStopRequestedEvent([{ type: "text", code: "partial" }, { type: "tool", code: "browser.open" }]),
+    false,
+  );
 });

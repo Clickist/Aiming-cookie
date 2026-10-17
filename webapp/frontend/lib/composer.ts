@@ -30,6 +30,20 @@ export function updateQueuedChip(items: QueuedChip[], id: number, text: string):
   return items.map((item) => (item.id === id ? { ...item, text } : item));
 }
 
+// ── 停止中派生 ───────────────────────────────────────────────────────────
+
+/**
+ * runtime stop 合同：stop 受理即追加
+ * type=status / code=run_stop_requested 事件（phase 原样），status 保持
+ * queued/running，任务真结束才落 stopped/completed。事件保留在 run.events，
+ * 刷新/重连后仍可恢复。UI 據此派生「停止中」：事件在场＝停止已受理未终态。
+ */
+export const RUN_STOP_REQUESTED_CODE = "run_stop_requested";
+
+export function hasStopRequestedEvent(events: Array<{ type: string; code: string }>): boolean {
+  return events.some((event) => event.type === "status" && event.code === RUN_STOP_REQUESTED_CODE);
+}
+
 // ── 草稿三级持久键（item 4）──────────────────────────────────────────────
 
 /**

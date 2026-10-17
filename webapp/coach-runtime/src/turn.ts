@@ -68,6 +68,11 @@ type TurnOptions = {
   session?: unknown;
   /** Test seam: inject a fake provider stream (e.g. streamSimple stub) without a network call. */
   streamFn?: StreamFn;
+  /**
+   * Cancellation signal: the pre-registration window, around compaction, and each retry branch
+   * decide to stop based on it, and it is injected into pi's independent LLM calls that carry no signal.
+   */
+  signal?: AbortSignal;
 };
 
 export type CoachPartialRevision = {
@@ -592,7 +597,11 @@ function redactMessage(message: unknown, secrets: string[]): unknown {
  *   context is the full history — windowing is pi compaction's job (token
  *   based), never a message-count cap (see the cache note above).
  */
-export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
+export function wrapCoachSession(
+  session: unknown,
+  secrets: string[],
+  stopBoundary?: () => string | null,
+): unknown {
   const target = session as {
     appendMessage(message: unknown): Promise<string>;
     buildContext(options?: unknown): Promise<{ messages: unknown[] }>;
@@ -632,6 +641,22 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
             // text_available-but-jsonl-missing bug).
             if (!text.trim() && !hasToolCalls) {
               return undefined;
+            }
+            // 停止落盘边界：停止后只持久化已冻结的已发布前缀（stopReason=aborted，
+            // 去停止后未显示正文）；带 toolCall 原样保留防配对断裂；未停止不介入；
+            // 停止前无已发布正文整条不落。
+            const boundary = stopBoundary?.() ?? null;
+            if (boundary !== null && !hasToolCalls) {
+              if (!boundary) return undefined;
+              if (text === boundary && assistant.stopReason === "aborted") {
+                return proxyTarget.appendMessage(redactMessage(message, secrets));
+              }
+              return proxyTarget.appendMessage(
+                redactMessage(
+                  { ...assistant, content: [{ type: "text", text: boundary }], stopReason: "aborted" },
+                  secrets,
+                ),
+              );
             }
             return proxyTarget.appendMessage(redactMessage(message, secrets));
           }
@@ -1073,6 +1098,8 @@ export async function runCoachTurn(
   let thinkingBuffer = "";
   let activitySequence = 0;
   let lastPartialText: string | null = null;
+  // 停止落盘边界的数据源：最近一次 text_delta 的原始流式正文（未清洗）。
+  let lastRawPartialText: string | null = null;
   let lastPartialAt = 0;
   // 流式重复熔断状态（stream guard，2026-10 █ 野外案）：text_delta 检测命中
   // 置位 + fire-and-forget abort；分叉在 prompt resolve 之后（下方 breaker
@@ -1092,6 +1119,10 @@ export async function runCoachTurn(
   const providerStarts: number[] = [];
   const toolStarts = new Map<string, number>();
   let collectedToolEvents: CoachRuntimeToolEvent[] = [];
+  // 任务级取消信号：声明在 try 外，catch 分类也依赖它。
+  const stopSignal = options.signal ?? null;
+  // 停止信号 → harness.abort 兜底监听：try 内赋值，finally 摘除。
+  let abortOnStopSignal: (() => void) | null = null;
   // Skill 调用工作事件（09-10 拍板）：模型 read SKILL.md = 加载该技能，
   // 每个 run 只记首次；实机评估与前端工作流呈现都吃这个事件。
   const seenSkillReads = new Set<string>();
@@ -1103,6 +1134,25 @@ export async function runCoachTurn(
 
   try {
     const request = parseRequest(rawRequest);
+    // 停止判据：turn 层 stopRequested 集合与任务级 abort signal 取或。
+    const isStopRequested = (): boolean =>
+      stopRequested.has(request.run_id) || stopSignal?.aborted === true;
+    const stoppedFailureResponse = () =>
+      failureResponse(
+        makeError({
+          category: "coach_runtime",
+          code: "stopped",
+          message: STOPPED_USER_MESSAGE,
+          retryable: true,
+        }),
+        [],
+        request.schema_version,
+        collectedToolEvents,
+        lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+        request.run_id,
+        analysisRefs,
+        deepReadAnalysisRefs,
+      );
     const resolved = await resolveProviderModel(request.model);
     const { history, lastMessage } = splitConversation(request.messages, resolved.model);
 
@@ -1156,7 +1206,8 @@ export async function runCoachTurn(
     // (agent-runs path) so history comes from Session.buildContext(); otherwise
     // fall back to an in-memory session rebuilt from the request.
     const session = options.session
-      ? wrapCoachSession(options.session, secrets)
+      ? wrapCoachSession(options.session, secrets, () =>
+          isStopRequested() ? (lastRawPartialText ?? "") : null)
       : await (async () => {
           const repo = new InMemorySessionRepo();
           const memorySession = await repo.create();
@@ -1206,6 +1257,16 @@ export async function runCoachTurn(
         })
       : wrapModelsWithResilientFetch(resolved.models, adaptiveThinkingFetch());
 
+    // 停止信号注入：pi prompt 自带 abort signal；独立摘要 LLM 调用（compaction）
+    // signal 硬编码 undefined，此处注入停止信号实现真取消；已带 signal 原样透传。
+    if (stopSignal) {
+      const baseStreamSimple = harnessModels.streamSimple.bind(harnessModels);
+      harnessModels.streamSimple = ((model: unknown, context: unknown, streamOptions?: Record<string, unknown>) => {
+        if (streamOptions?.signal) return baseStreamSimple(model, context, streamOptions);
+        return baseStreamSimple(model, context, { ...(streamOptions ?? {}), signal: stopSignal });
+      }) as PiModels["streamSimple"];
+    }
+
     // Create AgentHarness. Provider 请求启用 Pi 内建重试（OpenAI SDK 的
     // 连接/5xx 预流式重试）：代理与上游网络抖动是流中断的常见来源，
     // maxRetries=0 会让一次瞬断直接终结整轮对话（2026-08-21 实测 terminated）。
@@ -1245,6 +1306,18 @@ export async function runCoachTurn(
       thinkingLevel,
       estimateMessage: estimateMessageTokensCjkAware,
     });
+
+    // 外部停止信号兜底：信号触发即主动 abort harness（幂等），不依赖
+    // stopCoachTurn 的注册窗口时序；prompt 在途与压缩在途都被覆盖。
+    abortOnStopSignal = () => {
+      harness.abort().catch((error) => {
+        console.error("[coach] harness abort failed", error);
+      });
+    };
+    if (stopSignal) {
+      if (stopSignal.aborted) abortOnStopSignal();
+      else stopSignal.addEventListener("abort", abortOnStopSignal, { once: true });
+    }
 
     // Subscribe to events for streaming and tracking
     const publishActivity = async (
@@ -1291,7 +1364,7 @@ export async function runCoachTurn(
 
       if (eventType === "message_start" && isRecord(event.message) && event.message.role === "assistant") {
         // 每轮 assistant 消息开始＝上一轮思考段终结：把已累积的 buffer 作为
-        // 上一段终文随 thinking started 帧下发（前端据此开新思考段并补齐
+        // 上一轮终文随 thinking started 帧下发（前端据此开新思考段并补齐
         // 丢帧；GET 轮询经 run events 也能重建完整分段）。字段恒带（null 也
         // 带）：前端以 undefined 区分旧版 sidecar（无分段）并整体降级单块。
         await publishActivity({
@@ -1300,6 +1373,8 @@ export async function runCoachTurn(
           thinking_text: thinkingBuffer.trim() ? thinkingBuffer : null,
         });
         thinkingBuffer = "";
+        // 落盘边界按轮重置；已停止后的晚到 start 不得清掉此前冻结值。
+        if (!isStopRequested()) lastRawPartialText = null;
         return;
       }
 
@@ -1414,6 +1489,8 @@ export async function runCoachTurn(
       if (eventType === "message_update" && isRecord(event.assistantMessageEvent) && event.assistantMessageEvent.type === "text_delta") {
         firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
         const partialText = extractAssistantText(event.message);
+        // 冻结取消时刻的已发布正文：stop 后迟到 delta 不得推进落盘边界。
+        if (!isStopRequested()) lastRawPartialText = partialText;
         // Stream guard（2026-10 █ 野外案）：full-replace 文本连续 █ run 超阈值
         // 即熔断——fire-and-forget abort（照用户停止的现成写法），prompt 会
         // resolve stopReason="aborted"，由下方 breakerTripped 分叉接管重试。
@@ -1476,17 +1553,25 @@ export async function runCoachTurn(
       queue: queueTarget,
     });
 
+    // 注册 checkpoint：注册前窗口 signal 是唯一停止线索，不得进入压缩与 prompt。
+    if (isStopRequested()) {
+      return stoppedFailureResponse();
+    }
+
     // 长会话压缩（pi 内建 compaction，审计#18）：token 超窗口 80% 时先让 pi
     // 把旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动
     // 用摘要替换被压缩历史，查询侧零改动。这是唯一的窗口管理（40 条滑窗已
     // 移除，见上方缓存注）。压缩是一次独立 LLM 摘要调用（可能几十秒），
     // started/completed/failed 经 activity 通道让前端显示“正在整理会话记忆”，
     // 替代无反馈的静默等待。压缩失败绝不拦对话，只落诊断日志（fail-open）。
+    // 停止已在途时不启动压缩（上方注入的 signal 也会取消在途摘要请求）。
     try {
-      const shouldCompact = await shouldCompactNow(
-        session,
-        (resolved.model as { contextWindow?: number }).contextWindow ?? 0,
-      );
+      const shouldCompact = isStopRequested()
+        ? false
+        : await shouldCompactNow(
+            session,
+            (resolved.model as { contextWindow?: number }).contextWindow ?? 0,
+          );
       if (shouldCompact) {
         await publishActivity({ kind: "compaction", state: "started" });
         try {
@@ -1510,6 +1595,10 @@ export async function runCoachTurn(
         // best-effort
       }
     }
+    // 压缩后 checkpoint：压缩中已停止则不得继续 prompt。
+    if (isStopRequested()) {
+      return stoppedFailureResponse();
+    }
 
     // Run the turn. Analysis engagement is scoped: explicit "analysis:N"
     // references in the user's message pin the discussion subject; analysis
@@ -1531,29 +1620,15 @@ export async function runCoachTurn(
     // next_turn 排水：首轮结束后用同一 harness 连续 prompt()，排队的追问依次
     // 成为后续 turn 的用户消息——会话持续、run_id 不变，前端无需新开 run。
     // 熔断已命中时不排水：打断轮的恢复优先，排队追问交还下方 breaker 分支。
-    while (nextTurnTexts.length > 0 && !stopRequested.has(request.run_id) && !breakerTripped) {
+    while (nextTurnTexts.length > 0 && !isStopRequested() && !breakerTripped) {
       replyMessage = await runScopedSkillReads(recordSkillRead, () =>
         harness.prompt(nextTurnTexts.shift()!),
       );
     }
     let turnUsage = extractUsage(replyMessage);
 
-    if (stopRequested.has(request.run_id)) {
-      return failureResponse(
-        makeError({
-          category: "coach_runtime",
-          code: "stopped",
-          message: STOPPED_USER_MESSAGE,
-          retryable: true,
-        }),
-        [],
-        request.schema_version,
-        collectedToolEvents,
-        lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
-        request.run_id,
-        analysisRefs,
-        deepReadAnalysisRefs,
-      );
+    if (isStopRequested()) {
+      return stoppedFailureResponse();
     }
 
     // Provider 流中途断开时，harness 可能 resolve 一条 stopReason=error 且
@@ -1592,7 +1667,7 @@ export async function runCoachTurn(
     // 显式分叉会被吞成「用户主动停止」（谎报已停止，同 2026-10-12 重启事故
     // 形态）。恰一次重试：先降一档思考（pi setThinkingLevel；重试后必须恢复
     // 原档，否则静默永久降档），nudge 不落历史（同 B1 空回复重试先例）。
-    if (breakerTripped && !breakerRetryUsed) {
+    if (breakerTripped && !breakerRetryUsed && !isStopRequested()) {
       breakerRetryUsed = true;
       breakerTripped = false; // 重试轮重新检测；二次命中走下方 corrupted_stream
       // 降级可观测合同：诊断行落 coach-error.log（随报障包带出）。
@@ -1688,7 +1763,7 @@ export async function runCoachTurn(
     // 重试：stopReason=error 的场景 pi 流式层已内部重试过（maxRetries:2），
     // 再叠加只会把一次真实故障拖成三倍等待。重试仍空/中断/停止 → 落回
     // 下方既有失败路径。
-    if (rawReply === null && !isAborted && !isError && !stopRequested.has(request.run_id)) {
+    if (rawReply === null && !isAborted && !isError && !isStopRequested()) {
       replyMessage = await runScopedSkillReads(recordSkillRead, () =>
         runScopedAnalysisReads(recordAnalysisRead, () => harness.prompt(EMPTY_REPLY_NUDGE)),
       );
@@ -1777,7 +1852,10 @@ export async function runCoachTurn(
       turnUsage,
     );
   } catch (error) {
-    const stopped = activeRunId !== null && stopRequested.has(activeRunId);
+    // 停止在途时按 stopped 分类（含任务 signal 已 abort 的注册前窗口），
+    // 不把一次用户主动停止谎报成模型故障。
+    const stopped = stopSignal?.aborted === true
+      || (activeRunId !== null && stopRequested.has(activeRunId));
     // eslint-disable-next-line no-console
     console.error("[coach-turn] turn failed:", error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error);
     try {
@@ -1813,6 +1891,7 @@ export async function runCoachTurn(
     );
   } finally {
     unsubscribe?.();
+    if (stopSignal && abortOnStopSignal) stopSignal.removeEventListener("abort", abortOnStopSignal);
     if (activeRunId !== null) {
       activeTurns.delete(activeRunId);
       stopRequested.delete(activeRunId);

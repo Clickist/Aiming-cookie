@@ -360,6 +360,8 @@ async function runAgentTurn(
     const response = await runCoachTurn(turnRequest, {
       session,
       streamFn: record.streamFn,
+      // 任务级取消信号贯穿 turn 全路径（含注册前窗口与压缩/重试分支）。
+      signal,
       onPartial: async (partial) => {
         if (signal.aborted) return;
         // Thinking-only revisions carry text: null — they must not wipe the
@@ -724,25 +726,38 @@ export function subscribeAgentRun(
 export async function stopAgentRun(ownerId: string, runRef: string): Promise<AgentRunState | null> {
   const record = runs.get(runRef);
   if (!record || record.ownerId !== ownerId) return null;
-  const current = getAgentRun(ownerId, runRef);
-  if (!current) return null;
-  if (["succeeded", "failed", "stopped"].includes(current.status)) return current;
+  if (isTerminalStatus(record.state.status)) return getAgentRun(ownerId, runRef);
+  // stop_requested 事件同一 run 只发一次；重复 stop 幂等返回当前状态。
+  if (record.stopRequested) return getAgentRun(ownerId, runRef);
 
+  // 停止受理可观察事件：status 类型 + 当前 phase + code=run_stop_requested，
+  // 沿用 run_stopped 命名风格；不新增 wire status。
   record.stopRequested = true;
+  const stopRequestedEvent = appendEvent(
+    record,
+    "status",
+    record.state.phase,
+    "run_stop_requested",
+    "Coach run stop requested",
+  );
+  broadcastActivity(record, stopRequestedEvent);
   stopCoachTurn(runRef);
   stopTask(runRef);
 
   if (isTaskActive(runRef)) {
+    // 有界等待真实收尾；超时保持现状（stop_requested 事件可观察），
+    // 绝不伪造 stopped 终态放行同会话并发。
     await waitForTask(runRef, 3000);
     if (isTaskActive(runRef)) {
-      setRunStatus(record, "stopped", "completed", { finished: true });
-      appendEvent(record, "status", "completed", "run_stopped", "Coach run stopped by the user");
+      return getAgentRun(ownerId, runRef);
     }
-  } else {
+  }
+  // 任务不在途（含 queued provider-waiting 无 task 的直接停止）或已真实收尾：
+  // 会话已无在途写入，此时才允许落终态。
+  if (!isTerminalStatus(record.state.status)) {
     setRunStatus(record, "stopped", "completed", { finished: true });
     appendEvent(record, "status", "completed", "run_stopped", "Coach run stopped by the user");
   }
-
   return getAgentRun(ownerId, runRef);
 }
 
@@ -839,9 +854,11 @@ export async function steerAgentRun(
  * a run can still append to the same JSONL session.
  */
 export function hasActiveAgentRunForSession(threadId: number): boolean {
-  for (const record of runs.values()) {
+  for (const [runRef, record] of runs) {
     if (record.threadId !== threadId) continue;
     if (record.state.status === "queued" || record.state.status === "running") return true;
+    // 终态但任务仍在途：turn 可能仍在写会话 JSONL，闸不得重开。
+    if (isTaskActive(runRef)) return true;
   }
   return false;
 }
