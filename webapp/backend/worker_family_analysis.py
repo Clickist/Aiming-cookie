@@ -480,6 +480,10 @@ def run_dynamic_clicking_analysis(
     visual_quality = dict(visual_result.get("quality") or {})
     if filtered_invalid_samples:
         _mark_samples_filtered(visual_quality)
+    # 遥测合成轨迹的来源/坏行跳过标注是 provenance：合进质量输入再调分析器，
+    # 下游 result/metric/overview 才能继承；绝不与原生 Raw Input 轨迹无声混同。
+    for limitation in telemetry_limitations:
+        _mark_quality_limitation(visual_quality, limitation)
     signal_bundle = visual_result.get("signal_bundle")
     channels = signal_bundle.get("channels") if isinstance(signal_bundle, Mapping) else []
     available_channel_keys = [
@@ -501,11 +505,6 @@ def run_dynamic_clicking_analysis(
         "predictability_evidence": [],
         "comparison": None,
     })
-    if telemetry_limitations:
-        analysis["limitations"] = list(dict.fromkeys([
-            *(analysis.get("limitations") or []), *telemetry_limitations,
-        ]))
-    return analysis
 
 
 _MULTI_TARGET_MIN_TRACK_SAMPLES = 200
