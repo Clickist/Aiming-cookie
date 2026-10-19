@@ -243,8 +243,10 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.16</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-17</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-19</span></div>
           <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复 xAI（Grok）账号登录失败：应用现在会正确经由系统代理连接登录服务，需要代理的网络下也能正常完成设备码授权</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>登录失败的详细原因现在会写入诊断日志并随报障包带出，方便定位问题</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>补上 1.4.15 编码修复的漏网环节：训练收尾读取采集输出也可能因系统编码差异崩溃，现已一并修复</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复按局深度遥测冻结切片丢失 flag 步证、导致目标生命边界统计失真的问题</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复极端时序下训练记录状态可能被旧快照覆盖回退的问题（收尾状态并发写入）</span></li>

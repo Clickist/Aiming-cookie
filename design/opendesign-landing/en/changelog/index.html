@@ -243,11 +243,13 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.16</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-17</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-19</span></div>
           <ul>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed xAI (Grok) sign-in failures: the app now connects to the login service through your system proxy, so device-code authorization works on networks that require one</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Detailed reasons for sign-in failures are now written to the diagnostic log and included in support bundles, making issues easier to pin down</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Completed the 1.4.15 encoding fix: reading collector output during training finalization could still crash on non-Chinese Windows — now fixed as well</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed a per-run telemetry freeze bug that dropped flag rows and skewed target life-boundary statistics</span></li>
-            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed a rare race where a training record's state could be rolled back by a stale snapshot during concurrent finalization writes</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed a rare race where a training record&#39;s state could be rolled back by a stale snapshot during concurrent finalization writes</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Honest stop states: while a turn is still winding down the UI shows a stopping state instead of falsely marking it stopped</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Queued messages no longer leak across sessions — content queued in chat A can no longer be sent to chat B</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>An unfinished storage migration now blocks changing the location again, with clear recovery guidance (free the locked files and restart to resume)</span></li>
