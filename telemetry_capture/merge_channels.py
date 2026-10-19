@@ -74,6 +74,16 @@ INPUT_DELTA_TOL_S = 0.25
 # 语义，kill-click 几何回执无判别力（实测 tracking 局中位 43° 为语义噪音，同局
 # tracking_aim 1.23° 真值健康），不得据此拒旁车，只作诊断。
 CLICK_SEMANTICS_MIN_SHARE = 0.5
+# [fix 2026-10-19] click_geom 下分位簇门：高射速+击杀即刷新场景（1w1ts Advanced
+# e0d6721b 1019 案三局）中位被污染——死亡前 250ms 窗内的最近点击大量是 miss 点击、
+# 且击杀瞬间目标刷新后 target_poll（60Hz）可能已读到下一目标位置——但锚本身健康
+# （xcorr 偏差 1ms、score 72/72 满分、click→death 中位 3.7ms）。误差分布双峰：
+# 真击杀簇 <3°（share_lt_3deg 0.21~0.32），污染簇 15~30°，中位被拉到 17~18° 而
+# 双挂。负对照不回退：错锚（2156 R3 ±1.125s）中位 34~44°、<10° 占 3~10% ⇒ <3°≈0；
+# 垃圾死亡流 37°+；虚拟屏域错位角误差近均匀（3°/180°≈2%）。0.15 下限与负对照
+# 间隔 ≥7×，与最小实证样本（0.21）留 0.06 裕量。过此门 grade=click_geom_cluster
+# （manifest/stdout 区分，非静默放行）；中位门路径一字不动。
+CLICK_SHARE3_MIN = 0.15
 # [fix 2026-10-04] 逐轮部分验收：session 级双挂时常因个别脏轮（厚血场景死亡动画期
 # 位置停更、多目标混杂轮）拉爆汇总分布，其余轮回执其实健康（zxldewil 1003 案：
 # 唯一进考场的 session 被 4 目标混杂轮拖死，3 局干净轮陪葬）。逐轮独立 fail-closed：
@@ -286,6 +296,27 @@ def _aim_session_grade(aim_result):
     return None
 
 
+def _click_geom_grade(check_result, click_semantics):
+    """[fix 2026-10-19] click_geom 级分级：中位门（原判据）或下分位簇门。
+
+    中位门一字不动（n≥5 且中位≤1° ⇒ click_geom）；簇门针对高射速+击杀即刷新
+    场景的中位污染（标定见 CLICK_SHARE3_MIN 注）：<3° 占比达标 ⇒
+    click_geom_cluster，与中位门 grade 在 manifest/stdout 区分，非静默放行。
+    纯函数，便于直测。"""
+    if not click_semantics or not isinstance(check_result, dict):
+        return None
+    if (check_result.get("n") or 0) < CLICK_CHECK_MIN_N:
+        return None
+    median = check_result.get("median_deg")
+    if median is None:
+        return None
+    if median <= 1.0:
+        return "click_geom"
+    if (check_result.get("share_lt_3deg") or 0.0) >= CLICK_SHARE3_MIN:
+        return "click_geom_cluster"
+    return None
+
+
 def _game_fingerprint(entry, cam, inp):
     """[fix 2026-10-06] 同源数据指纹：重洗（cleaner 重跑）不变、换局必变。
 
@@ -407,6 +438,11 @@ def _reject_causes(check_result, aim_result, click_semantics, xcr, xcorr_dev_s,
         if median is None or median > 1.0:
             causes.append("click_geom_median_above_max")
             detail["check_median_deg"] = median
+            # [fix 2026-10-19] 簇门留档：中位超限但簇占比接近/达标时，分诊可
+            # 直接看到离 CLICK_SHARE3_MIN 的距离（过簇门时不进拒绝路径）。
+            share3 = check_result.get("share_lt_3deg")
+            if share3 is not None:
+                detail["check_share_lt_3deg"] = share3
     if not click_semantics:
         causes.append("click_semantics_low")
         lat = (xcr.get("click_to_death_latency_ms") or {}) if xcr else {}
@@ -574,8 +610,11 @@ def main():
     # （无 t0_epoch 的旧 xcorr 路径一字不动，见上 accepted 计算）。
     #   click_geom   —— ① kill-click 几何回执（n≥5 且中位 ≤1°，实战依据：0901
     #                     验证局中位 0.233°/<1°占98%，与 verify0831 黄金 0.231° 一致）
-    #                    ② xcorr 峰与锚偏差 ≤250ms（密集点击平台宽失效，见
+    #                     ② xcorr 峰与锚偏差 ≤250ms（密集点击平台宽失效，见
     #                     XCORR_DEV_MAX_S 注）；
+    #   click_geom_cluster —— [fix 2026-10-19] 高射速+击杀即刷新场景的簇门
+    #                     （中位被 miss 点击/目标刷新污染，<3° 占比达标即过，
+    #                     标定见 CLICK_SHARE3_MIN 注）；
     #   tracking_aim —— 跟枪/hold-fire 局：click 稀疏使互相关峰被场景动力学锁偏
     #                    （2156 实测 +1.125s，三方钟差对账证明钟互差 ≤±40ms），改用
     #                    death_aim_check（死亡前 200ms 窗准星→垂死目标最小夹角，
@@ -605,22 +644,21 @@ def main():
         # 0.55~1.125s）时，一个自称诊断的量会误杀几何回执健康的局。摘门后锚真
         # 错误仍被 n≥5+中位≤1° 拦住（准星不在靶上时该回执必爆炸）；偏差保留为
         # 诊断值（stdout/manifest.xcorr 照记，进拒绝 detail）。
-        click_geom_ok = (click_semantics
-                         and check_result["n"] >= CLICK_CHECK_MIN_N
-                         and check_result["median_deg"] is not None
-                         and check_result["median_deg"] <= 1.0)
+        # [fix 2026-10-19] 判定提为 _click_geom_grade 纯函数并加簇门备选。
+        click_grade = _click_geom_grade(check_result, click_semantics)
         aim_grade = _aim_session_grade(aim_result)
-        if click_geom_ok:
-            accept_grade = "click_geom"
+        if click_grade:
+            accept_grade = click_grade
         elif aim_grade:
             accept_grade = aim_grade
         accepted = accept_grade is not None
-        print("[align] 精确锚分级验收: click_geom(n=%d 中位=%s°, xcorr偏差=%.0fms,"
-              " 点击语义=%s)"
+        print("[align] 精确锚分级验收: click_geom(n=%d 中位=%s°, <3°占%.0f%%, "
+              "xcorr偏差=%.0fms, 点击语义=%s)"
               "=%s | tracking_aim(n=%d 窗最小中位=%s°, <10°占%.0f%%)=%s"
               " => grade=%s accepted=%s"
               % (check_result["n"], check_result["median_deg"],
-                 xcorr_dev_s * 1000.0, click_semantics, click_geom_ok,
+                 100.0 * (check_result.get("share_lt_3deg") or 0.0),
+                 xcorr_dev_s * 1000.0, click_semantics, click_grade,
                  aim_result["n"], aim_result["median_deg"],
                  100.0 * (aim_result["share_lt_10deg"] or 0.0),
                  aim_grade is not None, accept_grade, accepted))
@@ -731,12 +769,14 @@ def main():
         aln["accept_grade"] = accept_grade
         aln["accept_rule"] = (
             "click_geom: click语义(死亡-点击配对率>=%.2f) and check.n>=%d and "
-            "check.median_deg<=1.0 | tracking_aim: "
+            "check.median_deg<=1.0 | click_geom_cluster[fix 2026-10-19]: "
+            "同前但 check.share_lt_3deg>=%.2f(高射速+击杀即刷新场景中位被污染,"
+            "下分位簇验锚) | tracking_aim: "
             "aim_check.n>=%d and aim_check.median_deg<=%.1f and "
             "aim_check.share_lt_10deg>=%.2f "
             "(死亡前200ms窗最小夹角; xcorr 峰在 click 稀疏局被场景动力学锁偏,"
             "仅诊断[fix 2026-10-09 摘出硬门],偏差随 manifest.xcorr/detail 留档)"
-            % (CLICK_SEMANTICS_MIN_SHARE, CLICK_CHECK_MIN_N,
+            % (CLICK_SEMANTICS_MIN_SHARE, CLICK_CHECK_MIN_N, CLICK_SHARE3_MIN,
                AIM_CHECK_MIN_N, AIM_MEDIAN_MAX_DEG, AIM_SHARE10_MIN))
         if round_verdicts is not None:   # [fix 2026-10-04] 逐轮部分验收语义
             aln["round_verdicts"] = round_verdicts
