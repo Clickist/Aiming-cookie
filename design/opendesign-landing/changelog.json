@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.4.18",
+      "date": "2026-10-20",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复部分快节奏射击场景（如 1w1ts）训练数据被误判无效的问题：这些场景的分析此前会退到较慢的兜底路径且证据档降级，现在深度遥测正常启用",
+          "en": "Fixed an overly strict telemetry check that mis-rejected fast-fire scenarios (e.g. 1w1ts): analysis no longer falls back to the slower path, and full-depth telemetry evidence is restored"
+        },
+        {
+          "type": "fix",
+          "zh": "修复登录授权后偶发一直转圈的问题：登录确认事件偶尔会在系统跳转中丢失，现在应用会自动轮询登录结果兜底",
+          "en": "Fixed sign-in occasionally hanging after authorization: the app now polls for the login result as a fallback when the confirmation event gets lost in the OS handoff"
+        }
+      ]
+    },
+    {
       "version": "1.4.17",
       "date": "2026-10-19",
       "items": [
