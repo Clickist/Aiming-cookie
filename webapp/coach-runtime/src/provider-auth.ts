@@ -18,6 +18,7 @@ import {
   type OAuthCredential,
 } from "./contracts.ts";
 import { loadPiProvidersAll } from "./pi-source.ts";
+import { appendCoachErrorLog } from "./coach-error-log.ts";
 
 const AUTHORIZE_TIMEOUT_MS = 15 * 60 * 1_000;
 const REFRESH_TIMEOUT_MS = 30_000;
@@ -273,7 +274,28 @@ type InternalOperation = {
 type ManagerOptions = {
   loadProviders?: () => Promise<PiAuthProvider[]>;
   terminalRetentionMs?: number;
+  /** 结构化错误日志出口（coach-error.log）；测试注入 spy。 */
+  writeLog?: (line: string) => void;
 };
+
+// issue#8：login/refresh 的真实失败原因此前被空 catch 吞掉，只能吐固定文案。
+// UI message 受「sanitized terminal failure」契约约束保持固定（不得透出 provider 错误
+// 自由文本），详情走 coach-error.log（报障包自动带出）供诊断。
+const REDACTED_QUERY_KEYS = "access_token|refresh_token|device_code|code|token|api_key|key|state";
+
+function redactErrorDetail(error: unknown): string {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return raw
+    .replace(
+      new RegExp(`([?&])(${REDACTED_QUERY_KEYS})=([^&\\s]+)`, "gi"),
+      "$1$2=REDACTED",
+    )
+    .slice(0, 300);
+}
+
+function authRuntimeTag(): string {
+  return (globalThis as { Bun?: unknown }).Bun !== undefined ? "bun" : "node";
+}
 
 function isTerminal(status: ProviderAuthOperation["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out";
@@ -309,10 +331,12 @@ export class ProviderAuthOperationManager {
   private readonly operations = new Map<string, InternalOperation>();
   private readonly loadProviders: () => Promise<PiAuthProvider[]>;
   private readonly terminalRetentionMs: number;
+  private readonly writeLog: (line: string) => void;
 
   constructor(options: ManagerOptions = {}) {
     this.loadProviders = options.loadProviders ?? loadBuiltinProviders;
     this.terminalRetentionMs = options.terminalRetentionMs ?? TERMINAL_RETENTION_MS;
+    this.writeLog = options.writeLog ?? appendCoachErrorLog;
   }
 
   async capabilities(): Promise<ProviderAuthCapabilitiesResponse> {
@@ -523,8 +547,9 @@ export class ProviderAuthOperationManager {
         return;
       }
       this.finishSuccess(operation);
-    } catch {
+    } catch (error) {
       if (!isTerminal(operation.public.status)) {
+        this.logAuthFailure(operation, "login_failed", error);
         this.finishTerminal(operation, "failed", "login_failed", "Authentication login failed", true);
       }
     }
@@ -543,10 +568,30 @@ export class ProviderAuthOperationManager {
         return;
       }
       this.finishSuccess(operation);
-    } catch {
+    } catch (error) {
       if (!isTerminal(operation.public.status)) {
+        this.logAuthFailure(operation, "refresh_failed", error);
         this.finishTerminal(operation, "failed", "refresh_failed", "OAuth refresh failed", true);
       }
+    }
+  }
+
+  /** 失败详情（脱敏+截断）落 coach-error.log；UI message 维持固定文案（sanitized 契约）。 */
+  private logAuthFailure(operation: InternalOperation, code: "login_failed" | "refresh_failed", error: unknown): void {
+    try {
+      const detail = redactErrorDetail(error);
+      this.writeLog(
+        `${new Date().toISOString()} [provider-auth] ${JSON.stringify({
+          provider_id: operation.public.provider_id,
+          action: operation.public.action,
+          mode: operation.public.mode,
+          code,
+          error: detail,
+          runtime: authRuntimeTag(),
+        })}`,
+      );
+    } catch {
+      // 日志构造/写出失败不影响终态落定
     }
   }
 

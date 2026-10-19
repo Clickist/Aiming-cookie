@@ -329,6 +329,111 @@ test("OAuth state mismatch is a sanitized terminal failure", async () => {
   }
 });
 
+test("login failures record a structured line via writeLog while UI message stays sanitized", async () => {
+  const lines: string[] = [];
+  const provider = fakeProvider({
+    auth: {
+      oauth: {
+        name: "Fixture OAuth",
+        login: async () => {
+          throw new Error("Unable to connect to auth.example.ai");
+        },
+        refresh: async (credential) => credential,
+        toAuth: async (credential) => ({ apiKey: credential.access }),
+      },
+    },
+  });
+  const manager = new ProviderAuthOperationManager({
+    loadProviders: async () => [provider],
+    writeLog: (line) => lines.push(line),
+  });
+  try {
+    const started = await manager.start({ action: "login", provider_id: provider.id, mode: "oauth" });
+    const failed = await waitFor(manager, started.id, (operation) => operation.status === "failed");
+    assert.equal(failed.error?.code, "login_failed");
+    // sanitized 契约：UI message 保持固定文案，不透出 provider 错误自由文本
+    assert.equal(failed.error?.message, "Authentication login failed");
+    // 真实原因走 writeLog（生产=coach-error.log，随报障包带出）
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0]!.includes("[provider-auth]"));
+    const payload = JSON.parse(lines[0]!.slice(lines[0]!.indexOf("{"))) as Record<string, string>;
+    assert.equal(payload.provider_id, "fixture-provider");
+    assert.equal(payload.action, "login");
+    assert.equal(payload.mode, "oauth");
+    assert.equal(payload.code, "login_failed");
+    assert.ok(payload.error.includes("Unable to connect to auth.example.ai"));
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("provider-auth log lines redact credential-bearing query params", async () => {
+  const lines: string[] = [];
+  const provider = fakeProvider({
+    auth: {
+      oauth: {
+        name: "Fixture OAuth",
+        login: async () => {
+          throw new Error("auth callback failed https://x.ai/cb?access_token=SENTtok123&code=SENTcod456&keep=plain");
+        },
+        refresh: async (credential) => credential,
+        toAuth: async (credential) => ({ apiKey: credential.access }),
+      },
+    },
+  });
+  const manager = new ProviderAuthOperationManager({
+    loadProviders: async () => [provider],
+    writeLog: (line) => lines.push(line),
+  });
+  try {
+    const started = await manager.start({ action: "login", provider_id: provider.id, mode: "oauth" });
+    await waitFor(manager, started.id, (operation) => operation.status === "failed");
+    const joined = lines.join("\n");
+    assert.ok(!joined.includes("SENTtok123"));
+    assert.ok(!joined.includes("SENTcod456"));
+    assert.ok(joined.includes("access_token=REDACTED"));
+    assert.ok(joined.includes("code=REDACTED"));
+    assert.ok(joined.includes("keep=plain"));
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("refresh failures record the same structured log line", async () => {
+  const lines: string[] = [];
+  const provider = fakeProvider({
+    auth: {
+      oauth: {
+        name: "Fixture OAuth",
+        login: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 1 }),
+        refresh: async () => {
+          throw new Error("token endpoint returned 503");
+        },
+        toAuth: async (credential) => ({ apiKey: credential.access }),
+      },
+    },
+  });
+  const manager = new ProviderAuthOperationManager({
+    loadProviders: async () => [provider],
+    writeLog: (line) => lines.push(line),
+  });
+  try {
+    const started = await manager.start({
+      action: "refresh",
+      provider_id: provider.id,
+      credential: { type: "oauth", access: "a", refresh: "r", expires: 1 },
+    });
+    const failed = await waitFor(manager, started.id, (operation) => operation.status === "failed");
+    assert.equal(failed.error?.code, "refresh_failed");
+    assert.equal(failed.error?.message, "OAuth refresh failed");
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0]!.includes('"code":"refresh_failed"'));
+    assert.ok(lines[0]!.includes("token endpoint returned 503"));
+  } finally {
+    manager.dispose();
+  }
+});
+
 test("terminal operations and untaken credentials are evicted after retention", async () => {
   const provider = fakeProvider({
     auth: {

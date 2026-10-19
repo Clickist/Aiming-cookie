@@ -3,6 +3,20 @@
 // 自起时必须自带 AIMING_COOKIE_DESKTOP_TOKEN（与 backend 的同 env 一致），如：
 //   AIMING_COOKIE_DESKTOP_TOKEN=dev-secret bun start-sidecar.ts
 // 桌面模式下由 Tauri 每次启动生成新 token 注入，不经本入口。
+// 首条 import：代理感知 fetch 必须先于任何其他模块体安装（issue#8——
+// Bun --compile 产物的全局 fetch 不读 HTTPS_PROXY，xAI 等 OAuth 直连被墙）。
+import "./src/proxy-fetch.ts";
+
+// issue#8 第二层：pi 的 OAuth 流程默认走运行时动态 import（load.ts 用变量
+// specifier 故意防打包），compile 产物里没有源文件会 "Cannot find module"。
+// 与 pi 自家 Bun CLI（coding-agent/src/bun/cli.ts）同法：Bun 运行时下注册
+// 静态嵌入的 loaders；dev（node+tsx）下保持动态 import 从源码解析。
+import { registerBunOAuthFlows } from "../../third_party/pi/packages/ai/src/bun-oauth.ts";
+
+if ((globalThis as { Bun?: unknown }).Bun !== undefined) {
+  registerBunOAuthFlows();
+}
+
 import {
   DEFAULT_SIDECAR_HOST,
   DEFAULT_SIDECAR_PORT,

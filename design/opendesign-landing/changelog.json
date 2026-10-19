@@ -1,9 +1,19 @@
 {
   "versions": [
     {
-      "version": "1.4.16",
-      "date": "2026-10-17",
+      "version": "1.4.17",
+      "date": "2026-10-19",
       "items": [
+        {
+          "type": "fix",
+          "zh": "修复 xAI（Grok）账号登录失败：应用现在会正确经由系统代理连接登录服务，需要代理的网络下也能正常完成设备码授权",
+          "en": "Fixed xAI (Grok) sign-in failures: the app now connects to the login service through your system proxy, so device-code authorization works on networks that require one"
+        },
+        {
+          "type": "fix",
+          "zh": "登录失败的详细原因现在会写入诊断日志并随报障包带出，方便定位问题",
+          "en": "Detailed reasons for sign-in failures are now written to the diagnostic log and included in support bundles, making issues easier to pin down"
+        },
         {
           "type": "fix",
           "zh": "补上 1.4.15 编码修复的漏网环节：训练收尾读取采集输出也可能因系统编码差异崩溃，现已一并修复",
