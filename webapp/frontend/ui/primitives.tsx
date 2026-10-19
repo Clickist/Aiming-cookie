@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 
 import { useT } from "@/lib/i18n";
 import { IconClose } from "./icons";
@@ -412,7 +413,11 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
   const presence = useAnimatedPresence(open, 180);
   useModalInteraction(open && presence.present, onClose, id);
   if (!presence.present) return null;
-  return (
+  // portal 到 body：fixed 弹层不得留在组件树里——任何祖先带 transform（设置页
+  // 开关动画终态、区块入场动画的 fill-mode 都会留下恒等 transform）都会劫持
+  // fixed 包含块，把弹层“居中”进那个小容器（1.4.17 真机：添加 Provider 向导
+  // 在设置页顶部被裁切）。
+  return createPortal(
     <>
       <div className="ac-dialog-backdrop" data-state={presence.state} onMouseDown={open ? onClose : undefined} />
       <section
@@ -434,6 +439,7 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
         <div className="ac-dialog__body">{children}</div>
         {footer ? <footer className="ac-dialog__footer">{footer}</footer> : null}
       </section>
-    </>
+    </>,
+    document.body,
   );
 }
