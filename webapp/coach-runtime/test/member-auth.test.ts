@@ -385,10 +385,23 @@ test("poll maps 404/410 to stopped outcomes so the wizard can stop the loop", as
     const result = await memberAuth.pollMemberTicket();
     assert.equal(result.outcome, "stopped");
     assert.equal(result.outcome === "stopped" && result.code, "device_code_invalid");
+    // 1018：终态即清 pending——全局轮询兜底常驻后，死 dc 不清会让每次轮询都出网。
+    assert.equal(memberAuth.loadMemberState().pending, null, "404 终态后 pending 必须清掉");
   } finally {
     stub.restore();
   }
+  // pending 已被上一段清掉：后续轮询本地短路 no_pending，不再出网打服务端。
+  const stubIdle = stubAccounts({});
+  try {
+    const idle = await memberAuth.pollMemberTicket();
+    assert.equal(idle.outcome === "stopped" && idle.code, "no_pending");
+    assert.equal(stubIdle.calls.length, 0, "no_pending 必须本地短路，零网络");
+  } finally {
+    stubIdle.restore();
+  }
 
+  // 410 同样清 pending：重置状态后单独验证。
+  writeMemberState({ device_code: "dc-poll", login_url: "u", started_at: Date.now() });
   const stub410 = stubAccounts({
     "/api/device/poll": { status: 410, body: { error: "ticket expired" } },
   });
@@ -396,6 +409,7 @@ test("poll maps 404/410 to stopped outcomes so the wizard can stop the loop", as
     const result = await memberAuth.pollMemberTicket();
     assert.equal(result.outcome, "stopped");
     assert.equal(result.outcome === "stopped" && result.code, "ticket_expired");
+    assert.equal(memberAuth.loadMemberState().pending, null, "410 终态后 pending 必须清掉");
   } finally {
     stub410.restore();
   }

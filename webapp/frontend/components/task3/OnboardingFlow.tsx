@@ -40,6 +40,7 @@ import { ACCOUNTS_BASE_URL } from "@/lib/infra-urls";
 import { MEMBER_COPY, maskEmail, parseMemberDeepLink } from "@/lib/member";
 import {
   clearPendingDeepLink,
+  describeMemberDeepLinkUrls,
   isTerminalExchangeCode,
   noteMemberDeepLinkEvent,
   peekPendingDeepLink,
@@ -391,6 +392,8 @@ export function OnboardingFlow() {
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         if (disposed) return;
         unlisten = await onOpenUrl((urls) => {
+          // 到达必留痕（1018 报障的可观测缺口）：与 lib/member-deeplink 同口径。
+          noteMemberDeepLinkEvent(describeMemberDeepLinkUrls(urls, "event"));
           void process(urls);
         });
         if (disposed) {
@@ -398,7 +401,11 @@ export function OnboardingFlow() {
           unlisten = null;
           return;
         }
-        await process(await getCurrent());
+        const current = await getCurrent();
+        if (current && current.length) {
+          noteMemberDeepLinkEvent(describeMemberDeepLinkUrls(current, "cold-start"));
+        }
+        await process(current);
       } catch {
         // 插件不可用：不影响其余路径（手动重开、BYOK）。
       }
@@ -458,7 +465,9 @@ export function OnboardingFlow() {
         if (disposed) return;
         if (result.outcome === "pending" || result.outcome === "error") return;
         if (result.outcome === "stopped") {
-          setMemberMessage(result.message);
+          // 1018：poll 终态后 sidecar 会清本地 pending，后续轮询转 no_pending——
+          // 保持首次终态文案（「已过期/已失效」），不被「没有进行中的登录」顶掉。
+          if (result.code !== "no_pending") setMemberMessage(result.message);
           return;
         }
         // done：与 deep-link 成功同一推进路径（连通测试失败 → test_failed）。

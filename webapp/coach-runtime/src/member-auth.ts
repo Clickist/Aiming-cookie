@@ -495,12 +495,24 @@ export async function pollMemberTicket(): Promise<MemberPollResult> {
   }
   if (status === 404) {
     // 行已删：多半是 deep-link 已在别处消费（或 dc 从未存在）。前端会以 /api/me 复核。
+    // 1018：终态即清本地 pending——全局轮询兜底常驻后，死 dc 不清会让每次轮询
+    // 都出网打服务端（404/410 不会再有不同结果）；清掉后轮询落到 no_pending 本地短路。
+    clearStalePending();
     return { outcome: "stopped", code: "device_code_invalid", message: "登录会话已失效，请重新发起登录。" };
   }
   if (status === 410) {
+    clearStalePending();
     return { outcome: "stopped", code: "ticket_expired", message: "登录已过期，请重新发起登录。" };
   }
   return { outcome: "error", code: "network_error", message: `登录查询异常（HTTP ${status}），将继续重试。` };
+}
+
+/** poll 终态（404/410）后清掉本地待用 dc：这条登录流已死，保留只会让轮询持续出网。 */
+function clearStalePending(): void {
+  const next = loadMemberState();
+  if (!next.pending) return;
+  next.pending = null;
+  saveMemberState(next);
 }
 
 /** `/api/me`（契约 §7.1-8）：会员状态的唯一数据源。401 → 静默降级未登录。 */

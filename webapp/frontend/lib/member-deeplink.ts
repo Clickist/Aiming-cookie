@@ -15,15 +15,22 @@
  * `DesktopRuntimeUnavailableError`（或返回 network_error），此时 ticket 尚未被
  * 消费，原始 URL 暂存进 localStorage 由监听器定时重试，成功或终态拒绝即清；
  * 终态拒绝（dc 不匹配/已消费/过期类）仍降级为「刷新会员状态」。
+ *
+ * 轮询兜底（1018 野外案全局化）：deep-link 事件在 OS→webview 的最后一跳可能
+ * 整段丢失（2026-10-18 报障 31f899ed：Rust 侧收到 8/8、前端处理 0/8，服务端
+ * 19 次认领无一被消费）。sidecar 磁盘态里的 pending dc 让轮询成为所有登录
+ * 入口（设置页 / 主界面 / 冷启动）的公共收尾通道——事件被吞时最多晚一个
+ * 轮询周期完成登录，不再只属于 onboarding 等待页。
  */
 
 import { useEffect, useRef } from "react";
 
-import { exchangeMemberTicket, fetchMemberStatus } from "@/lib/api";
+import { exchangeMemberTicket, fetchMemberStatus, pollMemberLogin } from "@/lib/api";
 import { MEMBER_EXCHANGED_EVENT } from "@/lib/contracts";
 import { isDesktopRuntime } from "@/lib/desktop";
 import { logFrontendError } from "@/lib/frontend-log";
 import { canExchange, parseMemberDeepLink, type MemberDeepLink } from "@/lib/member";
+import type { MemberPollResponse } from "@/lib/types";
 
 export type MemberDeepLinkOutcome =
   | { kind: "exchanged"; member: boolean; email: string }
@@ -51,6 +58,11 @@ export const PENDING_FIRST_RETRY_DELAY_MS = 3_000;
 export const PENDING_RETRY_INTERVAL_MS = 5_000;
 /** 覆盖 device_code 前的暂存票消费重试上限（OnboardingFlow 使用），防死循环。 */
 export const PENDING_MAX_ATTEMPTS = 3;
+/**
+ * 全局登录轮询节奏（1018 野外案）：无登录流时 sidecar 对 no_pending 本地短路
+ * 不出网；有 pending dc 时与 onboarding 等待页的 3s 轮询同节奏。
+ */
+export const MEMBER_LOGIN_POLL_INTERVAL_MS = 3_000;
 
 export interface PendingDeepLinkEntry {
   url: string;
@@ -226,6 +238,59 @@ export async function handleMemberDeepLink(
 }
 
 /**
+ * 到达痕迹的脱敏摘要：只记条数与 scene/ticket/dc **是否存在**（与壳层 Rust 侧
+ * log_deep_link_receipt 同口径），原始 URL 与票据值一律不进日志。1018 报障里
+ * 正是这层痕迹缺失，导致「事件到没到 JS」只能靠三方排除法反推。
+ */
+export function describeMemberDeepLinkUrls(urls: string[] | null, source: string): string {
+  const list = urls ?? [];
+  const parts = list.map((url) => {
+    const link = parseMemberDeepLink(url);
+    return link
+      ? `scene=${link.scene} ticket=${link.ticket ? "yes" : "no"} dc=${link.dc ? "yes" : "no"}`
+      : "unparsed";
+  });
+  return `deep-link received (${source}): ${list.length} url(s) [${parts.join(", ")}]`;
+}
+
+/**
+ * 轮询结果的统一收口（1018 野外案）：`done` 与 deep-link exchange 成功同一
+ * 语义（广播 + 刷新 + 清暂存），并留一条观测痕迹——这行日志直接度量「事件
+ * 被吞、轮询救回」的野外发生率；`stopped/no_pending` 是无登录流时的常态
+ * 返回，不记（按轮询节奏会刷屏），其余终态留痕一次。
+ */
+export function settleMemberPollResult(
+  result: MemberPollResponse,
+  handlers: MemberDeepLinkHandlers,
+): void {
+  if (result.outcome === "pending" || result.outcome === "error") return;
+  if (result.outcome === "stopped") {
+    if (result.code !== "no_pending") {
+      noteMemberDeepLinkEvent(`login poll stopped: ${result.code}`);
+    }
+    return;
+  }
+  noteMemberDeepLinkEvent(
+    `login completed via poll fallback (member=${result.member ? "yes" : "no"}, connection=${result.connection_ok === false ? "failed" : "ok"})`,
+  );
+  // 换票已由 sidecar 落库（JWT 入仓、pending 清空）：暂存 deep-link 的重试没有意义了。
+  clearPendingDeepLink();
+  if (result.connection_ok === false && handlers.onConnectionFailed) {
+    handlers.onConnectionFailed(result.connection_message ?? "连接测试未通过。");
+  }
+  // 登录成功广播：与 handleMemberDeepLink 同一事件，AppShell 的「未订阅直达
+  // 设置页官方档」收口对两条通道一视同仁。无 window 的测试环境静默跳过。
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(MEMBER_EXCHANGED_EVENT, { detail: { member: result.member } }));
+  }
+  handlers.onRefreshed({
+    kind: "exchanged",
+    member: result.member,
+    email: result.user.email,
+  });
+}
+
+/**
  * 桌面端挂载即监听：冷启动 URL（插件 get_current）+ 运行中事件（single-instance
  * 转发的 argv 广播）。浏览器预览形态不装监听。
  */
@@ -235,6 +300,9 @@ export function useMemberDeepLinks(handlers: MemberDeepLinkHandlers, enabled = t
   const seenRef = useRef(new Set<string>());
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+  // 轮询 in-flight 门：慢网络下 sidecar 的账号请求可达 20s 超时，防止固定
+  // 间隔把请求堆叠（OnboardingFlow 等待页同款防护）。
+  const pollInflightRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !isDesktopRuntime()) return undefined;
@@ -280,6 +348,8 @@ export function useMemberDeepLinks(handlers: MemberDeepLinkHandlers, enabled = t
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         if (disposed) return;
         unlisten = await onOpenUrl((urls) => {
+          // 到达必留痕（1018 报障的可观测缺口）：事件到没到 JS，下次报障直接可判。
+          noteMemberDeepLinkEvent(describeMemberDeepLinkUrls(urls, "event"));
           void process(urls);
         });
         if (disposed) {
@@ -289,6 +359,9 @@ export function useMemberDeepLinks(handlers: MemberDeepLinkHandlers, enabled = t
         }
         // 冷启动由协议唤起：argv 里的 URL 在插件 setup 时已读入 current。
         const current = await getCurrent();
+        if (current && current.length) {
+          noteMemberDeepLinkEvent(describeMemberDeepLinkUrls(current, "cold-start"));
+        }
         if (!disposed) await process(current);
       } catch {
         // 插件不可用（浏览器预览 / 未注册）时静默：deep-link 本就是可失败路径。
@@ -300,6 +373,31 @@ export function useMemberDeepLinks(handlers: MemberDeepLinkHandlers, enabled = t
       unlisten?.();
       window.clearTimeout(firstRetry);
       window.clearInterval(retryTimer);
+    };
+  }, [enabled]);
+
+  // 全局轮询兜底（1018 野外案）：pending dc 持久化在 sidecar 磁盘态，deep-link
+  // 事件链路被吞时由这里收尾——覆盖设置页发起的登录（此前只有 onboarding
+  // 等待页有轮询）与重启后残留的 pending dc。常驻开销是每周期一次本地
+  // sidecar 调用（无登录流时 no_pending 本地短路，不出网）。
+  useEffect(() => {
+    if (!enabled || !isDesktopRuntime()) return undefined;
+    let disposed = false;
+    const tick = async (): Promise<void> => {
+      if (disposed || pollInflightRef.current) return;
+      pollInflightRef.current = true;
+      try {
+        settleMemberPollResult(await pollMemberLogin(), handlersRef.current);
+      } catch {
+        // sidecar 未就绪等瞬态失败：保持轮询，下一轮再问。
+      } finally {
+        pollInflightRef.current = false;
+      }
+    };
+    const timer = window.setInterval(() => void tick(), MEMBER_LOGIN_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
     };
   }, [enabled]);
 }

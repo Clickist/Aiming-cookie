@@ -84,6 +84,13 @@ test("member state never infers entitlement from the URL and always reads /api/m
   // 无 ticket / 拒绝路径一律降级刷新，不弹错误（§3.2 触发 2 / §3.3-7）。
   assert.match(deeplink, /kind: "refreshed"/);
   assert.doesNotMatch(deeplink, /alert\(|throw new Error\("deep-link/);
+  // 1018 野外案：deep-link 事件在 OS→webview 最后一跳可能整段丢失（报障
+  // 31f899ed 设置页登录 19 次全部卡死）。轮询兜底必须挂在壳层 hook 里（覆盖
+  // 设置页 / 主界面 / 冷启动所有入口），且事件到达 JS 侧必留脱敏观测痕迹。
+  assert.match(deeplink, /pollMemberLogin/);
+  assert.match(deeplink, /settleMemberPollResult/);
+  assert.match(deeplink, /MEMBER_LOGIN_POLL_INTERVAL_MS/);
+  assert.match(deeplink, /deep-link received/);
   // 60s 轮询 + 聚焦刷新（任务书 ⑥）；401 静默降级未登录。
   assert.match(state, /MEMBER_POLL_INTERVAL_MS = 60_000/);
   assert.match(state, /addEventListener\("focus"/);
