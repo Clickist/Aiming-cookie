@@ -243,7 +243,14 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-19</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.18</h2> <span class="cl-badge">Latest</span><span class="cl-date">2026-10-20</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed an overly strict telemetry check that mis-rejected fast-fire scenarios (e.g. 1w1ts): analysis no longer falls back to the slower path, and full-depth telemetry evidence is restored</span></li>
+            <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed sign-in occasionally hanging after authorization: the app now polls for the login result as a fallback when the confirmation event gets lost in the OS handoff</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2><span class="cl-date">2026-10-19</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Fixed xAI (Grok) sign-in failures: the app now connects to the login service through your system proxy, so device-code authorization works on networks that require one</span></li>
             <li class="cl-fix"><span class="cl-tag">Fixed</span><span>Detailed reasons for sign-in failures are now written to the diagnostic log and included in support bundles, making issues easier to pin down</span></li>

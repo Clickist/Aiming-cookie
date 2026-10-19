@@ -243,7 +243,14 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-19</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.18</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-20</span></div>
+          <ul>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分快节奏射击场景（如 1w1ts）训练数据被误判无效的问题：这些场景的分析此前会退到较慢的兜底路径且证据档降级，现在深度遥测正常启用</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>修复登录授权后偶发一直转圈的问题：登录确认事件偶尔会在系统跳转中丢失，现在应用会自动轮询登录结果兜底</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.17</h2><span class="cl-date">2026-10-19</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复 xAI（Grok）账号登录失败：应用现在会正确经由系统代理连接登录服务，需要代理的网络下也能正常完成设备码授权</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>登录失败的详细原因现在会写入诊断日志并随报障包带出，方便定位问题</span></li>
