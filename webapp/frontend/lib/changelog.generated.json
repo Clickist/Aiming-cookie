@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.4.19",
+      "date": "2026-10-20",
+      "items": [
+        {
+          "type": "new",
+          "zh": "官方订阅模型升级：教练现在由 DeepSeek V4.1 Flash 驱动（原 V4 Flash），回答质量与推理能力全面升级，订阅价格不变",
+          "en": "Official subscription model upgrade: the Coach is now powered by DeepSeek V4.1 Flash (previously V4 Flash), with across-the-board improvements in answer quality and reasoning — at the same subscription price"
+        }
+      ]
+    },
+    {
       "version": "1.4.18",
       "date": "2026-10-20",
       "items": [
