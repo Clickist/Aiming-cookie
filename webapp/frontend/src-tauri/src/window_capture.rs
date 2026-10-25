@@ -35,6 +35,12 @@ pub const DEFAULT_RECORDING_FPS_DENOMINATOR: u32 = 1;
 // 生效的约束要在 SetOutputType 之前经 ICodecAPI 设置，见
 // rate_control_plans / configure_rate_control。
 pub const DEFAULT_RECORDING_TARGET_BITRATE_BPS: u32 = 8_000_000;
+// 录制 H.264 的关键帧间隔（1 秒 @60fps）。不设置时编码器用厂商默认
+// GOP，AMD 硬编实测整局只吐 1 个 IDR：环形缓冲一旦把那个关键帧淘汰，
+// 任何导出都落在 MissingKeyframeCoverage 上——2026-10-23 线上报障
+// （RX 7900 XTX / 4K）10 局里 8-10 局无回放视频就是这个形态。
+// 1 秒间隔让缓冲内始终有可用起点，代价是码率略升。
+pub const DEFAULT_RECORDING_GOP_FRAMES: u32 = 60;
 pub const REPLAY_MAX_DURATION_100NS: i64 = 300 * 10_000_000;
 pub const REPLAY_MAX_BYTES: usize = 384 * 1024 * 1024;
 // 导出窗口内容忍的时间线缺口：丢 1 帧（60fps 下 16.7ms）不应废掉整个
@@ -492,6 +498,46 @@ fn configure_rate_control(
         }
     }
     Err(last_error)
+}
+
+// 关键帧间隔约束。与码率同一配置点（SetOutputType 之前）设置，否则编码器
+// 用厂商默认 GOP。这是「尽力而为」：部分 MFT 不实现该属性，此时不阻断
+// 录制——但必须留痕（见返回值），否则又会退化成「无回放视频但日志一片
+// 正常」的不可诊断形态。
+//
+// 注意 SetValue 的假成功：windows crate 把 HRESULT 转 Result 用的是 .ok()，
+// S_FALSE（属性只读/不支持）会变成 Ok(())。所以这里必须「设置后回读」，
+// 不能只看 SetValue 是否报错，否则属性根本没生效也会被当成成功。
+#[cfg(windows)]
+fn configure_keyframe_interval(
+    codec_api: &windows::Win32::Media::MediaFoundation::ICodecAPI,
+    gop_frames: u32,
+) -> Result<(), String> {
+    use windows::Win32::Media::MediaFoundation::CODECAPI_AVEncMPVGOPSize;
+    unsafe {
+        codec_api
+            .SetValue(&CODECAPI_AVEncMPVGOPSize, &ui4_variant(gop_frames))
+            .map_err(|error| format!("GOP size setup failed: {error}"))?;
+        // 回读校验：MFT 可能返回 S_FALSE（未设置）或静默钳制到别的值。
+        let readback = codec_api
+            .GetValue(&CODECAPI_AVEncMPVGOPSize)
+            .map_err(|error| format!("GOP size readback failed: {error}"))?;
+        let applied = readback.Anonymous.Anonymous.Anonymous.ulVal;
+        if readback.Anonymous.Anonymous.vt
+            != windows::Win32::System::Variant::VT_UI4
+        {
+            return Err(format!(
+                "GOP readback returned a non-UI4 variant (vt={})",
+                readback.Anonymous.Anonymous.vt.0
+            ));
+        }
+        if applied != gop_frames {
+            return Err(format!(
+                "GOP not applied: requested {gop_frames}, read back {applied}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1651,6 +1697,10 @@ pub struct WindowCaptureStatus {
     pub submitted_packets: u64,
     pub dropped_packets: u64,
     pub last_encoder_failure: Option<HardwareEncoderFailure>,
+    // 运行期失败的完整文案（含原始 HRESULT、设备丢失原因、发生阶段）。
+    // 只留枚举会让「GPU 设备被 TDR 重置」这类归因彻底丢失——worker 层
+    // 过去只取 error.failure 就丢弃 message（2026-10-23 4K 报障盲区）。
+    pub last_encoder_failure_message: Option<String>,
     // 硬编层失败被软编回退顶替时的拒绝原因（类别+消息）：末级软编聚合
     // 错误会完全遮蔽硬编层死在哪一步（0930 报障的盲区），此处单独留痕。
     pub last_hardware_rejection: Option<String>,
@@ -1822,6 +1872,7 @@ pub struct FrameQueue {
     submitted_packets: u64,
     dropped_packets: u64,
     last_encoder_failure: Option<HardwareEncoderFailure>,
+    last_encoder_failure_message: Option<String>,
     last_hardware_rejection: Option<String>,
     first_system_relative_time_100ns: Option<i64>,
     last_system_relative_time_100ns: Option<i64>,
@@ -1865,6 +1916,7 @@ impl FrameQueue {
             submitted_packets: 0,
             dropped_packets: 0,
             last_encoder_failure: None,
+            last_encoder_failure_message: None,
             last_hardware_rejection: None,
             first_system_relative_time_100ns: None,
             last_system_relative_time_100ns: None,
@@ -1967,6 +2019,18 @@ impl FrameQueue {
         }
     }
 
+    /// 带完整文案的运行期失败记录。枚举只说明「哪一类」失败，归因需要
+    /// 原始 HRESULT 与设备丢失原因（TDR 后 D3D11 只返回笼统的
+    /// DEVICE_REMOVED/HUNG）——这些只在 message 里，必须一起落诊断包。
+    pub fn record_hardware_failure_with_message(
+        &mut self,
+        failure: HardwareEncoderFailure,
+        message: String,
+    ) {
+        self.record_hardware_failure(failure);
+        self.last_encoder_failure_message = Some(message);
+    }
+
     /// 会话启动时记录 WGC item size（capture*）与取偶后的编码尺寸
     /// （encode*）：尺寸不进诊断包时，奇数窗口故障只能靠猜（0930 报障）。
     pub fn record_session_dimensions(
@@ -2044,6 +2108,7 @@ impl FrameQueue {
         self.submitted_packets = 0;
         self.dropped_packets = 0;
         self.last_encoder_failure = None;
+        self.last_encoder_failure_message = None;
         self.last_hardware_rejection = None;
         self.first_system_relative_time_100ns = None;
         self.last_system_relative_time_100ns = None;
@@ -2080,6 +2145,7 @@ impl FrameQueue {
             submitted_packets: self.submitted_packets,
             dropped_packets: self.dropped_packets,
             last_encoder_failure: self.last_encoder_failure,
+            last_encoder_failure_message: self.last_encoder_failure_message.clone(),
             last_hardware_rejection: self.last_hardware_rejection.clone(),
             first_system_relative_time_100ns: self.first_system_relative_time_100ns,
             last_system_relative_time_100ns: self.last_system_relative_time_100ns,
@@ -2885,6 +2951,10 @@ struct GpuBgraToNv12Converter {
     // UpdateSubresource（NV12 清黑）挂在基类 ID3D11DeviceContext 上，绑定
     // 未把基类方法投到 ID3D11VideoContext，留一份引用清黑时用。
     device_context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    // 设备丢失归因：GPU 驱动被 TDR 重置后，D3D11 调用只会返回笼统的
+    // DEVICE_REMOVED/HUNG，真正的原因要问设备本身。留引用以便失败时
+    // 取 GetDeviceRemovedReason（2026-10-23 4K 报障的盲区）。
+    device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
     enumerator: windows::Win32::Graphics::Direct3D11::ID3D11VideoProcessorEnumerator,
     processor: windows::Win32::Graphics::Direct3D11::ID3D11VideoProcessor,
     output_texture: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
@@ -3054,6 +3124,7 @@ impl GpuBgraToNv12Converter {
             video_device,
             video_context,
             device_context: context.clone(),
+            device: device.clone(),
             enumerator,
             processor,
             output_texture,
@@ -3227,12 +3298,29 @@ impl GpuBgraToNv12Converter {
         .map_err(|error| {
             HardwareEncoderError::new(
                 HardwareEncoderFailure::GpuConversionFailure,
-                format!("GPU BGRA to NV12 conversion failed: {error}"),
+                format!(
+                    "GPU BGRA to NV12 conversion failed: {error}{}",
+                    self.device_removed_note()
+                ),
             )
         });
         unsafe { ManuallyDrop::drop(&mut stream.pInputSurface) };
         result?;
         Ok(&self.output_texture)
+    }
+
+    /// 设备丢失归因。D3D11 调用在 GPU 被 TDR 重置后只会返回笼统的
+    /// DEVICE_REMOVED/HUNG；真正原因（驱动内部超时 / 物理移除 / 驱动升级）
+    /// 只有 GetDeviceRemovedReason 知道。取不到或设备正常时返回空串，
+    /// 调用方直接拼在错误文案后面，正常路径零成本零噪音。
+    fn device_removed_note(&self) -> String {
+        match unsafe { self.device.GetDeviceRemovedReason() } {
+            Ok(()) => String::new(),
+            Err(error) => format!(
+                "; device removed reason={:#010X} ({error})",
+                error.code().0 as u32
+            ),
+        }
     }
 }
 
@@ -3479,6 +3567,18 @@ impl HardwareH264Encoder {
                     last_rejection =
                         format!("{friendly_name}: MFT rate control setup failed: {error}");
                     continue;
+                }
+                // 关键帧间隔：不设则整局可能只有 1 个 IDR，环形缓冲淘汰后
+                // 任何回放导出都 MissingKeyframeCoverage（2026-10-23 4K 报障）。
+                // 失败不阻断（部分 MFT 不实现该属性），但必须留痕，否则会
+                // 静默退化成「无回放视频、日志一片正常」的不可诊断形态。
+                if let Err(error) =
+                    configure_keyframe_interval(&codec_api, DEFAULT_RECORDING_GOP_FRAMES)
+                {
+                    crate::dlog!(
+                        "[capture-encoder] {friendly_name}: GOP size not applied ({error}); \
+                         replay exports may fail with MissingKeyframeCoverage"
+                    );
                 }
                 if let Err(error) = unsafe { transform.SetOutputType(0, &output_type, 0) } {
                     last_rejection =
@@ -4279,6 +4379,15 @@ impl SoftwareH264Encoder {
                     last_rejection =
                         format!("{friendly_name}: MFT rate control setup failed: {error}");
                     continue;
+                }
+                // 与硬件路径同因：软编同样不设 GOP 会整局只有一个 IDR。
+                if let Err(error) =
+                    configure_keyframe_interval(&codec_api, DEFAULT_RECORDING_GOP_FRAMES)
+                {
+                    crate::dlog!(
+                        "[capture-encoder] {friendly_name}: GOP size not applied ({error}); \
+                         replay exports may fail with MissingKeyframeCoverage"
+                    );
                 }
                 if let Err(error) = unsafe { transform.SetOutputType(0, &output_type, 0) } {
                     last_rejection =
@@ -6701,8 +6810,10 @@ fn run_wgc_window_capture(
                 (automatic_encoder.as_mut(), encoder_frame_receiver.as_ref())
             {
                 let mut failure = None;
+                let mut failure_message = None;
                 if let Err(error) = encoder.drain_events() {
                     failure = Some(error.failure);
+                    failure_message = Some(error.message);
                 }
                 // 先查 gate 再等帧：dequeue_if_permitted 的既有语义是 gate 关
                 // 时帧留在通道里不被消费，先 recv 再查 gate 会偷走一帧。
@@ -6724,12 +6835,23 @@ fn run_wgc_window_capture(
                     let backlog = encoder_frame_backlog.fetch_sub(1, Ordering::AcqRel) as usize;
                     if let Err(error) = encoder.submit_capture_frame(captured, backlog) {
                         failure = Some(error.failure);
+                        failure_message = Some(error.message);
                     }
                 }
                 if let Some(failure) = failure {
                     recording_failed.store(true, Ordering::Release);
+                    // 文案必须一起落盘：枚举只说明「哪一类」，GPU 设备丢失
+                    // 的原始 HRESULT 与 removal reason 只在 message 里。
+                    crate::dlog!(
+                        "[capture-encoder] runtime failure kind={failure:?} detail={}",
+                        failure_message.as_deref().unwrap_or("<none>")
+                    );
                     if let Ok(mut guard) = queue.lock() {
-                        guard.record_hardware_failure(failure);
+                        match failure_message {
+                            Some(message) => guard
+                                .record_hardware_failure_with_message(failure, message),
+                            None => guard.record_hardware_failure(failure),
+                        }
                     }
                 }
             }
@@ -7414,6 +7536,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    // 2026-10-23 报障回归锁：不设 GOP 时 AMD 硬编整局只吐 1 个 IDR，
+    // 环形缓冲淘汰后导出全部 MissingKeyframeCoverage。这条钉住取值量级
+    // （GOP 是帧数不是墙钟秒，实际帧率低于目标时一个 GOP 会变长）。
+    #[test]
+    #[cfg(windows)]
+    fn keyframe_interval_stays_within_a_few_seconds_at_any_field_fps() {
+        let gop = DEFAULT_RECORDING_GOP_FRAMES;
+        assert!(gop > 1, "GOP must be > 1, got {gop}");
+        // 目标帧率下应为 1 秒。
+        let at_target = gop as f64 * DEFAULT_RECORDING_FPS_DENOMINATOR as f64
+            / DEFAULT_RECORDING_FPS_NUMERATOR as f64;
+        assert!(
+            (1.0..=2.0).contains(&at_target),
+            "GOP should be roughly 1s at target fps, got {at_target}s"
+        );
+        // 野外实测最低编码帧率约 13.6fps（4K/AMD）；此时一个 GOP 仍应
+        // 短于 300s 缓冲的十分之一，否则可用起点太少、导出极易落空。
+        let worst_field_fps = 13.6_f64;
+        let at_worst = gop as f64 / worst_field_fps;
+        assert!(
+            at_worst < 300.0 / 10.0,
+            "GOP spans {at_worst}s at {worst_field_fps}fps, too coarse for a 300s ring"
+        );
     }
 
     #[test]
@@ -8943,6 +9090,103 @@ mod tests {
         (encoder, queue)
     }
 
+    // 端到端锁（真 MFT，非 mock）：喂 3 个 GOP 的帧量，码流里必须出现
+    // 多个关键帧，且最大关键帧间距不得超过 GOP（场景切换可插额外 IDR，
+    // 所以只断言「不超过」，不断言恰好等距）。这条直接对应 2026-10-23
+    // 报障——修复前整局只有 1 个 IDR，环形缓冲淘汰它后导出全落空。
+    #[cfg(windows)]
+    #[test]
+    fn software_encoder_emits_a_keyframe_per_gop() {
+        let width = 320u32;
+        let height = 240u32;
+        let gops = 3u32;
+        // 多喂一个 MFT 管线延迟的余量，保证最后一个 GOP 也完成输出。
+        let fed = DEFAULT_RECORDING_GOP_FRAMES * gops + 32;
+        let (encoder, _queue) = drive_software_encoder(fed, width, height, width, height);
+        let keyframe_indices: Vec<usize> = encoder
+            .replay
+            .packets
+            .iter()
+            .enumerate()
+            .filter(|(_, packet)| packet.keyframe)
+            .map(|(index, _)| index)
+            .collect();
+        let keyframes = keyframe_indices.len();
+        // 相邻关键帧（含第一个之前的偏移）之间的最大间距。
+        let mut max_gap = keyframe_indices.first().copied().unwrap_or(usize::MAX);
+        for pair in keyframe_indices.windows(2) {
+            max_gap = max_gap.max(pair[1] - pair[0]);
+        }
+        eprintln!(
+            "GOP={} fed={} packets={} keyframes={keyframes} max_gap={max_gap} at={keyframe_indices:?}",
+            DEFAULT_RECORDING_GOP_FRAMES,
+            fed,
+            encoder.replay.packets.len()
+        );
+        assert!(
+            keyframes >= gops as usize,
+            "expected >= {gops} keyframes across {fed} frames with GOP {} \
+             (got {keyframes}); without a GOP setting the encoder emits a \
+             single IDR per session and replay export dies",
+            DEFAULT_RECORDING_GOP_FRAMES
+        );
+        // 总数够但间距失控（如第 0/90/180 帧才出关键帧）同样会废掉导出，
+        // 必须单独钉住间距上界。
+        assert!(
+            max_gap <= DEFAULT_RECORDING_GOP_FRAMES as usize,
+            "keyframe spacing {max_gap} exceeds GOP {} (keyframes at {keyframe_indices:?})",
+            DEFAULT_RECORDING_GOP_FRAMES
+        );
+    }
+
+    // 输入纹理生命周期探针（诊断输出，非契约锁）。我们每帧把同一张 NV12
+    // 输出纹理包进新 sample 交给异步 MFT，而微软契约是「MFT 释放 sample 前
+    // 不得复用其底层缓冲」。
+    //
+    // 注意这条探针的证据边界（别过度解读）：
+    //  - DOES_NOT_ADDREF=true 只保证「返回后不持有」，不保证一定拷贝；
+    //    false 只说明「可能持有」，不证明它真的持有，也不证明没拷贝。
+    //  - 这里测的是**尚未协商媒体类型的同步软编 MFT**；flags 可能在协商
+    //    与输入后变化，不能据此推断 AMD 硬件 MFT 的实际行为。
+    // 真判断必须用硬件 MFT + 带可识别帧号的动态画面，解码后核对帧身份。
+    #[cfg(windows)]
+    #[test]
+    fn real_mft_reports_whether_it_addrefs_input_samples() {
+        use windows::Win32::Media::MediaFoundation::{MFStartup, MF_VERSION, MFSTARTUP_FULL};
+        unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            )
+        }
+        .ok()
+        .expect("CoInitializeEx for the MFT input-stream probe");
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.expect("MFStartup for the MFT probe");
+
+        let candidates = enumerate_h264_mfts(None, false)
+            .expect("software H.264 MFT enumeration should succeed");
+        let activation = candidates
+            .first()
+            .expect("Win10 always ships an in-box H.264 encoder MFT to probe");
+        let transform: windows::Win32::Media::MediaFoundation::IMFTransform =
+            unsafe { activation.ActivateObject() }.expect("activate in-box software H.264 MFT");
+        let name = mft_friendly_name(activation);
+        let mut info = windows::Win32::Media::MediaFoundation::MFT_INPUT_STREAM_INFO::default();
+        unsafe { transform.GetInputStreamInfo(0, &mut info) }
+            .expect("in-box MFT should report input stream info");
+
+        const DOES_NOT_ADDREF: u32 =
+            windows::Win32::Media::MediaFoundation::MFT_INPUT_STREAM_DOES_NOT_ADDREF.0 as u32;
+        let does_not_addref = info.dwFlags & DOES_NOT_ADDREF != 0;
+        eprintln!(
+            "{name}: MFT_INPUT_STREAM_DOES_NOT_ADDREF={does_not_addref} \
+             (flags={:#x}, max_latency={})",
+            info.dwFlags, info.cbMaxLookahead
+        );
+        // 不断言具体值——厂商实现可能不同，这是诊断输出而非契约锁。
+        // 但把结论记进测试输出，供归因报告引用。
+    }
+
     #[cfg(windows)]
     #[test]
     fn software_h264_mft_enumeration_finds_microsoft_encoder() {
@@ -8959,6 +9203,61 @@ mod tests {
                 .iter()
                 .any(|name| name.to_ascii_uppercase().contains("H264")),
             "expected an in-box software H.264 encoder MFT, got: {names:?}"
+        );
+    }
+
+    // 真机锁（不是 mock）：对真实 MFT 设置 GOP 后必须能读回，且要能
+    // 编出多个关键帧。2026-10-23 报障的根因是「从未设置 GOP」，
+    // 单测证明不了 SetValue 会被厂商 MFT 接受——这条用真 MFT 验。
+    // 真机锁（不是 mock）：对真实 MFT 设置 GOP 后必须能回读一致。
+    // 这条只证明「配置被接受且可回读」，不证明输出端真的按该间隔出 IDR
+    // ——输出侧由 software_encoder_emits_a_keyframe_per_gop 的间距断言覆盖。
+    #[cfg(windows)]
+    #[test]
+    fn real_mft_accepts_keyframe_interval() {
+        use windows::Win32::Media::MediaFoundation::{MFStartup, MF_VERSION, MFSTARTUP_FULL};
+        // 测试线程默认没调 CoInitialize，ActivateObject 会 0x800401F0。
+        unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) }
+            .ok()
+            .expect("CoInitializeEx for the MFT activation probe");
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.expect("MFStartup for the MFT probe");
+        let candidates = enumerate_h264_mfts(None, false)
+            .expect("software H.264 MFT enumeration should succeed");
+        let activation = candidates
+            .first()
+            .expect("Win10 always ships an in-box H.264 encoder MFT to probe");
+        let transform: windows::Win32::Media::MediaFoundation::IMFTransform =
+            unsafe { activation.ActivateObject() }.expect("activate in-box software H.264 MFT");
+        use windows::core::Interface;
+        let codec_api: windows::Win32::Media::MediaFoundation::ICodecAPI =
+            transform.cast().expect("in-box MFT exposes ICodecAPI");
+
+        // configure_keyframe_interval 内部已做「设置后回读」校验：
+        // S_FALSE（属性只读）与静默钳制都会在这里变成 Err，所以本断言
+        // 同时覆盖了「假成功」路径。
+        configure_keyframe_interval(&codec_api, DEFAULT_RECORDING_GOP_FRAMES)
+            .expect("in-box Microsoft H.264 MFT must accept and echo GOP size");
+
+        let readback = unsafe {
+            codec_api.GetValue(&windows::Win32::Media::MediaFoundation::CODECAPI_AVEncMPVGOPSize)
+        };
+        let variant = readback.expect("GOP readback must succeed after a verified set");
+        let gop = unsafe { variant.Anonymous.Anonymous.Anonymous.ulVal };
+        eprintln!(
+            "GOP set={} readback={} vt={}",
+            DEFAULT_RECORDING_GOP_FRAMES,
+            gop,
+            unsafe { variant.Anonymous.Anonymous.vt }.0
+        );
+        assert_eq!(
+            unsafe { variant.Anonymous.Anonymous.vt },
+            windows::Win32::System::Variant::VT_UI4,
+            "GOP readback returned a non-UI4 variant"
+        );
+        assert_eq!(
+            gop, DEFAULT_RECORDING_GOP_FRAMES,
+            "MFT clamped GOP: set {} read back {gop}",
+            DEFAULT_RECORDING_GOP_FRAMES
         );
     }
 
