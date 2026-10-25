@@ -1149,6 +1149,11 @@ test("presentErrorV1Message maps error.v1 codes to dictionary copy with message 
       presentErrorV1Message({ code: "local_storage_busy", message: "raw backend copy" }),
       translate("en-US", "api.error.localStorageBusy"),
     );
+    // BYOK 服务商余额不足（2026-10-20 新用户报障案）：402 → 专属充值引导。
+    assert.equal(
+      presentErrorV1Message({ code: "provider_insufficient_balance", message: "HTTP 402 Insufficient Balance" }),
+      translate("en-US", "api.error.providerInsufficientBalance"),
+    );
     // 缺码：回落后端 message 原文（过渡期双保险）。
     assert.equal(
       presentErrorV1Message({ code: "unmapped_code", message: "raw backend copy" }),

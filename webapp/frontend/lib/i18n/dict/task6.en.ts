@@ -710,7 +710,8 @@ export const task6En = {
   "api.error.networkTransient": "Network hiccup (possibly a local VPN/proxy switch). Auto-retry did not recover it — press Retry to try again.",
   "api.error.serviceOverloaded": "The service is busy right now. Auto-retry did not recover it — please try again shortly.",
   "api.error.quotaExhausted": "Your quota for this period is used up. Buy a booster pack (never expires) or renew your subscription in the account center.",
-  "api.error.providerAuthInvalid": "Model service authentication failed: the API key is invalid or expired. Check Settings → Model service.",
+  "api.error.providerAuthInvalid": "Model service authentication failed: the API key you configured is invalid or expired. Check that key and its account in Settings → Model service (the official subscription is unaffected; an expired login prompts re-login separately).",
+  "api.error.providerInsufficientBalance": "The model provider reports insufficient balance: top up the account behind your API key on the provider's platform, then retry (Settings → Model service shows which provider is in use).",
   "api.error.localStorageBusy": "The session log file is locked by another program (often cloud sync or antivirus scanning). Auto-retry did not recover it — press Retry, or whitelist the data folder in that program.",
   "api.error.modelProtocolUnsupported": "The selected model doesn't support the current request format (its API has changed). Try another model, or update the app and retry.",
   // Stream corruption tiers: corruptedStream = error card when the sidecar

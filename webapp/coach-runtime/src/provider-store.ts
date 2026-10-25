@@ -9,7 +9,7 @@
  *     "next_id": 2,
  *     "profiles": [
  *       { "id": 1, "kind": "builtin", "provider_id": "opencode-go",
- *         "model_id": "deepseek-v4-flash",
+ *         "model_id": "deepseek-v4.1-flash",
  *         "credential": { "type": "api_key", "key": "..." } }
  *     ]
  *   }
@@ -226,7 +226,7 @@ function parseStoreDocument(config: unknown): ProviderProfileStore {
 
 /**
  * 官方会员档模型锁自愈（C2，2026-10-01 点点拍板）：模型锁只有
- * deepseek-v4-flash 一个（无可选性），存量档案若还指着已下架模型
+ * deepseek-v4.1-flash 一个（无可选性），存量档案若还指着已下架模型
  * （WP-C 时代的 deepseek-v4-pro 选择），解析恒 unknown_model 死路——
  * 读取时静默改写为锁内模型并落盘，最多事后提示「模型已自动更新」。
  * 只动 provider_id 命中官方档的条目；BYOK/自定义档自由填名是设计内能力。

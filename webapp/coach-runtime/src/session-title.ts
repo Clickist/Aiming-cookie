@@ -7,7 +7,7 @@ import { readConversationMeta, writeConversationMeta } from "./session-repo.ts";
 import type { ResolvedProviderModel } from "./provider-models.ts";
 
 /** 标题专用便宜快速档；provider 侧找不到该 id 时回退主会话模型。 */
-const TITLE_MODEL_ID = "deepseek-v4-flash";
+const TITLE_MODEL_ID = "deepseek-v4.1-flash";
 const TITLE_TIMEOUT_MS = 8000;
 const TITLE_MAX_TOKENS = 32;
 /** 中文按字截断；英文同量级预算放宽（6 词量级的中文 24 字 ≈ 英文 48 字符）。 */

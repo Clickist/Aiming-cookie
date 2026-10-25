@@ -325,10 +325,10 @@ test("POST /v1/provider-profiles/model rejects a relay model outside the single-
     await createProfile(server, {
       kind: "builtin",
       provider_id: "aiming-cookie-relay",
-      model_id: "deepseek-v4-flash",
+      model_id: "deepseek-v4.1-flash",
       api_key: "member-jwt",
     });
-    // 模型锁（契约 §0）：官方档只认 deepseek-v4-flash，清单外名单拒绝且不落盘。
+    // 模型锁（契约 §0）：官方档只认 deepseek-v4.1-flash，清单外名单拒绝且不落盘。
     const res = await request(server, "POST", "/v1/provider-profiles/model", JSON.stringify({
       schema_version: "coach_provider_model_switch.v1",
       model_id: "deepseek-v4-pro",
@@ -338,7 +338,7 @@ test("POST /v1/provider-profiles/model rejects a relay model outside the single-
       (res.json as { detail: string }).detail,
       "所选模型不可用，请选择当前 Provider 目录中的模型",
     );
-    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+    assert.equal(loadProfile()?.model_id, "deepseek-v4.1-flash");
   });
 });
 
@@ -964,7 +964,7 @@ test("member logout clears the relay credential and reports the BYOK fallback", 
     const member = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
       kind: "builtin",
       provider_id: "aiming-cookie-relay",
-      model_id: "deepseek-v4-flash",
+      model_id: "deepseek-v4.1-flash",
       api_key: "jwt-like-token",
     }));
     assert.equal(member.statusCode, 201);

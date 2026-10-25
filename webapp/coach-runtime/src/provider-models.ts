@@ -86,14 +86,14 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
  *
  * 这条档从「内测中转（key 对用户可见、模型全家桶、按 API 计费）」升级为
  * **账号订阅档**：auth 换成浏览器登录 + deep-link 换票拿到的 JWT（存在档案
- * credential 里，见 member-auth.ts），模型锁 `deepseek-v4-flash`，端点固定
+ * credential 里，见 member-auth.ts），模型锁 `deepseek-v4.1-flash`（1.4.19 起），端点固定
  * 指向广东 ECS 的 ac-gateway 会员入口（契约 §0：客户端 AI base_url 是
  * `https://member-gateway.example.invalid:8443/member`，网关只透传 `/v1/...`，
  * 故这里带上 `/v1` 让 OpenAI 兼容调用打到 `/member/v1/chat/completions`）。
  *
  * 目录、档解析、方言继承三条链路共用 createBuiltinModels，因此在这里注入。
  * 模型清单固定一条，能力/方言按 model_id 从 Pi 内建目录继承
- * （deepseek-v4-flash 自带 thinkingFormat 方言，缺失会让"说出声"复发）。
+ * （deepseek-v4.1-flash 在 Pi 目录自带 thinkingFormat 方言，缺失会让"说出声"复发）。
  *
  * 基址仍可由环境变量覆盖，供本地 dev / e2e 指向 mock：
  * `AC_MEMBER_GATEWAY_BASE_URL`（新）优先，`AC_RELAY_BASE_URL`（旧注入名）保留
@@ -121,7 +121,7 @@ async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> 
     streamSimple: (...args: unknown[]) => unknown;
   };
   // 能力与方言按 model_id 从 Pi 内建目录继承（与 resolveCustomProfile 的
-  // catalogHit 同款）：deepseek-v4-flash 自带 thinkingFormat 方言，缺失会
+  // catalogHit 同款）：deepseek-v4.1-flash 在目录自带 thinkingFormat 方言，缺失会
   // 让"说出声"复发。目录未收录的模型按默认能力处理。
   const catalogModels = models.getModels() as Array<
     PiModel & { compat?: Record<string, unknown>; thinkingLevelMap?: unknown }
@@ -348,7 +348,7 @@ export async function fetchCustomProviderModels(
 
 // 1003 修复：custom 档模型发现缺 reasoning 元数据——前端力度菜单
 // showEffortSection = currentModel?.reasoning === true 恒 false，自定义
-// Provider 的推理模型（含自家中转站 deepseek-v4-flash）永远出不来力度
+// Provider 的推理模型（含自家中转站 deepseek-v4.1-flash）永远出不来力度
 // 旋钮，档位只能吃运行时默认 high。与 resolveCustomProfile 的运行时目录
 // 查询同源（pi 内建目录 / models.dev）：命中继承 reasoning，未命中按
 // "会思考"处理（默认 true，同 resolveCustomProfile 兜底），保证 UI 旋钮
@@ -635,7 +635,7 @@ async function resolveCustomProfile(
     : "openai-completions";
   // 能力与方言查 pi 内建目录（models.dev 元数据，随 pi 版本更新），不猜
   // 名字：按发现的 model_id 匹配，命中即整体继承 reasoning、thinkingFormat
-  // 方言、reasoning_content 回传标志与档位映射（如 deepseek-v4-flash 自带
+  // 方言、reasoning_content 回传标志与档位映射（如 deepseek-v4.1-flash 自带
   // thinkingFormat:"deepseek" 与回传标志——缺失正是"说出声"复发的根因，
   // 审计#24）。目录未收录的模型按"会思考"处理：Pi 的 clampThinkingLevel
   // 对真不支持者收敛；极端端点报参数错时的降级重试留待真实案例出现再加。

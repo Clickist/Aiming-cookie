@@ -98,7 +98,7 @@ test("saveProfile replaces the active profile in place and keeps other profiles"
 });
 
 test("loadProviderStore silently heals an off-lock relay model to the locked flash (C2)", () => {
-  // C2（2026-10-01 点点拍板）：官方档只卖 deepseek-v4-flash 一个，存量 WP-C
+  // C2（2026-10-01 点点拍板）：官方档只卖锁内模型一个（1.4.19 起 deepseek-v4.1-flash），存量 WP-C
   // 选择（deepseek-v4-pro）解析恒 unknown_model 死路——读取时静默改写并落盘，
   // 不提供选择项。BYOK 档（deepseek + deepseek-v3）清单外但不在锁内，保持原样。
   writeRawDocument({
@@ -119,14 +119,14 @@ test("loadProviderStore silently heals an off-lock relay model to the locked fla
 
   const store = loadProviderStore();
   assert.equal(store.profiles[0]?.provider_id, "aiming-cookie-relay");
-  assert.equal(store.profiles[0]?.model_id, "deepseek-v4-flash");
+  assert.equal(store.profiles[0]?.model_id, "deepseek-v4.1-flash");
   // 修复值落盘：不是每次读取的临时改写。
   const doc = JSON.parse(readFileSync(providerConfigPath(), "utf8"));
-  assert.equal(doc.profiles[0].model_id, "deepseek-v4-flash");
+  assert.equal(doc.profiles[0].model_id, "deepseek-v4.1-flash");
   assert.equal(doc.profiles[0].credential.key, "member-jwt");
   // BYOK 档不受影响；turn 链路（loadProfile）读到的是修复值。
   assert.equal(store.profiles[1]?.model_id, "deepseek-v3");
-  assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+  assert.equal(loadProfile()?.model_id, "deepseek-v4.1-flash");
 });
 
 test("setActiveProfileId and deleteProfileById operate on stored ids", () => {

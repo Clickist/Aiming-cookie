@@ -349,7 +349,7 @@ function estimateMessageTokensCjkAware(message: unknown): number {
 /**
  * 压缩触发线＝窗口的固定比例（点点 2026-10-07 拍板）。pi 原版公式是固定
  * reserve 16384（tokens > window−16K 才压缩），对 1M 窗口的
- * deepseek-v4-flash 触发点在 98.4%——会话涨到 55 万+ tokens 也不压缩
+ * deepseek-v4.1-flash 触发点在 98.4%——会话涨到 55 万+ tokens 也不压缩
  * （2026-10-05 生产事故实证）。业界口径：Cline 80%、Claude Code 92-95%
  * （配 200K 小窗）、Gemini CLI 50%；1M 窗口下 80%＝80 万 tokens 触发，
  * 既给摘要输出留足余量，也不会久到触发网关 413。
@@ -958,6 +958,11 @@ export function classifyCoachFailureCode(error: unknown): string {
   // （adaptive-thinking-fallback）重发仍被拒才会到这里——确定性失败，换模型
   // 或等更新，重试无意义。
   if (/thinking[\s\S]{0,60}not supported for this model/i.test(message)) return "model_protocol_unsupported";
+  // BYOK 服务商账户余额不足（2026-10-20 新用户报障案：DeepSeek 402
+  // "Insufficient Balance" 此前落进通用失败，用户无从知道要去服务商充值）。
+  // 确定性失败：充值前重试无意义。必须在 quota/鉴权之前——402 报文可能同时
+  // 含余额与 key 字样，语义上余额更精确。
+  if (/insufficient balance|insufficient_balance|\b402\b/i.test(message)) return "provider_insufficient_balance";
   // 额度类：new-api 网关 403 透传（中转/BYOK 链路）、accounts 网关稳定 type
   // （quota_prehold_insufficient）与 OpenAI 口径。重试无意义。
   if (/insufficient_user_quota|insufficient_quota|quota_exhausted|quota_prehold_insufficient|预扣费额度失败|用户额度不足/i.test(message)) return "quota_exhausted";
@@ -1871,7 +1876,10 @@ export async function runCoachTurn(
     // 其余（含 provider 错误无详情的透传形态）保持原可重试语义——瞬态失败
     // 标成不可重试会把一次抖动变成死局。
     const failureCode = stopped ? "stopped" : classifyCoachFailureCode(error);
-    const deterministicFailure = failureCode === "quota_exhausted" || failureCode === "provider_auth_invalid";
+    const deterministicFailure =
+      failureCode === "quota_exhausted"
+      || failureCode === "provider_auth_invalid"
+      || failureCode === "provider_insufficient_balance";
     return failureResponse(
       makeError({
         category: "coach_runtime",

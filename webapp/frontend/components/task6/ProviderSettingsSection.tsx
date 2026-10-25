@@ -587,7 +587,7 @@ export function ProviderSettingsSection({
           name: t("settings.provider.officialArchiveName"),
           kind: "builtin",
           provider_id: OFFICIAL_RELAY_PROVIDER_ID,
-          model_id: detailCatalogEntry?.models[0]?.model_id ?? "deepseek-v4-flash",
+          model_id: detailCatalogEntry?.models[0]?.model_id ?? "deepseek-v4.1-flash",
           api_key: key,
           is_default: false,
         });
@@ -947,8 +947,8 @@ export function ProviderSettingsSection({
                     <div className="task6-provider-models">
                       <div className="task6-provider-models-title">{t("settings.provider.modelsTitle")}</div>
                       <div className="task6-provider-models-list">
-                        <div className="task6-provider-model-row" key="deepseek-v4-flash">
-                          <span>deepseek-v4-flash</span>
+                        <div className="task6-provider-model-row" key="deepseek-v4.1-flash">
+                          <span>DeepSeek V4.1 Flash</span>
                           <span className="task6-muted">{t("settings.provider.officialModelNote")}</span>
                         </div>
                       </div>

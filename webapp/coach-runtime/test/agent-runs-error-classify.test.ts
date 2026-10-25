@@ -56,6 +56,16 @@ test("a provider 401 auth body maps to provider_auth_invalid, non-retryable", as
   assert.equal(failed.error?.retryable, false, "invalid key must not invite a retry");
 });
 
+test("a provider 402 insufficient balance maps to provider_insufficient_balance, non-retryable", async () => {
+  const failed = await runToFailure("classify-balance-owner", 96, (async () => {
+    throw new Error(
+      'HTTP 402 {"error":{"message":"Insufficient Balance","type":"insufficient_balance","code":"insufficient_balance"}}',
+    );
+  }) as StreamFn);
+  assert.equal(failed.error?.code, "provider_insufficient_balance");
+  assert.equal(failed.error?.retryable, false, "provider balance top-up must happen before a retry");
+});
+
 test("a transport reset maps to network_transient, retryable, network domain", async () => {
   const failed = await runToFailure("classify-network-owner", 93, (async () => {
     throw new Error("fetch failed: ECONNRESET");

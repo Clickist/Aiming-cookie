@@ -711,7 +711,8 @@ export const task6Zh = {
   "api.error.networkTransient": "网络波动（可能与本机 VPN/代理切换有关），已自动重试仍未成功，可点「重试」再试一次。",
   "api.error.serviceOverloaded": "服务繁忙（当前使用人数较多），已自动重试仍未成功，请稍后再试。",
   "api.error.quotaExhausted": "本期额度已用完。可在账号中心购买加油包（永不过期）或续期订阅。",
-  "api.error.providerAuthInvalid": "模型服务认证失败：API key 无效或已过期，请在 设置 → 模型服务 中检查。",
+  "api.error.providerAuthInvalid": "模型服务认证失败：你配置的 API key 无效或已过期，请在 设置 → 模型服务 中检查该 key 与其对应账户（官方订阅档不受影响；若登录已过期会单独提示重新登录）。",
+  "api.error.providerInsufficientBalance": "模型服务商返回余额不足：请前往该服务商的开放平台为你的 API key 充值后重试（设置 → 模型服务 可查看当前使用的是哪个服务商）。",
   "api.error.localStorageBusy": "会话记录文件正被其他程序占用（常见于同步盘或杀毒软件扫描），已自动重试仍未成功。可点「重试」再试一次，或将数据目录加入占用程序的白名单。",
   "api.error.modelProtocolUnsupported": "所选模型不支持当前请求格式（模型协议已更新）。请更换模型，或更新应用后重试。",
   // 流损坏分层：corruptedStream=sidecar 管流内熔断/自动恢复仍失败的错误卡；

@@ -11,11 +11,12 @@ export const COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA = "coach_diagnostic_context.v3" 
 export const PROVIDER_MODEL_SWITCH_SCHEMA = "coach_provider_model_switch.v1" as const;
 
 // Aiming Cookie 官方会员档的模型锁（契约 §0：sub / boost 两令牌都是这一个
-// 模型）。常量本体放 contracts（最底层共享模块），provider-models 复出——
-// provider-store 的读取自愈需要它们，但 store 不能反向依赖 resolver 的重图
-// （provider-models 静态引入整个 pinned Pi）。
+// 模型；1.4.19 起锁 deepseek-v4.1-flash，旧档存量的 deepseek-v4-flash 由
+// provider-store 读取自愈静默迁移）。常量本体放 contracts（最底层共享模块），
+// provider-models 复出——provider-store 的读取自愈需要它们，但 store 不能
+// 反向依赖 resolver 的重图（provider-models 静态引入整个 pinned Pi）。
 export const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
-export const AIMING_COOKIE_RELAY_MODEL_ID = "deepseek-v4-flash";
+export const AIMING_COOKIE_RELAY_MODEL_ID = "deepseek-v4.1-flash";
 
 export const FORBIDDEN_TOOL_NAMES = new Set([
   "bash", "shell", "exec", "read", "write", "edit", "read_file",

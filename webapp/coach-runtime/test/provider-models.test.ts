@@ -61,7 +61,7 @@ test("catalog exposes the complete pinned Pi builtin provider/model catalog with
 
 test("aiming-cookie-relay injects as the recommended member tier with one locked model", async () => {
   // WP-C（2026-09-19 契约冻结）：这条档从内测中转升级为账号订阅档——
-  // 显示名挂「（推荐）」，模型锁 deepseek-v4-flash（sub/boost 两令牌同款）。
+  // 显示名挂「（推荐）」，模型锁 deepseek-v4.1-flash（1.4.19 起，sub/boost 两令牌同款）。
   const catalog = await listBuiltinProviderCatalog();
   const relay = catalog.providers.find((provider) => provider.provider_id === "aiming-cookie-relay");
   assert.ok(relay, "relay provider present in catalog");
@@ -69,7 +69,7 @@ test("aiming-cookie-relay injects as the recommended member tier with one locked
   assert.equal(relay.base_url, RELAY_BASE_URL);
   assert.ok(relay.auth_modes.includes("api_key"), "stored JWT credential is an api_key credential");
 
-  assert.deepEqual(relay.models.map((model) => model.model_id), ["deepseek-v4-flash"]);
+  assert.deepEqual(relay.models.map((model) => model.model_id), ["deepseek-v4.1-flash"]);
 
   // 方言继承：flash 与 Pi 内建 deepseek 的同名模型共享能力（contextWindow/reasoning），
   // 缺失即 thinkingFormat 方言没带上（"说出声"复发根因）。
@@ -78,21 +78,21 @@ test("aiming-cookie-relay injects as the recommended member tier with one locked
       getModel(provider: string, modelId: string): { contextWindow?: number; reasoning?: boolean } | undefined;
     };
   };
-  const builtinFlash = all.builtinModels().getModel("deepseek", "deepseek-v4-flash");
+  const builtinFlash = all.builtinModels().getModel("deepseek", "deepseek-v4.1-flash");
   assert.ok(builtinFlash);
   const relayFlash = relay.models[0];
   assert.equal(relayFlash.context_window, builtinFlash.contextWindow);
   assert.equal(relayFlash.reasoning, builtinFlash.reasoning);
 });
 
-test("builtin profile aiming-cookie-relay/deepseek-v4-flash resolves with the stored token", async () => {
+test("builtin profile aiming-cookie-relay/deepseek-v4.1-flash resolves with the stored token", async () => {
   const resolved = await resolveProviderModel({
     kind: "builtin",
     provider_id: "aiming-cookie-relay",
-    model_id: "deepseek-v4-flash",
+    model_id: "deepseek-v4.1-flash",
     api_key: "relay-test-token",
   });
-  assert.equal(resolved.model.id, "deepseek-v4-flash");
+  assert.equal(resolved.model.id, "deepseek-v4.1-flash");
   assert.equal(resolved.model.provider, "aiming-cookie-relay");
   assert.equal(resolved.model.baseUrl, RELAY_BASE_URL);
   assert.equal(resolved.hasRuntimeCredential, true);
