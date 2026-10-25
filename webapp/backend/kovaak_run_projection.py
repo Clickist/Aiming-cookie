@@ -9,11 +9,14 @@ from pathlib import Path
 
 from . import kovaak_run_store
 from .source_requirements import validate_source_requirements
-from .kovaak_snapshot_codec import (
-    _has_valid_mouse_snapshot_header,
+from .kovaak_snapshot_codec import (    _has_valid_mouse_snapshot_header,
     read_mouse_snapshot,
 )
 from .kovaak_evidence_artifacts import _file_fingerprint
+
+import logging
+
+log = logging.getLogger(__name__)
 
 
 _SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -374,7 +377,10 @@ def _external_telemetry_availability(run: dict) -> str:
 
     判定复用 `external_telemetry_ready`（配对索引有缓存、冻结侧指纹按
     size+mtime 缓存），因此列表投影逐局调用不会退化成全量哈希。
-    任何读取异常都收敛为 unavailable——遥测侧问题不得拖垮整个 Run 列表。
+    挑战窗必须一起传：多轮 ext 匹配同一 run 时按贴合度选优，不传会退回
+    “最新导入优先”，选中与分析时不同的一轮，造成列表与分析口径漂移。
+    任何读取异常都收敛为 unavailable——遥测侧问题不得拖垮整个 Run 列表，
+    但必须留日志，否则遥测故障与“这局没有遥测”在界面上不可区分。
     """
     run_id = run.get("id")
     user_id = run.get("user_id")
@@ -383,9 +389,16 @@ def _external_telemetry_availability(run: dict) -> str:
         or not isinstance(user_id, str) or not user_id
     ):
         return "invalid"
+    run_window_ms = (run.get("window_start_epoch_ms"), run.get("window_end_epoch_ms"))
     try:
-        ready = kovaak_run_store.external_telemetry_ready(run_id, user_id)
+        ready = kovaak_run_store.external_telemetry_ready(
+            run_id, user_id, run_window_ms,
+        )
     except Exception:  # noqa: BLE001 - 投影层 fail-open 到“无遥测”
+        log.warning(
+            "external telemetry availability probe failed run=%s", run_id,
+            exc_info=True,
+        )
         return "unavailable"
     return "available" if ready else "missing"
 

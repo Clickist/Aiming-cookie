@@ -4583,3 +4583,100 @@ async def test_stats_only_ingest_pause_run_fails_closed_csv_only(
     )
     assert run["alignment_state"] == "unavailable"
     assert run["alignment_summary"]["error_code"] == "pause_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_public_run_projection_reports_telemetry_tier_when_paired(
+    tmp_path: Path, monkeypatch,
+):
+    """配对遥测的 Run 必须在投影里报出 telemetry_multimodal。
+
+    1026 回归锁：`_run_evidence_view` 构造 source gate 时漏掉
+    external_telemetry 一项，gate 恒判遥测档不可用——列表与 Coach 把遥测局
+    显示成 input_native，而实际分析走的是遥测档。该缺口自遥测档落地即存在，
+    被 multimodal/video_fallback 两档遮住，档位收敛后暴露。
+    """
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    user_id = "owner-telemetry-tier"
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id=user_id, source_key="telemetry-tier-run",
+    )
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], user_id,
+        external_run_id="ext-telemetry-tier",
+        imported_at="2026-08-31T00:00:00Z",
+    )
+
+    public = kovaak_run_store.public_kovaak_run(kovaak_run_store._load_run(run["id"]))
+    assert public["supported_input_modes"] == ["telemetry_multimodal", "input_native"]
+    assert public["evidence_availability"]["external_telemetry"] == "available"
+
+
+@pytest.mark.asyncio
+async def test_public_run_projection_without_telemetry_falls_back_to_input_native(
+    tmp_path: Path, monkeypatch,
+):
+    """无配对遥测时投影退回 input_native，且 external_telemetry 诚实标 missing。"""
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="owner-no-telemetry", source_key="no-telemetry-run",
+    )
+    public = kovaak_run_store.public_kovaak_run(kovaak_run_store._load_run(run["id"]))
+    assert public["supported_input_modes"] == ["input_native"]
+    assert public["evidence_availability"]["external_telemetry"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_public_run_projection_telemetry_probe_uses_run_window(
+    tmp_path: Path, monkeypatch,
+):
+    """投影选轮必须传挑战窗：多轮匹配时按贴合度选，与分析快照同口径。
+
+    1026 架构复核风险点：不传窗会退回“最新导入优先”，选中与分析时不同的
+    一轮；两轮新鲜度不同时，列表说遥测可用、分析时却不可用。
+    """
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    user_id = "owner-window-pick"
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id=user_id, source_key="window-pick-run",
+    )
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    # 两轮都匹配同一 run：远处一轮后导入（更“新”），贴合窗的一轮先导入。
+    _write_paired_external_run(
+        run["id"], user_id,
+        external_run_id="ext-window-far",
+        imported_at="2026-08-31T12:00:00Z",
+        t_start=0.0, t_end=0.031,
+        epoch_start_est=0.0,
+        matched_run_ids=[run["id"]],
+    )
+    _write_paired_external_run(
+        run["id"], user_id,
+        external_run_id="ext-window-fit",
+        imported_at="2026-08-31T00:00:00Z",
+        t_start=0.0, t_end=0.031,
+        epoch_start_est=1.0,  # run 的 canonical 窗 = [1000ms, 2000ms]
+        matched_run_ids=[run["id"]],
+    )
+
+    from webapp.backend import kovaak_run_store as store
+    from webapp.backend.kovaak_run_projection import _external_telemetry_availability
+
+    assert store.external_telemetry_ready(
+        run["id"], user_id,
+        (run.get("window_start_epoch_ms"), run.get("window_end_epoch_ms")),
+    ) is True
+    assert _external_telemetry_availability(store._load_run(run["id"])) == "available"

@@ -722,13 +722,22 @@ def _select_external_telemetry_meta(
     return min(metas, key=_sort_key)
 
 
-def external_telemetry_ready(run_id: int, user_id: object) -> bool:
+def external_telemetry_ready(
+    run_id: int,
+    user_id: object,
+    run_window_ms: tuple[object, object] | None = None,
+) -> bool:
     """按局切窗导入是否已给该 run 配对出可用的外部遥测源（含旁车冻结校验）。
 
     分析创建前的有界等待用（等增量切窗 + watcher 导入落地）；同步轻查询。
+    ``run_window_ms`` 传挑战窗时与快照构建同口径按贴合度选轮——列表投影
+    必须传，否则多轮匹配局会选中与分析时不同的一轮 ext，出现「列表说遥测
+    可用、分析时却不可用」的漂移（1026 架构复核）。
     """
     return (
-        _external_telemetry_source(run_id, user_id).get("availability")
+        _external_telemetry_source(run_id, user_id, run_window_ms).get(
+            "availability"
+        )
         == "available"
     )
 
