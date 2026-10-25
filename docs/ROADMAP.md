@@ -12,11 +12,11 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段为**内测进行中**（v0.1.7 起向内测用户发布，2026-09-13 当前版本 v1.0.1，已内置自动更新链路）。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测；2026-09-06 起数据采集核心通路新增外部遥测三通道（RPM 目标/相机 + OS Raw Input）伴生常驻托管，Raw/窗口录制主链路本身未改动。真实 Tauri 打包/发版链路已由 v0.1.10–v0.1.15 与 v1.0.0、v1.0.1 的实际发布验证（installer + NSIS + updater 三件套 + 落地页切换）；仍开放的工程 Gate 是 Tracking 时延与 AMD/Intel 支持（v1 不把 AMD/Intel 物理验证设为发布阻塞）。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺。
+现阶段为**内测进行中**（v0.1.7 起向内测用户发布，2026-09-13 当前版本 v1.0.1，已内置自动更新链路）。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测；2026-09-06 起数据采集核心通路新增外部遥测三通道（RPM 目标/相机 + OS Raw Input）伴生常驻托管，Raw/窗口录制主链路本身未改动。真实 Tauri 打包/发版链路已由 v0.1.10–v0.1.15 与 v1.0.0、v1.0.1 的实际发布验证（installer + NSIS + updater 三件套 + 落地页切换）；仍开放的工程 Gate 是 Tracking 时延与 AMD/Intel 支持（v1 不把 AMD/Intel 物理验证设为发布阻塞）。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 是正式但有界的降级路径（CV 视频档已退役，见 PRD §14），真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺。
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化；本地诊断闭环不需要产品账号。商业化形态以 PRD 2026-09-06 修订为准（官方托管套餐 + BYOK 双轨，套餐/注册/订阅/支付页为自建售卖链路，见「当前优先级」）。
 
-当前分析策略是 Coach 自动选择 `telemetry_multimodal > multimodal > input_native > video_fallback`。四种路径分别表示遥测真值优先、完整多源、输入证据优先和视频证据优先；真值口径以配对 KovaaK 遥测为权威，CV 视觉是行为细节与回退档。不提供用户 mode selector。只有四条路径均不可用时才不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件可导入、展示为历史 Run。
+当前分析策略是 Coach 自动选择 `telemetry_multimodal > input_native`（2026-10-24 起本地 CV 视频档 `multimodal`/`video_fallback` 退役，见 PRD §14 同日决策条）。telemetry_multimodal 表示遥测真值优先（配对外部遥测 + KovaaK stats + canonical window），input_native 表示输入证据优先（Stats + Raw Input + canonical window）；真值口径以配对 KovaaK 遥测为权威，MP4 只保留给人看的直观回放与问题定位，不再是任何分析路径的输入。不提供用户 mode selector。两档均不可用时不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件可导入、展示为历史 Run（不满足任何分析档）。
 
 ## 2. 当前施工优先级
 

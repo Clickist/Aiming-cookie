@@ -104,10 +104,13 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
     supported_modes = [
         mode
         for mode, required in (
-            # telemetry_multimodal 排最前：外部遥测是首选数据源，CV 视频降为
-            # fallback；遥测档只要求遥测 + KovaaK stats + 时间窗，原生输入与
-            # 视频都不参与（遥测 producer 是本进程真值投影，不依赖 trace/cv2
-            # ——dev 应用离线期间的无视频 run 也必须能选到档）。
+            # telemetry_multimodal 排最前：外部遥测是首选数据源；遥测档只要求
+            # 遥测 + KovaaK stats + 时间窗，原生输入与视频都不参与（遥测
+            # producer 是本进程真值投影，不依赖 trace/cv2——dev 应用离线期间
+            # 的无视频 run 也必须能选到档）。
+            # CV 视频档（multimodal / video_fallback）已退役（2026-10-24，
+            # PRD §14）：不再产出，只收敛为遥测/输入原生两档；video 的
+            # availability 仍诚实呈现（MP4 保留给人看的回放角色）。
             # performance 已全面退出硬门（2026-10-08 CSV-only 兼容）：KovaaK
             # 不产 .perf 的机器靠 stats 对齐放行（执行层 performance=None 走
             # 冻结 canonical 窗口，limitations 带 performance_events_unavailable）；
@@ -116,9 +119,7 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
             ("telemetry_multimodal", (
                 "external_telemetry", "stats", "canonical_window",
             )),
-            ("multimodal", ("stats", "raw_input", "video", "canonical_window")),
             ("input_native", ("stats", "raw_input", "canonical_window")),
-            ("video_fallback", ("stats", "video")),
         )
         if available(*required)
     ]

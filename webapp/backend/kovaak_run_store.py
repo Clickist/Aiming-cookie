@@ -2309,9 +2309,9 @@ def _removal_result(
         "removal_state": removal_state,
         "reclaimed_bytes": reclaimed_bytes,
         "affected_modes": (
-            ["multimodal", "video_fallback"]
-            if evidence_kind == "video"
-            else ["input_native", "multimodal"]
+            # CV 视频档已退役（2026-10-24，PRD §14）：视频证据不再支撑任何
+            # 分析档；raw 仍支撑 input_native。
+            [] if evidence_kind == "video" else ["input_native"]
         ),
     }
 

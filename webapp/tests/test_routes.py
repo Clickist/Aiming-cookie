@@ -186,22 +186,6 @@ def _minimal_native_v2_result() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_analyze_returns_session_id():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"fakevideo", "video/mp4"),
-                "csv": ("s.csv", b"frame,time_s\n0,0\n", "text/csv"),
-            },
-            headers={"X-User-Id": "u1"},
-        )
-    assert resp.status_code == 200
-    sid = resp.json()["session_id"]
-    assert sid > 0
-
-
-@pytest.mark.asyncio
 async def test_session_response_projects_error_details():
     result = _minimal_native_v2_result()
     error = build_error_v1(
@@ -227,208 +211,6 @@ async def test_session_response_projects_error_details():
     payload = response.json()
     assert payload["error"]["code"] == "analysis_failed"
     assert "details" not in payload["error"]
-
-
-@pytest.mark.asyncio
-async def test_analyze_writes_files_under_session_workspace(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
-    from webapp.backend import routes
-
-    destinations = []
-    original_stream = routes.stream_upload_to_path
-
-    async def record_temp_destination(*args, **kwargs):
-        destination = args[1]
-        destinations.append(destination)
-        assert destination.name.endswith(".tmp")
-        assert not Path(str(destination)[:-4]).exists()
-        return await original_stream(*args, **kwargs)
-
-    monkeypatch.setattr(routes, "stream_upload_to_path", record_temp_destination)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "u_ws"},
-    ) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("clip.mp4", b"fakevideo", "video/mp4"),
-                "csv": ("stats.csv", b"frame,time_s\n0,0\n", "text/csv"),
-            },
-            headers={"X-User-Id": "u_ws"},
-        )
-    assert resp.status_code == 200
-    sid = resp.json()["session_id"]
-    ws = session_dir(sid)
-    assert ws.is_dir()
-    video_path = ws / "video.mp4"
-    csv_path = ws / "stats.csv"
-    assert video_path.is_file()
-    assert csv_path.is_file()
-    row = await queue.get_session(sid)
-    assert row is not None
-    assert row["video_path"] == str(video_path)
-    assert row["csv_path"] == str(csv_path)
-    assert destinations == [ws / "video.mp4.tmp", ws / "stats.csv.tmp"]
-    assert list(ws.glob("*.tmp")) == []
-
-
-@pytest.mark.asyncio
-async def test_analyze_is_claimable_only_after_upload_finishes(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
-    from webapp.backend import routes
-
-    original_stream = routes.stream_upload_to_path
-    upload_started = asyncio.Event()
-    release_upload = asyncio.Event()
-    calls = 0
-
-    async def paused_stream(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            upload_started.set()
-            await release_upload.wait()
-        return await original_stream(*args, **kwargs)
-
-    monkeypatch.setattr(routes, "stream_upload_to_path", paused_stream)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "u_uploading"},
-    ) as client:
-        request = asyncio.create_task(
-            client.post(
-                "/api/analyze",
-                files={
-                    "video": ("v.mp4", b"fakevideo", "video/mp4"),
-                    "csv": ("s.csv", b"frame,time_s\n0,0\n", "text/csv"),
-                },
-            )
-        )
-        await upload_started.wait()
-        assert await queue.has_active("u_uploading") is True
-        assert await queue.claim_next(TEST_WORKER) is None
-
-        release_upload.set()
-        resp = await request
-
-    assert resp.status_code == 200
-    claimed = await queue.claim_next(TEST_WORKER)
-    assert claimed is not None
-    assert claimed["id"] == resp.json()["session_id"]
-
-
-@pytest.mark.asyncio
-async def test_analyze_stream_limit_cleans_workspace_and_session(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
-    monkeypatch.setattr(config, "MAX_CSV_BYTES", 16)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "u_abort"},
-    ) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"ok", "video/mp4"),
-                "csv": ("s.csv", b"x" * 32, "text/csv"),
-            },
-            headers={"X-User-Id": "u_abort"},
-        )
-    assert resp.status_code == 413
-    sessions_root = tmp_path / "sessions"
-    if sessions_root.exists():
-        assert list(sessions_root.iterdir()) == []
-    rows = await queue.list_sessions("u_abort")
-    assert rows == []
-
-
-@pytest.mark.asyncio
-async def test_analyze_rejects_low_disk_before_enqueue(monkeypatch, tmp_path):
-    """DATA_ROOT 盘空闲低于阈值 → 507，不入队、不写工作区。"""
-    from collections import namedtuple
-
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
-    min_free = 500 * 1024 * 1024
-    monkeypatch.setattr(config, "MIN_FREE_DISK_BYTES", min_free)
-    _Disk = namedtuple("_Disk", ("total", "used", "free"))
-
-    def _low_free_usage(_path):
-        return _Disk(1_000_000_000, 999_000_000, min_free - 1)
-
-    monkeypatch.setattr("webapp.backend.routes.shutil.disk_usage", _low_free_usage)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "u_disk"},
-    ) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"fakevideo", "video/mp4"),
-                "csv": ("s.csv", b"frame,time_s\n0,0\n", "text/csv"),
-            },
-            headers={"X-User-Id": "u_disk"},
-        )
-    assert resp.status_code == 507
-    # B1 错误码化：detail 是 {code, message[, args]}，断稳定码而非中文文案。
-    assert resp.json()["detail"]["code"] == "upload.disk_space_insufficient"
-    assert resp.json()["detail"]["args"]["required_mb"] == min_free // (1024 * 1024)
-    sessions_root = tmp_path / "sessions"
-    assert not sessions_root.exists() or list(sessions_root.iterdir()) == []
-    assert await queue.list_sessions("u_disk") == []
-
-
-@pytest.mark.asyncio
-async def test_analyze_rejects_when_active_job_exists():
-    """单用户已有 uploading/queued/running job → 429。"""
-    await queue.enqueue("u1", "/a", "/a.csv")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"x", "video/mp4"),
-                "csv": ("s.csv", b"y", "text/csv"),
-            },
-            headers={"X-User-Id": "u1"},
-        )
-    assert resp.status_code == 429
-
-
-@pytest.mark.asyncio
-async def test_analyze_rejects_oversized_video():
-    """视频 > 100MB → 413。"""
-    big = b"x" * (101 * 1024 * 1024)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", big, "video/mp4"),
-                "csv": ("s.csv", b"y", "text/csv"),
-            },
-            headers={"X-User-Id": "u2"},
-        )
-    assert resp.status_code == 413
-
-
-@pytest.mark.asyncio
-async def test_analyze_rejects_oversized_csv():
-    """CSV > MAX_CSV_BYTES(10MB)→ 413。"""
-    from webapp.backend.config import MAX_CSV_BYTES
-    big_csv = b"x" * (MAX_CSV_BYTES + 1)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"fakevideo", "video/mp4"),
-                "csv": ("s.csv", big_csv, "text/csv"),
-            },
-            headers={"X-User-Id": "u_csv_oversize"},
-        )
-    assert resp.status_code == 413
 
 
 @pytest.mark.asyncio
@@ -983,6 +765,17 @@ async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
     selected, selected_video = await _seed_route_video_run(tmp_path, "selected")
     waiting, _waiting_video = await _seed_route_video_run(tmp_path, "waiting")
+    # CV 退役（2026-10-24）：multimodal 档不再被选择；配对外部遥测让冻结快照
+    # 选到 telemetry_multimodal，managed video 别名仍拷入会话（回放角色）。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        selected["id"], config.DESKTOP_LOCAL_PROFILE,
+        external_run_id="ext-route-selected",
+        imported_at="2026-08-31T00:00:00Z",
+    )
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -1022,6 +815,17 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
 ) -> None:
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
     run, run_video = await _seed_route_video_run(tmp_path, "playback")
+    # CV 退役（2026-10-24）：配对外部遥测使快照选到 telemetry_multimodal，
+    # run-owned 视频别名冻结与回放路径保持被测。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+        external_run_id="ext-route-playback",
+        imported_at="2026-08-31T00:00:00Z",
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -1146,6 +950,17 @@ async def test_evidence_segment_playback_subtracts_decode_preroll(
 ) -> None:
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
     run, _run_video = await _seed_route_video_run(tmp_path, "preroll-playback")
+    # CV 退役（2026-10-24）：配对外部遥测使快照选到 telemetry_multimodal，
+    # run-owned 视频别名与 decode preroll 回放路径保持被测。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+        external_run_id="ext-route-preroll",
+        imported_at="2026-08-31T00:00:00Z",
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -1221,6 +1036,17 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
 ) -> None:
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
     run, run_video = await _seed_route_video_run(tmp_path, "video-fallback-empty")
+    # CV 退役（2026-10-24）：配对外部遥测使快照选到 telemetry_multimodal，
+    # 无 derived segments 时的 run-owned 回放路径保持被测。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+        external_run_id="ext-route-empty-segments",
+        imported_at="2026-08-31T00:00:00Z",
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -1624,7 +1450,7 @@ async def test_storage_and_run_evidence_removal_are_desktop_only_and_path_free(
     assert removed.status_code == 200, removed.text
     assert removed.json()["run_ref"] == f"run:{run['id']}"
     assert removed.json()["evidence_kind"] == "video"
-    assert removed.json()["affected_modes"] == ["multimodal", "video_fallback"]
+    assert removed.json()["affected_modes"] == []
     assert str(tmp_path) not in removed.text
     assert await queue.get_session(sid) is not None
     assert analysis_file.is_file()

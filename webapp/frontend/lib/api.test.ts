@@ -33,7 +33,6 @@ import {
   switchProviderModel,
   syncKovaaKScores,
   uninstallKnowledgePack,
-  uploadVideo,
 } from "./api";
 import {
   getManagedVideoUrl,
@@ -431,23 +430,32 @@ test("sidecar API requests carry the current locale in X-Locale", async () => {
 });
 
 test("coded API errors localize through the dictionary with args interpolation", async () => {
-  Reflect.set(globalThis, "isTauri", false);
-  Reflect.set(globalThis, "window", {});
+  // analyzeKovaakRun 是 desktop-only API（原 uploadVideo 浏览器路径已退役）：
+  // 按同文件「analysis write requests」用例的 desktop 桩模式搭环境。
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({
+        baseUrl: "http://127.0.0.1:43128",
+        token: "test-launch-token",
+      }),
+    },
+  });
   globalThis.fetch = (async () => new Response(JSON.stringify({
     detail: {
-      code: "upload.disk_space_insufficient",
-      message: "数据盘可用空间不足，无法接收上传（需至少 450MB 空闲）",
-      args: { required_mb: 450 },
+      code: "upload.video.path_ext_unsupported",
+      message: "视频 扩展名不支持（仅 .mp4）",
+      args: { allowed: ".mp4" },
     },
-  }), { status: 507, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  }), { status: 400, headers: { "Content-Type": "application/json" } })) as typeof fetch;
 
   setLocale("en-US");
   await assert.rejects(
-    () => uploadVideo(new File(["x"], "v.mp4"), { csv: new File(["y"], "s.csv") }),
+    () => analyzeKovaakRun(42, {}, { idempotencyKey: "error-args-key" }),
     (error: unknown) => error instanceof Error
-      && error.name === "ApiError_507"
-      && error.message === translate("en-US", "api.error.upload.diskSpaceInsufficient", { required_mb: 450 })
-      && error.message.includes("450MB"),
+      && error.name === "ApiError_400"
+      && error.message === translate("en-US", "api.error.upload.video.pathExtUnsupported", { allowed: ".mp4" })
+      && error.message.includes(".mp4"),
   );
 });
 

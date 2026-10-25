@@ -398,12 +398,7 @@ KOVAAK_WATCH_POLL_SECONDS = float(os.environ.get("KOVAAK_WATCH_POLL_SECONDS", "1
 # Legacy compatibility inputs only. Active Coach/worker provider selection is
 # owner-scoped local profile state and does not apply the fixed CNY budget.
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
-MAX_VIDEO_BYTES = 100 * 1024 * 1024  # 100MB
-MAX_CSV_BYTES = 10 * 1024 * 1024    # 10MB(KovaaK Stats CSV 实际 <1MB,留余量)
 UPLOAD_CHUNK_SIZE = int(os.environ.get("UPLOAD_CHUNK_SIZE", str(1024 * 1024)))  # 1MB
-MIN_FREE_DISK_BYTES = int(
-    os.environ.get("MIN_FREE_DISK_BYTES", str(500 * 1024 * 1024))
-)  # refuse upload when DATA_ROOT volume free space is below this
 
 # Worker job lease / heartbeat (CV ~160s; TTL leaves headroom if heartbeat pauses)
 LEASE_TTL_SECONDS = int(os.environ.get("LEASE_TTL_SECONDS", "300"))

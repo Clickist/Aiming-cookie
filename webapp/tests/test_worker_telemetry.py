@@ -512,12 +512,12 @@ async def test_available_telemetry_uses_producer_without_cv():
 
 
 @pytest.mark.asyncio
-async def test_producer_failure_falls_back_to_cv_with_warning():
-    """②producer 抛错 + video 可用：回退 CV 管线，结果 warnings/limitations
-    带 external_telemetry_unavailable:<code>。"""
+async def test_producer_failure_with_video_still_lands_outcome_only():
+    """②producer 抛错 + video 可用：CV 已退役（2026-10-24），不再回退 CV，
+    直接 outcome_only + external_telemetry_unavailable:<code>。"""
     ext_dir = _write_frozen_external_run(_data_root())
     job = _telemetry_job(ext_dir)
-    job["video_path"] = "managed.mp4"  # 遥测档的视频是可选增强；回退 CV 需要 it
+    job["video_path"] = "managed.mp4"  # 遥测档的视频是可选增强；不影响降级落点
 
     def _boom(_job):
         raise worker.TelemetryPipelineError("telemetry_projection_failed")
@@ -529,19 +529,20 @@ async def test_producer_failure_falls_back_to_cv_with_warning():
         tracking_analysis=lambda _job, _visual: _family_fixture(),
     )
 
-    mocks["cv_pipeline"].assert_called_once()
+    mocks["cv_pipeline"].assert_not_called()
     mocks["builder"].assert_called_once()
     result = mocks["result"]
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
+    assert result["deterministic"]["support_status"] == "outcome_only"
     marker = "external_telemetry_unavailable:telemetry_projection_failed"
     assert {"code": marker} in result["warnings"]
     assert marker in result["deterministic"]["limitations"]
-    # 指标仍然来自 CV 兜底路径（family fixture 的 metric 保留）。
-    assert result["deterministic"]["metrics"], "CV fallback metrics missing"
 
 
 @pytest.mark.asyncio
-async def test_alignment_rejected_manifest_falls_back_to_cv():
-    """③merge_manifest.alignment.accepted=false：真实 producer 闸门拒绝，同回退。"""
+async def test_alignment_rejected_manifest_lands_outcome_only():
+    """③merge_manifest.alignment.accepted=false：真实 producer 闸门拒绝；
+    CV 已退役，直接 outcome_only + 降级标记。"""
     ext_dir = _write_frozen_external_run(_data_root(), alignment_accepted=False)
     job = _telemetry_job(ext_dir)
     job["video_path"] = "managed.mp4"
@@ -561,18 +562,19 @@ async def test_alignment_rejected_manifest_falls_back_to_cv():
     )
 
     assert len(builder_calls) == 1
-    mocks["cv_pipeline"].assert_called_once()
+    mocks["cv_pipeline"].assert_not_called()
     marker = "external_telemetry_unavailable:telemetry_alignment_not_accepted"
     result = mocks["result"]
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
     assert {"code": marker} in result["warnings"]
     assert marker in result["deterministic"]["limitations"]
 
 
 @pytest.mark.asyncio
-async def test_round_rejected_verdict_falls_back_to_cv():
+async def test_round_rejected_verdict_lands_outcome_only():
     """③b [fix 2026-10-04] 逐轮部分验收：manifest.alignment.accepted=true 但该轮
-    round_verdicts=false（merge 端 session 级双挂、本轮流脏）→ 投影前拒绝，
-    limitation 归并为 telemetry_alignment_round_rejected，CV 兜底不受影响。"""
+    round_verdicts=false（merge 端 session 级双挂、本轮流脏）→ 投影前拒绝；
+    CV 已退役，直接 outcome_only + telemetry_alignment_round_rejected。"""
     ext_dir = _write_frozen_external_run(
         _data_root(), round_verdicts={"1": False})
     job = _telemetry_job(ext_dir)
@@ -593,9 +595,10 @@ async def test_round_rejected_verdict_falls_back_to_cv():
     )
 
     assert len(builder_calls) == 1
-    mocks["cv_pipeline"].assert_called_once()
+    mocks["cv_pipeline"].assert_not_called()
     marker = "external_telemetry_unavailable:telemetry_alignment_round_rejected"
     result = mocks["result"]
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
     assert {"code": marker} in result["warnings"]
     assert marker in result["deterministic"]["limitations"]
 
@@ -622,8 +625,9 @@ async def test_producer_failure_without_video_lands_outcome_only():
 
 
 @pytest.mark.asyncio
-async def test_without_telemetry_source_behavior_is_unchanged():
-    """④无遥测源：不碰 producer，行为与改动前完全一致（CV 管线 + 无降级标记）。"""
+async def test_without_telemetry_source_lands_outcome_only():
+    """④无遥测源：不碰 producer；CV 已退役（2026-10-24），直接 outcome_only
+    + telemetry_source_unavailable 降级标记。"""
     ext_dir = _write_frozen_external_run(_data_root())
     job = _telemetry_job(ext_dir, with_telemetry=False)
     job["video_path"] = "managed.mp4"
@@ -636,19 +640,13 @@ async def test_without_telemetry_source_behavior_is_unchanged():
     )
 
     mocks["builder"].assert_not_called()
-    mocks["cv_pipeline"].assert_called_once()
+    mocks["cv_pipeline"].assert_not_called()
     result = mocks["result"]
-    assert result["deterministic"]["metrics"]
-    assert not [
-        warning for warning in result["warnings"]
-        if str(warning.get("code", "")).startswith("external_telemetry_unavailable")
-    ]
-    assert "external_telemetry_unavailable" not in str(result["deterministic"])
-    # 结果来源标记是 CV 桩的 producer，不是遥测。
-    assert (
-        result["deterministic"]["visual_validation"]["producer_version"]
-        == "cv_fixture.v1"
-    )
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
+    assert result["deterministic"]["support_status"] == "outcome_only"
+    marker = "external_telemetry_unavailable:telemetry_source_unavailable"
+    assert marker in result["deterministic"]["limitations"]
+    assert {"code": marker} in result["warnings"]
 
 
 def test_history_trends_treats_telemetry_and_cv_profiles_incomparable():
@@ -882,9 +880,10 @@ async def test_baseline_dispatch_with_telemetry_uses_producer():
 
 
 @pytest.mark.asyncio
-async def test_baseline_producer_failure_falls_back_to_cv_with_marker():
-    """baseline 档 + producer 失败 + video 可用：回退 CV 子进程，结果带
-    external_telemetry_unavailable 降级标记（_mark_telemetry_fallback）。"""
+async def test_baseline_producer_failure_lands_outcome_only_with_marker():
+    """baseline 档 + producer 失败 + video 可用：CV 已退役（2026-10-24），
+    不再回退 CV 子进程；结果带 external_telemetry_unavailable 降级标记
+    （_mark_telemetry_fallback），baseline 输入运动学照常产出。"""
     ext_dir = _write_frozen_external_run(_data_root())
     job = _telemetry_job(ext_dir)
     job["input_snapshot"]["scenario_resolution"] = _baseline_scenario_resolution(
@@ -902,7 +901,7 @@ async def test_baseline_producer_failure_falls_back_to_cv_with_marker():
     )
 
     mocks["builder"].assert_called_once()
-    mocks["cv_plain"].assert_called_once()
+    mocks["cv_plain"].assert_not_called()
     result = mocks["result"]
     assert result["analysis_version"] == "continuous_tracking.baseline.v1"
     marker = "external_telemetry_unavailable:telemetry_projection_failed"
@@ -934,9 +933,10 @@ async def test_baseline_without_telemetry_keeps_previous_path():
 
 
 @pytest.mark.asyncio
-async def test_static_native_without_telemetry_keeps_cv_path():
-    """static（native_flicking.v1）无遥测源：producer 不被调用，visual 走
-    CV 子进程——与接线前行为一致。"""
+async def test_static_native_without_telemetry_degrades_visual_without_cv():
+    """static（native_flicking.v1）无遥测源：producer 不被调用；CV 已退役
+    （2026-10-24），visual validation 以 telemetry_source_unavailable 降级，
+    native 输入运动学照常产出。"""
     ext_dir = _write_frozen_external_run(_data_root())
     job = _telemetry_job(ext_dir, with_telemetry=False)
     job["input_snapshot"]["scenario_resolution"] = _static_scenario_resolution()
@@ -949,10 +949,11 @@ async def test_static_native_without_telemetry_keeps_cv_path():
     )
 
     mocks["builder"].assert_not_called()
-    mocks["cv_plain"].assert_called_once()
+    mocks["cv_plain"].assert_not_called()
     result = mocks["result"]
     assert result["analysis_version"] == worker.NATIVE_ANALYSIS_VERSION
-    assert "external_telemetry_unavailable" not in str(result["warnings"])
+    marker = "external_telemetry_unavailable:telemetry_source_unavailable"
+    assert marker in str(result["warnings"])
 
 
 @pytest.mark.asyncio

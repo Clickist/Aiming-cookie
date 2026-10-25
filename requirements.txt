@@ -1,3 +1,8 @@
+# 研究期遗留文件：此清单不再是桌面构建的事实源。
+# 桌面打包实际依赖见 webapp/requirements.txt + pandas/numpy/scipy/plotly。
+# opencv-contrib-python（CV 视频分析）已随 CV 退役（2026-10-24，PRD §14）
+# 不再进包，build-windows-runtime.ps1 显式 exclude-module cv2/PIL/pyarrow；
+# 重新安装本清单不会把 CV 带回运行时，但会把大依赖装进环境——勿照单全装。
 opencv-contrib-python
 streamlit
 pandas

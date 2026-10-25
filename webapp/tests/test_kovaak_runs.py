@@ -936,7 +936,9 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempo
     assert replay.json() == response.json()
     assert calls == 2  # second call is deduplicated by run, not skipped by a journal
     session = await queue.get_session(response.json()["session_id"])
-    assert session["input_mode"] == "multimodal"
+    # CV 退役（2026-10-24）：multimodal 档不再被选择，冻结快照自选落
+    # input_native；managed video 指纹仍照常冻结进快照。
+    assert session["input_mode"] == "input_native"
     assert session["kovaak_run_id"] == run["id"]
     assert session["input_snapshot"]["scenario_identity_version"] == "kovaak_scenario.v1"
     assert session["input_snapshot"]["sources"]["stats"]["artifact_ref"].startswith("run:")
@@ -1095,6 +1097,17 @@ async def test_multimodal_rejects_video_replaced_after_freeze_before_copy(
         user_id="owner-video-copy-race",
         source_key="video-copy-race-run",
     )
+    # CV 退役（2026-10-24）：multimodal 档不再被选择；managed video 别名冻结
+    # 只属于 telemetry_multimodal 档 → 配对外部遥测让快照选到遥测档。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], "owner-video-copy-race",
+        external_run_id="ext-video-copy-race",
+        imported_at="2026-08-31T00:00:00Z",
+    )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"frozen-video-revision")
     original_copy = analysis_service.copy_path_to_path
@@ -1130,6 +1143,17 @@ async def test_multimodal_rejects_video_mtime_changed_after_freeze_before_copy(
         tmp_path,
         user_id="owner-video-copy-mtime-race",
         source_key="video-copy-mtime-race-run",
+    )
+    # CV 退役（2026-10-24）：配对外部遥测使快照选到 telemetry_multimodal，
+    # managed video 别名冻结路径保持被测。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], "owner-video-copy-mtime-race",
+        external_run_id="ext-video-copy-mtime-race",
+        imported_at="2026-08-31T00:00:00Z",
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"stable-video-bytes")
@@ -1170,6 +1194,17 @@ async def test_multimodal_reports_video_disappearance_during_managed_copy(
         tmp_path,
         user_id="owner-video-copy-disappears",
         source_key="video-copy-disappears-run",
+    )
+    # CV 退役（2026-10-24）：配对外部遥测使快照选到 telemetry_multimodal，
+    # managed video 别名冻结路径保持被测。
+    from webapp.tests.test_external_telemetry_analysis_input import (
+        _write_paired_external_run,
+    )
+
+    _write_paired_external_run(
+        run["id"], "owner-video-copy-disappears",
+        external_run_id="ext-video-copy-disappears",
+        imported_at="2026-08-31T00:00:00Z",
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"video-before-copy")
@@ -3797,7 +3832,7 @@ async def test_run_owned_video_snapshot_and_public_dto_are_path_free(
 
     public = kovaak_run_store.public_kovaak_run(run)
     assert public["readiness_state"] == "pending_analysis"
-    assert public["supported_input_modes"] == ["multimodal", "input_native", "video_fallback"]
+    assert public["supported_input_modes"] == ["input_native"]
     assert public["evidence_availability"] == {
         "stats": "available",
         "performance": "available",
@@ -3937,7 +3972,7 @@ async def test_remove_run_video_is_contained_owner_scoped_and_idempotent(
 
     assert removed["removal_state"] == "completed"
     assert removed["reclaimed_bytes"] == video_bytes
-    assert removed["affected_modes"] == ["multimodal", "video_fallback"]
+    assert removed["affected_modes"] == []
     assert repeated["removal_state"] == "already_unavailable"
     assert repeated["reclaimed_bytes"] == 0
     persisted = await kovaak_run_store.get_kovaak_run(run["id"], "u1")

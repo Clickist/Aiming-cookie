@@ -1696,30 +1696,21 @@ async def _external_telemetry_visual_or_none(
 async def _visual_result_with_telemetry_preference(
     job: dict,
 ) -> tuple[dict, str | None]:
-    """family 分支共用的 visual_result 取数点：遥测优先，CV 兜底。
+    """family 分支共用的 visual_result 取数点：只走遥测投影。
 
-    返回 (visual_result, telemetry_unavailable_code)。无遥测源时 code=None 且
-    直接走 CV 子进程，行为与改动前完全一致；producer 失败时先记日志，video
-    可用则回退 CV（CV 异常带 telemetry_unavailable_code 属性供分支 except
-    观测），无 video 抛 TelemetryPipelineError 让分支落 outcome_only。
+    CV 视频管线已退役（2026-10-24，PRD §14）：visual_result 为空一律抛
+    TelemetryPipelineError 让 family 分支落 outcome_only——无遥测源时用
+    稳定 code "telemetry_source_unavailable"，producer 失败时透传其 code。
     """
     visual_result, code = await _external_telemetry_visual_or_none(job)
-    if visual_result is None and code is None:
-        return await run_visual_preprocessing_isolated(job), None
     if visual_result is None:
         log.warning(
-            "external telemetry producer unavailable session=%s code=%s; "
-            "falling back to CV visual pipeline",
+            "external telemetry visual unavailable session=%s code=%s; "
+            "CV video pipeline is retired (PRD §14 2026-10-24)",
             job.get("id"),
             code,
         )
-        if not job.get("video_path"):
-            raise TelemetryPipelineError(code)
-        try:
-            visual_result = await run_visual_preprocessing_isolated(job)
-        except Exception as error:
-            error.telemetry_unavailable_code = code
-            raise
+        raise TelemetryPipelineError(code or "telemetry_source_unavailable")
     return visual_result, code
 
 
@@ -3416,18 +3407,11 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             visual_result,
                         ) from error
                 else:
-                    if telemetry_unavailable_code is not None:
-                        # 与 dynamic 分支同一回退策略：无 video 不空转 CV 子进程。
-                        if not job.get("video_path"):
-                            raise TelemetryPipelineError(telemetry_unavailable_code)
-                        log.warning(
-                            "external telemetry producer unavailable session=%s "
-                            "code=%s; falling back to CV visual pipeline",
-                            sid,
-                            telemetry_unavailable_code,
-                        )
-                    visual_result, tracking_result = (
-                        await run_continuous_tracking_pipeline_isolated(job)
+                    # CV 视频管线已退役（2026-10-24，PRD §14）：producer 失败/
+                    # 无遥测源都直接落 outcome_only（下方 TelemetryPipelineError
+                    # 分支），不再拉起 CV 子进程。
+                    raise TelemetryPipelineError(
+                        telemetry_unavailable_code or "telemetry_source_unavailable"
                     )
             except SourceSnapshotChangedError:
                 raise
@@ -3692,103 +3676,12 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                                         completed_at=completed_at_iso,
                                     )
                 else:
-                    if telemetry_unavailable_code is not None:
-                        # 与 dynamic/tracking 分支同一回退策略：无 video 不空转
-                        # CV 子进程。
-                        if not job.get("video_path"):
-                            raise TelemetryPipelineError(telemetry_unavailable_code)
-                        log.warning(
-                            "external telemetry producer unavailable session=%s "
-                            "code=%s; falling back to CV visual pipeline",
-                            sid,
-                            telemetry_unavailable_code,
-                        )
-                    visual_result, episode_result = (
-                        await run_target_switching_pipeline_isolated(job)
+                    # CV 视频管线已退役（2026-10-24，PRD §14）：producer 失败/
+                    # 无遥测源都直接落 outcome_only（下方 TelemetryPipelineError
+                    # 分支），不再拉起 CV 子进程。
+                    raise TelemetryPipelineError(
+                        telemetry_unavailable_code or "telemetry_source_unavailable"
                     )
-                    visual_validation = dict(visual_result.get("safe_summary") or {})
-                    quality = visual_result.get("quality")
-                    enabled_families = (
-                        set(quality.get("enabled_metric_families") or [])
-                        if isinstance(quality, Mapping)
-                        else set()
-                    )
-                    quality_enabled = (
-                        isinstance(quality, Mapping)
-                        and quality.get("status") in {"accepted", "limited"}
-                        and "target_switching" in enabled_families
-                    )
-                    if not quality_enabled:
-                        result = _build_outcome_only_result_v2(
-                            job,
-                            created_at=created_at_iso,
-                            completed_at=completed_at_iso,
-                            limitations_override=["target_switching_visual_quality_unavailable"],
-                            visual_validation=visual_validation,
-                            extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
-                            analysis_type_override="target_switching",
-                        )
-                    else:
-                        try:
-                            switching_result = await asyncio.to_thread(
-                                run_target_switching_analysis,
-                                job,
-                                visual_result,
-                                episode_result,
-                                frozen_stats,
-                            )
-                        except SourceSnapshotChangedError:
-                            raise
-                        except Exception as error:
-                            log.warning(
-                                "target switching analysis unavailable session=%s error=%r",
-                                sid,
-                                repr(error),
-                            )
-                            result = _build_outcome_only_result_v2(
-                                job,
-                                created_at=created_at_iso,
-                                completed_at=completed_at_iso,
-                                limitations_override=["target_switching_analysis_unavailable"],
-                                visual_validation=visual_validation,
-                                extra_warnings=[{"code": "target_switching_analyzer_unavailable"}],
-                                analysis_type_override="target_switching",
-                            )
-                        else:
-                            result = _build_target_switching_result_v2(
-                                job,
-                                switching_result,
-                                visual_result,
-                                created_at=created_at_iso,
-                                completed_at=completed_at_iso,
-                            )
-                            try:
-                                from .history_trends import (
-                                    matched_target_switching_baseline_for_user,
-                                )
-
-                                comparison = await matched_target_switching_baseline_for_user(
-                                    str(job["user_id"]),
-                                    result,
-                                    list(switching_result.get("metrics") or {}),
-                                )
-                            except Exception as error:
-                                log.warning(
-                                    "target switching baseline unavailable session=%s error=%r",
-                                    sid,
-                                    repr(error),
-                                )
-                            else:
-                                if comparison.get("comparable") is True:
-                                    switching_result = copy.deepcopy(switching_result)
-                                    switching_result["comparison"] = comparison
-                                    result = _build_target_switching_result_v2(
-                                        job,
-                                        switching_result,
-                                        visual_result,
-                                        created_at=created_at_iso,
-                                        completed_at=completed_at_iso,
-                                    )
             except SourceSnapshotChangedError:
                 raise
             except TelemetryPipelineError as error:
@@ -3936,66 +3829,14 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                             f"{type(error).__name__}: {error}",
                         )
                 else:
-                    try:
-                        stats_path = (snapshot.get("sources") or {}).get(
-                            "stats", {}
-                        ).get("path")
-                        if not isinstance(stats_path, str):
-                            raise ValueError("multimodal analysis requires stats source")
-                        _, visual_extras = await asyncio.to_thread(
-                            run_analysis,
-                            job["video_path"],
-                            stats_path,
-                            job.get("cm_per_360"),
-                            job.get("fov"),
-                            stats=frozen_stats,
-                        )
-                        video_availability = "available"
-                        visual_validation = {
-                            "status": "available",
-                            "timeline": _build_timeline(visual_extras, _job_locale(job)),
-                        }
-                        # [rb P1-4 2026-10-11] 视频中途解码失败 → 截断轨迹
-                        # 打分：visual_validation 与 warnings 都要可观测。
-                        if isinstance(visual_extras, Mapping) and (
-                            visual_extras.get("timeline_status") == "partial"
-                        ):
-                            visual_validation["timeline_status"] = "partial"
-                            warnings.append({"code": "video_timeline_partial"})
-                    except SourceSnapshotChangedError:
-                        raise
-                    except Exception:
-                        await asyncio.to_thread(
-                            _assert_managed_video_matches_snapshot_with_baseline,
-                            job,
-                            raw_input_mode,
-                            video_source_baseline,
-                        )
-                        log.warning("multimodal video validation unavailable session=%s", sid)
-                        video_availability = "unavailable"
-                        warnings.append({"code": "video_cv_unavailable"})
+                    # 遗留 v1 快照（在途/重试兼容）：CV 视频管线已退役
+                    # （2026-10-24，PRD §14），不再拉起 run_analysis，直接降级；
+                    # mp4 事实可用性照实记录（与 v2/v3 分支同口径）。
+                    video_availability = "available" if job.get("video_path") else "missing"
+                    limitation = "video_cv_retired"
+                    visual_validation = _unavailable_visual_summary(limitation)
+                    warnings.append({"code": "video_cv_unavailable"})
             generic_visual_result = None
-            # static_clicking 的正牌 dispatch（native_flicking.v1）也纳入 generic：
-            # 该家族的 exact 视觉档案场景不存在，reviewed 路必失败，没有
-            # generic 兜底的话所有 static 场景都只有输入端运动学。
-            if (
-                input_mode == "multimodal"
-                and (
-                    scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS
-                    or scenario_dispatch == NATIVE_ANALYSIS_VERSION
-                )
-                and job.get("video_path")
-            ):
-                await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
-                try:
-                    generic_visual_result = await run_generic_static_clicking_isolated(job)
-                except Exception as error:
-                    log.warning(
-                        "generic static clicking unavailable session=%s error=%s",
-                        sid,
-                        f"{type(error).__name__}: {error}",
-                    )
-                    warnings.append({"code": "generic_visual_unavailable"})
             if scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS:
                 # The baseline tier consumes no visual measurement, but the
                 # managed MP4 stays replayable: attach the video evidence
@@ -4025,93 +3866,19 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 )
             cost = 0.0
         else:
+            # video_fallback 遗留会话（在途/重试兼容）：CV 视频管线已退役
+            # （2026-10-24，PRD §14），不再拉起 run_analysis，直接降级为
+            # outcome-only 结果并如实标注。run-less 手动上传遗留会话没有
+            # 可分析证据，_build_outcome_only_result_v2 抛错落 failed（诚实拦截）。
             await queue.set_task_phase(sid, "computing_kinematics", worker_id=WORKER_ID)
-            try:
-                summary, extras = await asyncio.to_thread(
-                    run_analysis,
-                    job["video_path"],
-                    job["csv_path"],
-                    job.get("cm_per_360"),
-                    job.get("fov"),
-                    profile_default=profile_default,
-                    manual_override=manual_override,
-                )
-                if isinstance(extras, Mapping) and isinstance(
-                    extras.get("calibration"), Mapping
-                ):
-                    job["calibration_snapshot"] = dict(extras["calibration"])
-                    snapshot = job.get("input_snapshot")
-                    if isinstance(snapshot, dict):
-                        snapshot["calibration"] = dict(extras["calibration"])
-                else:
-                    job["calibration_snapshot"] = resolve_calibration_v1(
-                        stats=None,
-                        manual_override=_manual_override_or_legacy(
-                            manual_override,
-                            cm_per_360=job.get("cm_per_360"),
-                            fov=job.get("fov"),
-                        ),
-                        profile_default=profile_default,
-                    )
-            except Exception as error:
-                await asyncio.to_thread(
-                    _assert_managed_video_matches_snapshot_with_baseline,
-                    job,
-                    raw_input_mode,
-                    video_source_baseline,
-                )
-                log.warning(
-                    "video fallback analysis unavailable session=%s error=%s",
-                    sid,
-                    type(error).__name__,
-                )
-                raise RuntimeError("video fallback analysis failed") from None
-            await asyncio.to_thread(
-                _assert_managed_video_matches_snapshot_with_baseline,
+            result = _build_outcome_only_result_v2(
                 job,
-                raw_input_mode,
-                video_source_baseline,
-            )
-            summary = dict(summary)
-            sparc_distribution = summary.get("sparc")
-            if isinstance(sparc_distribution, dict):
-                summary["sparc"] = {
-                    **sparc_distribution,
-                    "metric_version": _VIDEO_FALLBACK_SPARC_METRIC_VERSION,
-                }
-            job_locale = _job_locale(job)
-            timeline_events = _build_timeline(extras, job_locale)
-            # 施工单⑤⑥：读图语境分支 + 锚点三路接力探测本机已装（fail-open）。
-            from .config import resolve_kovaak_install_dir as _resolve_install
-
-            video_reading = (job.get("input_snapshot") or {}).get(
-                "scenario_reading_descriptor",
-            )
-            report_dict = await asyncio.to_thread(
-                run_report,
-                summary,
-                job_locale,
-                scenario_reading=(
-                    dict(video_reading)
-                    if isinstance(video_reading, dict) else None
-                ),
-                install_dir=_resolve_install(),
-            )
-            cost = 0.0
-
-            result = _build_video_fallback_result_v2(
-                job,
-                summary,
-                report_dict,
-                timeline_events,
                 created_at=created_at_iso,
                 completed_at=completed_at_iso,
-                narration_status="not_requested",
-                video_timeline_status=(
-                    extras.get("timeline_status")
-                    if isinstance(extras, Mapping) else None
-                ),
+                limitations_override=["video_cv_retired"],
+                extra_warnings=[{"code": "video_cv_unavailable"}],
             )
+            cost = 0.0
         if telemetry_unavailable_code:
             # producer 失败但会话带可用遥测源：无论最终走 CV 还是 outcome_only，
             # 结果层都要可观测地标记来源降级（history/前端可区分）。

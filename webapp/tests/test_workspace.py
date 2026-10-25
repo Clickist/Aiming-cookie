@@ -6,13 +6,11 @@ from pathlib import Path
 import pytest
 
 from webapp.backend import config, file_store, queue
-from webapp.backend.config import MAX_CSV_BYTES, UPLOAD_CHUNK_SIZE
+from webapp.backend.config import UPLOAD_CHUNK_SIZE
 from webapp.backend.workspace import (
     InvalidSessionId,
-    UploadSizeExceeded,
     remove_session_workspace,
     session_dir,
-    stream_upload_to_path,
 )
 
 
@@ -102,29 +100,3 @@ class _ChunkedFakeUpload:
         return chunk
 
 
-@pytest.mark.asyncio
-async def test_stream_upload_reads_in_chunks_not_whole_file(tmp_path):
-    payload = b"a" * (UPLOAD_CHUNK_SIZE * 3 + 17)
-    upload = _ChunkedFakeUpload(payload)
-    dest = tmp_path / "video.mp4"
-    nbytes = await stream_upload_to_path(
-        upload,
-        dest,
-        max_bytes=MAX_CSV_BYTES,
-        field="video",
-    )
-    assert nbytes == len(payload)
-    assert dest.read_bytes() == payload
-    assert upload.read_calls
-    assert all(n == UPLOAD_CHUNK_SIZE for n in upload.read_calls[:-1])
-    assert upload.read_calls[-1] == UPLOAD_CHUNK_SIZE
-
-
-@pytest.mark.asyncio
-async def test_stream_upload_oversize_removes_partial_file(tmp_path):
-    limit = 100
-    upload = _ChunkedFakeUpload(b"x" * (limit + 1), chunk_size=40)
-    dest = tmp_path / "big.csv"
-    with pytest.raises(UploadSizeExceeded):
-        await stream_upload_to_path(upload, dest, max_bytes=limit, field="csv")
-    assert not dest.exists()

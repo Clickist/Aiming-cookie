@@ -1,8 +1,8 @@
 """外部遥测源注入分析输入快照（telemetry_multimodal 切片）。
 
 覆盖：配对轮 → external_telemetry 源可用且 tier 选 telemetry_multimodal；
-无配对 → 不可用 + 原因，tier 落回 multimodal；导入清单与冻结侧不符 →
-sidecars_stale。producer 本切片不接（分析仍走 CV 路径）。
+无配对 → 不可用 + 原因，tier 落回 input_native（CV 档已退役，2026-10-24）；
+导入清单与冻结侧不符 → sidecars_stale。producer 本切片不接。
 """
 
 from __future__ import annotations
@@ -188,7 +188,9 @@ async def test_unpaired_run_snapshot_marks_telemetry_unavailable(tmp_path: Path)
     assert source["external_run_id"] is None
 
     gate = validate_source_requirements(snapshot)
-    assert gate["selected_mode"] == "multimodal"
+    # CV 档已退役（2026-10-24）：无遥测时余下 input_native 一档。
+    assert gate["selected_mode"] == "input_native"
+    assert gate["supported_modes"] == ["input_native"]
     assert "telemetry_multimodal" not in gate["supported_modes"]
 
 
@@ -233,7 +235,8 @@ async def test_frozen_side_divergence_fails_closed_as_sidecars_stale(
     assert source["external_run_id"] == "ext-stale01"
 
     gate = validate_source_requirements(snapshot)
-    assert gate["selected_mode"] == "multimodal"
+    # CV 档已退役（2026-10-24）：遥测不可用时余下 input_native 一档。
+    assert gate["selected_mode"] == "input_native"
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,11 @@ $commonArgs = @(
     "--add-data", "$(Join-Path $RepoRoot 'telemetry_capture');telemetry_capture",
     "--collect-submodules", "webapp.backend",
     "--collect-submodules", "kovaak_tracker",
+    # CV 视频分析已退役（2026-10-24，PRD §14）：cv2/PIL/pyarrow 不在运行路径
+    # 上，显式排除防止传递导入把它们拖回包体（pyarrow ~40MB、PIL+cv2 共 ~50MB）。
+    "--exclude-module", "pyarrow",
+    "--exclude-module", "PIL",
+    "--exclude-module", "cv2",
     $entry
 )
 & $python @commonArgs
@@ -60,6 +65,15 @@ Require-Path $backendExe "packaged backend executable"
 Copy-Item -LiteralPath $pyDist -Destination $runtimeRoot -Recurse
 $backendExe = Join-Path $runtimeRoot "aiming-cookie-runtime\aiming-cookie-runtime.exe"
 Require-Path $backendExe "packaged backend executable"
+
+# Plotly 本体保留（Figure.to_dict() 运行期在用），但 _internal\plotly\package_data
+# （内置地理/字体大数据包）不在任何运行路径上，删除以瘦身。
+$plotlyDir = Join-Path $runtimeRoot "aiming-cookie-runtime\_internal\plotly"
+Require-Path $plotlyDir "packaged plotly module"
+$plotlyPackageData = Join-Path $plotlyDir "package_data"
+if (Test-Path -LiteralPath $plotlyPackageData) {
+    Remove-Item -LiteralPath $plotlyPackageData -Recurse -Force
+}
 
 $coachExe = Join-Path $runtimeRoot "coach-sidecar.exe"
 $bunItem = Get-Item -LiteralPath $bun
@@ -139,5 +153,21 @@ New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "artifacts\eloshapes\
 Copy-Item -LiteralPath (Join-Path $RepoRoot "artifacts\eloshapes\snapshots\eloshapes_mouse_catalog_2026-07-31T211736Z.json") -Destination (Join-Path $runtimeRoot "artifacts\eloshapes\snapshots\eloshapes_mouse_catalog_2026-07-31T211736Z.json")
 Copy-Item -LiteralPath (Join-Path $RepoRoot "artifacts\eloshapes\marketplace-mapping\marketplace-mapping.json") -Destination (Join-Path $runtimeRoot "artifacts\eloshapes\marketplace-mapping\marketplace-mapping.json")
 
+# 体积守门：CV 退役后未压缩 runtime 预期 ~287MB。超出 300MB 说明重依赖
+# （cv2/PIL/pyarrow 等）被传递导入意外拉回包内——先修构建，不发更大的安装包。
+$runtimeBytes = (
+    Get-ChildItem -LiteralPath $runtimeRoot -Recurse -File |
+        Measure-Object -Property Length -Sum
+).Sum
+$runtimeMb = [math]::Round($runtimeBytes / 1MB)
+if ($runtimeMb -gt 300) {
+    throw (
+        "Packaged runtime is ${runtimeMb}MB uncompressed, over the 300MB gate " +
+        "(expected ~287MB after CV retirement). Inspect " +
+        "$runtimeRoot\aiming-cookie-runtime\_internal for pyarrow/PIL/cv2 " +
+        "or other oversized modules before releasing."
+    )
+}
+
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
-Write-Host "Packaged runtime ready: $runtimeRoot"
+Write-Host "Packaged runtime ready: $runtimeRoot (${runtimeMb}MB uncompressed)"

@@ -1,27 +1,4 @@
 export interface paths {
-    "/api/analyze": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Analyze
-         * @description 接收 flicking 视频 + Stats CSV,入队异步分析。
-         *
-         *     限制:单用户同时 1 个 job(并发防滥用);视频 100MB 上限。
-         *     user_id 由 get_request_user_id 解析(dev: X-User-Id; trust: 反代用户头)。
-         */
-        post: operations["analyze_api_analyze_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/benchmarks": {
         parameters: {
             query?: never;
@@ -141,26 +118,6 @@ export interface paths {
          *     deletion is a plain hard remove with no confirmation round-trip.
          */
         delete: operations["delete_current_training_api_current_training_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/desktop/analyze-paths": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Analyze Paths
-         * @description Import desktop-selected local files into a managed session workspace.
-         */
-        post: operations["analyze_paths_api_desktop_analyze_paths_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -976,19 +933,6 @@ export interface components {
             training_at?: string | null;
             visual_replay: components["schemas"]["VisualReplayOut"];
         };
-        /** AnalyzePathsRequest */
-        AnalyzePathsRequest: {
-            /** Cm Per 360 */
-            cm_per_360?: number | null;
-            /** Csv Path */
-            csv_path: string;
-            /** Fov */
-            fov?: number | null;
-            manual_override?: components["schemas"]["CalibrationValues"] | null;
-            profile_default?: components["schemas"]["CalibrationValues"] | null;
-            /** Video Path */
-            video_path: string;
-        };
         /** AnalyzeResponse */
         AnalyzeResponse: {
             /** Session Id */
@@ -1052,25 +996,6 @@ export interface components {
             unit: string;
             /** Value */
             value: number;
-        };
-        /** Body_analyze_api_analyze_post */
-        Body_analyze_api_analyze_post: {
-            /** Cm Per 360 */
-            cm_per_360?: number | null;
-            /** Csv */
-            csv: string;
-            /** Fov */
-            fov?: number | null;
-            /** Manual Override Cm Per 360 */
-            manual_override_cm_per_360?: number | null;
-            /** Manual Override Fov */
-            manual_override_fov?: number | null;
-            /** Profile Default Cm Per 360 */
-            profile_default_cm_per_360?: number | null;
-            /** Profile Default Fov */
-            profile_default_fov?: number | null;
-            /** Video */
-            video: string;
         };
         /** CalibrationProfileOut */
         CalibrationProfileOut: {
@@ -2545,39 +2470,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    analyze_api_analyze_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_analyze_api_analyze_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnalyzeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_benchmarks_api_benchmarks_get: {
         parameters: {
             query?: never;
@@ -2800,39 +2692,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    analyze_paths_api_desktop_analyze_paths_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AnalyzePathsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnalyzeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

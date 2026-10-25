@@ -69,21 +69,24 @@ def test_csv_only_bundle_without_performance_still_reaches_native_tiers():
     ]
 
 
-def test_csv_only_bundle_with_video_selects_multimodal():
+def test_video_only_run_selects_no_tier_and_stays_not_ready():
+    """CV 退役（2026-10-24）：仅 Stats+MP4（旧 video_fallback 形态）选不到任何档。"""
     snapshot = {
         "schema_version": "analysis_input_snapshot.v3",
         "sources": {
             "stats": _source(kind="stats"),
             "video": _source(kind="video"),
         },
-        "trace": _source(kind="raw_input"),
         "canonical_time_window": _window(),
     }
 
     result = validate_source_requirements(snapshot)
 
-    assert result["ready"] is True
-    assert result["selected_mode"] == "multimodal"
+    assert result["ready"] is False
+    assert result["supported_modes"] == []
+    assert result["selected_mode"] is None
+    assert MISSING_EXTERNAL_TELEMETRY in result["missing"]
+    assert MISSING_RAW_INPUT in result["missing"]
 
 
 def test_complete_bundle_is_ready_and_has_bounded_public_summary():
@@ -100,10 +103,10 @@ def test_complete_bundle_is_ready_and_has_bounded_public_summary():
             "video": "available",
             "canonical_window": "available",
         },
-        "supported_modes": ["multimodal", "input_native", "video_fallback"],
-        "selected_mode": "multimodal",
+        "supported_modes": ["input_native"],
+        "selected_mode": "input_native",
         "summary": {
-            "mode": "multimodal",
+            "mode": "input_native",
             "source_count": 5,
             "canonical_window": "available",
         },
@@ -134,13 +137,11 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
 
     result = validate_source_requirements(snapshot)
 
-    assert result["ready"] is (field != "stats")
+    assert result["ready"] is (field in {"performance", "video"})
     assert result["missing"] == [MISSING_EXTERNAL_TELEMETRY, code]
     assert result["summary"] == {
         "mode": (
-            "multimodal" if field == "performance"
-            else "input_native" if field == "video"
-            else "video_fallback" if field in {"trace", "canonical_time_window"}
+            "input_native" if field in {"performance", "video"}
             else None
         ),
         "source_count": 5,
@@ -151,10 +152,10 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
 @pytest.mark.parametrize(
     ("missing_fields", "expected_modes", "selected_mode"),
     [
-        ((), ["multimodal", "input_native", "video_fallback"], "multimodal"),
-        (("performance",), ["multimodal", "input_native", "video_fallback"], "multimodal"),
+        ((), ["input_native"], "input_native"),
+        (("performance",), ["input_native"], "input_native"),
         (("video",), ["input_native"], "input_native"),
-        (("performance", "trace", "canonical_time_window"), ["video_fallback"], "video_fallback"),
+        (("performance", "trace", "canonical_time_window"), [], None),
         (("stats",), [], None),
     ],
 )
@@ -222,7 +223,7 @@ def test_unknown_fields_do_not_become_requirements_or_public_output():
     assert "untrusted_extra" not in json.dumps(result, ensure_ascii=False)
 
 
-def test_external_telemetry_takes_priority_over_the_visual_tier():
+def test_external_telemetry_takes_priority_over_the_native_tier():
     snapshot = _complete_snapshot()
     snapshot["sources"]["external_telemetry"] = {
         "availability": "available",
@@ -232,15 +233,13 @@ def test_external_telemetry_takes_priority_over_the_visual_tier():
 
     result = validate_source_requirements(snapshot)
 
-    # 外部遥测是首选数据源：telemetry_multimodal 排最前，CV 视频降为 fallback。
-    assert result["supported_modes"] == [
-        "telemetry_multimodal", "multimodal", "input_native", "video_fallback",
-    ]
+    # 外部遥测是首选数据源；CV 视频档已退役，余下两档。
+    assert result["supported_modes"] == ["telemetry_multimodal", "input_native"]
     assert result["selected_mode"] == "telemetry_multimodal"
     assert result["missing"] == []
 
 
-def test_unavailable_external_telemetry_falls_back_to_the_visual_tier():
+def test_unavailable_external_telemetry_falls_back_to_the_native_tier():
     snapshot = _complete_snapshot()
     snapshot["sources"]["external_telemetry"] = {
         "availability": "unavailable",
@@ -250,7 +249,7 @@ def test_unavailable_external_telemetry_falls_back_to_the_visual_tier():
 
     result = validate_source_requirements(snapshot)
 
-    assert result["selected_mode"] == "multimodal"
+    assert result["selected_mode"] == "input_native"
     assert "telemetry_multimodal" not in result["supported_modes"]
     assert MISSING_EXTERNAL_TELEMETRY in result["missing"]
 

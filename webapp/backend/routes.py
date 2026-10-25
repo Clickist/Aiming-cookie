@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import zipfile
@@ -14,7 +13,7 @@ from pathlib import Path as FilePath
 from typing import Literal, Optional
 
 import httpx
-from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import (
@@ -62,7 +61,6 @@ from .queue import (
     SessionNotFound,
 )
 from .schemas import (
-    AnalyzePathsRequest,
     AnalyzeResponse,
     BenchmarkRecordCreate,
     BenchmarkRecordListResponse,
@@ -123,13 +121,6 @@ from .schemas import (
     TaskDetailResponse,
     TaskListResponse,
 )
-from .workspace import (
-    UploadSizeExceeded,
-    copy_path_to_path,
-    remove_session_workspace,
-    session_dir,
-    stream_upload_to_path,
-)
 from .native_capture_client import NativeCaptureClient, NativeCaptureRetryableError
 from kovaak_tracker.coach import knowledge_pack
 
@@ -148,9 +139,6 @@ _ERROR_TEXT: dict[str, str] = {
     "session.forbidden": "无权访问此 session",
     "session.contract_version_unsupported": "分析结果版本不受支持",
     "session.delete_active": "分析进行中，请等完成或失败后再删除",
-    "upload.analysis_active": "已有分析进行中,等完成再提交",
-    "upload.state_lost": "上传状态已失效，请重新提交",
-    "upload.video_too_large": "视频超过 100MB 限制",
     "upload.video.path_invalid": "视频 路径必须是存在的绝对普通文件",
     "upload.video.path_unreadable": "视频 文件不可读",
     "upload.video.path_ext_unsupported": "视频 扩展名不支持（仅 {allowed}）",
@@ -191,24 +179,8 @@ def _request_locale(request: Request) -> str:
 
 # user_id 经 auth.get_request_user_id 校验(路径安全字符集)。
 _ALLOWED_VIDEO_EXTS = {".mp4"}
-_ALLOWED_CSV_EXTS = {".csv"}
 
 
-def _require_upload_disk_space(required_bytes: int = 0) -> None:
-    """Reject writes when the managed data volume lacks reserve plus the incoming bytes."""
-    config.DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    usage = shutil.disk_usage(config.DATA_ROOT)
-    required = config.MIN_FREE_DISK_BYTES + required_bytes
-    if usage.free < required:
-        need_mb = required // (1024 * 1024)
-        raise HTTPException(
-            507,
-            _error_detail(
-                "upload.disk_space_insufficient",
-                {"required_mb": need_mb},
-                message=f"数据盘可用空间不足，无法接收上传（需至少 {need_mb}MB 空闲）",
-            ),
-        )
 
 
 def _validate_local_input_path(
@@ -274,86 +246,8 @@ async def _get_owned_session(
     return s
 
 
-async def _update_session_input_paths(
-    session_id: int,
-    user_id: str,
-    video_path: str,
-    csv_path: str,
-) -> None:
-    await queue.set_session_input_paths(
-        session_id, user_id, video_path, csv_path,
-    )
 
 
-async def _abort_uploading_session(session_id: int) -> None:
-    try:
-        remove_session_workspace(session_id)
-    except OSError:
-        log.exception("incomplete workspace cleanup failed session_id=%s", session_id)
-    await queue.abort_uploading_session(session_id, config.DESKTOP_LOCAL_PROFILE)
-
-
-@router.post("/desktop/analyze-paths", response_model=AnalyzeResponse)
-async def analyze_paths(
-    request: AnalyzePathsRequest,
-    http_request: Request,
-    _: None = Depends(require_desktop_token),
-):
-    """Import desktop-selected local files into a managed session workspace."""
-    user_id = config.DESKTOP_LOCAL_PROFILE
-    if await queue.has_active(user_id):
-        raise HTTPException(429, _error_detail("upload.analysis_active"))
-
-    video_path = _validate_local_input_path(
-        request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
-        code_prefix="upload.video",
-    )
-    csv_path = _validate_local_input_path(
-        request.csv_path, allowed_exts=_ALLOWED_CSV_EXTS, label="CSV",
-        code_prefix="upload.csv",
-    )
-    video_size = os.path.getsize(video_path)
-    csv_size = os.path.getsize(csv_path)
-    _require_upload_disk_space(video_size + csv_size)
-
-    try:
-        sid = await queue.enqueue(
-            user_id,
-            "",
-            "",
-            cm_per_360=request.cm_per_360,
-            fov=request.fov,
-            profile_default=(request.profile_default.model_dump() if request.profile_default else None),
-            manual_override=(request.manual_override.model_dump() if request.manual_override else None),
-            status="uploading",
-            require_no_active=True,
-            locale=_request_locale(http_request),
-        )
-    except queue.ActiveSessionExists as exc:
-        raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
-    workspace = session_dir(sid)
-    managed_video = workspace / "video.mp4"
-    managed_csv = workspace / "stats.csv"
-    temp_video = workspace / "video.mp4.tmp"
-    temp_csv = workspace / "stats.csv.tmp"
-    try:
-        # 整视频复制可达数百 MB，放线程池执行，避免冻结事件循环上所有并发请求。
-        await asyncio.to_thread(copy_path_to_path, FilePath(video_path), temp_video)
-        await asyncio.to_thread(copy_path_to_path, FilePath(csv_path), temp_csv)
-        temp_video.replace(managed_video)
-        temp_csv.replace(managed_csv)
-        await _update_session_input_paths(
-            sid, config.DESKTOP_LOCAL_PROFILE, str(managed_video), str(managed_csv),
-        )
-        if not await queue.finish_upload(sid):
-            raise HTTPException(409, _error_detail("upload.state_lost"))
-    except HTTPException:
-        await _abort_uploading_session(sid)
-        raise
-    except Exception:
-        await _abort_uploading_session(sid)
-        raise
-    return AnalyzeResponse(session_id=sid)
 
 
 @router.get("/storage", response_model=StorageResponse)
@@ -659,134 +553,6 @@ async def get_task(task_ref: str, x_user_id: str = Depends(get_request_user_id))
     return TaskDetailResponse(**build_task_detail_v1(current, attempts=rows))
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(
-    http_request: Request,
-    video: UploadFile = File(...),
-    csv: UploadFile = File(...),
-    cm_per_360: Optional[float] = Form(default=None),
-    fov: Optional[float] = Form(default=None),
-    profile_default_cm_per_360: Optional[float] = Form(default=None),
-    profile_default_fov: Optional[float] = Form(default=None),
-    manual_override_cm_per_360: Optional[float] = Form(default=None),
-    manual_override_fov: Optional[float] = Form(default=None),
-    x_user_id: str = Depends(get_request_user_id),
-):
-    """接收 flicking 视频 + Stats CSV,入队异步分析。
-
-    限制:单用户同时 1 个 job(并发防滥用);视频 100MB 上限。
-    user_id 由 get_request_user_id 解析(dev: X-User-Id; trust: 反代用户头)。
-    """
-    if await queue.has_active(x_user_id):
-        raise HTTPException(429, _error_detail("upload.analysis_active"))
-
-    if video.size is not None and video.size > config.MAX_VIDEO_BYTES:
-        raise HTTPException(413, _error_detail("upload.video_too_large"))
-    if csv.size is not None and csv.size > config.MAX_CSV_BYTES:
-        raise HTTPException(
-            413,
-            _error_detail(
-                "upload.csv_too_large",
-                {"limit_mb": config.MAX_CSV_BYTES // 1024 // 1024},
-                message=f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
-            ),
-        )
-
-    video_ext = os.path.splitext(video.filename or "video.mp4")[1].lower()
-    if video_ext not in _ALLOWED_VIDEO_EXTS:
-        raise HTTPException(
-            400,
-            _error_detail(
-                "upload.video_ext_unsupported",
-                {"ext": video_ext or "(无)"},
-                message=f"视频扩展名不支持(仅 .mp4): {video_ext or '(无)'}",
-            ),
-        )
-    csv_ext = os.path.splitext(csv.filename or "stats.csv")[1].lower()
-    if csv_ext not in _ALLOWED_CSV_EXTS:
-        raise HTTPException(
-            400,
-            _error_detail(
-                "upload.csv_ext_unsupported",
-                {"ext": csv_ext or "(无)"},
-                message=f"CSV 扩展名不支持(仅 .csv): {csv_ext or '(无)'}",
-            ),
-        )
-
-    _require_upload_disk_space()
-
-    try:
-        sid = await queue.enqueue(
-            x_user_id,
-            "",
-            "",
-            cm_per_360=cm_per_360,
-            fov=fov,
-            profile_default={
-                "cm_per_360": profile_default_cm_per_360,
-                "fov": profile_default_fov,
-            },
-            manual_override=(
-                {
-                    "cm_per_360": manual_override_cm_per_360,
-                    "fov": manual_override_fov,
-                }
-                if manual_override_cm_per_360 is not None or manual_override_fov is not None
-                else None
-            ),
-            status="uploading",
-            require_no_active=True,
-            locale=_request_locale(http_request),
-        )
-    except queue.ActiveSessionExists as exc:
-        raise HTTPException(429, _error_detail("upload.analysis_active")) from exc
-    ws = session_dir(sid)
-    ws.mkdir(parents=True, exist_ok=True)
-    video_path = ws / f"video{video_ext}"
-    csv_path = ws / f"stats{csv_ext}"
-    video_temp_path = ws / f"video{video_ext}.tmp"
-    csv_temp_path = ws / f"stats{csv_ext}.tmp"
-
-    try:
-        await stream_upload_to_path(
-            video,
-            video_temp_path,
-            max_bytes=config.MAX_VIDEO_BYTES,
-            field="video",
-        )
-        await stream_upload_to_path(
-            csv,
-            csv_temp_path,
-            max_bytes=config.MAX_CSV_BYTES,
-            field="csv",
-        )
-        video_temp_path.replace(video_path)
-        csv_temp_path.replace(csv_path)
-        await _update_session_input_paths(sid, x_user_id, str(video_path), str(csv_path))
-    except UploadSizeExceeded as exc:
-        await _abort_uploading_session(sid)
-        if exc.field == "video":
-            raise HTTPException(413, _error_detail("upload.video_too_large")) from exc
-        raise HTTPException(
-            413,
-            _error_detail(
-                "upload.csv_too_large",
-                {"limit_mb": config.MAX_CSV_BYTES // 1024 // 1024},
-                message=f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
-            ),
-        ) from exc
-    except HTTPException:
-        await _abort_uploading_session(sid)
-        raise
-    except Exception:
-        await _abort_uploading_session(sid)
-        raise
-
-    if not await queue.finish_upload(sid):
-        await _abort_uploading_session(sid)
-        raise HTTPException(409, _error_detail("upload.state_lost"))
-
-    return AnalyzeResponse(session_id=sid)
 
 
 def _session_status_response(

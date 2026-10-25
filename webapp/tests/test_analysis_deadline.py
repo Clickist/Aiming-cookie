@@ -33,13 +33,16 @@ async def test_process_one_enforces_total_budget_and_loop_survives(monkeypatch):
     release = threading.Event()
 
     def _hanging_analysis(*args, **kwargs):
-        # 模拟证据落盘/分析挂死。事件在 finally 释放，避免线程池在事件循环
-        # 关闭时等待整个 sleep 时长（施工单的 sleep(9999) 会挂死测试进程）。
+        # 模拟证据落盘/分析挂死（线程池内执行，事件循环保持空闲让预算定时器
+        # 可触发）。事件在 finally 释放，避免线程池在事件循环关闭时等待整个
+        # sleep 时长。
         release.wait(timeout=10)
-        return ({"sparc": {}}, {})
+        return None
 
     monkeypatch.setattr(worker, "ANALYSIS_TOTAL_BUDGET_SECONDS", 0.2)
-    monkeypatch.setattr(worker, "run_analysis", _hanging_analysis)
+    # CV 退役（2026-10-24）：run_analysis 不再被拉起；挂起点改在所有作业
+    # 起始都在线程池中执行的视频基线定约。
+    monkeypatch.setattr(worker, "_establish_managed_video_baseline", _hanging_analysis)
 
     sid = await queue.enqueue("u-deadline", "/tmp/v.mp4", "/tmp/s.csv")
     try:

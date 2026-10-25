@@ -100,22 +100,3 @@ async def test_coded_error_detail_shape_on_unknown_session():
     assert detail["message"] == "session 不存在"
 
 
-@pytest.mark.asyncio
-async def test_coded_error_detail_for_active_analysis():
-    """B1：429 并发上限的稳定码（upload.analysis_active）。"""
-    await queue.enqueue("u_active", "/a", "/a.csv")
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "u_active"},
-    ) as client:
-        resp = await client.post(
-            "/api/analyze",
-            files={
-                "video": ("v.mp4", b"x", "video/mp4"),
-                "csv": ("s.csv", b"y", "text/csv"),
-            },
-            headers={"X-User-Id": "u_active"},
-        )
-    assert resp.status_code == 429
-    assert resp.json()["detail"]["code"] == "upload.analysis_active"

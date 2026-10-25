@@ -1,6 +1,16 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-10-12. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-10-24. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+
+## 2026-10-24 — 本地 CV 视频分析退役 + 档位收敛两档 + 打包瘦身（施工完成，未提交/未发版）
+
+- **产品依据**：PRD §14 2026-10-24 决策条（点点拍板）——`multimodal`/`video_fallback` 两档不再产出，自动降级序收敛为 `telemetry_multimodal > input_native`；遥测与 Raw Input 均不可用的局（含仅 Stats / Stats+MP4）不设 outcome-only 兜底，由源门直接拦下不创建分析。历史记录中的旧 mode 值永久可读。
+- **实现**：选择层 `source_requirements.py` 收敛两档（video availability 保留诚实呈现）；执行层 `worker.py` 五个 CV 调用点退役（遥测偏好函数、continuous tracking/target switching 的 CV 兜底改为直接落 outcome_only + `external_telemetry_unavailable:{code}`；遗留 v1 快照块降级 `video_cv_retired`；generic static clicking CV 子进程块整删——它此前在遥测局 static 家族上也会拉起 CV；video_fallback 遗留会话降级 outcome-only + `video_cv_retired`，run-less 手动上传遗留会话无 run ref 直接失败诚实拦截）。端点退役：`/api/analyze` 与 `/desktop/analyze-paths` 及其专用校验器（MAX_VIDEO_BYTES/MAX_CSV_BYTES/MIN_FREE_DISK_BYTES/stream_upload_to_path 等）；前端 `api.ts` 删 `uploadVideo`/`importDesktopPaths`。证据删除 `affected_modes`：video → `[]`、raw → `["input_native"]`（诚实反映退役后档位支撑）。
+- **回归锚转移**：`webapp/tests/test_e2e.py`（CV 回退真值回归锚）随产品能力退役删除；遥测路径真值回归锚 = `test_worker_telemetry_realdata.py`（不动）。CV 竞态/回放/冻结身份等仍活路径的覆盖重锚到 telemetry_multimodal 档（`_write_paired_external_run` 配对装置）。
+- **打包**：`build-windows-runtime.ps1` 显式 exclude pyarrow/PIL/cv2、删 `_internal\plotly\package_data`（plotly 本体保留，`Figure.to_dict()` 运行期在用）、新增 300MB 未压缩体积守门（预期 ~287MB）；安装包预期 144MB → **~62-69MB**。根 `requirements.txt` 加研究期遗留声明头（桌面构建事实源在 `webapp/requirements.txt`）。
+- **scipy 保留说明**：scipy 未随本次瘦身剔除——遥测 producer/对齐路径仍依赖（剔除属 2026-10-05 挂账的「SciPy 完整出仓」课题，未在本批范围）。
+- **验证**：`python -m compileall` 全绿；pytest 全量 0 failed（skip 仅既有 env-gated 项）；`/api/analyze`、`analyze-paths`、`uploadVideo`、`importDesktopPaths` 仓库内 grep 零残留。前端全量测试由并行会话覆盖。
+- **挂账**：worker.py 内 CV wrapper（`run_visual_preprocessing_isolated`/`run_generic_static_clicking_isolated`/`run_continuous_tracking_pipeline_isolated`/`run_target_switching_pipeline_isolated`）与 `visual_worker_process.py`、`desktop-runtime-entry.py` 的 --visual-worker 分支成为死码，清理另开独立 commit（本批按拍板不混入）；前端 `api-types.generated.ts` 为手工同步删除路由条目，下次 openapi 重生成自然对齐。
 
 ## 2026-10-12 — Aim Lab 逆向完成（静态+动态）+ PRD 拍板纳入（动作学全量档）
 
@@ -183,7 +193,7 @@ v0.1.14（tag 指向落地页 commit `3355b89`）是**首个内置自动更新�
 ## Current Product Direction
 
 - Windows 单机桌面应用（内测阶段，v1.0.0）：KovaaK's 训练诊断 + AI 教练。正常产品面 = Coach、History、Settings。
-- Coach 自动选最强可用 Run 档：`telemetry_multimodal` → `multimodal` → `input_native` → `video_fallback`；真值口径以 KovaaK 遥测为权威，CV 是行为细节与回退档（视频 e2e 回归锚的意义所在，见 `webapp/tests/test_e2e.py`）。
+- Coach 自动选最强可用 Run 档：`telemetry_multimodal` → `input_native`（2026-10-24 起 CV 视频档退役，见 PRD §14）；真值口径以 KovaaK 遥测为权威，MP4 只保留给人看的回放与问题定位；遥测路径真值回归锚 = `webapp/tests/test_worker_telemetry_realdata.py`（CV e2e 回归锚已随退役删除）。
 - 商业模式（PRD 09-06 修订）：官方托管套餐 + BYOK 双轨；官方托管服务接入已完成订阅 API 与排障，售卖链路拍板为不急。
 - 自动更新已上线：新版本发布 = 上传 R2 三件套（latest.json 最后）→ 老客户端自动弹更新。
 

@@ -860,40 +860,55 @@ def test_static_native_artifact_projects_stable_flick_refs_and_ranked_segments(
     assert "target_relative_error" not in rendered
 
 
-@pytest.mark.asyncio
-async def test_process_one_happy_path():
-    """claim → local analysis/report → mark_done, without Analysis narration."""
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_summary = {"sparc": {"med": -7.5}}
-    fake_extras = {
-        "fps": 60, "duration_frames": 100,
-        "flicks": [{"start_frame": 10, "peak_frame": 15, "end_frame": 20,
-                    "peak_speed_px": 800.0, "duration_s": 0.18}],
-        "kill_frames": [18], "corrective_frames": [],
-    }
-    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
+async def _retired_video_fallback_session(
+    tmp_path: Path, *, user_id: str, source_key: str, **enqueue_kwargs,
+) -> int:
+    """CV 退役后的 video_fallback 遗留会话形态：run-based + 冻结视频身份。
 
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=(fake_summary, fake_extras)), \
-         patch("webapp.backend.worker.run_report", return_value=fake_report) as mock_report, \
-         patch("webapp.backend.worker._delete_video_safely"):
+    video_fallback 分支的前置视频基线校验要求托管视频存在且与快照指纹一致；
+    分析本体降级为 outcome-only（video_cv_retired）。
+    """
+    from webapp.backend import kovaak_run_store
+
+    video = tmp_path / f"{source_key}-video.mp4"
+    video.write_bytes(b"frozen-video-revision")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=user_id, source_key=source_key, scenario="Scenario",
+    )
+    return await queue.enqueue(
+        user_id, str(video), str(tmp_path / f"{source_key}-stats.csv"),
+        input_mode="video_fallback",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run["id"],
+            "sources": {"video": _video_source(video)},
+        },
+        **enqueue_kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_one_happy_path(tmp_path: Path):
+    """claim → mark_done：CV 退役后 video_fallback 遗留会话降级 outcome-only。"""
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-video-fallback",
+    )
+
+    with patch("asyncio.create_subprocess_exec") as spawn_mock:
         handled = await worker.process_one()
 
+    spawn_mock.assert_not_called()
     assert handled is True
     s = await queue.get_session(sid)
     assert s["status"] == "done"
     result = s["result"]
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
-    assert result["narration"]["status"] == "not_requested"
-    assert result["narration"]["text"] is None
-    assert len(mock_report.call_args.args) == 2  # (summary, locale)
-    report_summary = mock_report.call_args.args[0]
-    assert report_summary["sparc"]["metric_version"] == (
-        "flicking_fair_summary.sparc.v2"
-    )
+    assert "narration" not in result
+    assert result["deterministic"]["support_status"] == "outcome_only"
+    assert result["deterministic"]["limitations"] == ["video_cv_retired"]
+    assert {"code": "video_cv_unavailable"} in result["warnings"]
     assert float(s["llm_cost_cny"]) == 0.0
-    types = sorted(e["type"] for e in result["deterministic"]["timeline"])
-    assert types == ["kill", "peak"]
 
 
 @pytest.mark.asyncio
@@ -906,6 +921,8 @@ async def test_process_one_marks_knowledge_fallback_official_on_broken_active_pa
     坏包的 tmp 目录即可模拟「激活包损坏 → 回退官方」，不碰 worker 其余
     依赖（它们读 config.DATA_ROOT 模块属性）。
     """
+    from webapp.backend import kovaak_run_store
+
     pack_id = "com.example.broken"
     registry_path = tmp_path / "knowledge-packs" / pack_id / "knowledge" / "registry.json"
     registry_path.parent.mkdir(parents=True)
@@ -922,15 +939,10 @@ async def test_process_one_marks_knowledge_fallback_official_on_broken_active_pa
     }), encoding="utf-8")
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
 
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"sparc": {"med": -7.5}},
-                             {"fps": 60, "flicks": [], "kill_frames": [],
-                              "corrective_frames": []})), \
-         patch("webapp.backend.worker.run_report", return_value=fake_report), \
-         patch("webapp.backend.worker._delete_video_safely"):
-        assert await worker.process_one() is True
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-knowledge-fallback",
+    )
+    assert await worker.process_one() is True
 
     session = await queue.get_session(sid)
     assert session["status"] == "done"
@@ -944,100 +956,40 @@ async def test_process_one_marks_knowledge_fallback_official_on_broken_active_pa
 
 
 @pytest.mark.asyncio
-async def test_video_fallback_does_not_read_or_load_selected_provider():
+async def test_video_fallback_does_not_read_or_load_selected_provider(tmp_path: Path):
     """Video fallback analysis never touches Provider setup (owned by Coach)."""
-    sid = await queue.enqueue("owner-selected", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_report = {"diagnosis": {}, "narration": None, "notes": []}
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="owner-selected", source_key="retired-provider-isolation",
+    )
 
-    with patch(
-        "webapp.backend.worker.run_analysis",
-        return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
-    ), patch(
-        "webapp.backend.worker.run_report",
-        return_value=fake_report,
-    ) as run_report:
-        assert await worker.process_one() is True
+    assert await worker.process_one() is True
 
-    assert len(run_report.call_args.args) == 2  # (summary, locale)
     session = await queue.get_session(sid)
-    assert session["result"]["narration"]["status"] == "not_requested"
-    assert session["result"]["narration"]["text"] is None
+    assert session["status"] == "done"
+    assert "narration" not in session["result"]
     assert session["llm_cost_cny"] == 0.0
+    assert session["result"]["deterministic"]["limitations"] == ["video_cv_retired"]
 
 
 @pytest.mark.asyncio
-async def test_process_one_happy_path_writes_analysis_result_v2():
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv", cm_per_360=30.0, fov=90.0)
-    fake_extras = {
-        "fps": 60,
-        "flicks": [{"peak_frame": 15}],
-        "kill_frames": [18],
-        "corrective_frames": [],
-    }
-    fake_report = {
-        "diagnosis": {"x": 1},
-        "figures": {},
-        "narration": None,
-        "notes": [],
-    }
-
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"a": {"med": 1}}, fake_extras)), \
-         patch("webapp.backend.worker.run_report", return_value=fake_report), \
-         patch("webapp.backend.worker._delete_video_safely"):
-        await worker.process_one()
+async def test_process_one_happy_path_writes_analysis_result_v2(tmp_path: Path):
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-v2-write",
+        cm_per_360=30.0, fov=90.0,
+    )
+    await worker.process_one()
 
     s = await queue.get_session(sid)
     result = s["result"]
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
     assert result["analysis_type"] == "flicking"
     assert result["input_mode"] == "video_fallback"
-    assert result["input_snapshot"]["calibration"] == {
-        "cm_per_360": {"value": 30.0, "source": "manual_override"},
-        "fov": {"value": 90.0, "source": "manual_override"},
-    }
-    assert result["narration"] == {
-        "status": "not_requested",
-        "text": None,
-        "provider": None,
-        "model": None,
-        "usage": None,
-    }
-
+    assert result["deterministic"]["support_status"] == "outcome_only"
+    assert result["deterministic"]["limitations"] == ["video_cv_retired"]
+    assert "narration" not in result
     assert "timeline" not in result
-    assert len(result["deterministic"]["timeline"]) == 2
     assert result["created_at"].endswith("Z")
     assert result["completed_at"].endswith("Z")
-
-
-@pytest.mark.asyncio
-async def test_video_fallback_partial_decode_marks_limitation_and_warning():
-    """[rb P1-4 2026-10-11] 视频中途解码失败（extras.timeline_status=partial）：
-    deterministic.limitations 与 warnings 都要带 video_timeline_partial，
-    禁止静默输出看似完整的报告；complete 时不带。"""
-    fake_report = {"diagnosis": {}, "figures": {}, "narration": None, "notes": []}
-    base_extras = {
-        "fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": [],
-    }
-
-    for status, expect_partial in (("partial", True), ("complete", False)):
-        sid = await queue.enqueue("u-partial", "/tmp/v.mp4", "/tmp/s.csv")
-        with patch(
-            "webapp.backend.worker.run_analysis",
-            return_value=({}, {**base_extras, "timeline_status": status}),
-        ), patch(
-            "webapp.backend.worker.run_report", return_value=fake_report,
-        ):
-            await worker.process_one()
-        session = await queue.get_session(sid)
-        deterministic = session["result"]["deterministic"]
-        limitation_codes = deterministic.get("limitations") or []
-        warning_codes = [
-            item.get("code") for item in session["result"].get("warnings") or []
-        ]
-        assert ("video_timeline_partial" in limitation_codes) is expect_partial
-        assert ("video_timeline_partial" in warning_codes) is expect_partial
-        assert "raw_input_not_used" in limitation_codes
 
 
 def test_video_fallback_explicit_manual_override_wins_over_legacy_flat_values():
@@ -1064,18 +1016,12 @@ def test_video_fallback_explicit_manual_override_wins_over_legacy_flat_values():
 
 
 @pytest.mark.asyncio
-async def test_process_one_without_selected_provider_keeps_v2_narration_null():
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_report_no_llm = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
+async def test_process_one_without_selected_provider_keeps_v2_narration_null(tmp_path: Path):
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-narration-null",
+    )
 
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
-                                                  "kill_frames": [],
-                                                  "corrective_frames": []})), \
-         patch("webapp.backend.worker.run_report",
-               return_value=fake_report_no_llm), \
-         patch("webapp.backend.worker._delete_video_safely"):
-        handled = await worker.process_one()
+    handled = await worker.process_one()
 
     assert handled is True
     s = await queue.get_session(sid)
@@ -1083,66 +1029,34 @@ async def test_process_one_without_selected_provider_keeps_v2_narration_null():
     assert float(s["llm_cost_cny"]) == 0.0
     result = s["result"]
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
-    assert result["narration"]["status"] == "not_requested"
-    assert result["narration"]["text"] is None
-    assert result["deterministic"]["timeline"] == []
-
-
-@pytest.mark.asyncio
-async def test_process_one_calls_local_report_without_backend():
-    """The deterministic report has no Provider/backend argument.
-
-    施工单⑤⑥ golden 更新：run_report 新增只读 kwargs——scenario_reading
-    （读图语境描述符，判读档分支输入）与 install_dir（锚点三路接力探测）；
-    两者都不是 Provider/backend 参数，无 Provider 调用语义不变。
-    """
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_report_no_llm = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
-
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
-                                                  "kill_frames": [], "corrective_frames": []})), \
-         patch("webapp.backend.worker.run_report",
-               return_value=fake_report_no_llm) as mock_report, \
-         patch("webapp.backend.worker._delete_video_safely"):
-        handled = await worker.process_one()
-
-    assert handled is True
-    s = await queue.get_session(sid)
-    assert s["status"] == "done"
-    assert float(s["llm_cost_cny"]) == 0.0
-    assert s["result"]["deterministic"]["timeline"] == []
-    assert s["result"]["narration"]["status"] == "not_requested"
-    assert mock_report.call_args.args
-    assert len(mock_report.call_args.args) == 2  # (summary, locale)
-    # 施工单⑤⑥：新增 kwargs 只为读图语境与锚点探测；该 job 无读图描述符。
-    assert set(mock_report.call_args.kwargs) == {"scenario_reading", "install_dir"}
-    assert mock_report.call_args.kwargs["scenario_reading"] is None
+    assert "narration" not in result
 
 
 @pytest.mark.asyncio
 async def test_process_one_normalizes_non_finite_values_before_persisting():
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     nan = float("nan")
-    fake_report = {
-        "diagnosis": {"summary": {"sparc": {"med": nan}}},
-        "figures": {},
-        "narration": None,
-        "notes": [],
+    native_result = _native_adapter_result()
+    native_result["deterministic"]["metrics"]["sparc"]["value"] = nan
+    job = {
+        "id": 105,
+        "user_id": "u1",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": _native_snapshot(),
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
     }
 
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
-                                                  "kill_frames": [],
-                                                  "corrective_frames": []})), \
-         patch("webapp.backend.worker.run_report", return_value=fake_report), \
-         patch("webapp.backend.worker._delete_video_safely"):
-        await worker.process_one()
+    result, _calls, _native_mock, _cv_mock = await _capture_mode_result(
+        job, native_result=native_result,
+    )
 
-    s = await queue.get_session(sid)
-    med = s["result"]["deterministic"]["diagnosis"]["summary"]["sparc"]["med"]
+    med = result["deterministic"]["metrics"]["sparc"]["value"]
     assert med is None
-    issues = s["result"]["normalization_issues"]
+    issues = result["normalization_issues"]
     assert any(i.get("code") == "non_finite_number" for i in issues)
 
 
@@ -1246,56 +1160,41 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance(
         kovaak_run_id=run["id"],
         input_snapshot=snapshot,
     )
-    fake_report = {
-        "diagnosis": {"summary": {"ok": True}},
-        "figures": {},
-        "narration": None,
-        "notes": [],
-    }
 
-    with patch(
-        "webapp.backend.worker.run_analysis",
-        return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
-    ), patch("webapp.backend.worker.run_report", return_value=fake_report):
+    with patch("asyncio.create_subprocess_exec") as spawn_mock:
         await worker.process_one()
 
+    spawn_mock.assert_not_called()
     stored = await queue.get_session(sid)
     assert stored["result"]["schema_version"] == "analysis_result.v2"
     assert stored["result"]["input_mode"] == "video_fallback"
-    assert "raw_input" not in stored["result"]["evidence"]["sources"]
-    assert stored["result"]["input_snapshot"]["trace"] is None
+    assert stored["result"]["deterministic"]["support_status"] == "outcome_only"
+    assert stored["result"]["deterministic"]["limitations"] == ["video_cv_retired"]
+    # 快照源以 outcome_source 身份如实列出（不声称 raw 运动学被消费）；
+    # mp4 是未参与分析的视觉源。
+    evidence_sources = stored["result"]["evidence"]["sources"]
+    assert evidence_sources["mp4"]["role"] == "visual_source_not_analyzed"
+    assert stored["result"]["deterministic"]["metrics"] == {}
     assert stored["result"]["input_snapshot"]["sources"]["video"]["fingerprint"] == video_fingerprint
-    video_artifact = next(
-        artifact
-        for artifact in stored["result"]["artifact_manifest"]["external_inputs"]
-        if artifact["kind"] == "mp4"
-    )
-    assert video_artifact["checksum"] == video_fingerprint["sha256"]
     assert "/private" not in json.dumps(stored["result"])
     assert str(source_video) not in json.dumps(stored["result"])
 
 
 @pytest.mark.asyncio
-async def test_process_one_never_loads_narration_backend():
-    """Analysis keeps the deterministic report and never touches Provider setup."""
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
-    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
+async def test_process_one_never_loads_narration_backend(tmp_path: Path):
+    """Analysis keeps the deterministic result and never touches Provider setup."""
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-narration-backend",
+    )
 
-    with patch("webapp.backend.worker.run_analysis",
-               return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
-                                                  "kill_frames": [],
-                                                  "corrective_frames": []})), \
-         patch("webapp.backend.worker.run_report",
-               return_value=fake_report) as mock_report, \
-         patch("webapp.backend.worker._delete_video_safely"):
+    with patch("asyncio.create_subprocess_exec") as spawn_mock:
         handled = await worker.process_one()
 
+    spawn_mock.assert_not_called()
     assert handled is True
     s = await queue.get_session(sid)
     assert s["status"] == "done"
-    assert s["result"]["narration"]["status"] == "not_requested"
-    assert s["result"]["narration"]["text"] is None
-    assert len(mock_report.call_args.args) == 2  # (summary, locale)
+    assert "narration" not in s["result"]
 
 
 def test_build_timeline_combines_peaks_correctives_kills():
@@ -1351,17 +1250,18 @@ async def test_process_one_claims_without_recovering():
 
 
 @pytest.mark.asyncio
-async def test_process_one_heartbeats_during_analysis():
-    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
+async def test_process_one_heartbeats_during_analysis(tmp_path: Path):
+    sid = await _retired_video_fallback_session(
+        tmp_path, user_id="u1", source_key="retired-heartbeat",
+    )
     beats: list[int] = []
 
-    def slow_analysis(*_a, **_k):
-        # Block the worker thread long enough for heartbeat loop ticks.
-        time.sleep(0.2)
-        return (
-            {"a": {"med": 1}},
-            {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []},
-        )
+    real_set_task_phase = queue.set_task_phase
+
+    async def slow_phase(session_id, phase, **kwargs):
+        # Yield long enough between phase writes for heartbeat loop ticks.
+        await asyncio.sleep(0.15)
+        return await real_set_task_phase(session_id, phase, **kwargs)
 
     real_heartbeat = queue.heartbeat
 
@@ -1370,9 +1270,7 @@ async def test_process_one_heartbeats_during_analysis():
         return await real_heartbeat(session_id, worker_id)
 
     with patch("webapp.backend.worker.HEARTBEAT_INTERVAL_SECONDS", 0.05), \
-         patch("webapp.backend.worker.run_analysis", side_effect=slow_analysis), \
-         patch("webapp.backend.worker.run_report",
-               return_value={"diagnosis": {}, "narration": None, "notes": []}), \
+         patch("webapp.backend.queue.set_task_phase", side_effect=slow_phase), \
          patch("webapp.backend.queue.heartbeat", side_effect=counting_hb):
         await worker.process_one()
 
@@ -3550,8 +3448,9 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
     ), patch(
         "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
     ), patch(
-        "webapp.backend.worker.run_visual_preprocessing_isolated",
-        new=AsyncMock(return_value=visual_result),
+        # CV 退役（2026-10-24）：visual_result 只来自遥测 producer。
+        "webapp.backend.worker._external_telemetry_visual_or_none",
+        new=AsyncMock(return_value=(visual_result, None)),
     ), patch(
         "webapp.backend.worker.run_dynamic_clicking_analysis", dynamic_mock,
     ), patch(
@@ -3656,7 +3555,6 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
 
     visual_result = _tracking_visual_summary(enabled=quality_enabled)
     tracking_result = _tracking_analysis_summary() if quality_enabled else None
-    pipeline_mock = AsyncMock(return_value=(visual_result, tracking_result))
     evidence_mock = AsyncMock(side_effect=lambda _job, result, *_args: result)
     native_mock = MagicMock()
     with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
@@ -3668,8 +3566,12 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
     ), patch(
         "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
     ), patch(
-        "webapp.backend.worker.run_continuous_tracking_pipeline_isolated",
-        new=pipeline_mock,
+        # CV 退役（2026-10-24）：tracking 只走遥测 producer + 本进程 adapter。
+        "webapp.backend.worker._external_telemetry_visual_or_none",
+        new=AsyncMock(return_value=(visual_result, None)),
+    ), patch(
+        "webapp.backend.worker.run_continuous_tracking_analysis",
+        MagicMock(return_value=_tracking_analysis_summary()),
     ), patch(
         "webapp.backend.worker.run_native_analysis", native_mock,
     ), patch(
@@ -3688,14 +3590,10 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
     assert result["analysis_version"] == expected_version
     assert result["analysis_type"] == "continuous_tracking"
     native_mock.assert_not_called()
-    pipeline_mock.assert_awaited_once_with(job)
     if quality_enabled:
-        evidence_mock.assert_awaited_once_with(
-            job,
-            result,
-            visual_result,
-            tracking_result,
-        )
+        # 遥测路径 telemetry_visual_used=True：证据提交走通用 evidence 提交，
+        # 不再走 CV 子进程 evidence commit。
+        evidence_mock.assert_not_awaited()
         assert result["deterministic"]["metrics"][
             "continuous_tracking.target_relative_error_px"
         ]["value"] == 8.0
@@ -3837,7 +3735,6 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tm
     managed_video.write_bytes(source_video.read_bytes())
     snapshot = _native_snapshot()
     snapshot["sources"]["video"] = _video_source(source_video)
-    video_fingerprint = snapshot["sources"]["video"]["fingerprint"]
     job = {
         "id": 102,
         "user_id": "u1",
@@ -3860,14 +3757,10 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tm
         cv_error=RuntimeError("video decoder unavailable"),
     )
 
-    assert calls == ["native", "cv"]
-    cv_mock.assert_called_once_with(
-        str(managed_video),
-        "/db-private/runs/42/stats.csv",
-        None,
-        None,
-        stats=parsed_stats,
-    )
+    # CV 退役（2026-10-24）：遗留 v1 快照不再拉起 CV（cv_error 不会被触发），
+    # 视频验证直接降级，native 结果照常产出。
+    assert calls == ["native"]
+    cv_mock.assert_not_called()
     assert result["schema_version"] == "analysis_result.v2"
     assert result["analysis_version"] == "native_flicking.v1"
     assert result["owner_id"] == "u1"
@@ -3875,24 +3768,8 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tm
     assert result["deterministic"]["status"] == "available"
     assert result["deterministic"]["metrics"] == native_result["deterministic"]["metrics"]
     assert result["deterministic"]["timeline"] == native_result["deterministic"]["timeline"]
-    assert result["evidence"]["availability"]["mp4"] == "unavailable"
+    assert result["evidence"]["availability"]["mp4"] == "available"
     assert result["evidence"]["sources"]["mp4"]["parser_or_format_version"] == "mp4"
-    video_artifact = next(
-        entry for entry in result["artifact_manifest"]["external_inputs"]
-        if entry["kind"] == "mp4"
-    )
-    assert video_artifact["ownership"] == "analysis"
-    assert video_artifact["managed"] is True
-    assert video_artifact["local_only"] is True
-    assert video_artifact["format_version"] == "mp4"
-    assert video_artifact["checksum"] == video_fingerprint["sha256"]
-    assert result["input_snapshot"]["sources"]["video"] == {
-        "artifact_ref": "analysis:102:video",
-        "basename": source_video.name,
-        "fingerprint": video_fingerprint,
-        "availability": "available",
-        "format_version": "mp4",
-    }
     assert result["warnings"] == [
         {"code": "video_cv_unavailable"},
         {"code": "legacy_static_compatibility"},
@@ -3934,6 +3811,8 @@ async def test_v2_multimodal_does_not_run_visual_analyzer_without_reviewed_profi
     assert calls == ["native"]
     cv_mock.assert_not_called()
     assert result["evidence"]["availability"]["mp4"] == "available"
+    # CV 退役（2026-10-24）：无遥测源时不再空转 CV，visual validation 以
+    # 稳定 telemetry code 诚实降级。
     assert result["deterministic"]["visual_validation"] == {
         "schema_version": "visual_signal_summary.v1",
         "status": "unavailable",
@@ -3946,12 +3825,13 @@ async def test_v2_multimodal_does_not_run_visual_analyzer_without_reviewed_profi
         "crosshair_coverage": None,
         "completeness": "unavailable",
         "event_counts": {},
-        "limitations": ["visual_quality_profile_unavailable"],
+        "limitations": ["external_telemetry_unavailable:telemetry_source_unavailable"],
     }
-    assert result["warnings"] == [
-        {"code": "video_cv_unavailable"},
-        {"code": "legacy_static_compatibility"},
-    ]
+    # _mark_telemetry_fallback 把来源降级标记移到 warnings 末尾（既有行为）。
+    assert {item.get("code") for item in result["warnings"]} == {
+        "external_telemetry_unavailable:telemetry_source_unavailable",
+        "legacy_static_compatibility",
+    }
 
 
 def test_visual_preprocessing_uses_only_registered_run_owned_video(
@@ -4461,8 +4341,9 @@ async def test_v3_multimodal_commits_validated_visual_result_before_terminal_wri
              return_value=(_native_v2_adapter_result(), object()),
          ), \
          patch(
-             "webapp.backend.worker.run_visual_preprocessing_isolated",
-             new=AsyncMock(return_value=visual),
+             # CV 退役（2026-10-24）：visual_result 改从遥测 producer 进入。
+             "webapp.backend.worker._external_telemetry_visual_or_none",
+             new=AsyncMock(return_value=(visual, None)),
          ), \
          patch("webapp.backend.worker._maybe_commit_analysis_evidence", side_effect=commit):
         assert await worker.process_one() is True
@@ -4574,57 +4455,11 @@ async def test_process_one_run_based_mode_requires_frozen_video_identity(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("input_mode", ["multimodal", "video_fallback"])
-async def test_process_one_rejects_managed_video_changed_during_cv(
+async def test_video_fallback_retired_writes_outcome_only_without_input_paths(
     tmp_path: Path,
-    input_mode: str,
 ):
-    source_video = tmp_path / "source.mp4"
-    managed_video = tmp_path / "managed.mp4"
-    source_video.write_bytes(b"frozen-video-revision")
-    managed_video.write_bytes(source_video.read_bytes())
-    snapshot = _native_snapshot()
-    snapshot["sources"]["video"] = _video_source(source_video)
-    job = {
-        "id": 202,
-        "user_id": "u1",
-        "input_mode": input_mode,
-        "kovaak_run_id": 42,
-        "input_snapshot": snapshot,
-        "video_path": str(managed_video),
-        "csv_path": str(tmp_path / "managed-stats.csv"),
-        "cm_per_360": None,
-        "fov": None,
-        "created_at": "2026-07-13 12:00:00",
-    }
-
-    def mutate_video(*_args, **_kwargs):
-        managed_video.write_bytes(b"changed-during-cv")
-        return {}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}
-
-    with patch(
-        "webapp.backend.worker.run_report",
-        return_value={"diagnosis": {}, "narration": None, "notes": []},
-    ) as report_mock:
-        error, _native_mock, cv_mock = await _capture_mode_failure(
-            job,
-            native_result=_native_adapter_result(),
-            cv_side_effect=mutate_video,
-        )
-
-    cv_mock.assert_called_once()
-    assert error["category"] == "input_validation"
-    assert error["code"] == "source_unavailable"
-    assert error["retryable"] is False
-    if input_mode == "video_fallback":
-        report_mock.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_video_fallback_cv_failure_does_not_log_input_paths(
-    tmp_path: Path,
-    caplog,
-):
+    """CV 退役（2026-10-24）：遗留 video_fallback 会话不再拉起 CV，结果层
+    outcome-only + video_cv_retired，且私有输入路径不得泄漏进结果。"""
     source_video = tmp_path / "source.mp4"
     managed_video = tmp_path / "managed.mp4"
     managed_stats = tmp_path / "managed-stats.csv"
@@ -4645,24 +4480,20 @@ async def test_video_fallback_cv_failure_does_not_log_input_paths(
         "fov": None,
         "created_at": "2026-07-13 12:00:00",
     }
-    private_message = f"decoder failed video={managed_video} csv={managed_stats}"
 
-    error, native_mock, cv_mock = await _capture_mode_failure(
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
         job,
         native_result=_native_adapter_result(),
-        cv_side_effect=RuntimeError(private_message),
     )
 
     native_mock.assert_not_called()
-    cv_mock.assert_called_once()
-    assert error["category"] == "internal_unknown"
-    assert error["code"] == "analysis_failed"
-    assert error["retryable"] is True
-    assert str(managed_video) not in json.dumps(error, ensure_ascii=False)
-    assert str(managed_stats) not in json.dumps(error, ensure_ascii=False)
-    assert str(managed_video) not in caplog.text
-    assert str(managed_stats) not in caplog.text
-    assert "RuntimeError" in caplog.text
+    cv_mock.assert_not_called()
+    assert calls == []
+    assert result["deterministic"]["support_status"] == "outcome_only"
+    assert result["deterministic"]["limitations"] == ["video_cv_retired"]
+    assert {"code": "video_cv_unavailable"} in result["warnings"]
+    assert str(managed_video) not in json.dumps(result, ensure_ascii=False)
+    assert str(managed_stats) not in json.dumps(result, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
@@ -4699,10 +4530,11 @@ async def test_process_one_accepts_run_owned_video_without_mtime_fingerprint(
         job,
         native_result=_native_adapter_result(),
         parsed_stats=object(),
-        cv_result=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
     )
 
-    assert calls == ["native", "cv"]
+    # CV 退役（2026-10-24）：run-owned 视频身份校验（无 mtime 指纹容差）
+    # 仍在分析前置基线定约时执行；CV 本体不再被拉起。
+    assert calls == ["native"]
     assert result["input_mode"] == "multimodal"
     assert result["evidence"]["availability"]["mp4"] == "available"
 
@@ -4770,7 +4602,7 @@ async def test_managed_video_verification_does_not_block_heartbeat():
 
 
 @pytest.mark.asyncio
-async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis(
+async def test_process_one_multimodal_v1_degrades_retired_video_keeps_native_metrics(
     tmp_path: Path,
 ):
     parsed_stats = object()
@@ -4792,44 +4624,67 @@ async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis(
         "fov": None,
         "created_at": "2026-07-13 12:00:00",
     }
-    cv_result = (
-        {},
-        {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []},
-    )
 
     result, calls, native_mock, cv_mock = await _capture_mode_result(
         job,
         native_result=_native_adapter_result(),
         parsed_stats=parsed_stats,
-        cv_result=cv_result,
     )
 
-    assert calls == ["native", "cv"]
+    # CV 退役（2026-10-24）：multimodal 仍冻结 parsed stats（native 返回），
+    # 但视频验证直接降级，CV 子进程不再被拉起。
+    assert calls == ["native"]
     assert native_mock.call_args.kwargs["return_parsed_stats"] is True
-    assert cv_mock.call_args.kwargs["stats"] is parsed_stats
+    cv_mock.assert_not_called()
     assert result["input_mode"] == "multimodal"
     assert result["deterministic"]["metrics"] == _native_adapter_result()["deterministic"]["metrics"]
     assert result["deterministic"]["timeline"] == _native_adapter_result()["deterministic"]["timeline"]
     assert result["deterministic"]["visual_validation"] == {
-        "status": "available",
-        "timeline": [],
+        "schema_version": "visual_signal_summary.v1",
+        "status": "unavailable",
+        "quality_status": "unavailable",
+        "producer_version": None,
+        "enabled_metric_families": [],
+        "track_count": 0,
+        "observation_count": 0,
+        "target_coverage": None,
+        "crosshair_coverage": None,
+        "completeness": "unavailable",
+        "event_counts": {},
+        "limitations": ["video_cv_retired"],
     }
     assert result["evidence"]["availability"]["mp4"] == "available"
-    assert result["warnings"] == [{"code": "legacy_static_compatibility"}]
+    assert result["warnings"] == [
+        {"code": "video_cv_unavailable"},
+        {"code": "legacy_static_compatibility"},
+    ]
     assert result["deterministic"]["diagnosis"]["meta"]["input_mode"] == "multimodal"
 
 
 @pytest.mark.asyncio
-async def test_process_one_video_fallback_writes_v2_without_raw_provenance():
+async def test_process_one_video_fallback_writes_v2_without_raw_provenance(
+    tmp_path: Path,
+):
+    from webapp.backend import kovaak_run_store
+
     completed: list[dict] = []
+    video = tmp_path / "session-video.mp4"
+    video.write_bytes(b"frozen-video-revision")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="retired-upload-fallback", scenario="Scenario",
+    )
     job = {
         "id": 103,
         "user_id": "u1",
         "input_mode": "video_fallback",
-        "kovaak_run_id": None,
-        "input_snapshot": None,
-        "video_path": "/managed/session/video.mp4",
-        "csv_path": "/managed/session/stats.csv",
+        "kovaak_run_id": run["id"],
+        "input_snapshot": {
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run["id"],
+            "sources": {"video": _video_source(video)},
+        },
+        "video_path": str(video),
+        "csv_path": str(tmp_path / "session-stats.csv"),
         "cm_per_360": 30.0,
         "fov": 90.0,
         "created_at": "2026-07-13 12:00:00",
@@ -4844,46 +4699,25 @@ async def test_process_one_video_fallback_writes_v2_without_raw_provenance():
          patch("webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True)), \
          patch("webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done)), \
          patch("webapp.backend.worker.run_native_analysis") as native_mock, \
-         patch(
-             "webapp.backend.worker.run_analysis",
-             return_value=(
-                 {"a": {"med": 1}, "sparc": {"med": -1.2}},
-                 {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []},
-             ),
-         ), \
-         patch(
-             "webapp.backend.worker.run_report",
-             return_value={"diagnosis": {}, "narration": None, "notes": []},
-         ):
+         patch("asyncio.create_subprocess_exec") as spawn_mock:
         assert await worker.process_one() is True
 
+    spawn_mock.assert_not_called()
     assert len(completed) == 1
     result = completed[0]
     native_mock.assert_not_called()
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
-    assert result["analysis_version"] == "flicking_fair_summary.v1"
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
     assert result["owner_id"] == "u1"
     assert result["input_mode"] == "video_fallback"
-    assert result["input_snapshot"]["calibration"] == {
-        "cm_per_360": {"value": 30.0, "source": "manual_override"},
-        "fov": {"value": 90.0, "source": "manual_override"},
-    }
-    assert "kovaak_run_ref" not in result
-    assert "raw_input" not in result["evidence"]["sources"]
-    assert result["evidence"]["availability"] == {"stats": "available", "mp4": "available"}
+    assert result["deterministic"]["support_status"] == "outcome_only"
+    assert result["deterministic"]["limitations"] == ["video_cv_retired"]
+    assert result["kovaak_run_ref"] == f"run:{run['id']}"
+    evidence_sources = result["evidence"]["sources"]
+    assert "raw_input" not in evidence_sources
+    assert evidence_sources["mp4"]["role"] == "visual_source_not_analyzed"
     assert result["evidence"]["coverage"] is None
-    metric = result["deterministic"]["metrics"]["a"]
-    assert metric["key"] == "a"
-    assert metric["value"] == 1
-    assert metric["unit"] == "unknown"
-    assert metric["provenance"] == {"kind": "fused", "sources": ["mp4", "stats"]}
-    assert metric["metric_version"] == "flicking_fair_summary.v1"
-    assert result["deterministic"]["metrics"]["sparc"]["metric_version"] == (
-        "flicking_fair_summary.sparc.v2"
-    )
-    assert metric["coverage"] is None
-    assert "coverage_not_recorded" in metric["limitations"]
-    assert "unit_not_registered" in metric["limitations"]
+    assert result["deterministic"]["metrics"] == {}
     assert all(
         {
             "source", "availability", "ownership", "managed", "local_only",

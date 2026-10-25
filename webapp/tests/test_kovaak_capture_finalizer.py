@@ -766,13 +766,23 @@ async def test_raw_completeness_receipt_never_attaches_incomplete_native_trace(
     assert run["trace_state"] == expected_trace_state
     assert run["trace_error"] == expected_error
     readiness = kovaak_run_store.derive_run_readiness(run)
-    assert readiness["state"] == "pending_analysis"
     if expected_trace_state == "attached":
-        assert readiness["input_native"] is True
+        assert readiness == {
+            "ready": True,
+            "state": "pending_analysis",
+            "input_native": True,
+            "video_fallback": False,
+        }
         # 回显只挂在 receipt 判死路径；正常 attach 的 run 不携带。
         assert "trace_receipt_echo" not in run
     else:
-        assert readiness["video_fallback"] is True
+        # CV 退役（2026-10-24）：trace 判死后只余 Stats+视频，无档可选。
+        assert readiness == {
+            "ready": False,
+            "state": "incomplete_evidence",
+            "input_native": False,
+            "video_fallback": False,
+        }
         # receipt 判死必须回显时钟锚/覆盖值/窗口（区分元数据误报与真缺数据）。
         echo = run["trace_receipt_echo"]
         assert echo["receiptVersion"] == "raw_snapshot_receipt.v2"

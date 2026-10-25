@@ -3,13 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import Protocol
-
 from . import config
-
-
-class UploadReader(Protocol):
-    async def read(self, size: int = -1) -> bytes: ...
 
 
 class InvalidSessionId(ValueError):
@@ -18,18 +12,6 @@ class InvalidSessionId(ValueError):
 
 class WorkspacePathError(ValueError):
     """Resolved workspace path is outside DATA_ROOT."""
-
-
-class UploadSizeExceeded(ValueError):
-    """Streamed upload exceeded configured byte limit."""
-
-    def __init__(self, *, field: str, limit: int, received: int) -> None:
-        self.field = field
-        self.limit = limit
-        self.received = received
-        super().__init__(
-            f"{field} exceeds limit ({received} > {limit})",
-        )
 
 
 def _safe_session_id(session_id: int | str) -> str:
@@ -119,37 +101,3 @@ def copy_path_to_path(source: Path, destination: Path) -> int:
         destination.unlink(missing_ok=True)
         raise
     return destination.stat().st_size
-
-
-async def stream_upload_to_path(
-    upload: UploadReader,
-    dest: Path,
-    *,
-    max_bytes: int,
-    field: str = "file",
-) -> int:
-    """Write upload body to dest in chunks; never loads the whole file into memory."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    chunk_size = config.UPLOAD_CHUNK_SIZE
-    total = 0
-    try:
-        with dest.open("wb") as out:
-            while True:
-                chunk = await upload.read(chunk_size)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise UploadSizeExceeded(
-                        field=field,
-                        limit=max_bytes,
-                        received=total,
-                    )
-                out.write(chunk)
-    except Exception:
-        try:
-            dest.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-    return total
