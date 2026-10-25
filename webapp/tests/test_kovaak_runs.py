@@ -3838,6 +3838,7 @@ async def test_run_owned_video_snapshot_and_public_dto_are_path_free(
         "performance": "available",
         "raw": "available",
         "video": "available",
+        "external_telemetry": "missing",
         "canonical_window": "available",
     }
     assert public["video_artifact_ref"] == snapshot["sources"]["video"]["artifact_ref"]

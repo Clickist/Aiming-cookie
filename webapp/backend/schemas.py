@@ -357,7 +357,9 @@ class KovaaKRunListItem(BaseModel):
     ] = "incomplete_evidence"
     analysis_count: int = 0
     supported_input_modes: list[
-        Literal["input_native", "multimodal", "video_fallback"]
+        Literal[
+            "telemetry_multimodal", "input_native", "multimodal", "video_fallback"
+        ]
     ] = Field(default_factory=list)
     evidence_availability: dict[str, str] = Field(default_factory=dict)
     alignment: dict = Field(default_factory=dict)

@@ -369,6 +369,27 @@ def _trace_quality(
     }
 
 
+def _external_telemetry_availability(run: dict) -> str:
+    """外部遥测可用性，与创建分析时的 source gate 同口径。
+
+    判定复用 `external_telemetry_ready`（配对索引有缓存、冻结侧指纹按
+    size+mtime 缓存），因此列表投影逐局调用不会退化成全量哈希。
+    任何读取异常都收敛为 unavailable——遥测侧问题不得拖垮整个 Run 列表。
+    """
+    run_id = run.get("id")
+    user_id = run.get("user_id")
+    if (
+        not isinstance(run_id, int) or isinstance(run_id, bool)
+        or not isinstance(user_id, str) or not user_id
+    ):
+        return "invalid"
+    try:
+        ready = kovaak_run_store.external_telemetry_ready(run_id, user_id)
+    except Exception:  # noqa: BLE001 - 投影层 fail-open 到“无遥测”
+        return "unavailable"
+    return "available" if ready else "missing"
+
+
 def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]:
     stats_source = _summary_source(run.get("stats_summary"))
     performance_source = _summary_source(run.get("performance_summary"))
@@ -395,6 +416,7 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
         run.get("trace_state"), run.get("mouse_trace_path"), shallow=shallow,
     )
     video_availability, video = _current_video_evidence(run, shallow=shallow)
+    external_availability = _external_telemetry_availability(run)
     native = (
         stats_availability == "available"
         and performance_availability == "available"
@@ -410,6 +432,10 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
             "stats": {"availability": stats_availability},
             "performance": {"availability": performance_availability},
             "video": {"availability": video_availability},
+            # 外部遥测必须先于其它来源进入投影：缺这一项时 source gate 恒判
+            # telemetry_multimodal 不可用，列表与 Coach 会把遥测局显示成较低
+            # 档位（1025 真机走查发现，早于档位收敛即存在的显示缺口）。
+            "external_telemetry": {"availability": external_availability},
         },
         "trace": {"availability": trace_quality["availability"]},
         "canonical_time_window": canonical_window,
@@ -441,6 +467,7 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
             "performance": performance_availability,
             "raw": trace_quality["availability"],
             "video": video_availability,
+            "external_telemetry": external_availability,
             "canonical_window": "available" if canonical_window_available else "missing",
         },
         "video": video,

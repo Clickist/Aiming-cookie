@@ -1807,7 +1807,7 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /** Supported Input Modes */
-            supported_input_modes?: ("input_native" | "multimodal" | "video_fallback")[];
+            supported_input_modes?: ("telemetry_multimodal" | "input_native" | "multimodal" | "video_fallback")[];
             /** Trace Artifact Ref */
             trace_artifact_ref?: string | null;
             /** Trace Error */
@@ -1890,7 +1890,7 @@ export interface components {
                 [key: string]: number;
             } | null;
             /** Supported Input Modes */
-            supported_input_modes?: ("input_native" | "multimodal" | "video_fallback")[];
+            supported_input_modes?: ("telemetry_multimodal" | "input_native" | "multimodal" | "video_fallback")[];
             /** Trace Error */
             trace_error?: string | null;
             trace_quality: components["schemas"]["TraceQualityOut"];

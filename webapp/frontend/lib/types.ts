@@ -287,6 +287,9 @@ export interface AnalysisResultV2 {
 
 export type AnalysisResult = AnalysisResultV1 | AnalysisResultV2;
 export type InputMode = "input_native" | "multimodal" | "video_fallback";
+/** Run 可用档位：选择层含 telemetry_multimodal（执行层仍归一化成 multimodal）；
+ * 历史分析结果里的 input_mode 只有 InputMode 三值。 */
+export type SupportedInputMode = InputMode | "telemetry_multimodal";
 
 export interface ErrorV1 {
   schema_version: ErrorSchemaVersion;
@@ -873,7 +876,7 @@ export interface KovaaKRunListItem {
   finalization_error?: string | null;
   readiness_state: "pending_analysis" | "analyzed" | "incomplete_evidence";
   analysis_count: number;
-  supported_input_modes: InputMode[];
+  supported_input_modes: SupportedInputMode[];
   evidence_availability: Record<string, string>;
   alignment: KovaaKRunAlignment;
   video_quality: KovaaKRunVideoQuality;
