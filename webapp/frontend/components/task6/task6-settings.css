@@ -1045,6 +1045,64 @@
   color: var(--event-peak);
 }
 
+/* 下载进度（update-download-progress 视觉稿）：形态对齐 task3 更新卡的进度条。 */
+.task6-app-update-progress {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.task6-update-bar {
+  display: block;
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+}
+
+.task6-update-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width var(--duration-fast) var(--ease-out);
+}
+
+.task6-update-bar[data-indeterminate] > i {
+  width: 35%;
+  animation: task6-update-bar-slide 1.1s ease-in-out infinite;
+  transition: none;
+}
+
+@keyframes task6-update-bar-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* 元信息：左 = 百分比 · 已下载/总量，右 = 速度/安装中（tabular-nums 数字稳定）。 */
+.task6-update-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.task6-update-meta > b {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task6-update-bar[data-indeterminate] > i {
+    animation: none;
+    width: 100%;
+  }
+}
+
 /* 卡内标题：通用屏自包含卡的标题行沿用分组标题字级。 */
 
 .task6-profile-group-title {

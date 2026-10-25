@@ -396,9 +396,10 @@ test("UpdatePrompt respects the Coach-busy block: install disabled and note swap
   const prompt = await source("components/task3/UpdatePrompt.tsx");
   const shell = await source("components/task3/AppShell.tsx");
   // blocked（Coach 回合活跃）是可选 prop：按钮禁用、ready 说明换成不打断口径，
-  // 卡片本身照常出现（用户仍应知道有新版本）。
+  // 卡片本身照常出现（用户仍应知道有新版本）。installing 态照视觉稿
+  // update-download-progress 改为按钮保留但禁用（插件无取消能力），断言随新形态。
   assert.match(prompt, /blocked = false/);
-  assert.match(prompt, /<Button disabled=\{blocked\} onClick=\{\(\) => void install\(\)\} size="compact">/);
+  assert.match(prompt, /<Button disabled=\{phase === "installing" \|\| blocked\} onClick=\{\(\) => void install\(\)\} size="compact">/);
   assert.match(prompt, /: blocked\s*\n\s*\? t\("update\.prompt\.noteCoachBusy"\)/);
   // AppShell 上报链：handleCoachActiveRunChange 落点广播活跃态，UpdatePrompt 吃订阅值。
   assert.match(shell, /setCoachRunActive\(active\);/);

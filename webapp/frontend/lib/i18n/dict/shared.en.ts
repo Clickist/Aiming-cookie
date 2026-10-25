@@ -7,11 +7,11 @@ export const sharedEn = {
   // components/task3/UpdatePrompt.tsx —— 桌面更新提示卡（批 0 样板）
   "update.prompt.ariaLabel": "App update notice",
   "update.prompt.title": "Version {version} is available",
-  "update.prompt.noteInstalling": "Downloading and installing. The app will restart automatically when it's done…",
+  "update.prompt.noteDownloading": "Downloading the update; the app will restart automatically when it's done…",
+  "update.prompt.noteDownloadedInstalling": "Download complete. Installing and restarting automatically…",
   "update.prompt.noteFailed": "Update failed. Check your connection, then retry from \"App updates\" in Settings.",
   "update.prompt.noteReady": "Download the official installer and restart automatically to complete the upgrade.",
   "update.prompt.noteCoachBusy": "Coach is replying. Installing restarts the app and interrupts the current reply — you can install once the turn ends.",
-  "update.prompt.busy": "Working…",
   "update.prompt.retry": "Retry",
   "update.prompt.installNow": "Update now",
   "update.prompt.later": "Later",

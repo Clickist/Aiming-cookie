@@ -36,7 +36,7 @@ import {
   setStorageLocation,
   type StorageLocationStatusV1,
 } from "@/lib/storage-location";
-import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
+import { checkForDesktopUpdate, formatDownloadedMb, formatDownloadSpeed, type DesktopUpdate, type DesktopUpdateProgress } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
 import { KnowledgeSettingsSection } from "@/components/task6/KnowledgeSettingsSection";
@@ -98,8 +98,27 @@ function AppUpdatePanel() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [checkState, setCheckState] = useState<AppUpdateCheckState>({ phase: "idle" });
   const [installing, setInstalling] = useState(false);
+  // 下载进度（update-download-progress 视觉稿）：只在安装中上屏，Finished 后
+  // 切「安装中」直到进程重启。Progress 事件高频：最新值进 ref，rAF 合帧再落
+  // state，防渲染风暴；Finished 是终态直接落 state（重启随时可能发生）。
+  const [progress, setProgress] = useState<DesktopUpdateProgress | null>(null);
+  const progressRef = useRef<DesktopUpdateProgress | null>(null);
+  const frameRef = useRef<number | null>(null);
   // Coach 回合活跃时禁装（安装会重启应用打断回复），卡片内同步说明。
   const coachRunActive = useCoachRunActive();
+
+  const flushProgress = useCallback(() => {
+    frameRef.current = null;
+    setProgress(progressRef.current);
+  }, []);
+
+  // 卸载时取消在途渲染帧，不对已卸载组件 setState。
+  useEffect(
+    () => () => {
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isDesktopRuntime()) return undefined;
@@ -127,27 +146,59 @@ function AppUpdatePanel() {
   const installNow = useCallback(async () => {
     if (checkState.phase !== "available") return;
     setInstalling(true);
+    setProgress(null);
+    progressRef.current = null;
     try {
-      await checkState.update.install();
+      await checkState.update.install((p) => {
+        progressRef.current = p;
+        if (p.finished) {
+          if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+          frameRef.current = null;
+          setProgress(p);
+          return;
+        }
+        if (frameRef.current == null) frameRef.current = requestAnimationFrame(flushProgress);
+      });
       // 安装成功时进程会重启；走到这里说明重启未发生，恢复为可重试。
       setInstalling(false);
     } catch {
+      setProgress(null);
+      progressRef.current = null;
       setInstalling(false);
     }
-  }, [checkState]);
+  }, [checkState, flushProgress]);
 
   if (!isDesktopRuntime()) {
     return <p className="task6-muted">{t("settings.update.browserOnly")}</p>;
   }
+  // 下载进度派生值（视觉稿口径）：百分比向下取整、固定 1 位小数 MB、
+  // 总大小未知时不显示百分比（进度条走不确定态）。
+  const liveProgress = installing ? progress : null;
+  const downloadDone = liveProgress?.finished ?? false;
+  const downloadRatio = liveProgress?.contentLength
+    ? Math.min(1, liveProgress.downloadedBytes / liveProgress.contentLength)
+    : null;
+  const downloadPct = downloadRatio != null ? Math.floor(downloadRatio * 100) : null;
+  const downloadBytes =
+    liveProgress == null
+      ? ""
+      : liveProgress.contentLength != null
+        ? `${formatDownloadedMb(liveProgress.downloadedBytes)} / ${formatDownloadedMb(liveProgress.contentLength)}`
+        : formatDownloadedMb(liveProgress.downloadedBytes);
   // 线框形态（0912 完美复刻）：第一行 = 「应用更新」+ 状态 chip；
   // 第二行 = 当前版本（居左）+ 行尾「检查更新」。chip 状态词与面板状态
-  // 一一对应：未检查/检查中/已是最新/有新版本/检查失败。
+  // 一一对应：未检查/检查中/已是最新/下载中/安装中/有新版本/检查失败。
   const chip =
     checkState.phase === "latest" ? { tone: "ok", label: t("settings.update.chipLatest") }
-    : checkState.phase === "available" ? { tone: "new", label: t("settings.update.chipAvailable") }
     : checkState.phase === "checking" ? { tone: "idle", label: t("settings.update.chipChecking") }
     : checkState.phase === "error" ? { tone: "idle", label: t("settings.update.chipError") }
-    : { tone: "idle", label: t("settings.update.chipIdle") };
+    : checkState.phase !== "available" ? { tone: "idle", label: t("settings.update.chipIdle") }
+    : installing
+      ? downloadDone ? { tone: "new", label: t("settings.update.chipInstalling") }
+        : downloadPct != null
+          ? { tone: "new", label: t("settings.update.chipDownloading", { pct: downloadPct }) }
+          : { tone: "new", label: t("settings.update.chipDownloadingPlain") }
+      : { tone: "new", label: t("settings.update.chipAvailable") };
   return (
     <div className="task6-app-update">
       <div className="task6-app-update-head">
@@ -159,7 +210,7 @@ function AppUpdatePanel() {
           {t("settings.update.currentVersion")}{appVersion ? t("settings.update.versionSuffix", { version: appVersion }) : ""}
           {checkState.phase === "checking" ? t("settings.update.checkingSuffix") : null}
           {checkState.phase === "error" ? t("settings.update.errorSuffix") : null}
-          {installing ? t("settings.update.installingSuffix") : null}
+          {installing ? (downloadDone ? t("settings.update.installingSuffix") : t("settings.update.downloadingSuffix")) : null}
           {coachRunActive ? t("update.prompt.noteCoachBusy") : null}
         </p>
         <div className="task6-inline-actions">
@@ -178,6 +229,21 @@ function AppUpdatePanel() {
           ) : null}
         </div>
       </div>
+      {liveProgress ? (
+        <div className="task6-app-update-progress">
+          {/* contentLength 未知 → 不确定态滑动；已知 → 按比例出条，完成即满条。 */}
+          <div className="task6-update-bar" data-indeterminate={downloadRatio == null || undefined}>
+            <i style={downloadRatio != null ? { width: `${(downloadRatio * 100).toFixed(1)}%` } : undefined} />
+          </div>
+          <div aria-live="polite" className="task6-update-meta">
+            <span>
+              {downloadPct != null ? <><b>{downloadPct}%</b> · </> : null}
+              {downloadBytes}
+            </span>
+            <span>{downloadDone ? t("settings.update.installingSpeed") : formatDownloadSpeed(liveProgress.bytesPerSecond)}</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
