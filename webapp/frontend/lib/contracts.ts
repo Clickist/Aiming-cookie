@@ -1074,5 +1074,6 @@ export function presentStorageCategories(
     [t("settings.storage.runVideo"), categories.run_video_bytes],
     [t("settings.storage.runRaw"), categories.run_raw_bytes],
     [t("settings.storage.incomplete"), categories.incomplete_recovery_bytes],
+    [t("settings.storage.orphanQuarantine"), categories.orphan_quarantine_bytes],
   ];
 }

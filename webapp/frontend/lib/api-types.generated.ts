@@ -2181,6 +2181,11 @@ export interface components {
              */
             incomplete_recovery_bytes: number;
             /**
+             * Orphan Quarantine Bytes
+             * @default 0
+             */
+            orphan_quarantine_bytes: number;
+            /**
              * Run Raw Bytes
              * @default 0
              */

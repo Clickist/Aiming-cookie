@@ -73,6 +73,9 @@ class StorageCategoryTotals(BaseModel):
     run_video_bytes: int = 0
     run_raw_bytes: int = 0
     incomplete_recovery_bytes: int = 0
+    # runs/orphans/ 的隔离产物：不属于任何 run，也不能从"未完成采集"列表
+    # 删除，所以单列一类，避免分类数字与明细/删除入口对不上。
+    orphan_quarantine_bytes: int = 0
 
 
 class StorageResponse(BaseModel):

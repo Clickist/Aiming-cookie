@@ -2595,18 +2595,40 @@ def _adopt_run_storage_ledger(run: dict, ledger: dict[str, object], data_root: s
         _LEDGER_VALIDATED_DIR_MTIME[run_id] = dir_mtime
 
 
+def _scan_orphan_storage(data_root: str | Path) -> int:
+    """实测 runs/orphans/ 的字节数（这些文件不属于任何 run，台账扫不到）。
+
+    之前完全不计入 storage：实测 72 个 mp4 共 3.0GB 在用户眼里"不存在"，
+    但它确实占盘。单列 orphan_quarantine 分类——它们够不到"未完成采集"的
+    明细与删除入口，混进去会让分类数字和列表对不上。
+    """
+    root = Path(data_root) / "runs" / "orphans"
+    if not root.is_dir():
+        return 0
+    total = 0
+    for candidate in root.iterdir():
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            continue
+        if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            continue
+        total += metadata.st_size
+    return total
+
+
 async def run_storage_usage(
     user_id: str, data_root: str | Path,
 ) -> dict[str, int]:
-    def _collect() -> tuple[list[dict], dict[int, dict[str, object]]]:
+    def _collect() -> tuple[list[dict], dict[int, dict[str, object]], int]:
         runs = _all_runs(user_id)
         stale = [run for run in runs if not _storage_ledger_is_current(run, data_root)]
         scanned = {int(run["id"]): _scan_run_storage(run, data_root) for run in stale}
-        return runs, scanned
+        return runs, scanned, _scan_orphan_storage(data_root)
 
     # 台账校验与缺失重算都是纯读扫描（walk + lstat），放线程池；
     # meta 回写（self-heal）是唯一写动作，留在事件循环上。
-    runs, scanned = await asyncio.to_thread(_collect)
+    runs, scanned, orphan_bytes = await asyncio.to_thread(_collect)
     for run in runs:
         ledger = scanned.get(int(run["id"]))
         if ledger is not None:
@@ -2615,6 +2637,7 @@ async def run_storage_usage(
         "run_video_bytes": 0,
         "run_raw_bytes": 0,
         "incomplete_recovery_bytes": 0,
+        "orphan_quarantine_bytes": orphan_bytes,
     }
     for run in runs:
         ledger = run.get(_STORAGE_LEDGER_KEY)

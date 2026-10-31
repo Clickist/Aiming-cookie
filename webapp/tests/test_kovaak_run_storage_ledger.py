@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -165,6 +166,7 @@ async def test_legacy_run_without_ledger_self_heals_once_on_first_read() -> None
         "run_video_bytes": 0,
         "run_raw_bytes": 0,
         "incomplete_recovery_bytes": len(b"raw-bytes"),
+        "orphan_quarantine_bytes": 0,
     }
     healed = file_store.read_json(f"runs/{run['id']}/meta.json")
     assert healed["storage_ledger"]["schema_version"] == "run_storage_ledger.v1"
@@ -195,7 +197,11 @@ async def test_external_deletion_is_detected_and_ledger_recomputed() -> None:
     before = await kovaak_run_store.run_storage_usage("u1", config.DATA_ROOT)
     assert before["incomplete_recovery_bytes"] == len(b"partial-bytes")
 
-    partial.unlink()  # 外部删除：目录 mtime 变化必须触发该 run 重算。
+    # 外部删除：目录 mtime 变化必须触发该 run 重算。台账校验以目录 mtime
+    # 为信号，紧随台账写入的删除可能落在同一时间刻度内——先跨一个刻度，
+    # 让这条断言测的是"删除被检测到"而不是文件系统的时钟精度。
+    time.sleep(0.02)
+    partial.unlink()
     after = await kovaak_run_store.run_storage_usage("u1", config.DATA_ROOT)
 
     assert after["incomplete_recovery_bytes"] == 0
@@ -386,3 +392,54 @@ async def test_storage_incomplete_endpoint_shape_is_unchanged(monkeypatch) -> No
     assert item["item_ref"].startswith("incomplete:")
     assert item["run_ref"].startswith("run:")
     assert item["removable"] is True
+
+
+# ---- [2026-10-27] 共享字节只计一次 + 孤儿仓可见 ----
+
+
+@pytest.mark.asyncio
+async def test_workspace_size_excludes_run_hardlinks() -> None:
+    """session 的视频别名是 run 视频的硬链接，不能在工作区里再算一遍。
+
+    否则 /api/storage 把同一份字节算进 analysis_artifacts 和 run_video
+    两个分类（实测虚报 35%），自动清理也会按虚高用量提前触发。
+    """
+    from webapp.backend.workspace import session_dir, workspace_size_bytes
+
+    run = await kovaak_run_store.upsert_kovaak_run(user_id="u1", source_key="hardlink")
+    sid = await queue.enqueue(
+        "u1", "", "", input_mode="telemetry_multimodal", kovaak_run_id=run["id"],
+    )
+    run_root = config.DATA_ROOT / "runs" / str(run["id"])
+    run_root.mkdir(parents=True, exist_ok=True)
+    shared = run_root / "video-shared.mp4"
+    shared.write_bytes(b"v" * 64)
+    workspace = session_dir(sid)
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "derived.bin").write_bytes(b"d" * 10)
+    os.link(shared, workspace / "video.mp4")
+
+    assert workspace_size_bytes(sid) == 10
+
+
+@pytest.mark.asyncio
+async def test_storage_usage_counts_orphan_quarantine() -> None:
+    """runs/orphans/ 的隔离产物不属于任何 run，但确实占盘，必须可见。
+
+    实测线上有 72 个 mp4 共 3.0GB 躺在这里，storage 完全看不到。
+    """
+    orphans = config.DATA_ROOT / "runs" / "orphans"
+    orphans.mkdir(parents=True, exist_ok=True)
+    (orphans / "video-dead.mp4").write_bytes(b"o" * 32)
+    (orphans / "trace-dead.bin").write_bytes(b"t" * 8)
+
+    usage = await kovaak_run_store.run_storage_usage("u1", config.DATA_ROOT)
+
+    # 孤儿仓单列一类：它够不到"未完成采集"的明细与删除入口，混进
+    # incomplete_recovery 会让分类数字和列表对不上。
+    assert usage == {
+        "run_video_bytes": 0,
+        "run_raw_bytes": 0,
+        "incomplete_recovery_bytes": 0,
+        "orphan_quarantine_bytes": 40,
+    }

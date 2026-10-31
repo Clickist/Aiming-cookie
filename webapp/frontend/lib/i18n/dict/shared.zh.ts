@@ -193,6 +193,7 @@ export const sharedZh = {
   "settings.storage.runVideo": "Run 录像",
   "settings.storage.runRaw": "Raw trace",
   "settings.storage.incomplete": "未完成采集",
+  "settings.storage.orphanQuarantine": "隔离区（不可清理）",
 
   // lib/metric-format.ts 与 lib/contracts.ts 共享的限制说明（批 1；两文件的
   // 同码同值条目共用一个键，字典是单一事实源）

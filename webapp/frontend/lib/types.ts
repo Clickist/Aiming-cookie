@@ -1281,6 +1281,7 @@ export interface StorageCategoryTotals {
   run_video_bytes: number;
   run_raw_bytes: number;
   incomplete_recovery_bytes: number;
+  orphan_quarantine_bytes: number;
 }
 
 export interface RunEvidenceRemovalResponse {

@@ -706,7 +706,8 @@ export const STORAGE: StorageResponse = {
     analysis_artifacts_bytes: 180_000_000,
     run_video_bytes: 2_000_000_000,
     run_raw_bytes: 300_000_000,
-    incomplete_recovery_bytes: 20_000_000,
+    incomplete_recovery_bytes: 0,
+    orphan_quarantine_bytes: 20_000_000,
   },
   sessions: [{ session_id: 42, status: "done", created_at: NOW, workspace_bytes: 180_000_000 }],
 };

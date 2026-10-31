@@ -1445,6 +1445,7 @@ async def test_storage_and_run_evidence_removal_are_desktop_only_and_path_free(
         "run_video_bytes": video_bytes,
         "run_raw_bytes": 0,
         "incomplete_recovery_bytes": 0,
+        "orphan_quarantine_bytes": 0,
     }
     assert storage.json()["total_bytes"] == len(b"analysis-bytes") + video_bytes
     assert removed.status_code == 200, removed.text

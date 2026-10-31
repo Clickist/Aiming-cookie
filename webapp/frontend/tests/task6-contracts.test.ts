@@ -34,17 +34,19 @@ test("Coach context presentation is allow-listed and deleted refs stay unavailab
   assert.doesNotMatch(JSON.stringify(context), /path|raw|video_path|token|secret/);
 });
 
-test("Storage maps exactly four categories without inventing cleanup", () => {
+test("Storage maps exactly the backend categories without inventing cleanup", () => {
   assert.deepEqual(presentStorageCategories({
     analysis_artifacts_bytes: 1,
     run_video_bytes: 2,
     run_raw_bytes: 3,
     incomplete_recovery_bytes: 4,
+    orphan_quarantine_bytes: 5,
   }), [
     ["分析产物", 1],
     ["Run 录像", 2],
     ["Raw trace", 3],
     ["未完成采集", 4],
+    ["隔离区（不可清理）", 5],
   ]);
 });
 

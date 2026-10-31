@@ -3940,6 +3940,7 @@ async def test_storage_usage_classifies_run_video_raw_and_recovery_without_sourc
         "run_video_bytes": video.stat().st_size + receipt.stat().st_size,
         "run_raw_bytes": trace.stat().st_size,
         "incomplete_recovery_bytes": recovery.stat().st_size,
+        "orphan_quarantine_bytes": 0,
     }
     assert stats.read_bytes() == b"user-stats-source"
     assert performance.read_bytes() == b"user-performance-source"

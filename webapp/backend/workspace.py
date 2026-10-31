@@ -57,14 +57,22 @@ _WORKSPACE_SIZE_LEDGER: dict[str, tuple[int, int]] = {}
 
 
 def _measure_workspace(path: Path) -> int:
-    """Pure read/scan: sum managed workspace file sizes."""
+    """Pure read/scan: sum managed workspace file sizes.
+
+    多链接文件（nlink>1）不计入：run 视频被硬链接成工作区别名后，字节实际
+    归属 runs/{id}/，两边各算一次会让存储页虚报、并让自动清理按虚高的用量
+    提前触发。共享字节只在归属侧计一次。
+    """
     total = 0
     for root, _, files in os.walk(path):
         for name in files:
             try:
-                total += (Path(root) / name).stat().st_size
+                stat_result = (Path(root) / name).stat()
             except OSError:
                 continue
+            if stat_result.st_nlink > 1:
+                continue
+            total += stat_result.st_size
     return total
 
 

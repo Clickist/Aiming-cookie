@@ -190,6 +190,7 @@ export const sharedEn = {
   "settings.storage.runVideo": "Run videos",
   "settings.storage.runRaw": "Raw traces",
   "settings.storage.incomplete": "Incomplete captures",
+  "settings.storage.orphanQuarantine": "Quarantine (not cleanable)",
 
   // lib/metric-format.ts 与 lib/contracts.ts 共享的限制说明（批 1）
   "metric.limitation.exactScenarioGate": "Applies only to the current reviewed scenario at 1920×1080 with a single-target layout.",
