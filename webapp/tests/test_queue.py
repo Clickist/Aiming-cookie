@@ -683,6 +683,45 @@ async def test_requeue_failed_session_for_retry(tmp_path):
         await queue.requeue_for_retry(retry_id)
     assert ei2.value.code == "missing_video"
 @pytest.mark.asyncio
+async def test_retry_preserves_input_native_video_alias(tmp_path):
+    """input_native 的重试也要带上回放视频。
+
+    回放与档位解耦后 input_native 的 session 有 video.mp4 别名；重试若沿用
+    旧集合（只 copy video_fallback/multimodal/telemetry_multimodal），重试
+    产物会丢掉回放。
+    """
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x" * 16)
+    sid = await queue.enqueue(
+        "u1", "", "",
+        input_mode="input_native",
+        input_snapshot={"schema_version": "analysis_input_snapshot.v2"},
+        status="uploading",
+    )
+    assert await queue.set_session_input_paths(sid, "u1", str(video), "")
+    assert await queue.finish_upload(sid)
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(
+        sid,
+        build_error_v1(
+            category="internal_unknown",
+            code="analysis_failed",
+            message="分析失败，请重试；若持续失败请联系维护者。",
+            retryable=False,
+            trace_id=None,
+        ),
+        worker_id=TEST_WORKER,
+    )
+
+    retried = await queue.requeue_for_retry(sid)
+
+    copied = Path(retried["video_path"])
+    assert copied.is_file()
+    assert copied.read_bytes() == video.read_bytes()
+    assert copied != video
+
+
+@pytest.mark.asyncio
 async def test_retry_copy_failure_rolls_back_and_cleans_workspace(
     monkeypatch,
     tmp_path,

@@ -632,7 +632,10 @@ async def requeue_for_retry(session_id: int) -> dict:
     try:
         copied_video = None
         copied_csv = None
-        if input_mode in {"video_fallback", "multimodal", "telemetry_multimodal"}:
+        # input_native 也带视频别名：回放资产与档位解耦（PRD §14）。
+        if input_mode in {
+            "video_fallback", "multimodal", "telemetry_multimodal", "input_native",
+        }:
             if source.get("video_path"):
                 copied_video = session_dir(new_id) / "video.mp4"
                 copy_path_to_path(Path(source["video_path"]), copied_video)

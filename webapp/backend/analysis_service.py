@@ -1202,8 +1202,12 @@ async def create_analysis_from_run(
         managed_video = ""
         managed_csv = ""
         workspace = session_dir(session_id)
-        # telemetry_multimodal 与 multimodal 同为视频参与档：工作区视频别名照常冻结。
-        uses_video = selected_mode in {"multimodal", "video_fallback", "telemetry_multimodal"}
+        # 视频别名是回放资产、不是分析输入：遥测/视频档照常冻结，input_native
+        # 也建别名——档位收敛后 input_native 接手了"有视频但无遥测"的局，MP4
+        # 仍要能给人看（PRD §14）。
+        uses_video = selected_mode in {
+            "multimodal", "video_fallback", "telemetry_multimodal", "input_native",
+        }
         if uses_video and managed_video_source is not None:
             video_destination = workspace / "video.mp4"
             try:

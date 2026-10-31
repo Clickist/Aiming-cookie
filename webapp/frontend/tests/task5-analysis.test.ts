@@ -451,8 +451,21 @@ test("workspace presents only known Switching identifiers as natural user text",
 
 test("native-only and multimodal visual failure remain honest without erasing native results", () => {
   const native = result({ input_mode: "input_native" });
-  assert.equal(presentAnalysisWorkspace(session({ input_mode: "input_native", result: native }))?.input.preview, true);
-  assert.equal(presentAnalysisWorkspace(session({ input_mode: "input_native", result: native }))?.video.kind, "native-only");
+  const legacyNative = session({ input_mode: "input_native", result: native });
+  legacyNative.history!.visual_replay = {
+    kind: "native_only",
+    available: false,
+    seekable: false,
+    endpoint: null,
+    artifact_ref: null,
+    reason: "input_native_has_no_visual_replay",
+  };
+  assert.equal(presentAnalysisWorkspace(legacyNative)?.input.preview, true);
+  assert.equal(presentAnalysisWorkspace(legacyNative)?.video.kind, "native-only");
+
+  // 回放不再按档位否决：input_native 只要后端给出可回放 MP4 就能播。
+  const replayableNative = session({ input_mode: "input_native", result: native });
+  assert.equal(presentAnalysisWorkspace(replayableNative)?.video.kind, "seekable");
 
   const visualUnavailable = session();
   visualUnavailable.history!.visual_replay = {

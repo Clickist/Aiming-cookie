@@ -2320,7 +2320,11 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert result["evidence"]["sources"]["raw_input"]["parser_or_format_version"] == 1
     assert result["evidence"]["sources"]["stats"]["parser_or_format_version"] == "kovaak_stats.v1"
     assert result["evidence"]["sources"]["performance"]["parser_or_format_version"] == "kovaak_performance.v1"
-    assert "mp4" not in result["evidence"]["sources"]
+    # 回放与档位解耦：有冻结视频别名时挂回放级 mp4 证据，但视频不参与任何
+    # 运动学计算（CV 未调用），也不作为分析输入披露。
+    assert result["evidence"]["sources"]["mp4"]["role"] == "visual_replay_only"
+    assert result["evidence"]["sources"]["mp4"]["artifact_ref"] == "analysis:101:video"
+    assert result["evidence"]["sources"]["mp4"]["availability"] == "available"
     assert "video" not in result["input_snapshot"]["sources"]
     assert result["input_snapshot"]["trace"] == {
         "artifact_ref": "run:42:trace",
@@ -2376,9 +2380,16 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert entries["analysis:101"]["local_only"] is True
     assert entries["analysis:101"]["format_version"] == "analysis_result.v2"
     assert set(entries["analysis:101"]["derived_from"]) == {
-        "run:42:stats", "run:42:performance", "run:42:trace",
+        "run:42:stats", "run:42:performance", "run:42:trace", "analysis:101:video",
     }
-    assert all(entry["kind"] != "mp4" for entry in entries.values())
+    # 回放视频进 manifest，ownership=analysis（本分析冻结的别名），
+    # 但不进 derived_from 之外的任何分析输入语义。
+    assert entries["analysis:101:video"]["kind"] == "mp4"
+    assert entries["analysis:101:video"]["source"] == "mp4"
+    assert entries["analysis:101:video"]["ownership"] == "analysis"
+    assert entries["analysis:101:video"]["managed"] is True
+    assert entries["analysis:101:video"]["local_only"] is True
+    assert entries["analysis:101:video"]["format_version"] == "mp4"
     issue = public_deterministic["diagnosis"]["issues"][0]
     assert issue["signal"] == "decel_frac high"
     assert issue["severity"] == "info"
@@ -2389,6 +2400,39 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert "observation_ref" not in issue
     assert "knowledge_registry_version" not in issue
     assert "knowledge_entry_refs" not in issue
+
+
+def test_outcome_only_input_native_attaches_replay_evidence():
+    """input_native 的 outcome-only 也挂回放级 mp4 证据（档位不否决回放）。"""
+    job = {
+        "id": 205,
+        "user_id": "u1",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": _native_snapshot(),
+        "video_path": "/managed/session/video.mp4",
+        "csv_path": "",
+    }
+
+    result = worker._build_outcome_only_result_v2(
+        job,
+        created_at="2026-07-13 12:00:00",
+        completed_at="2026-07-13 12:00:10",
+    )
+
+    mp4 = result["evidence"]["sources"]["mp4"]
+    assert mp4["availability"] == "available"
+    assert mp4["artifact_ref"] == "analysis:205:video"
+    assert result["evidence"]["availability"]["mp4"] == "available"
+    entries = {
+        entry["id"]: entry
+        for entry in result["artifact_manifest"]["external_inputs"]
+    }
+    assert entries["analysis:205:video"]["kind"] == "mp4"
+    assert entries["analysis:205:video"]["ownership"] == "analysis"
+    assert entries["analysis:205:video"]["availability"] == "available"
+    # 视频不作为分析输入披露。
+    assert "video" not in result["input_snapshot"]["sources"]
 
 
 @pytest.mark.asyncio

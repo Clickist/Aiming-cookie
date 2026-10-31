@@ -745,21 +745,19 @@ def _manifest_is_path_free(value: object) -> bool:
 
 
 def visual_replay_capability(session: dict) -> dict[str, object]:
+    """MP4 回放能力，与"本档是否用视频做分析"解耦。
+
+    档位收敛后 input_native 接手了"有视频但无遥测"的局，MP4 只承担给人看的
+    回放（PRD §14），所以判定只看"有可校验 MP4 + 有托管文件"，不看档位。
+    历史 input_native 分析（结果里从未记录 mp4 证据）保持 native_only，
+    不会因为本轮语义变更被误报成"视频丢了"。
+    """
     session_id = int(session["id"])
     input_mode = session.get("input_mode") or "video_fallback"
-    if input_mode == "input_native":
-        return {
-            "kind": "native_only",
-            "available": False,
-            "seekable": False,
-            "endpoint": None,
-            "artifact_ref": None,
-            "reason": "input_native_has_no_visual_replay",
-        }
-
     result = session.get("result")
     artifact_ref: str | None = None
     contracted = False
+    mp4_evidence_seen = False
     if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
         evidence = result.get("evidence") or {}
         sources = evidence.get("sources") or {}
@@ -769,6 +767,7 @@ def visual_replay_capability(session: dict) -> dict[str, object]:
             and mp4.get("source") == "mp4"
             and mp4.get("availability") in {"available", "unavailable"}
         ):
+            mp4_evidence_seen = True
             candidate_ref = mp4.get("artifact_ref")
             stable_ref = (
                 isinstance(candidate_ref, str)
@@ -828,6 +827,17 @@ def visual_replay_capability(session: dict) -> dict[str, object]:
             "endpoint": f"/api/sessions/{session_id}/video",
             "artifact_ref": artifact_ref,
             "reason": None,
+        }
+    if input_mode == "input_native" and not mp4_evidence_seen:
+        # 历史 input_native（档位收敛前）从不记录 mp4 证据：本档无回放是事实，
+        # 不是视频丢失。
+        return {
+            "kind": "native_only",
+            "available": False,
+            "seekable": False,
+            "endpoint": None,
+            "artifact_ref": None,
+            "reason": "input_native_has_no_visual_replay",
         }
     return {
         "kind": "unavailable",

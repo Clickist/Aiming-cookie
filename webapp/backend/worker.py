@@ -1369,6 +1369,7 @@ def _native_v2_evidence(
     snapshot: dict,
     analysis_id: str,
     video_availability: str | None = None,
+    video_role: str = "visual_evidence",
 ) -> dict:
     native_evidence = native_result.get("evidence") or {}
     source_values = native_evidence.get("sources") or {}
@@ -1380,7 +1381,7 @@ def _native_v2_evidence(
     if video_availability is not None:
         sources["mp4"] = {
             "source": "mp4",
-            "role": "visual_evidence",
+            "role": video_role,
             "availability": video_availability,
             "artifact_ref": f"{analysis_id}:video",
             "parser_or_format_version": "mp4",
@@ -1947,9 +1948,12 @@ def _build_outcome_only_result_v2(
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution") or {}
     input_mode = _execution_input_mode(job.get("input_mode"), default="video_fallback")
-    include_video = input_mode in {"multimodal", "video_fallback"}
+    # 回放不依赖分析档：input_native 有冻结视频别名时同样挂 mp4 证据。
+    include_video = input_mode in {"multimodal", "video_fallback"} or (
+        input_mode == "input_native" and bool(job.get("video_path"))
+    )
     public_snapshot = public_analysis_input_snapshot(snapshot)
-    if input_mode == "input_native":
+    if input_mode == "input_native" and not include_video:
         public_snapshot.get("sources", {}).pop("video", None)
     owner_id, local_profile = _result_owner(job)
     run_id = job.get("kovaak_run_id") or snapshot.get("run_id")
@@ -2371,7 +2375,8 @@ def _build_native_result_v2(
         public_snapshot["calibration"] = dict(calibration)
     if input_mode == "input_native":
         # 保留“不可用 + 原因”的视频证据桩（若有）：结果与 disclosure 才能
-        # 区分用户未录制与录制管线故障（如 video_coverage_gap）。
+        # 区分用户未录制与录制管线故障（如 video_coverage_gap）。可用视频
+        # 不作为输入披露——它只是回放资产，走 evidence.sources.mp4。
         video_stub = public_snapshot.get("sources", {}).get("video")
         if not (
             isinstance(video_stub, dict)
@@ -2400,6 +2405,11 @@ def _build_native_result_v2(
             snapshot=snapshot,
             analysis_id=analysis_id,
             video_availability=video_availability,
+            video_role=(
+                "visual_replay_only"
+                if input_mode == "input_native"
+                else "visual_evidence"
+            ),
         ),
         deterministic=deterministic,
         artifact_manifest=_native_artifact_manifest_v2(
@@ -3759,7 +3769,13 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
                 snapshot = job.get("input_snapshot")
                 if isinstance(snapshot, dict):
                     snapshot["calibration"] = dict(native_result["calibration"])
-            video_availability = None
+            # input_native 的回放视频独立于分析：工作区有冻结别名就挂 mp4
+            # 证据（role=visual_replay_only），没有则保持 None 不出证据。
+            video_availability = (
+                "available"
+                if input_mode == "input_native" and job.get("video_path")
+                else None
+            )
             warnings: list[dict] = []
             visual_validation = None
             snapshot = job.get("input_snapshot") or {}
@@ -3840,10 +3856,16 @@ async def _execute_claimed_job(job: dict, sid: int) -> None:
             if scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS:
                 # The baseline tier consumes no visual measurement, but the
                 # managed MP4 stays replayable: attach the video evidence
-                # reference when the workspace video exists.
+                # reference when the workspace video exists. input_native 同样
+                # 建别名（档位收敛后它接手"有视频但无遥测"的局）。
+                # input_native 无视频时不给 None 以外的值：无 MP4 不出 mp4
+                # 证据，回放判定保持"本档无回放"（native_only），不会误报
+                # 成"视频丢了"。
                 baseline_video_availability = (
                     ("available" if job.get("video_path") else "unavailable")
                     if input_mode == "multimodal"
+                    else ("available" if job.get("video_path") else None)
+                    if input_mode == "input_native"
                     else None
                 )
                 result = _build_clicking_baseline_result_v2(

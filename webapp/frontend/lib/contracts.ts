@@ -520,10 +520,12 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     }];
   });
   const replay = session.history?.visual_replay;
-  const videoKind = result.input_mode === "input_native"
-    ? "native-only"
-    : replay?.kind === "seekable_mp4"
-      ? "seekable"
+  // 回放能力由后端按其持有的 MP4 判定，不再按分析档位推导：input_native
+  // 同样可能有可回放的 MP4（档位收敛后它接手"有视频但无遥测"的局）。
+  const videoKind = replay?.kind === "seekable_mp4"
+    ? "seekable"
+    : replay?.kind === "native_only"
+      ? "native-only"
       : "unavailable";
   const calibration = result.input_snapshot.calibration;
   const limitations = Array.from(new Set([

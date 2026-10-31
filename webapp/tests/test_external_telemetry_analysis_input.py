@@ -417,6 +417,33 @@ async def test_create_analysis_stays_fail_closed_without_telemetry(tmp_path: Pat
     assert "video_missing" in exc_info.value.message
 
 
+@pytest.mark.asyncio
+async def test_create_analysis_input_native_links_run_video_for_replay(tmp_path: Path):
+    """input_native 也要冻结视频别名：回放与档位解耦（PRD §14）。
+
+    档位收敛后 input_native 接手"有视频但无遥测"的局，视频不再参与分析，
+    但必须能给人看——session 工作区要有 run 视频的硬链接。
+    """
+    from webapp.backend import analysis_service, queue
+    from webapp.backend.workspace import session_dir
+
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="native-replay-create",
+    )
+    await _attach_run_video(run)
+
+    created = await analysis_service.create_analysis_from_run("u1", run["id"])
+
+    session = await queue.get_session(created["session_id"])
+    assert session["input_mode"] == "input_native"
+    alias = session_dir(created["session_id"]) / "video.mp4"
+    assert Path(session["video_path"]) == alias
+    assert alias.is_file()
+    # 硬链接：回放不额外占盘，删除分析只摘链接、不动 run 证据。
+    run_video = Path((await kovaak_run_store.get_kovaak_run(run["id"], "u1"))["video_path"])
+    assert alias.samefile(run_video)
+
+
 # ------------------------------------------------------------------ 切窗在途的有界等待
 
 

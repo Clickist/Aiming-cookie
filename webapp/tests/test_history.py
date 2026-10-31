@@ -732,8 +732,14 @@ async def test_visual_evidence_failure_does_not_disable_managed_mp4_replay(
     ),
     [
         pytest.param(
-            "input_native", True, False, "native_only",
-            "input_native_has_no_visual_replay", id="native-only",
+            # 历史 input_native 分析（结果里没有 mp4 证据）：本档无回放是事实。
+            "input_native", False, False, "native_only",
+            "input_native_has_no_visual_replay", id="legacy-native-only",
+        ),
+        pytest.param(
+            # input_native 有 mp4 证据但托管文件已丢：诚实报视频不可用。
+            "input_native", True, True, "unavailable",
+            "run_owned_video_unavailable", id="input-native-missing-mp4",
         ),
         pytest.param(
             "multimodal", True, True, "unavailable",
@@ -777,7 +783,7 @@ async def test_analysis_detail_replay_gate_rejects_non_seekable_cases(
     assert replay["seekable"] is False
     assert replay["endpoint"] is None
     assert replay["reason"] is not None
-    if input_mode == "input_native" or not include_mp4:
+    if not include_mp4:
         assert replay["artifact_ref"] is None
     assert video_response.status_code == 410
     assert video_response.json() == {
@@ -785,6 +791,40 @@ async def test_analysis_detail_replay_gate_rejects_non_seekable_cases(
         "availability": "unavailable",
         "reason": expected_reason,
     }
+
+
+@pytest.mark.asyncio
+async def test_input_native_with_managed_mp4_stays_replayable(tmp_path: Path):
+    """回放与档位解耦：input_native 有托管 MP4 时同样可回放（PRD §14）。
+
+    档位收敛后 input_native 接手"有视频但无遥测"的局，MP4 只承担回放；
+    这里钉住"档位不再是回放的否决条件"。
+    """
+    user_id = "u_replay_input_native"
+    sid, _, _, _, _ = await _seed_v2_history_analysis(
+        tmp_path,
+        user_id=user_id,
+        input_mode="input_native",
+        include_mp4=True,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": user_id},
+    ) as client:
+        detail = await client.get(f"/api/sessions/{sid}")
+        video_response = await client.get(f"/api/sessions/{sid}/video")
+
+    assert detail.status_code == 200, detail.text
+    replay = detail.json()["history"]["visual_replay"]
+    assert replay["kind"] == "seekable_mp4"
+    assert replay["available"] is True
+    assert replay["seekable"] is True
+    assert replay["endpoint"] == f"/api/sessions/{sid}/video"
+    assert replay["artifact_ref"] == f"analysis:{sid}:video"
+    assert replay["reason"] is None
+    assert video_response.status_code == 200
 
 
 @pytest.mark.asyncio
