@@ -1704,10 +1704,60 @@ async def test_stale_rebuild_reenqueue_keeps_attached_trace(
     ))
 
     assert rerun["id"] == run["id"]
-    assert rerun["finalization_error"] == "video_replay_expired"
+    # [2026-10-27] 已终态且源 revision 未变的局在补跑里直接早退：证据不再重走
+    # 一遍解析，也不写 video_replay_expired——视频与轨迹都已 attached，这条
+    # "回放窗过期"的判词与事实相反。trace 自愈仍走未 attached 的分支。
+    assert rerun["finalization_error"] is None
     assert rerun["video_state"] == "attached"
     assert rerun["trace_state"] == "attached"
     assert rerun["trace_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_settled_run_skips_reingest_on_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重启补跑不再重走已终态且源未变的局。
+
+    watcher 的已发射集合只在内存，重启会把最近 50 个/目录重发一遍；这些局
+    每次都要重新解析 CSV + 哈希 + 写 meta，启动期串行占满事件循环（实测
+    100 局 ~130s，期间 API 不响应）。早退后 ingest 一次都不该发生。
+    """
+    start = int(time.time() * 1000) - 60_000
+    _configure_parsers(monkeypatch, start_epoch_ms=start, time_limit=60.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": start + 30_000, "dx": 1, "dy": 1, "buttons": 0},
+    ])
+    finalizer = _finalizer(tmp_path, FakeNativeCaptureClient(tmp_path / "data"), raw_snapshot=raw)
+    discovery = KovaaKFileDiscovery(
+        stem="settled-run",
+        stats_path=stats,
+        performance_path=performance,
+    )
+    run = await finalizer.finalize(discovery)
+    assert run["finalization_state"] == "finalized"
+    assert run["video_state"] == "attached"
+    assert run["trace_state"] == "attached"
+
+    calls = {"ingest": 0}
+    real_ingest = kovaak_run_store.ingest_discovery
+
+    async def counting_ingest(*args, **kwargs):
+        calls["ingest"] += 1
+        return await real_ingest(*args, **kwargs)
+
+    monkeypatch.setattr(kovaak_run_store, "ingest_discovery", counting_ingest)
+    rerun = await finalizer.finalize(discovery)
+
+    assert calls["ingest"] == 0, "settled run must not be re-ingested on restart"
+    assert rerun["id"] == run["id"]
+    assert rerun["finalization_state"] == "finalized"
 
 
 @pytest.mark.asyncio

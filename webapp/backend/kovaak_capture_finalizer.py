@@ -74,6 +74,60 @@ def _source_revision(summary: object) -> dict[str, object] | None:
     return {field: source[field] for field in fields}
 
 
+def _sources_unchanged(run: dict, discovery: KovaaKFileDiscovery) -> bool:
+    for path, summary_key in (
+        (discovery.stats_path, "stats_summary"),
+        (discovery.performance_path, "performance_summary"),
+    ):
+        if path is None:
+            continue
+        revision = _source_revision(run.get(summary_key))
+        if revision is None:
+            return False
+        try:
+            stat = Path(path).stat()
+        except OSError:
+            return False
+        if (
+            revision["size"] != stat.st_size
+            or revision["mtime_ns"] != stat.st_mtime_ns
+        ):
+            return False
+    return True
+
+
+def _run_is_already_settled(run: dict, discovery: KovaaKFileDiscovery) -> bool:
+    """已终态且源文件未变：重启补跑可以安全跳过。
+
+    只认"证据全部终态"的局（video attached/unavailable + trace attached）。
+    trace 未 attached 的局不进早退——补跑预判里的 heal-from-disk 还要靠
+    它自愈历史版本清掉的切片。
+    """
+    if run.get("finalization_state") != "finalized":
+        return False
+    if run.get("video_state") not in {"attached", "unavailable"}:
+        return False
+    if run.get("trace_state") != "attached":
+        return False
+    return _sources_unchanged(run, discovery)
+
+
+def _window_is_stale(run: dict, now_ms: int) -> bool:
+    """补跑预判的窗口条件：30 天活动窗内且终点早于回放覆盖下界。"""
+    start_ms = run.get("window_start_epoch_ms")
+    end_ms = run.get("window_end_epoch_ms")
+    if (
+        isinstance(start_ms, bool) or not isinstance(start_ms, int)
+        or isinstance(end_ms, bool) or not isinstance(end_ms, int)
+    ):
+        return False
+    return (
+        now_ms - _REPLAY_REBUILD_ACTIVITY_WINDOW_MS
+        < end_ms
+        < now_ms - kovaak_run_store.MAX_CAPTURE_WINDOW_MS
+    )
+
+
 def _request_identity(run: dict) -> tuple[str, str]:
     identity = {
         "run_id": run["id"],
@@ -238,6 +292,24 @@ class KovaaKCaptureFinalizer:
                 "source deleted by user", code="source_deleted_by_user",
             )
         ingest_started = time.monotonic()
+        # [fix 2026-10-27] 启动补跑早退：watcher 的已发射集合只在内存，重启后
+        # 会把最近 50 个/目录（共 100 个）重新送进来；已终态且源 revision 未变
+        # 的局再走一遍解析+哈希，会在启动期串行占满事件循环（实测 100 局
+        # ~130s，期间 API 完全不响应）。这里只跳过"证据已终态"的局——trace
+        # 未 attached 的仍需下沉到 heal-from-disk。
+        existing = await kovaak_run_store.get_kovaak_run_by_source_key(
+            self._user_id, source_key,
+        )
+        if existing is not None and _run_is_already_settled(existing, discovery):
+            return existing
+        # 解析前截胡过期局：这些局注定走补跑预判终态，整轮 CSV 解析 + 哈希
+        # 全是白费。启动补跑 145s 里最大的一块就在这里（30 个旧局 × ~4.8s）。
+        if (
+            existing is not None
+            and _sources_unchanged(existing, discovery)
+            and _window_is_stale(existing, int(time.time() * 1000))
+        ):
+            return await self._settle_stale_replay(existing)
         merged = await self._merge_discovery(discovery)
         trace_pending: RetryableIngestionError | None = None
         try:
@@ -328,34 +400,14 @@ class KovaaKCaptureFinalizer:
         # 的 300s）」时截胡：更老的局量少且老路径终态语义本就正确；刚打完的
         # 局（窗口终点距现在秒级）不受影响。时间源 wall clock，预判不抛错。
         now_ms = int(time.time() * 1000)
-        if (
-            now_ms - _REPLAY_REBUILD_ACTIVITY_WINDOW_MS
-            < end_epoch_ms
-            < now_ms - kovaak_run_store.MAX_CAPTURE_WINDOW_MS
-        ):
+        if _window_is_stale(run, now_ms):
             # [fix 2026-10-09] 补跑预判只补终态，不清既有证据，可自愈：
             # mark_run_video_unavailable 对 attached 视频自保护，而 trace 侧
             # 此前被无条件翻转——v1.4.5~v1.4.9 每次重启补跑都会把近期局已
             # attach 的 Raw 轨迹清成 unavailable（10-09 报障实锤：更新重启后
             # 前一晚的局全部 Raw 不可用）。现在 attached 不翻转；已被历史
             # 版本清掉的局，磁盘上仍留有窗口切片文件时回挂自愈。
-            if run.get("trace_state") != "attached":
-                healed = await kovaak_run_store.reattach_mouse_trace_from_disk(
-                    run["id"], self._user_id,
-                )
-                if healed is not None:
-                    run = healed
-                else:
-                    # 已有细分终态判词的局不被粗判词覆盖（heal-from-disk
-                    # 优先级不变）；pending/none 照旧翻转。
-                    run = await kovaak_run_store.mark_mouse_trace_unavailable(
-                        run["id"], self._user_id, "trace_snapshot_out_of_coverage",
-                        preserve_fine_verdict=True,
-                    ) or run
-            run = await kovaak_run_store.mark_run_video_unavailable(
-                run["id"], self._user_id, "video_replay_expired",
-            ) or run
-            return await self._finish_or_retry_trace(run, None, "video_replay_expired")
+            return await self._settle_stale_replay(run)
 
         # 挑战窗有效即触发按局增量遥测切窗（与 mp4/raw-input 同一收尾时机；
         # 服务侧幂等去重 + fire-and-forget，失败不影响本函数）。
@@ -605,6 +657,29 @@ class KovaaKCaptureFinalizer:
             )
             return current or run, error
         return attached, None
+
+    async def _settle_stale_replay(self, run: dict) -> dict:
+        """补跑预判终态：heal-from-disk（能自愈就回挂）+ 过期标记 + 收尾。
+
+        解析前后两个调用点共用：解析前调用可以整轮跳过 CSV 解析/哈希。
+        """
+        if run.get("trace_state") != "attached":
+            healed = await kovaak_run_store.reattach_mouse_trace_from_disk(
+                run["id"], self._user_id,
+            )
+            if healed is not None:
+                run = healed
+            else:
+                # 已有细分终态判词的局不被粗判词覆盖（heal-from-disk
+                # 优先级不变）；pending/none 照旧翻转。
+                run = await kovaak_run_store.mark_mouse_trace_unavailable(
+                    run["id"], self._user_id, "trace_snapshot_out_of_coverage",
+                    preserve_fine_verdict=True,
+                ) or run
+        run = await kovaak_run_store.mark_run_video_unavailable(
+            run["id"], self._user_id, "video_replay_expired",
+        ) or run
+        return await self._finish_or_retry_trace(run, None, "video_replay_expired")
 
     async def _finish_or_retry_trace(
         self,

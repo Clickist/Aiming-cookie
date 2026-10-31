@@ -52,6 +52,7 @@ async def isolated_db():
     _runs._RUN_META_CACHE.clear()
     _runs._SESSION_LIGHT_CACHE.clear()
     _runs._LEDGER_VALIDATED_DIR_MTIME.clear()
+    _runs._ORPHAN_SPAN_CACHE.clear()
     _workspace._WORKSPACE_SIZE_LEDGER.clear()
     try:
         yield

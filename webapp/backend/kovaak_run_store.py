@@ -162,6 +162,8 @@ _STORAGE_LEDGER_KEY = "storage_ledger"
 # run_id -> 上次台账校验时的 run 目录 mtime（仅进程内；重启后首个读路径
 # 对全部 run 各付一次重算，即冷启动首次成本，见加载慢专项工作流 C）。
 _LEDGER_VALIDATED_DIR_MTIME: dict[int, int] = {}
+# 孤儿切片跨度的进程内索引：(目录签名, spans)。见 _load_orphan_spans。
+_ORPHAN_SPAN_CACHE: dict[str, tuple[tuple[int, int], list[tuple[Path, tuple[int, int]]]]] = {}
 
 
 def _run_root(data_root: str | Path, run_id: int) -> Path:
@@ -3141,13 +3143,31 @@ def _mouse_snapshot_span(path: Path) -> Optional[tuple[int, int]]:
 def _load_orphan_spans(
     orphans_dir: Path,
 ) -> list[tuple[Path, tuple[int, int]]]:
+    """孤儿切片的时间跨度索引（按目录签名缓存）。
+
+    每次启动补跑都会对几十个 trace 不可用的局尝试 heal-from-disk，每个局都
+    全量读一遍孤儿仓的 .bin（实测 234 个文件、单次数秒，30 个局累计 145s，
+    启动期把事件循环占满）。目录签名 = (mtime_ns, .bin 数量)：新增/删除切片
+    会变，同一批候选因此只扫一次。
+    """
     if not orphans_dir.is_dir():
         return []
+    key = str(orphans_dir)
+    try:
+        dir_stat = orphans_dir.stat()
+    except OSError:
+        return []
+    candidates = sorted(orphans_dir.glob("*.bin"))
+    signature = (dir_stat.st_mtime_ns, len(candidates))
+    cached = _ORPHAN_SPAN_CACHE.get(key)
+    if cached is not None and cached[0] == signature:
+        return list(cached[1])
     spans: list[tuple[Path, tuple[int, int]]] = []
-    for candidate in sorted(orphans_dir.glob("*.bin")):
+    for candidate in candidates:
         span = _mouse_snapshot_span(candidate)
         if span is not None:
             spans.append((candidate, span))
+    _ORPHAN_SPAN_CACHE[key] = (signature, list(spans))
     return spans
 
 
@@ -3239,7 +3259,10 @@ async def reattach_mouse_trace_from_disk(
         and not isinstance(end_ms, bool)
         and end_ms > start_ms
     ):
-        orphan_hit = _match_orphan_trace(
+        # 孤儿仓扫描是纯读 IO（234 个 .bin 读一次 ~2.7s），必须离开事件循环：
+        # 启动补跑会对几十个局连续 heal，留在 loop 上会把 API 卡住数秒。
+        orphan_hit = await asyncio.to_thread(
+            _match_orphan_trace,
             runs_root / "orphans", start_ms, end_ms, run_id, user_id,
         )
     candidates: list[tuple[Path, bool]] = [(path, False) for path in in_place]
