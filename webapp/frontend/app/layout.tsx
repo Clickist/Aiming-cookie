@@ -1,9 +1,12 @@
 import "../ui/theme.css";
+import "@openuidev/react-ui/layered/styles/index.css";
+import "../lib/openui/openui-theme.css";
 import "../components/task3/task3.css";
 import "../components/task4/task4.css";
 import "../components/task6/task6-settings.css";
 import "../components/task6/task6.css";
 import "../components/task7/session-rail.css";
+import "../components/task7/coach-presentation.css";
 
 import type { Metadata } from "next";
 import { Suspense, type ReactNode } from "react";

@@ -1,0 +1,44 @@
+/* Coach 讲解富展示区段（coach_presentation.v1）在消息气泡内的排版与失败呈现。 */
+
+.coach-presentation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.coach-openui-root {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-1) 0;
+}
+
+/* OpenUI 卡片/图表在窄侧栏内不产生横向溢出。 */
+.coach-openui-root .openui-card,
+.coach-openui-root .openui-chart-container {
+  max-width: 100%;
+}
+
+.coach-openui-notice {
+  display: block;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--divider-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+/* 流式中途生成状态：不遮挡已有内容，仅给一个轻量的可达性提示。 */
+.coach-openui-root[data-openui-state="rendering"] {
+  opacity: 0.92;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .coach-openui-root {
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+}

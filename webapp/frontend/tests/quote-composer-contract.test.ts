@@ -28,7 +28,7 @@ test("selection evaluation is anchored to a single non-streaming assistant artic
   assert.match(panel, /messageArticleFromNode\(selection\?\.anchorNode/);
   assert.match(panel, /messageArticleFromNode\(selection\?\.focusNode/);
   // 流式禁划：partial article 带 data-streaming，运行中才置 true
-  const partialChunk = chunkBetween(panel, "{run?.partial_text ?", "{run && [");
+  const partialChunk = chunkBetween(panel, 'data-streaming={composerBusy ? "true" : undefined}', "</article>");
   assert.match(partialChunk, /data-streaming=\{composerBusy \? "true" : undefined\}/);
 });
 

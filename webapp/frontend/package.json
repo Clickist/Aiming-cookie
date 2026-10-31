@@ -14,6 +14,8 @@
     "lint": "tsc --noEmit",
     "sync-types": "node scripts/sync-api-types.mjs",
     "sync-changelog": "node scripts/sync-changelog.mjs",
+    "sync:openui-skill": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs scripts/sync-openui-skill-reference.mjs",
+    "check:openui-skill": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs scripts/sync-openui-skill-reference.mjs --check",
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:contracts",
     "test:unit": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts mocks/*.test.ts",
@@ -23,6 +25,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@openuidev/react-lang": "^1.0.2",
+    "@openuidev/react-ui": "^0.18.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@tauri-apps/plugin-dialog": "^2.7.1",
@@ -31,7 +35,13 @@
     "@tauri-apps/plugin-updater": "^2.11.0",
     "next": "16.2.10",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "zod": "^4.6.7"
+  },
+  "overrides": {
+    "@openuidev/react-lang": "$@openuidev/react-lang",
+    "react": "$react",
+    "react-dom": "$react-dom"
   },
   "devDependencies": {
     "@playwright/test": "1.51.1",
@@ -40,7 +50,9 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/react-test-renderer": "^19.1.0",
     "openapi-typescript": "7.13.0",
+    "react-test-renderer": "^19.2.7",
     "tailwindcss": "4.3.2",
     "typescript": "^5.7.0"
   }

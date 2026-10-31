@@ -1373,6 +1373,9 @@ export interface CoachThreadMessageOut {
   context_refs?: CoachContextRefV1[];
   /** Legacy attach-era field; always absent in the file-based architecture. */
   cards?: CoachMessageCardV1[];
+  /** coach_presentation.v1 历史投影（ARCHITECTURE §5.3）：sidecar 从 JSONL
+      原文用同一分流器现算；缺省＝旧 sidecar，前端回退本地切分。 */
+  presentation?: unknown;
 }
 
 export type CoachAnalysisRefStatus = "active" | "deleted";
@@ -1521,6 +1524,7 @@ export interface CoachAgentRunV1 {
   status: "queued" | "running" | "succeeded" | "failed" | "stopped";
   phase: "queued" | "text_generation" | "tool_execution" | "completed";
   partial_text: string | null;
+  partial_presentation?: unknown;
   error: {
     domain: "network" | "model" | "permission" | "tool" | "coach_runtime";
     code: string;

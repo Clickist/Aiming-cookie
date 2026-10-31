@@ -67,14 +67,15 @@ test("streaming answer renders through the same text pipeline as final answers",
   const panel = await source("components/task6/CoachPanel.tsx");
   const activity = await source("components/task6/CoachRunActivity.tsx");
   // 流式文字不再裸渲染：批7（digests §10）起 partial 与最终答案同走受控富
-  // 渲染管线 CoachMessageText；流式光标经 tail 插到续写位，不游离在组件外。
-  // （旧断言锁单行 JSX 属性串，因批7 加 tail 属性换行而更新。）
-  const at = panel.indexOf("text={run.partial_text}");
-  assert.ok(at > -1, "streaming partial must render through CoachMessageText");
-  const start = panel.lastIndexOf("<CoachMessageText", at);
-  const end = panel.indexOf("/>", at);
-  const streamingBlock = panel.slice(Math.max(0, start), end);
-  assert.match(streamingBlock, /text=\{run\.partial_text\}/);
+  // 渲染管线 CoachPresentationText（文字段复用 CoachMessageText）；
+  // 流式光标经 tail 插到续写位，不游离在组件外。
+  const at = panel.indexOf("presentation={runPresentation(run)");
+  assert.ok(at > -1, "streaming partial must render through CoachPresentationText");
+  const start = panel.lastIndexOf("<CoachPresentationText", at);
+  const end = panel.indexOf("</article>", at);
+  const streamingBlock = panel.slice(start, end);
+  assert.match(streamingBlock, /text=\{run\.partial_text \?\? undefined\}/);
+  assert.match(await source("components/task7/CoachPresentationText.tsx"), /<CoachMessageText/);
   assert.match(streamingBlock, /task6-streaming-cursor/);
   // 归档回合渲染交错的思考段/工具段时序（0828：CoachWorkStream 统一呈现）
   assert.match(panel, /<CoachWorkStream segments=\{archivedTurn\.segments\} \/>/);

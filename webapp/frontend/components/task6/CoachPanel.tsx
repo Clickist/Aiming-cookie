@@ -67,7 +67,15 @@ import {
   snapshotQuote,
   type CoachQuote,
 } from "@/lib/quote";
-import { CoachMessageText } from "@/components/task7/CoachMessageText";
+import { CoachPresentationText } from "@/components/task7/CoachPresentationText";
+import {
+  asCoachPresentation,
+  generationStatusFromMessage,
+  generationStatusFromRunStatus,
+  mergeCoachPartialSnapshot,
+  type CoachPresentation,
+  type CoachUiActionV1,
+} from "@/lib/openui/presentation";
 import { CoachModelMenu } from "./CoachModelMenu";
 import { CoachWorkStream, ElapsedTicker, freezeThinkingSegment, settleTerminalWorkSegments, type CoachToolStep, type CoachWorkSegment } from "./CoachRunActivity";
 import type {
@@ -103,6 +111,14 @@ function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready
 // queued 态的"等待开始"同款，落 run 后无缝换成真实事件流（0910 死窗修复）。
 // 计时起点在发送时写入 pendingRunStartAtRef（走表，0912 审计），故段在
 // 渲染处内联构造，不再是模块常量。
+
+/**
+ * sidecar 的 coach_presentation.v1 投影（旧版本 sidecar 无此字段）：
+ * 形状校验通过才交给展示层，否则回退到 partial_text 兼容切分。
+ */
+function runPresentation(run: CoachAgentRunV1): CoachPresentation | null {
+  return asCoachPresentation(run.partial_presentation);
+}
 
 function runErrorTitle(error: CoachAgentRunV1["error"]): string {
   switch (error?.domain) {
@@ -1859,7 +1875,7 @@ export function CoachPanel({
           // partial 帧同时携带 text 与 thinking_text（思考帧的 text 为 null 或
           // 重发的最新正文）。thinking_text＝当前思考段全文（full-replace），
           // 写进最后一个流式思考段；首个非空回答 token 冻结思考段时长。
-          const data = JSON.parse(event.data) as { text?: unknown; thinking_text?: unknown };
+          const data = JSON.parse(event.data) as { text?: unknown; thinking_text?: unknown; presentation?: unknown };
           const thinking = typeof data.thinking_text === "string" ? data.thinking_text : "";
           if (thinking.trim()) {
             setLiveSegments((current) => {
@@ -1903,11 +1919,9 @@ export function CoachPanel({
               return next;
             });
           }
-          if (typeof data.text === "string") {
-            // 正文增量只更新正文；思考段的冻结交给轮边界 activity / tool /
-            // settle——同轮内 thinking 与 text 可能交替，这里冻结会撕裂段落。
-            setRun((prev) => (prev ? { ...prev, partial_text: data.text as string } : prev));
-          }
+          // 正文增量只更新正文与展示快照；思考段的冻结交给轮边界 activity /
+          // tool / settle——同轮内 thinking 与 text 可能交替。
+          setRun((prev) => prev?.run_ref === runRef ? mergeCoachPartialSnapshot(prev, data) : prev);
         } catch {
           // Ignore malformed stream frames.
         }
@@ -2356,7 +2370,7 @@ export function CoachPanel({
    */
   const sendText = async (
     contentRaw: string,
-    opts: { force?: boolean; refs?: string[] } = {},
+    opts: { force?: boolean; refs?: string[]; uiAction?: CoachUiActionV1 } = {},
   ): Promise<boolean> => {
     const content = contentRaw.trim();
     if (!content || sendingRef.current) return false;
@@ -2431,6 +2445,7 @@ export function CoachPanel({
         {
           ...(effectiveSessionId == null ? {} : { sessionId: effectiveSessionId }),
           ...(refs.length ? { contextRefs: refs } : {}),
+          ...(opts.uiAction ? { uiAction: opts.uiAction } : {}),
         },
       );
       setPendingRunStart(false);
@@ -2446,6 +2461,17 @@ export function CoachPanel({
     } finally {
       sendingRef.current = false;
     }
+  };
+
+  /**
+   * @ToAssistant 手势落点（ARCHITECTURE §5.3 动作权限）：只复用既有消息发送
+   * 流程发起新回合，不执行任何产品命令；来源标记 coach_ui_action.v1 随请求
+   * 体透传（sidecar 后续消费）。引用 chips 不参与——按钮动作不是用户当前
+   * 输入的一部分。
+   */
+  const handleCoachUiAction = (action: CoachUiActionV1): void => {
+    if (composerBusy || pendingRunStart || !action.message.trim()) return;
+    void sendText(action.message, { refs: [], uiAction: action });
   };
 
   /**
@@ -3424,10 +3450,16 @@ export function CoachPanel({
                     {/* 受控富渲染（digests §10）：助手消息走 task7-rich 块结构，
                        不再套 <p>（表格/列表不能内嵌在段落里）。@time 视频归属
                        逐消息计算（1002 串视频修复），无主题挂载回落深读链。 */}
-                    <CoachMessageText
+                    <CoachPresentationText
                       text={message.content}
+                      presentation={asCoachPresentation(message.presentation) ?? undefined}
+                      messageId={message.id}
+                      conversationId={sessionId ?? handoverSessionId}
+                      generationStatus={generationStatusFromMessage(message)}
                       analysisRef={messageAnalysisRefs.get(message.id) ?? deepReadRunRef ?? deepReadSessionRef}
                       onOpenVideo={onOpenVideo}
+                      onToAssistant={handleCoachUiAction}
+                      actionsDisabled={composerBusy || pendingRunStart}
                     />
                     {/* 停止/打断的半截回复如实标记（0911 审计 §12.5 + 0912 P0）：
                         interrupted=应用重启打断，给「重新回答」入口强制重发前置
@@ -3500,7 +3532,7 @@ export function CoachPanel({
             },
           }]} />
         ) : null}
-        {run?.partial_text ? (
+        {run && (run.partial_text || runPresentation(run)?.segments.length) ? (
           <article
             className="task6-message"
             data-role="assistant"
@@ -3511,10 +3543,17 @@ export function CoachPanel({
           >
             {/* 流式期间与最终答案同一渲染路径：@time 链接实时可点，
                 消除完成后裸文本→格式化的跳变；光标经 tail 插在续写位。 */}
-            <CoachMessageText
-              text={run.partial_text}
+            <CoachPresentationText
+              presentation={runPresentation(run) ?? undefined}
+              text={run.partial_text ?? undefined}
+              messageId={run.run_ref}
+              conversationId={run.session_id}
+              runId={run.run_ref}
+              generationStatus={generationStatusFromRunStatus(run.status)}
               analysisRef={defaultAnalysisRef}
               onOpenVideo={onOpenVideo}
+              onToAssistant={handleCoachUiAction}
+              actionsDisabled={composerBusy || pendingRunStart}
               tail={
                 run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null
               }

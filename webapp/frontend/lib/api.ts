@@ -13,6 +13,7 @@ import {
 } from "./desktop";
 import { DICTIONARIES, getLocale, interpolate, t, type MessageKey, type TranslateParams } from "./i18n/core";
 import type { IntroSessionCreated, IntroSessionStatus } from "./intro-session";
+import type { CoachUiActionV1 } from "./openui/presentation";
 import type {
   AnalyzeResponse,
   BenchmarkRecord,
@@ -1400,7 +1401,14 @@ export async function getCoachSession(
 
 export async function createCoachAgentRun(
   content: string,
-  opts: { signal?: AbortSignal; userId?: string; sessionId?: number; contextRefs?: string[] } = {},
+  opts: {
+    signal?: AbortSignal;
+    userId?: string;
+    sessionId?: number;
+    contextRefs?: string[];
+    /** @ToAssistant 手势的来源标记（coach_ui_action.v1）；普通输入不带。 */
+    uiAction?: CoachUiActionV1;
+  } = {},
 ): Promise<CoachAgentRunV1> {
   const res = await apiFetchSidecar(
     "/v1/agent-runs",
@@ -1413,6 +1421,8 @@ export async function createCoachAgentRun(
         ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
         // 结构化分析引用（引用菜单选择）：消息文本不再携带 analysis:N 机器码。
         ...(opts.contextRefs?.length ? { context_refs: opts.contextRefs } : {}),
+        // UI 手势来源标记；sidecar 旧版本忽略未知字段，后续投影层消费。
+        ...(opts.uiAction ? { ui_action: opts.uiAction } : {}),
       }),
     },
     opts,

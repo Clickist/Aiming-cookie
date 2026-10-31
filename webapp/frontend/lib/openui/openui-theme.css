@@ -1,0 +1,144 @@
+/*
+ * OpenUI 设计 token → Aiming Cookie 主题变量映射。
+ *
+ * react-ui 的组件样式全部通过 `--openui-*` 变量取色；本文件只重映射
+ * 颜色、字体族与圆角/字阶，间距类沿用 react-ui 默认刻度。
+ * AC 主题由 ui/theme.tsx 在 `:root` 上以内联样式写入 --background /
+ * --on-surface 等变量，因此这里只写一组 var() 映射即可自动跟随
+ * 深/浅主题，不需要重复 data-theme 规则。
+ *
+ * 样式加载顺序：react-ui 的 layered CSS 全部位于 @layer openui 内，
+ * 本文件未分层 —— 未分层规则始终优先于 layer 内规则（Cascade Layers）。
+ */
+
+:root {
+  /* Surface / background */
+  --openui-background: var(--background, #f7f5f0);
+  --openui-foreground: var(--surface, #fffdf8);
+  --openui-popover-background: var(--surface-container-lowest, #ffffff);
+  --openui-sunk-light: color-mix(in srgb, var(--on-surface, #24211d) 3%, transparent);
+  --openui-sunk: color-mix(in srgb, var(--on-surface, #24211d) 6%, transparent);
+  --openui-sunk-deep: color-mix(in srgb, var(--on-surface, #24211d) 10%, transparent);
+  --openui-elevated-light: color-mix(in srgb, var(--on-surface, #24211d) 5%, transparent);
+  --openui-elevated: color-mix(in srgb, var(--on-surface, #24211d) 8%, transparent);
+  --openui-elevated-strong: color-mix(in srgb, var(--on-surface, #24211d) 16%, transparent);
+  --openui-elevated-intense: color-mix(in srgb, var(--on-surface, #24211d) 30%, transparent);
+  --openui-overlay: color-mix(in srgb, var(--inverse-surface, #312b25) 32%, transparent);
+  --openui-highlight-subtle: color-mix(in srgb, var(--on-surface, #24211d) 3%, transparent);
+  --openui-highlight: color-mix(in srgb, var(--on-surface, #24211d) 6%, transparent);
+  --openui-highlight-strong: color-mix(in srgb, var(--on-surface, #24211d) 10%, transparent);
+  --openui-highlight-intense: color-mix(in srgb, var(--on-surface, #24211d) 30%, transparent);
+  --openui-inverted-background: var(--inverse-surface, #312b25);
+
+  /* Semantic backgrounds */
+  --openui-info-background: var(--tertiary-container, #d7e7ff);
+  --openui-success-background: color-mix(in srgb, var(--event-kill, #16875b) 14%, transparent);
+  --openui-alert-background: color-mix(in srgb, var(--quota-warn, #e8930c) 18%, transparent);
+  --openui-danger-background: var(--error-container, #ffdad6);
+  --openui-purple-background: color-mix(in srgb, var(--event-corrective, #1769c2) 14%, transparent);
+  --openui-pink-background: color-mix(in srgb, var(--event-miss, #c53442) 14%, transparent);
+
+  /* Text */
+  --openui-text-neutral-primary: var(--on-surface, #24211d);
+  --openui-text-neutral-secondary: var(--on-surface-variant, #625c54);
+  --openui-text-neutral-tertiary: color-mix(in srgb, var(--on-surface, #24211d) 38%, transparent);
+  --openui-text-neutral-link: var(--primary, #c83d00);
+  --openui-text-brand: var(--primary, #c83d00);
+  --openui-text-white: #ffffff;
+  --openui-text-black: #000000;
+  --openui-text-accent-primary: var(--on-primary, #ffffff);
+  --openui-text-accent-secondary: color-mix(in srgb, var(--on-primary, #ffffff) 55%, transparent);
+  --openui-text-accent-tertiary: color-mix(in srgb, var(--on-primary, #ffffff) 28%, transparent);
+  --openui-text-success-primary: var(--event-kill, #16875b);
+  --openui-text-success-inverted: var(--on-primary, #ffffff);
+  --openui-text-alert-primary: var(--quota-warn, #e8930c);
+  --openui-text-alert-inverted: var(--inverse-on-surface, #f9eee8);
+  --openui-text-danger-primary: var(--error, #ba1a1a);
+  --openui-text-danger-secondary: var(--event-miss, #c53442);
+  --openui-text-danger-tertiary: color-mix(in srgb, var(--event-miss, #c53442) 65%, transparent);
+  --openui-text-danger-inverted-primary: var(--on-error, #ffffff);
+  --openui-text-danger-inverted-secondary: color-mix(in srgb, var(--on-error, #ffffff) 60%, transparent);
+  --openui-text-danger-inverted-tertiary: color-mix(in srgb, var(--on-error, #ffffff) 35%, transparent);
+  --openui-text-info-primary: var(--tertiary, #005fae);
+  --openui-text-info-inverted: var(--on-primary, #ffffff);
+  --openui-text-pink-primary: var(--event-miss, #c53442);
+  --openui-text-pink-inverted: var(--on-primary, #ffffff);
+  --openui-text-purple-primary: var(--tertiary, #005fae);
+  --openui-text-purple-inverted: var(--on-primary, #ffffff);
+
+  /* Interactive */
+  --openui-interactive-accent-default: var(--primary, #c83d00);
+  --openui-interactive-accent-hover: color-mix(in srgb, var(--primary, #c83d00) 82%, var(--on-surface, #24211d));
+  --openui-interactive-accent-disabled: color-mix(in srgb, var(--primary, #c83d00) 38%, transparent);
+  --openui-interactive-accent-pressed: color-mix(in srgb, var(--primary, #c83d00) 88%, var(--on-surface, #24211d));
+  --openui-interactive-destructive-default: color-mix(in srgb, var(--error, #ba1a1a) 4%, transparent);
+  --openui-interactive-destructive-hover: color-mix(in srgb, var(--error, #ba1a1a) 12%, transparent);
+  --openui-interactive-destructive-disabled: color-mix(in srgb, var(--error, #ba1a1a) 4%, transparent);
+  --openui-interactive-destructive-pressed: color-mix(in srgb, var(--error, #ba1a1a) 16%, transparent);
+  --openui-interactive-destructive-accent-default: var(--error, #ba1a1a);
+  --openui-interactive-destructive-accent-hover: color-mix(in srgb, var(--error, #ba1a1a) 84%, var(--on-surface, #24211d));
+  --openui-interactive-destructive-accent-pressed: color-mix(in srgb, var(--error, #ba1a1a) 90%, var(--on-surface, #24211d));
+  --openui-interactive-destructive-accent-disabled: color-mix(in srgb, var(--error, #ba1a1a) 38%, transparent);
+
+  /* Chat */
+  --openui-chat-user-response-bg: var(--surface-container-high, #e4ded5);
+  --openui-chat-user-response-text: var(--on-surface, #24211d);
+
+  /* Borders */
+  --openui-border-default: var(--outline-variant, #cec6bc);
+  --openui-border-interactive: var(--outline, #7b746b);
+  --openui-border-interactive-emphasis: var(--on-surface-variant, #625c54);
+  --openui-border-interactive-selected: var(--on-surface, #24211d);
+  --openui-border-accent: color-mix(in srgb, var(--primary, #c83d00) 22%, transparent);
+  --openui-border-accent-emphasis: var(--primary, #c83d00);
+  --openui-border-info: color-mix(in srgb, var(--tertiary, #005fae) 20%, transparent);
+  --openui-border-info-emphasis: var(--tertiary, #005fae);
+  --openui-border-alert: color-mix(in srgb, var(--quota-warn, #e8930c) 22%, transparent);
+  --openui-border-alert-emphasis: var(--quota-warn, #e8930c);
+  --openui-border-success: color-mix(in srgb, var(--event-kill, #16875b) 22%, transparent);
+  --openui-border-success-emphasis: var(--event-kill, #16875b);
+  --openui-border-danger: color-mix(in srgb, var(--error, #ba1a1a) 22%, transparent);
+  --openui-border-danger-emphasis: var(--error, #ba1a1a);
+
+  /* Typography — 跟随 AC 字体栈与聊天字阶 */
+  --openui-font-body: var(--font-ui, Inter, sans-serif);
+  --openui-font-code: var(--font-mono, monospace);
+  --openui-font-heading: var(--font-display, var(--font-ui, sans-serif));
+  --openui-font-label: var(--font-ui, Inter, sans-serif);
+  --openui-font-numbers: var(--font-ui, Inter, sans-serif);
+  --openui-font-size-2xs: var(--text-micro, 11px);
+  --openui-font-size-xs: var(--text-caption, 12px);
+  --openui-font-size-sm: var(--text-ui, 13px);
+  --openui-font-size-md: var(--text-body, 14px);
+  --openui-font-size-lg: var(--text-title, 15px);
+  --openui-font-size-xl: var(--text-display, 20px);
+  --openui-text-body-default: 400 var(--text-body, 14px) / 1.5 var(--font-ui, sans-serif);
+  --openui-text-body-default-letter-spacing: 0;
+  --openui-text-body-default-heavy: 560 var(--text-body, 14px) / 1.5 var(--font-ui, sans-serif);
+  --openui-text-body-sm: 400 var(--text-caption, 12px) / 1.5 var(--font-ui, sans-serif);
+  --openui-text-body-sm-heavy: 560 var(--text-caption, 12px) / 1.5 var(--font-ui, sans-serif);
+  --openui-text-body-lg: 400 var(--text-ui, 13px) / 1.5 var(--font-ui, sans-serif);
+  --openui-text-body-lg-heavy: 560 var(--text-ui, 13px) / 1.5 var(--font-ui, sans-serif);
+
+  /* Radius — 对齐 AC 的软圆角刻度 */
+  --openui-radius-3xs: 1px;
+  --openui-radius-2xs: var(--radius-sm, 6px);
+  --openui-radius-xs: var(--radius-sm, 6px);
+  --openui-radius-s: var(--radius-sm, 6px);
+  --openui-radius-m: var(--radius-md, 10px);
+  --openui-radius-l: var(--radius-md, 10px);
+  --openui-radius-xl: var(--radius-md, 10px);
+  --openui-radius-2xl: var(--radius-lg, 14px);
+  --openui-radius-3xl: var(--radius-lg, 14px);
+  --openui-radius-4xl: var(--radius-xl, 16px);
+  --openui-radius-5xl: var(--radius-xl, 16px);
+  --openui-radius-6xl: var(--radius-xl, 16px);
+}
+
+/* OpenUI 组件默认按 body 字号排版；嵌在 Coach 气泡里时压回 AC 正文字号。 */
+.coach-openui-root {
+  color: var(--on-surface);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}

@@ -69,8 +69,12 @@ test("Coach 运行控制走共享 API 适配器，不携带原始字段也不写
   // Coach 只读当前训练：训练写操作不从这里发起。
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
   // 时间点链接：解析与格式化在 lib/rich-text，渲染层只消费。
-  assert.match(coach, /CoachMessageText/);
+  // 2026-10-28 讲解富展示：CoachPanel 的文本入口升级为 CoachPresentationText
+  // （text 段内部仍走 CoachMessageText），断言链保持同一条呈现路径。
+  assert.match(coach, /CoachPresentationText/);
   assert.match(coach, /defaultAnalysisRef/);
+  const presentation = await source("components/task7/CoachPresentationText.tsx");
+  assert.match(presentation, /CoachMessageText/);
   const text = await source("components/task7/CoachMessageText.tsx");
   assert.match(text, /parseTimeSegments/);
   assert.match(text, /from "@\/lib\/rich-text"/);

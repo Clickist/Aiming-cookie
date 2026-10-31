@@ -343,6 +343,29 @@ test("Coach session adapters forward the selected session identity", async () =>
   });
 });
 
+test("Coach action adapter preserves numeric history identity and its user message", async () => {
+  let requestBody: unknown;
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  const action = {
+    schema_version: "coach_ui_action.v1" as const,
+    interaction_id: "click:42",
+    message_id: 42,
+    segment_id: "seg:1",
+    kind: "to_assistant" as const,
+    message: "继续看这组",
+  };
+  await createCoachAgentRun(action.message, { sessionId: 17, uiAction: action });
+  assert.deepEqual(requestBody, {
+    schema_version: "coach_agent_run_request.v1", content: action.message,
+    session_id: 17, ui_action: action,
+  });
+});
+
 test("Composer steer adapters forward queue requests to the sidecar queue verbs", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
   Reflect.set(globalThis, "isTauri", false);
