@@ -852,6 +852,8 @@ def _external_telemetry_source(
         source["reason"] = "sidecars_stale"
     else:
         source["availability"] = "available"
+        # 可用时原因不适用：不留初始化时的 telemetry_not_paired 误导消费方。
+        source["reason"] = None
     return source
 
 

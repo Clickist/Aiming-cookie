@@ -152,6 +152,8 @@ async def test_paired_run_snapshot_carries_available_external_telemetry(
     source = snapshot["sources"]["external_telemetry"]
 
     assert source["availability"] == "available"
+    # 可用即无原因：初始化值 telemetry_not_paired 不能被带出去。
+    assert source["reason"] is None
     assert source["external_run_id"] == "ext-paired01"
     assert source["round"] == 3
     assert source["frames_path"] is not None
