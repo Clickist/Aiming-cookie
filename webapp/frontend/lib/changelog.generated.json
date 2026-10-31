@@ -8,6 +8,11 @@
           "type": "new",
           "zh": "官方订阅模型升级：教练现在由 DeepSeek V4.1 Flash 驱动（原 V4 Flash），回答质量与推理能力全面升级，订阅价格不变",
           "en": "Official subscription model upgrade: the Coach is now powered by DeepSeek V4.1 Flash (previously V4 Flash), with across-the-board improvements in answer quality and reasoning — at the same subscription price"
+        },
+        {
+          "type": "fix",
+          "zh": "Windows 版启动时会请求管理员权限，避免 KovaaK 以管理员运行时无法记录鼠标轨迹或读取训练数据；覆盖安装和卸载也会在需要时请求权限以关闭后台进程",
+          "en": "Windows now requests administrator permission at startup to prevent missing mouse traces or training data when KovaaK runs as administrator; installation and uninstallation also request permission when needed to close background processes"
         }
       ]
     },

@@ -54,6 +54,7 @@ Desktop Client (Next.js UI in Tauri)
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
 - Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 JSON 文件（`runs/{id}/meta.json`）；源文件仍由用户拥有；
 - Node Coach product command 可以基于 owner-scoped `KovaaKRun` 原子预留 Analysis Session、冻结 Run 输入并将 Session 推入 `queued`；canonical Run finalization、Analysis 文件生命周期、确定性分析和 terminal result 仍归 Local Analysis Runtime / Python worker 所有；
+- Windows 正式版通过应用 manifest 的 `requireAdministrator` 在启动前请求标准 UAC 授权；壳与本次启动的 runtime/采集子进程继承同一用户权限，默认数据根仍属于实际运行进程的 Windows 用户。开发构建不强制提权；安装继续使用 current-user 范围，安装/卸载钩子在关闭已提权进程被拒绝时按需申请权限；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
 - native layer 不改变鼠标设备 polling rate。Windows 上报进入 canonical trace 前按整数毫秒归一化：同一毫秒内所有运动报告的 `dx/dy` 分别求和为至多一条运动记录，按钮状态边沿按接收顺序作为例外单独保留，因此 canonical 运动序列最高 1000 Hz；不补零、不做 deadzone/低通滤波，也不把亚毫秒路径形状写成产品事实；
 - 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；

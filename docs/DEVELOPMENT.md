@@ -56,6 +56,8 @@ Pop-Location
 
 桌面壳开发还需要本机 Rust toolchain 和 Tauri 2 的平台依赖。
 
+Windows 正式版（Cargo `release` profile）由 `src-tauri/build.rs` 嵌入 `windows-app-manifest.xml`，启动时正常请求管理员权限；开发构建不强制提权，调试管理员运行的 KovaaK 时需要自行以管理员权限启动开发终端。UAC 同意不替代应用内采集 opt-in。同一 Windows 用户确认 UAC 后，原数据目录保持不变；使用另一个管理员账号的凭据运行时，数据根属于该管理员账号。安装器保持 current-user 安装位置，仅在关闭已提权 AC 被拒绝时按需申请权限；取消或关闭失败会停止安装/卸载。
+
 ## 2. 本地 Web 开发
 
 推荐分三个终端启动：

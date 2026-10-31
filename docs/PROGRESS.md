@@ -1,6 +1,13 @@
 # Aiming Cookie Current Progress
 
 > Updated: 2026-10-24. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+## 2026-10-27 — Windows 正式版默认管理员启动（代码完成，真机全链验收未完成，未提交/未发版）
+
+- **产品依据**：PRD §14 同日拍板。Windows release profile 通过 `build.rs` 嵌入 `windows-app-manifest.xml` 的 `requireAdministrator`，保留原 Common Controls 依赖；debug profile 维持默认权限。UAC 不替代采集 opt-in，安装范围、数据路径与进程生命周期逻辑不作迁移。
+- **安装兼容**：`installer-hooks.nsh` 保留 current-user 安装，只对无法关闭的进程调用 `runas taskkill`；取消/失败/超时即中止文件操作。退出成功改由 `nsis_tauri_utils::FindProcess` 的实际枚举判定。实测普通权限 `taskkill /F /T /PID <提权候选>` 返回 **128 且主进程仍活着**，因此旧代码“128 = 不存在”不可沿用。
+- **验证**：MSVC `cargo check --locked --all-targets` / `cargo clippy --locked --all-targets -- -D warnings` 通过；Rust **241 passed / 7 ignored / 0 failed**；改动的 `build.rs` rustfmt 与 `git diff --check` 通过；更新公告定向 **11/11** 通过。独立 identifier release 与正式 identifier NSIS 安装包构建均成功，PE 资源实读主 EXE `requireAdministrator`、安装器 `asInvoker`；实际启动的壳、Coach、Python 后端均存在，隔离 profile/runtime 连接文件已落盘。本地安装包仅供构建验证（跳过更新签名，未重建已有 Python/Coach 资源），不作为发布验收产物。实际 NSIS 安装/卸载宏编译通过；提权 dummy 进程由普通 NSIS 通过实际宏清理成功（退出码 0、进程消失、到达后续文件操作）。
+- **既有检查失败**：全仓 `cargo fmt -- --check` 仍报 `lib.rs`、`raw_input.rs`、`storage_location.rs`、`window_capture.rs` 的既有格式差异；本次只改的 `build.rs` 单文件检查通过，未格式化其它文件。
+- **验收边界**：当前 ZCode 未提权，CUA 返回 Windows UIPI 拒绝访问管理员版 AC，未取得有效界面走查证据。真实 UAC 取消、同用户旧数据读取、会员登录/支付回跳、完整覆盖安装/卸载、更新重启与在途 Coach/分析的最终显示，以及管理员 KovaaK 实打轨迹仍待提权的验收会话完成；不能据此关闭 issue #7。测试进程已退出，隔离启动时变更的 `aimingcookie://` 协议入口已恢复已安装程序；未覆盖安装真实客户端、未外发。
 
 ## 2026-10-24 — 本地 CV 视频分析退役 + 档位收敛两档 + 打包瘦身（施工完成，未提交/未发版）
 

@@ -20,6 +20,8 @@ LangString AC_UNCONFIRM_TOP 2052 "即将从电脑移除 Aiming Cookie。你的�
 LangString AC_UNCONFIRM_TOP 1033 "Aiming Cookie will be removed from your computer. Your training data and analysis records are kept by default."
 LangString AC_KILLING 2052 "正在关闭 Aiming Cookie 后台进程…"
 LangString AC_KILLING 1033 "Closing Aiming Cookie background processes..."
+LangString AC_CLOSE_FAILED 2052 "无法关闭 Aiming Cookie，本次安装或卸载已停止。请同意管理员授权，或完全退出 Aiming Cookie 后重试。"
+LangString AC_CLOSE_FAILED 1033 "Could not close Aiming Cookie. Installation or uninstallation stopped. Approve the administrator prompt, or fully exit Aiming Cookie and retry."
 
 !define MUI_WELCOMEPAGE_TITLE "$(AC_WELCOME_TITLE)"
 !define MUI_WELCOMEPAGE_TEXT "$(AC_WELCOME_TEXT)"
@@ -32,23 +34,41 @@ LangString AC_KILLING 1033 "Closing Aiming Cookie background processes..."
 ; 主程序退出后，两个后台子进程（Python 运行时与 Coach sidecar）还有短暂
 ; 存活窗口（stdin EOF 自杀协议），期间锁着 runtime\ 下的 DLL，安装器覆盖
 ; 时会报 "Error opening file for writing"。顺序：先杀主程序（断掉重启监
-; 督者），再循环杀子进程，直到 taskkill 报无匹配进程（退出码 128）。
-; taskkill 退出码：0=已终止，128=无匹配进程，其余=失败继续重试。
+; 督者），再循环杀子进程，直到进程枚举确认对应镜像已全部退出。
+; 是否退出由进程枚举确认；关闭被拒绝时仅对 taskkill 申请管理员权限。
 
 !macro AC_KILL_WAIT IMAGE ID
   !define UniqueID ${ID}
   Push $R0
   Push $R1
+  Push $R2
   StrCpy $R1 0
+  StrCpy $R2 0
 ac_kill_retry_${UniqueID}:
-  nsExec::Exec 'taskkill /F /T /IM "${IMAGE}"'
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${IMAGE}"'
   Pop $R0
-  IntCmp $R0 128 ac_kill_done_${UniqueID} ac_kill_wait_${UniqueID} ac_kill_wait_${UniqueID}
+  ; taskkill /T can return 128 for a still-running elevated process tree.
+  nsis_tauri_utils::FindProcess "${IMAGE}"
+  Pop $R0
+  StrCmp $R0 1 ac_kill_done_${UniqueID}
+  StrCmp $R0 0 0 ac_kill_failed_${UniqueID}
+  StrCmp $R2 1 ac_kill_wait_${UniqueID}
+  StrCpy $R2 1
+  ClearErrors
+  ExecShellWait "runas" "$SYSDIR\taskkill.exe" '/F /T /IM "${IMAGE}"' SW_HIDE
+  IfErrors ac_kill_failed_${UniqueID}
 ac_kill_wait_${UniqueID}:
   Sleep 250
   IntOp $R1 $R1 + 1
-  IntCmp $R1 12 ac_kill_done_${UniqueID} ac_kill_retry_${UniqueID} ac_kill_done_${UniqueID}
+  IntCmp $R1 12 ac_kill_failed_${UniqueID} ac_kill_retry_${UniqueID} ac_kill_failed_${UniqueID}
+ac_kill_failed_${UniqueID}:
+  Pop $R2
+  Pop $R1
+  Pop $R0
+  SetErrorLevel 1
+  Abort "$(AC_CLOSE_FAILED)"
 ac_kill_done_${UniqueID}:
+  Pop $R2
   Pop $R1
   Pop $R0
   !undef UniqueID
