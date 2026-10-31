@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$RepoRoot,
     [int]$CdpPort = 0,
@@ -76,7 +76,14 @@ if ($SeedProfileDir) {
     $seedDb = Join-Path $seedRoot "aiming_cookie.db"
     if (-not (Test-Path -LiteralPath $seedDb -PathType Leaf)) { throw "Seed profile database is missing: $seedDb" }
     New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
-    Copy-Item -LiteralPath $seedDb -Destination (Join-Path $appDataDir "aiming_cookie.db")
+        Copy-Item -LiteralPath $seedDb -Destination (Join-Path $appDataDir "aiming_cookie.db")
+    # Seed config/*.json too (onboarding completion, provider profiles, member state):
+    # a seeded profile without its config gates every walkthrough behind onboarding.
+    $seedConfig = Join-Path $seedRoot "config"
+    if (Test-Path -LiteralPath $seedConfig -PathType Container) {
+        New-Item -ItemType Directory -Path (Join-Path $appDataDir "config") -Force | Out-Null
+        Copy-Item -Path (Join-Path $seedConfig "*.json") -Destination (Join-Path $appDataDir "config") -Force
+    }
     foreach ($analysisId in $SeedAnalysisVideo) {
         if ($analysisId -le 0) { throw "Seed Analysis id must be positive: $analysisId" }
         $sourceAnalysisDir = Join-Path $seedRoot "sessions\$analysisId"
@@ -158,6 +165,41 @@ try {
         Write-Host "  Warning: aiming-cookie-desktop not found in process tree; falling back to runner PID" -ForegroundColor Yellow
     }
     Write-Host "  Tauri PID: $($env:AIMING_COOKIE_TAURI_PID)" -ForegroundColor Green
+
+    # Wait for the app to leave its startup splash before running specs: CDP being
+    # up does not mean the workspace is ready, and the first spec's 30s test budget
+    # otherwise gets consumed by cold start (2026-10-27 L2 desktop-managed-media flake).
+    $env:AIMING_COOKIE_TAURI_CDP_URL = "http://127.0.0.1:$CdpPort"
+    Write-Host "  Waiting for workspace ready..."
+    $readyScript = @'
+const { chromium } = require("@playwright/test");
+(async () => {
+  try {
+    const browser = await chromium.connectOverCDP(process.env.AIMING_COOKIE_TAURI_CDP_URL);
+    const page = browser.contexts()[0]?.pages()[0];
+    if (!page) { console.log("no-page"); await browser.close(); return; }
+    const ready = await page.evaluate(() => !!document.querySelector(".task7-session-rail__brand"));
+    console.log(ready ? "ready" : "starting");
+    await browser.close();
+  } catch { console.log("probe-error"); }
+  process.exit(0);
+})();
+'@
+    $readyDeadline = (Get-Date).AddSeconds(240)
+    Push-Location $frontendRoot
+    try {
+        do {
+            Start-Sleep -Seconds 3
+            $readyState = ($readyScript | & node --input-type=commonjs - 2>$null)
+        } while ($readyState -notcontains "ready" -and (Get-Date) -lt $readyDeadline)
+    } finally {
+        Pop-Location
+    }
+    if ($readyState -contains "ready") {
+        Write-Host "  Workspace ready." -ForegroundColor Green
+    } else {
+        Write-Host "  Warning: workspace not ready within 240s; running specs anyway" -ForegroundColor Yellow
+    }
 
     # 3. Run only the Tauri Desktop specs via Playwright (grep filters browser tests out).
     Write-Host "`n[3/3] Running Tauri Desktop specs..." -ForegroundColor Cyan

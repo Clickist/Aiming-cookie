@@ -225,7 +225,6 @@ $env:KOVAAK_INSTALL_DIR = Join-Path $testRoot "missing-kovaak"
 cd webapp/frontend
 npm run type-check
 npm test
-npm run test:e2e
 
 # Tauri / Rust
 cd webapp/frontend/src-tauri
@@ -251,10 +250,9 @@ Push-Location third_party\pi
 npm.cmd test --workspace @earendil-works/pi-ai
 Pop-Location
 
-# Frontend unit/contracts 与 production-build Playwright；正式 route 状态以 PROGRESS.md 为准
+# Frontend unit/contracts；正式 route 状态以 PROGRESS.md 为准
 npm.cmd --prefix webapp\frontend run type-check
 npm.cmd --prefix webapp\frontend test
-npm.cmd --prefix webapp\frontend run test:e2e
 
 # Tauri / Rust MSVC
 $env:PATH = "$HOME\.cargo\bin;$env:PATH"

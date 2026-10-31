@@ -6,7 +6,7 @@
 
 | 档 | 时刻 | 真实度 | 现状 |
 |---|---|---|---|
-| **L1 代码门禁** | 每次改动、提交前 | 假壳+假数据 | 已有：pytest、前端 unit/contracts、coach-runtime node 测试、cargo 四件套、浏览器 E2E |
+| **L1 代码门禁** | 每次改动、提交前 | 假壳+假数据 | 已有：pytest、前端 unit/contracts、coach-runtime node 测试、cargo 四件套 |
 | **L2 实机功能集成** | 功能完成、合并前 | 真 Tauri dev 壳+fixture 数据 | 已有 7 个 `real Tauri` 用例（`run-tauri-e2e.ps1`） |
 | **L3 打包版验收** | 每次打出候选包后 | 真安装包+fixture 数据 | 半成品：`test-windows-installer.ps1`（安装冒烟+CDP 渲染冒烟）、`test-packaged-runtime.ps1`（runtime 资源+健康检查）；功能用例待补 |
 | **L4 发布全旅程** | 每次对外发版前 | 真安装包+真实使用 | 本文件第 3 节清单 |
@@ -17,7 +17,7 @@ L4 六段清单中，🔁 = 可自动化（脚本/CDP 断言），✋ = 必须�
 
 ## 2. L1–L3 维护规则
 
-- **L1**：按改动范围跑最小相关集；发版前跑全量。入口见 `DEVELOPMENT.md` §4。规则：改 `coach-runtime` 源码必须重编 sidecar 才算验证过；改 `webapp/backend/**` 必须重建 runtime 镜像。**浏览器 E2E（`npm run test:e2e`，纯 Edge）已废弃为验收路径**（2026-09-15 点点确认）：套件仅作存量保持绿，不作为任何档的验收依据，不在发版流程中跑；验收一律走真机 CDP（L2/L3/L4）。
+- **L1**：按改动范围跑最小相关集；发版前跑全量。入口见 `DEVELOPMENT.md` §4。规则：改 `coach-runtime` 源码必须重编 sidecar 才算验证过；改 `webapp/backend/**` 必须重建 runtime 镜像。验收一律真机 **CUA 操作 + CDP 观察**（L2/L3/L4；2026-10-27 点点定稿）。
 - **L2**：每新增一个用户可见能力，配套加一个 fixture 驱动的 `real Tauri` 用例，保持"新功能不裸奔进 L3"。现有用例：desktop-matrix（能力矩阵）、desktop-managed-media（媒体播放降级）、interaction-polish×2（布局/表面）、desktop-coach-provider（真 Provider 回合，field test）、diagnostics-export-live（诊断包）、packaged-release（打包版渲染冒烟）。
 - **L3**：补建打包版功能套件——静默装出包→起 CDP→复跑 L2 的 fixture 驱动用例（desktop-matrix、managed-media、interaction-polish、诊断包导出）。打包版 WebView 与 dev 版同源，用例理论可复用；跑不通处即"打包环境分歧"暴露点。现有入口：`test-windows-installer.ps1 -InstallSmoke -WebViewSmoke` 已能静默装+起 CDP+跑 packaged-release.spec.ts，扩展其 spec 集即可。
   ⚠️ **已知缺陷（2026-09-15 实锤）**：该脚本的 APPDATA 环境变量隔离对 Tauri 数据无效——Windows 上 `app_data_dir` 走 Known Folder（`DEVELOPMENT.md` 打包铁律同源问题），打包冒烟实际跑在真实 profile 上，断言仅"产品表面渲染"所以未露馅。真隔离需 identifier 覆盖构建（L4-D3 同款 `com.aimingcookie.l4smoke` 做法）；改造前不要把该冒烟当"全新环境"证据。
@@ -197,13 +197,13 @@ L4 六段清单中，🔁 = 可自动化（脚本/CDP 断言），✋ = 必须�
 |---|---|---|---|
 | J-1 | 双主题全页面跟随 | 明暗各截一轮关键页 | [真机] |
 | J-2 | 窗口：最小宽度 1180、最大化/全屏、拖拽带、三键浮条 | 缩放/全屏走查 | [真机] |
-| J-3 | toast：键盘关闭、自动消失、reduced motion | 已有 L2 浏览器用例 | [自动]+[真机] 抽验 |
+| J-3 | toast：键盘关闭、自动消失、reduced motion | 待补真机用例（原浏览器用例已退役） | [真机] 抽验 |
 | J-4 | 诊断包导出 v5：字段完整、session id 剥离 | 已有 live 用例，真机再导一次人工看内容 | [真机] |
 | J-5 | 日志一键上传：上传成功返回链接 | 真机传一次 | [真机] |
 | J-6 | 启动性能：设置/历史秒开 | 感官验证 | [真机] |
 | J-7 | 长时间运行稳定性：连打 N 局内存不涨不崩 | 大版本抽测 | [真机] |
 | J-8 | 安全边界：API 受 launch token 保护、响应无 token/绝对路径泄漏 | 已有 desktop-matrix 断言 | [自动] |
-| J-9 | 无障碍：键盘可达、焦点、reduced motion | 已有 L1 浏览器用例 | [自动] |
+| J-9 | 无障碍：键盘可达、焦点、reduced motion | 待补真机用例（原浏览器用例已退役） | [真机] 抽验 |
 | J-10 | 凭据零泄漏（PRD 红线）：provider key 不进日志、诊断包、Coach 消息、导出 | 全链路抽查：诊断包/日志文件/对话记录里搜不到任何 key 片段 | [真机] |
 | J-11 | ErrorBoundary：局部渲染崩溃有兜底，不死白屏 | 走查异常路径不出现无提示白屏 | [真机] 抽测 |
 | J-12 | 代理环境抽测：系统代理开启下 Provider 请求可达 | 大陆用户真实环境 | [真机] 抽测 |
