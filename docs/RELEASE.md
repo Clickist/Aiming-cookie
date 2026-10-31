@@ -25,6 +25,8 @@
 
 ## ① 版本与 changelog bump
 
+**官方模型名变更时先验计费，再放行客户端。** 将新请求别名与应沿用的正式模型逐项核对：`GET /api/option/model_pricing?model=<旧名>&model=<新名>` 中新名必须有明确的 `configured`，`tiered_expr` 的 mode、表达式、缓存与输出规则须完整；`SelfUseModeEnabled` 返回的通用倍率37.5不算已定价。通过单模型 `expected_version` PATCH保存后，核对 `GET /api/option/` 的进程内存，并跨一个实际 `SYNC_FREQUENCY` 再检查；用内部账号经过正式会员网关发一条微量真实请求，按实际用量、缓存和北京时间独立重算quota，同时核对钱包/令牌净扣与结算错误。保留前后备份和管理审计；任一步不符即停止新别名发布，不靠渠道映射继承价格。（2026-10-29：v4.1漏配价格事故。）
+
 ```powershell
 # 四文件版本号：webapp/frontend/package.json、src-tauri/tauri.conf.json、
 # src-tauri/Cargo.toml、src-tauri/Cargo.lock（lock 里 aiming-cookie-desktop 的 version 行）
