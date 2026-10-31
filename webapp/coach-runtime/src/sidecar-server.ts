@@ -36,6 +36,7 @@ import { loadProfile } from "./provider-store.ts";
 import { readSessionStats, readSessionMessages } from "./session-repo.ts";
 import { ensureIntroSession, readIntroSessionFlag } from "./intro-session.ts";
 import { introKickoffPrompt, type IntroKickoffLocale } from "./intro-kickoff.ts";
+import { parseCoachUiActionV1 } from "./presentation/index.ts";
 import { notifyTurnConsumed, startUsageReportLoop } from "./usage-reporter.ts";
 import {
   runCoachTurn,
@@ -45,6 +46,7 @@ import {
   type CoachTurnTiming,
 } from "./turn.ts";
 import type { CoachRuntimeTurnResponse } from "./contracts.ts";
+import { applyPresentationTransportBudget } from "./presentation/index.ts";
 import {
   AgentRunError,
   createAgentRun,
@@ -572,24 +574,26 @@ export async function handleSidecarRequest(
     let lastActivitySequence = 0;
     const response = await turnRunner(parsed, {
       onPartial: async (partial) => {
-        // A partial is valid when it carries answer text or live thinking
-        // (thinking-only revisions stream with text: null before the first
-        // text delta).
+        // A partial is valid when it carries answer text, live thinking, or a
+        // rich presentation snapshot (thinking-only revisions and openui-only
+        // replies stream with text: null).
         if (
           partial.revision !== lastRevision + 1 ||
-          !(partial.text || partial.thinking_text)
+          !(partial.text || partial.thinking_text || partial.presentation)
         ) {
           throw new Error("invalid Coach partial revision");
         }
         lastRevision = partial.revision;
         // Match the agent-runs SSE path: a long partial is truncated instead
-        // of failing the whole turn.
+        // of failing the whole turn. 分段投影先于截断：text 段沿用 12KB，
+        // openui 段独立 64KiB（§5.3），合法 UI 区段不会被 text 截断误伤。
         const safeText = partial.text ? partial.text.slice(0, 12_000) : null;
         writeNdjsonFrame(res, {
           schema_version: COACH_RUNTIME_STREAM_SCHEMA,
           type: "partial",
           revision: partial.revision,
           text: safeText,
+          presentation: partial.presentation ? applyPresentationTransportBudget(partial.presentation) : null,
           thinking_text: partial.thinking_text ? partial.thinking_text.slice(0, 12_000) : null,
           elapsed_ms: partial.elapsed_ms,
           provider_rounds: partial.provider_rounds,
@@ -661,7 +665,14 @@ export async function handleSidecarRequest(
         : undefined;
       // B0 locale 管道：读请求 X-Locale 存进 run 记录（随 turnRequest 透传）。
       const locale = localeFromRequest(req);
-      const result = createAgentRun(ownerId, content, { sessionId, contextRefs, locale });
+      // coach_ui_action.v1（§5.3）：@ToAssistant 手势来源标记。形状不符
+      // 回 400——按钮点击是用户手势，静默丢弃会变成"点了没反应"。
+      const uiAction = parseCoachUiActionV1(body.ui_action);
+      if (body.ui_action !== undefined && uiAction === null) {
+        writeJson(res, 400, { detail: "invalid_ui_action" });
+        return;
+      }
+      const result = createAgentRun(ownerId, content, { sessionId, contextRefs, locale, uiAction });
       writeJson(res, 202, result);
     } catch (error) {
       if (error instanceof AgentRunError) {
@@ -836,11 +847,12 @@ export async function handleSidecarRequest(
 
     // Catch a late subscriber up with the current partial text (and live
     // thinking) before new revisions stream in.
-    if (initial.partial_text || initial.partial_thinking) {
+    if (initial.partial_text || initial.partial_thinking || initial.partial_presentation) {
       writeSseEvent(res, "partial", {
         schema_version: AGENT_RUN_STREAM_SCHEMA,
         type: "partial",
         text: initial.partial_text ?? "",
+        presentation: initial.partial_presentation ?? null,
         thinking_text: initial.partial_thinking,
       });
     }
@@ -855,12 +867,13 @@ export async function handleSidecarRequest(
     };
 
     const subscribed = subscribeAgentRun(ownerId, runRef, {
-      onPartial: (text, thinking) => {
+      onPartial: (text, thinking, presentation) => {
         if (closed) return;
         writeSseEvent(res, "partial", {
           schema_version: AGENT_RUN_STREAM_SCHEMA,
           type: "partial",
           text,
+          presentation: presentation ?? null,
           thinking_text: thinking ?? null,
         });
       },

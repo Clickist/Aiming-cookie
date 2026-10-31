@@ -42,6 +42,12 @@ import {
 } from "./session-repo.ts";
 import { maybeAutoTitleSession, type SessionTitleProviders } from "./session-title.ts";
 import { getDataRoot } from "./app-data.ts";
+import {
+  applyPresentationTransportBudget,
+  projectGenerationStatus,
+  type CoachPresentation,
+  type CoachUiActionV1,
+} from "./presentation/index.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -56,6 +62,12 @@ export type AgentRunState = {
   status: "queued" | "running" | "succeeded" | "failed" | "stopped";
   phase: "queued" | "text_generation" | "tool_execution" | "completed";
   partial_text: string | null;
+  /**
+   * coach_presentation.v1 展示投影（ARCHITECTURE §5.3）：与 partial_text
+   * 同 revision 的全量快照。SSE/轮询/完成响应共用；旧前端只读
+   * partial_text，忽略本字段（无 openui 时两者语义一致）。
+   */
+  partial_presentation: CoachPresentation | null;
   /** Live extended-thinking text (trailing window); null for non-reasoning models. */
   partial_thinking: string | null;
   error: AnyDict | null;
@@ -93,7 +105,7 @@ export type AgentRunEvent = {
  * reaches a terminal status (succeeded/failed/stopped).
  */
 export type AgentRunListener = {
-  onPartial?: (text: string, thinking: string | null) => void;
+  onPartial?: (text: string, thinking: string | null, presentation?: CoachPresentation | null) => void;
   onActivity?: (event: AgentRunEvent) => void;
   onDone?: (state: AgentRunState) => void;
 };
@@ -140,6 +152,9 @@ interface RunRecord {
   /** B0 locale 管道：创建该 run 的请求 locale，随 turnRequest 透传。
       教练语言不消费它（2026-09 拍板跟随用户消息语言）；留给诊断文案波（B3）。 */
   locale: "zh-CN" | "en-US";
+  /** coach_ui_action.v1（§5.3）：@ToAssistant 手势来源标记，仅审计用——
+      回合输入语义就是 content 本身，动作不改写任何产品状态。 */
+  uiAction: CoachUiActionV1 | null;
   stopRequested: boolean;
   /** Test seam: fake provider stream, threaded to runCoachTurn. */
   streamFn?: StreamFn;
@@ -237,11 +252,12 @@ function appendEvent(record: RunRecord, type: string, phase: string, code: strin
   return event;
 }
 
-function setRunStatus(record: RunRecord, status: AgentRunState["status"], phase: AgentRunState["phase"], options: { partialText?: string | null; error?: AnyDict | null; started?: boolean; finished?: boolean } = {}): void {
+function setRunStatus(record: RunRecord, status: AgentRunState["status"], phase: AgentRunState["phase"], options: { partialText?: string | null; partialPresentation?: CoachPresentation | null; error?: AnyDict | null; started?: boolean; finished?: boolean } = {}): void {
   const state = record.state;
   state.status = status;
   state.phase = phase;
   if (options.partialText !== undefined) state.partial_text = options.partialText;
+  if (options.partialPresentation !== undefined) state.partial_presentation = options.partialPresentation;
   if (options.error !== undefined) state.error = options.error;
   if (options.started) state.started_at = state.started_at ?? new Date().toISOString();
   if (options.finished) state.finished_at = new Date().toISOString();
@@ -261,10 +277,15 @@ function snapshotRun(record: RunRecord): AgentRunState {
   };
 }
 
-function broadcastPartial(record: RunRecord, text: string, thinking: string | null = null): void {
+function broadcastPartial(
+  record: RunRecord,
+  text: string,
+  thinking: string | null = null,
+  presentation: CoachPresentation | null = null,
+): void {
   for (const listener of record.listeners) {
     try {
-      listener.onPartial?.(text, thinking);
+      listener.onPartial?.(text, thinking, presentation);
     } catch {
       // A listener (e.g. a closed SSE socket) must not break the run turn.
     }
@@ -377,8 +398,14 @@ async function runAgentTurn(
             provider_rounds: partial.provider_rounds,
           });
         }
+        // 分段投影在截断之前完成：text 段沿用 12KB 传输预算，openui 段走
+        // 独立 64KiB 预算（applyPresentationTransportBudget）——先切段再按
+        // 段截断，合法 UI 区段不会被整段文本的截断误伤（§5.3 预算条）。
+        if (partial.presentation) {
+          record.state.partial_presentation = applyPresentationTransportBudget(partial.presentation);
+        }
         record.state.partial_thinking = partial.thinking_text ? partial.thinking_text.slice(0, 12_000) : null;
-        broadcastPartial(record, record.state.partial_text ?? "", record.state.partial_thinking);
+        broadcastPartial(record, record.state.partial_text ?? "", record.state.partial_thinking, record.state.partial_presentation);
       },
       onActivity: async (activity) => {
         if (signal.aborted) return;
@@ -461,7 +488,10 @@ async function runAgentTurn(
     record.state.usage = response.usage ?? null;
 
     if (signal.aborted || record.stopRequested) {
-      setRunStatus(record, "stopped", "completed", { finished: true });
+      setRunStatus(record, "stopped", "completed", {
+        partialPresentation: projectGenerationStatus(record.state.partial_presentation, "stopped"),
+        finished: true,
+      });
       appendEvent(record, "status", "completed", "run_stopped", "Coach run stopped by the user");
       return;
     }
@@ -473,8 +503,17 @@ async function runAgentTurn(
       // The assistant reply is persisted by the harness through the wrapped
       // session in turn.ts (redacted at the write boundary).
 
+      // 完成态投影以 turn 的终态快照为准（从模型原文现算，含 openui 段）；
+      // 无快照的旧 turn 实现回退到最后一份流式快照。
+      const completedPresentation = response.presentation
+        ?? projectGenerationStatus(record.state.partial_presentation, "completed", {
+          messageId: runRef,
+          runId: runRef,
+        });
+
       setRunStatus(record, "succeeded", "completed", {
         partialText: redactedReply,
+        partialPresentation: completedPresentation,
         finished: true,
       });
       appendEvent(record, "text", "text_generation", "text_available", "Coach response text is available");
@@ -527,6 +566,13 @@ async function runAgentTurn(
 
       setRunStatus(record, "failed", "completed", {
         partialText: response.partial_reply,
+        // 失败不重算正文（没有原始全文），用最后一份流式快照收口并如实
+        // 标 generation_status；停止类失败同时带 cause=stopped。
+        partialPresentation: projectGenerationStatus(
+          record.state.partial_presentation,
+          failure.code === "stopped" ? "stopped" : "failed",
+          { messageId: runRef, runId: runRef },
+        ),
         error: failure,
         finished: true,
       });
@@ -556,7 +602,17 @@ async function runAgentTurn(
             retryable: isRetryableFailureCode(code),
           };
         })();
-    setRunStatus(record, "failed", "completed", { error: failure, finished: true });
+    setRunStatus(record, "failed", "completed", {
+      // 与 turn 内失败路径同口径：最后一份流式快照只能原样收口，不得把
+      // generation_status 留在 streaming 让失败态看起来仍在生成。
+      partialPresentation: projectGenerationStatus(
+        record.state.partial_presentation,
+        failure.code === "stopped" ? "stopped" : "failed",
+        { messageId: runRef, runId: runRef },
+      ),
+      error: failure,
+      finished: true,
+    });
     appendEvent(record, "error", "completed", failure.code, failure.message);
   }
 }
@@ -572,6 +628,8 @@ export function createAgentRun(
     streamFn?: StreamFn;
     /** B0 locale 管道：随 run 记录透传给 turn 请求（教练语言不消费，留给 B3）。 */
     locale?: "zh-CN" | "en-US";
+    /** coach_ui_action.v1 来源标记（已由 HTTP 边界校验），仅落审计事件。 */
+    uiAction?: CoachUiActionV1 | null;
   } = {},
 ): AgentRunState {
   if (!content || !content.trim()) {
@@ -603,6 +661,7 @@ export function createAgentRun(
       status: "queued",
       phase: "queued",
       partial_text: null,
+      partial_presentation: null,
       partial_thinking: null,
       error: null,
       events: [],
@@ -623,12 +682,23 @@ export function createAgentRun(
       .slice(0, 10),
     stopRequested: false,
     streamFn: options.streamFn,
+    uiAction: options.uiAction ?? null,
     events: [],
     listeners: new Set(),
   };
 
   runs.set(runRef, record);
   appendEvent(record, "status", "queued", "run_queued", "Coach run queued");
+  if (options.uiAction) {
+    // coach_ui_action.v1（§5.3）审计：@ToAssistant 手势的来源标记只落事件，
+    // 回合输入语义就是 content 本身，不因此改写产品状态或权限。
+    appendEvent(record, "interaction", "queued", "coach_ui_action", "Coach reply initiated from rendered UI action", {
+      kind: options.uiAction.kind,
+      interaction_id: options.uiAction.interaction_id,
+      message_id: options.uiAction.message_id,
+      segment_id: options.uiAction.segment_id,
+    });
+  }
 
   startTask(runRef, (signal) => runAgentTurn(runRef, ownerId, threadId, safeContent, signal));
 
@@ -650,6 +720,7 @@ export function resumeWaitingRuns(ownerId: string): string[] {
 
       record.state.error = null;
       record.state.partial_text = null;
+      record.state.partial_presentation = null;
       record.state.partial_thinking = null;
       record.state.phase = "queued";
     appendEvent(record, "status", "queued", "provider_requeued", "Coach run requeued after Provider recovery");
@@ -790,6 +861,7 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
       status: "queued",
       phase: "queued",
       partial_text: null,
+      partial_presentation: null,
       partial_thinking: null,
       error: null,
       events: [],

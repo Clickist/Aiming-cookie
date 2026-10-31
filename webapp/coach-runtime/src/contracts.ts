@@ -10,6 +10,8 @@ export const COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA = "coach_diagnostic_context.v2" 
 export const COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA = "coach_diagnostic_context.v3" as const;
 export const PROVIDER_MODEL_SWITCH_SCHEMA = "coach_provider_model_switch.v1" as const;
 
+import type { CoachPresentation } from "./presentation/types.ts";
+
 // Aiming Cookie 官方会员档的模型锁（契约 §0：sub / boost 两令牌都是这一个
 // 模型；1.4.19 起锁 deepseek-v4.1-flash，旧档存量的 deepseek-v4-flash 由
 // provider-store 读取自愈静默迁移）。常量本体放 contracts（最底层共享模块），
@@ -317,6 +319,11 @@ export type CoachRuntimeTurnResponse = {
    * they are NOT 本次讨论 subjects.
    */
   deep_read_analysis_refs: string[];
+  /**
+   * coach_presentation.v1 展示投影（ARCHITECTURE §5.3）：成功路径的终态
+   * 快照；失败/停止路径由调用方用最后一份流式快照收口。旧调用方忽略。
+   */
+  presentation?: CoachPresentation | null;
 };
 
 export type ProviderAuthMode = "api_key" | "oauth" | "ambient";

@@ -58,6 +58,12 @@ Pop-Location
 
 Windows 正式版（Cargo `release` profile）由 `src-tauri/build.rs` 嵌入 `windows-app-manifest.xml`，启动时正常请求管理员权限；开发构建不强制提权，调试管理员运行的 KovaaK 时需要自行以管理员权限启动开发终端。UAC 同意不替代应用内采集 opt-in。同一 Windows 用户确认 UAC 后，原数据目录保持不变；使用另一个管理员账号的凭据运行时，数据根属于该管理员账号。安装器保持 current-user 安装位置，仅在关闭已提权 AC 被拒绝时按需申请权限；取消或关闭失败会停止安装/卸载。
 
+### Coach 图表组件说明
+
+Coach 的 `data-visuals` skill 从前端受限 OpenUI library 生成组件签名。修改 `webapp/frontend/lib/openui/library.tsx` 后，在前端目录运行 `npm run sync:openui-skill`；`npm run check:openui-skill` 和 `tests/openui-skill-reference.test.ts` 检查说明是否与实际组件一致。组件生命周期与真实点击回归位于 `tests/openui-lifecycle.test.tsx`，使用同版本 React 的挂载测试；桌面最终验收仍走 CUA。
+
+图表解析、渲染、版本和预算失败写入当前数据根的 `logs/frontend.log`（`openui.presentation`），诊断包沿用现有前端日志收集。记录包含会话、消息、run、区段、revision、库版本和错误码，不复制图表源码或用户正文。
+
 ## 2. 本地 Web 开发
 
 推荐分三个终端启动：

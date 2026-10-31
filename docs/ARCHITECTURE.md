@@ -358,6 +358,18 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - Pi coding-agent 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；产品只注册经过显式拍板的集合：受限 app-data 文件工具、typed product command，以及 `bash` / `web_search` / `fetch_page`（见 §5.1，2026-10-10 拍板）；
 - 首次启动以不可跳过的 Provider onboarding 为主路径；Provider 与 Windows Raw Input/窗口回放采集授权、启用都是进入主工作区的硬门槛。后续 Provider 失效不回退 onboarding，Coach 对话提供错误和 Settings 恢复入口。
 
+### 5.3 Coach 讲解富展示合同（coach_presentation.v1，2026-10-28）
+
+Coach 回复可以携带受限富 UI 区段（Generative UI，产品语义见 PRD §7 B 阶段）。稳定合同：
+
+- **格式与分流**：模型在正文里以 ` ```openui-lang ` fenced block 输出 DSL（OpenUI 官方 inlineMode），与文字混排；直接从原始回复投影，不引入 `]]>openui:` 宿主包装行。sidecar 的展示归一化（`normalizeUserFacingText`）不作用于 openui 区段——区段由**有状态分流器**先行切出，仅对 text 段执行现有归一化与 secret redaction；DSL 只豁免格式清洗，不豁免 redaction、预算与组件限制。分流器与前端使用同一份冻结语法 fixture（CRLF、未闭合 fence、围栏形文本、相似语言标识均不得误识别）。
+- **展示投影**：UI 消费的展示边界为 `coach_presentation.v1`：`{schema_version, message_id, run_id, revision, generation_status, cause?, segments}`；`generation_status ∈ streaming|completed|stopped|interrupted|failed`（生成状态，不等于前端渲染成功）；segment 为 `{id, kind:"text", text}` 或 `{id, kind:"openui", library_id, library_version, source}`。每次更新传全量快照，`revision` 单调递增，旧 revision 不得覆盖新状态；SSE、轮询、完成响应与历史重放四条路径使用同一投影语义。模型原始输出照旧整体落 JSONL，历史消息零迁移。
+- **组件白名单（library 合同）**：前端只注册白名单组件，`library_id + library_version` 同时驱动运行时 Renderer 与提示词生成（单一来源）；第一刀白名单 = Card / CardHeader / Stack / TextContent / BoldText / MetricIndicatorInline / Callout / BarChart / LineChart / Series / Buttons / Button（仅 `@ToAssistant`）。TextContent/Callout 内部的 Markdown 呈现必须复用前端受限渲染，不引入图片、任意外链、Query/Mutation、工具调用与网络副作用；零 iframe、CSP 不变、任意 HTML 红线不变。依赖侧 @openuidev/react-lang 与 react-ui 必须解析到单一 React 实例与单一 react-lang 实例。
+- **预算**：单 UI 区段 ≤64 KiB、单回复默认 1 个 openui 区段且图表 ≤2 张；超限不静默丢弃——截断/拒收必须带 cause 呈现。流式展示管道现有的文本截断预算不得截坏合法区段（openui 段使用独立预算，见 agent-runs partial 处理）。
+- **失败呈现与诊断**（2026-10-28 点点拍板）：生成状态与渲染状态分开。cause 至少区分 `parse_error / unknown_component / render_error / unsupported_library / budget_exceeded / process_interrupted / stopped`；界面保留有效内容及简短、中性的提示，不向用户堆叠技术错误。开发诊断必须记录会话、message/run/segment、revision、库版本、生成/渲染状态、失败阶段与稳定错误码，写入现有本地 `logs/frontend.log` 并随诊断包导出；不记录 DSL、用户正文、凭据或原始异常内容。进程重启打断的未完成内容不得呈现为最终结果；旧快照展示必须标记未完成。前端维护 `rendering|ready|degraded|failed` 局部渲染状态，客户端渲染错误不冒充 sidecar 生成失败。
+- **动作权限**：`@ToAssistant` 是"用户手势发起新回合"——点击经用户确认语义走既有消息发送流程，带 `{schema_version:"coach_ui_action.v1", interaction_id, message_id, segment_id, kind:"to_assistant", message}` 来源标记；不是通用动作总线，不得直接执行产品命令。流式/降级/中断状态下按钮禁用；历史重放不自动执行动作；第一刀不开放 `@OpenUrl`、Form/Input 与 action context。
+- **数据诚实**：UI 区段只能承载 Coach 已读取的分析数据；图表数字与文字讲解同源，保留单位与口径；禁止 DSL 表达式重算正式指标或生成新的测量结论。验收终点是用户路径最终呈现与官方数据对账，不只测渲染成功。
+
 ## 6. 本地归属与安全
 
 - Desktop 本地数据默认属于当前 OS 用户/本地 profile；内部 `owner/profile` 字段表达本地数据隔离和稳定引用，不代表云端用户身份；

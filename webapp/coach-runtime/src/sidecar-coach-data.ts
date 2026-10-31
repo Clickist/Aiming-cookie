@@ -29,6 +29,7 @@ import {
   type SessionMessage,
 } from "./session-repo.ts";
 import { hasActiveAgentRunForSession, hasRunRecordForSession } from "./agent-runs.ts";
+import { splitPresentation, type CoachGenerationStatus } from "./presentation/index.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -100,11 +101,31 @@ function shapeSession(
     created_at: meta.created_at,
     updated_at: updatedAt,
     message_count: messages.length,
-    last_message_preview: lastVisible ? lastVisible.content.slice(0, 240) : null,
+    last_message_preview: lastVisible ? previewForMessage(lastVisible) : null,
     title_pending: titlePending || undefined,
     analysis_session_ids: meta.analysis_session_ids ?? [],
     deep_read_analysis_session_ids: meta.deep_read_analysis_session_ids ?? [],
   };
+}
+
+/**
+ * 侧栏预览不得漏出 openui DSL。只对确含 UI 区段的 assistant 消息走分流器
+ * 取 text 段；其余消息保持原来的原文 preview 口径，零行为变化。
+ */
+function previewForMessage(message: SessionMessage): string {
+  if (message.role !== "assistant") return message.content.slice(0, 240);
+  // 快速路径：绝大多数消息根本没有 UI 区段（相似标识会走下面的真实分流判定）。
+  if (!message.content.includes("```openui-lang")) return message.content.slice(0, 240);
+  const presentation = splitPresentation(message.content, "completed");
+  if (!presentation.segments.some((segment) => segment.kind === "openui")) {
+    return message.content.slice(0, 240);
+  }
+  const text = presentation.segments
+    .filter((segment): segment is Extract<typeof segment, { kind: "text" }> => segment.kind === "text")
+    .map((segment) => segment.text)
+    .join("")
+    .trim();
+  return text.slice(0, 240);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +208,20 @@ function analysisRefsFromMeta(meta: ConversationMeta): Array<{ id: number; attac
   return (meta.analysis_session_ids ?? []).map((id) => ({ id, attached_at: "" }));
 }
 
+/**
+ * 历史重放的生成状态（§5.3：进程重启打断的未完成内容不得呈现为最终结果）：
+ * - assistant 条目自身 stopReason=aborted → stopped；
+ * - 紧跟在尾部合成中断标记之前的半截正文 → interrupted（合成标记自身没有
+ *   正文，不投影 presentation）；
+ * - 其余正常落库的回复 → completed。
+ */
+function historyGenerationStatus(entry: SessionMessage, next: SessionMessage | undefined): CoachGenerationStatus {
+  if (entry.interrupted) return "interrupted";
+  if (entry.stopped) return "stopped";
+  if (next?.interrupted) return "interrupted";
+  return "completed";
+}
+
 export async function getCoachSessionDetail(
   ownerId: string,
   sessionId: number,
@@ -214,6 +249,17 @@ export async function getCoachSessionDetail(
     legacy_session_id: null,
     ...(entry.stopped ? { stopped: true } : {}),
     ...(entry.interrupted ? { interrupted: true } : {}),
+    // coach_presentation.v1 历史重放：从 JSONL 原文用同一分流器现算，
+    // 旧消息零迁移；旧前端忽略此字段照旧渲染 content。
+    ...(entry.role === "assistant" && entry.content.trim()
+      ? {
+          presentation: splitPresentation(entry.content, historyGenerationStatus(entry, entries[index + 1]), {
+            revision: 1,
+            messageId: index + 1,
+            runId: null,
+          }),
+        }
+      : {}),
   }));
   return { ...base, analysis_refs: analysisRefsFromMeta(meta), messages };
 }

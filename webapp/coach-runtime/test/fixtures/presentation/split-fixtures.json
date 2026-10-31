@@ -1,0 +1,87 @@
+{
+  "comment": "coach_presentation.v1 分流器冻结 fixtures（ARCHITECTURE §5.3 合同的验收样例）。字段：input=模型原始输出全文；expected_segments=分流器必须产出的段序列（kind=text 的 text 字段必须逐字相等；kind=openui 的 source 为 DSL 原文逐字相等）；generation_status=该样本对应的生成状态。sidecar 分流器与前端切分共用本文件，任何一方修改语法判定必须先改这里并双侧同步。",
+  "fixtures": [
+    {
+      "name": "plain-text-only",
+      "description": "纯文字回复，无 UI 区段——分流器必须零改动透传",
+      "generation_status": "completed",
+      "input": "这局整体命中率不错，但过早点火占了失误的近一半。\n\n回看 @2.3s，注意准星到目标边上之后那 0.2 秒它在做什么。",
+      "expected_segments": [
+        { "kind": "text", "text": "这局整体命中率不错，但过早点火占了失误的近一半。\n\n回看 @2.3s，注意准星到目标边上之后那 0.2 秒它在做什么。" }
+      ]
+    },
+    {
+      "name": "prose-plus-one-chart",
+      "description": "标准讲解形态：文字 + 一个 openui-lang 区段（1 张图）+ 文字结论",
+      "generation_status": "completed",
+      "input": "这局过早点火占了失误的近一半——看下面的分布：\n\n```openui-lang\nroot = Card([head, chart])\nhead = CardHeader(\"失误分布\", \"Flick Tracking · 30 分钟\")\nchart = BarChart(labels, [series])\nlabels = [\"过早点火\", \"追枪过头\", \"下压过度\", \"节奏断裂\"]\nseries = Series(\"失误次数\", [23, 12, 9, 6])\n```\n\n所以下一步只练一件事：出掩体后停半拍再压。",
+      "expected_segments": [
+        { "kind": "text", "text": "这局过早点火占了失误的近一半——看下面的分布：\n\n" },
+        { "kind": "openui", "source": "root = Card([head, chart])\nhead = CardHeader(\"失误分布\", \"Flick Tracking · 30 分钟\")\nchart = BarChart(labels, [series])\nlabels = [\"过早点火\", \"追枪过头\", \"下压过度\", \"节奏断裂\"]\nseries = Series(\"失误次数\", [23, 12, 9, 6])" },
+        { "kind": "text", "text": "\n\n所以下一步只练一件事：出掩体后停半拍再压。" }
+      ]
+    },
+    {
+      "name": "two-charts-in-one-block",
+      "description": "单区段内两张图（合同上限内）：一个 fence 的 DSL 定义两个图表变量",
+      "generation_status": "completed",
+      "input": "横向对比这周和上周：\n\n```openui-lang\nroot = Card([c1, c2])\nc1 = BarChart(wkLabels, [wkThis, wkLast])\nwkLabels = [\"命中率\", \"TTK\"]\nwkThis = Series(\"本周\", [68, 1.9])\nwkLast = Series(\"上周\", [63, 2.2])\nc2 = LineChart(dayLabels, [trend])\ndayLabels = [\"周一\", \"周三\", \"周五\"]\ntrend = Series(\"TPM 趋势\", [150, 165, 172])\n```\n\n进步是真实的，继续按这个节奏。",
+      "expected_segments": [
+        { "kind": "text", "text": "横向对比这周和上周：\n\n" },
+        { "kind": "openui", "source": "root = Card([c1, c2])\nc1 = BarChart(wkLabels, [wkThis, wkLast])\nwkLabels = [\"命中率\", \"TTK\"]\nwkThis = Series(\"本周\", [68, 1.9])\nwkLast = Series(\"上周\", [63, 2.2])\nc2 = LineChart(dayLabels, [trend])\ndayLabels = [\"周一\", \"周三\", \"周五\"]\ntrend = Series(\"TPM 趋势\", [150, 165, 172])" },
+        { "kind": "text", "text": "\n\n进步是真实的，继续按这个节奏。" }
+      ]
+    },
+    {
+      "name": "streaming-unclosed-fence",
+      "description": "流式中途：openui fence 未闭合——已收 DSL 进入缓冲中的 openui 段（不泄入 text 展示），fence 前文字照常",
+      "generation_status": "streaming",
+      "input": "看这组分布：\n\n```openui-lang\nroot = Card([chart])\nchart = BarChart(la",
+      "expected_segments": [
+        { "kind": "text", "text": "看这组分布：\n\n" },
+        { "kind": "openui", "source": "root = Card([chart])\nchart = BarChart(la" }
+      ]
+    },
+    {
+      "name": "crlf-line-endings",
+      "description": "CRLF 行尾：围栏识别与 DSL 内容都必须按 CRLF 正确工作",
+      "generation_status": "completed",
+      "input": "分布如下：\r\n\r\n```openui-lang\r\nroot = Card([chart])\r\nchart = BarChart(labels, [series])\r\nlabels = [\"A\", \"B\"]\r\nseries = Series(\"失误\", [3, 1])\r\n```\r\n\r\n以上。",
+      "expected_segments": [
+        { "kind": "text", "text": "分布如下：\r\n\r\n" },
+        { "kind": "openui", "source": "root = Card([chart])\r\nchart = BarChart(labels, [series])\r\nlabels = [\"A\", \"B\"]\r\nseries = Series(\"失误\", [3, 1])" },
+        { "kind": "text", "text": "\r\n\r\n以上。" }
+      ]
+    },
+    {
+      "name": "lookalike-fences-not-matched",
+      "description": "反噬样例：相似语言标识、普通代码块、正文围栏形文本——全部不得进入 openui 段；普通 fence（python/无标识/mermaid）仍按旧语义连内容删除",
+      "generation_status": "completed",
+      "input": "先说结论。\n\n```openui-langs\nroot = Fake()\n```\n\n上面这个相似标识不是 UI 区段。\n\n```python\nprint(\"hello\")\n```\n\n上面是普通代码块（照旧整体删除）。\n\n正文里提到 ```openui-lang 这种写法不算开启围栏。\n\n```\nunknown fence also removed\n```\n\n完。",
+      "expected_segments": [
+        { "kind": "text", "text": "先说结论。\n\n上面这个相似标识不是 UI 区段。\n\n上面是普通代码块（照旧整体删除）。\n\n正文里提到 ```openui-lang 这种写法不算开启围栏。\n\n完。" }
+      ]
+    },
+    {
+      "name": "dsl-with-hostile-chars",
+      "description": "DSL 字符串值里含 <script>、反引号、#、比较符——分流与归一化都不得破坏；渲染层负责转义",
+      "generation_status": "completed",
+      "input": "看数据：\n\n```openui-lang\nroot = Card([note])\nnote = Callout(\"warning\", \"口径提醒\", \"命中 <script>alert(1)</script> 面板显示的是 <60% 的对局；## 标题形文本与 `反引号` 与 5<6 都要原样\")\n```\n\n完。",
+      "expected_segments": [
+        { "kind": "text", "text": "看数据：\n\n" },
+        { "kind": "openui", "source": "root = Card([note])\nnote = Callout(\"warning\", \"口径提醒\", \"命中 <script>alert(1)</script> 面板显示的是 <60% 的对局；## 标题形文本与 `反引号` 与 5<6 都要原样\")" },
+        { "kind": "text", "text": "\n\n完。" }
+      ]
+    },
+    {
+      "name": "stopped-partial",
+      "description": "用户主动停止：流式中断在 fence 内——openui 段保留已收部分供降级呈现，generation_status=stopped",
+      "generation_status": "stopped",
+      "input": "这局的核心问题：\n\n```openui-lang\nroot = Card([m1])\nm1 = MetricIndicatorInline(\"23%\", \"过早点火占比\")",
+      "expected_segments": [
+        { "kind": "text", "text": "这局的核心问题：\n\n" },
+        { "kind": "openui", "source": "root = Card([m1])\nm1 = MetricIndicatorInline(\"23%\", \"过早点火占比\")" }
+      ]
+    }
+  ]
+}

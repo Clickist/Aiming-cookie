@@ -38,7 +38,16 @@ import { extractMessageText } from "./session-repo.ts";
 import { isIntroSession } from "./intro-session.ts";
 import { registerCompactionFallback } from "./compaction-fallback.ts";
 import { COMPACTION_CLEANUP_CUSTOM_INSTRUCTIONS } from "./compaction-cleanup.ts";
+import {
+  normalizeUserFacingText,
+  splitPresentation,
+  type CoachPresentation,
+} from "./presentation/index.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
+
+// 归一化实现已搬到 presentation 模块（分流器只对 text 段调用它，避免
+// turn.ts ↔ presentation 的循环依赖）；这里保留原来的导出面。
+export { normalizeUserFacingText } from "./presentation/index.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -79,6 +88,11 @@ export type CoachPartialRevision = {
   revision: number;
   /** Null on thinking-only revisions (extended thinking streams before any text). */
   text: string | null;
+  /**
+   * coach_presentation.v1 全量快照（ARCHITECTURE §5.3），与 text 同 revision。
+   * 旧调用方只读 text，忽略本字段；text 仍是既有的「openui 区段被剥除」视图。
+   */
+  presentation?: CoachPresentation | null;
   /** Live extended-thinking text (pi thinking_delta), full-replace like text. */
   thinking_text: string | null;
   elapsed_ms: number;
@@ -753,56 +767,10 @@ function coachSkillsDir(): string {
 
 // ── Text helpers ─────────────────────────────────────────────────────────
 
-/** 代码块 fence 行（``` 或 ~~~，GFM 允许 ≤3 空格缩进）。 */
-const FENCE_OPEN_RE = /^ {0,3}(?:`{3,}|~{3,})/;
-/** 围栏闭合行：只有同一字符的 fence 记号（允许更长），无 info string。 */
-const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})\s*$/;
-
 /**
- * 剥除 fenced code / mermaid：连围栏带内容整体删除。流式片段里未闭合的
- * fence 同样吞掉其后残余，终稿闭合后自然收敛——这是「消 fence 流式陷阱」
- * 的代价面，只发生在展示链路。
+ * 展示归一化（normalizeUserFacingText）已移到 presentation/normalize-text.ts：
+ * 分流器只对 text 段调用它。安全兜底仍在这里组合 redaction + 归一化。
  */
-function stripFencedBlocks(text: string): string {
-  const out: string[] = [];
-  let fenceToken: string | null = null;
-  for (const line of text.split("\n")) {
-    if (fenceToken === null) {
-      if (FENCE_OPEN_RE.test(line)) fenceToken = line.trim().slice(0, 1);
-      else out.push(line);
-      continue;
-    }
-    const trimmed = line.trim();
-    if (trimmed.startsWith(fenceToken) && FENCE_CLOSE_RE.test(line)) fenceToken = null;
-  }
-  return out.join("\n");
-}
-
-/**
- * 受限白名单归一化（frontend-parity 批 7，digests §10）。
- *
- * 展示端从「删字符」改为「白名单透传」：放行训练计划天然的受限子集——
- * GFM 表格、有序/无序列表标记、行内加粗 **…** 与 @time 标记；其余继续剥除：
- * H1–H6 标题记号、代码块 fence（含内容）、引用块记号、Mermaid（属 fence 家族）、
- * 图片语法、一切 HTML。红线：任意 HTML 渲染＝XSS 面，受限解析器绝不引入
- * rehype-raw 式通道，这里先在源头剥干净。行内代码不在白名单，保留内容去反引号。
- * JSONL 持久化的是模型原始输出，本函数只作用于展示链路，历史消息零迁移。
- */
-export function normalizeUserFacingText(value: string): string {
-  return stripFencedBlocks(value)
-    .replace(/<(script|style|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>\n]*>/g, "")
-    // 流式片段里未闭合的标签形（<tag… 到行尾无 >）：只吞掉确有标签开头的
-    // 形状，普通文本里的比较符（如 5<6）不受影响。
-    .replace(/(^|[ \t])<(?:[a-zA-Z/!?][^>\n]*)$/gm, "$1")
-    .replace(/^ {0,3}#{1,6}\s+/gm, "")
-    .replace(/^ {0,3}>\s?/gm, "")
-    .replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, "")
-    .replace(/`([^`\n]+)`/g, "$1")
-    .trim();
-}
-
 function safePartialReply(
   value: string | null,
   secrets: string[],
@@ -855,7 +823,7 @@ export const LANGUAGE_FOLLOW_POLICY = `
 - 先判断当前这条用户消息的主要语言，再用同一种语言回复；整条回复只用这一种语言，不要中英混排。用户用英文提问就全程用英文回复，用中文提问就全程用中文回复。
 - 提示词其余部分所有「用中文回复」「用中文口语说话」「把英文术语换算成中文说法」这类语言要求，只在用户消息是中文时适用；用户消息是其他语言时一律以本节为准。
 - 用英文回复时，术语直接用瞄准社群的标准英文词（与中文说法一一对应）：甩枪=flick、停稳=settle、刹住（急停语境）=stop the mouse dead、跟枪=tracking、横移=strafe、冲过头/拉过头=overshoot、刻意拉少一点=underaim、转火=target switching、目标阅读=target reading、重新跟住=reacquisition、复位（鼠标复位）=reset、预判=prediction、小修正=micro-correction、减速段=decel、动作分段=submovement、击杀耗时=TTK、复测=retest、低敏/高敏=low sens/high sens、趴握/抓握/指握=palm/claw/fingertip grip、大臂/手腕=arm/wrist aiming。研究术语同样不许照搬，必须讲成大白话，需要精确时括号带原词（开环=open-loop、闭环=closed-loop、弹道段=ballistic phase、手动间歇控制=intermittent manual control）；「cue／教学提示」这类内部词汇照旧不出现在对话里；SPARC、cm/360 等缩写照旧保留并首次出现时白话解释。
-- 除语言选择本身外，提示词的全部纪律与格式要求在任何输出语言下同样遵守、一字不降：@X.Xs 回看标记的用法与限制、来源引用的说法、富文本白名单规则、数值与事实不可改写、教学闭环话术纪律。
+- 除语言选择本身外，提示词的全部纪律与格式要求在任何输出语言下同样遵守、一字不降：@X.Xs 回看标记的用法与限制、来源引用的说法、数据图表区段的组件与格式限制、数值与事实不可改写、教学闭环话术纪律。
 - 知识库（knowledge/ 目录）和分析文档（analyses/）的内容大部分是中文的：照常检索、照常读中文条目与中文文档，讲解时用用户消息的语言转述其中的口径；不要因为条目是中文就拒答，也不要在非中文回复里整段照贴中文原文。`;
 
 /** Compose the full system prompt from the base prompt and the skills block. */
@@ -1103,6 +1071,9 @@ export async function runCoachTurn(
   let thinkingBuffer = "";
   let activitySequence = 0;
   let lastPartialText: string | null = null;
+  // 投影内容签名（段数 + 各段长度）：仅 openui 区段增长、正文仍为空时，
+  // 旧 text 去重会把流式 UI 帧全吞掉；签名变化即可放行。
+  let lastPresentationSignature: string | null = null;
   // 停止落盘边界的数据源：最近一次 text_delta 的原始流式正文（未清洗）。
   let lastRawPartialText: string | null = null;
   let lastPartialAt = 0;
@@ -1136,6 +1107,25 @@ export async function runCoachTurn(
     seenSkillReads.add(skillName);
     collectedToolEvents.push({ type: "skill", skill_name: skillName });
   };
+  // 终态展示投影：失败/停止响应必须带上最后一份已见原始正文的 §5.3 投影，
+  // 否则 NDJSON 的 final 帧只有 legacy partial_reply，前端拿不到 openui 段。
+  // 与完成态同口径：raw 原文、同一份 secrets 脱敏、revision 取最后 partial + 1。
+  const withTerminalPresentation = (
+    response: CoachRuntimeTurnResponse,
+    rawText: string | null,
+    generationStatus: "stopped" | "failed",
+    runId: string | null,
+  ): CoachRuntimeTurnResponse => {
+    response.presentation = rawText === null
+      ? null
+      : splitPresentation(rawText, generationStatus, {
+          revision: partialRevision + 1,
+          messageId: runId,
+          runId,
+          secrets,
+        });
+    return response;
+  };
 
   try {
     const request = parseRequest(rawRequest);
@@ -1143,20 +1133,25 @@ export async function runCoachTurn(
     const isStopRequested = (): boolean =>
       stopRequested.has(request.run_id) || stopSignal?.aborted === true;
     const stoppedFailureResponse = () =>
-      failureResponse(
-        makeError({
-          category: "coach_runtime",
-          code: "stopped",
-          message: STOPPED_USER_MESSAGE,
-          retryable: true,
-        }),
-        [],
-        request.schema_version,
-        collectedToolEvents,
-        lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+      withTerminalPresentation(
+        failureResponse(
+          makeError({
+            category: "coach_runtime",
+            code: "stopped",
+            message: STOPPED_USER_MESSAGE,
+            retryable: true,
+          }),
+          [],
+          request.schema_version,
+          collectedToolEvents,
+          lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+          request.run_id,
+          analysisRefs,
+          deepReadAnalysisRefs,
+        ),
+        lastRawPartialText ?? lastPartialText,
+        "stopped",
         request.run_id,
-        analysisRefs,
-        deepReadAnalysisRefs,
       );
     const resolved = await resolveProviderModel(request.model);
     const { history, lastMessage } = splitConversation(request.messages, resolved.model);
@@ -1332,10 +1327,38 @@ export async function runCoachTurn(
       await options.onActivity({ sequence: ++activitySequence, ...activity });
     };
 
-    const publishPartial = async (text: string | null, force = false, thinkingChanged = false): Promise<void> => {
+    /**
+     * rawText 是模型原始正文（未清洗）；text 仍按既有链路归一化（openui
+     * 区段在旧视图里被剥除），presentation 用同一份原文做 §5.3 分段投影，
+     * 两者同 revision。legacyText 只给 thinking-only 帧沿用「重发上一条
+     * 已发布正文」的历史语义。
+     */
+    const publishPartial = async (
+      rawText: string | null,
+      force = false,
+      thinkingChanged = false,
+      legacyText?: string | null,
+    ): Promise<void> => {
       if (!options.onPartial) return;
-      if (text === null && !thinkingChanged) return;
-      if (text === lastPartialText && !thinkingChanged) return;
+      const text = legacyText !== undefined
+        ? legacyText
+        : (rawText === null ? null : safePartialReply(rawText, secrets));
+      const presentation = rawText === null
+        ? null
+        : splitPresentation(rawText, "streaming", {
+            messageId: request.run_id,
+            runId: request.run_id,
+            secrets,
+          });
+      const presentationSignature = presentation === null
+        ? ""
+        : presentation.segments
+            .map((segment) => (segment.kind === "openui" ? `o:${segment.source.length}` : `t:${segment.text.length}`))
+            .join("|");
+      const presentationChanged = presentationSignature !== lastPresentationSignature;
+      const hasOpenUi = presentation?.segments.some((segment) => segment.kind === "openui") ?? false;
+      if (text === null && !thinkingChanged && !hasOpenUi) return;
+      if (text === lastPartialText && !thinkingChanged && !presentationChanged) return;
       const now = performance.now();
       const sentenceBoundary = /[。！？.!?]$/.test(text ?? "");
       const thinkingOnly = text === null || text === lastPartialText;
@@ -1345,11 +1368,20 @@ export async function runCoachTurn(
       if (!force && !thinkingOnly && partialRevision > 0 && now - lastPartialAt < 80 && !sentenceBoundary) return;
       partialRevision += 1;
       lastPartialText = text;
+      lastPresentationSignature = presentationSignature;
       lastPartialAt = now;
       firstSafeTextMs ??= Math.max(0, Math.round(now - turnStartedAt));
       await options.onPartial({
         revision: partialRevision,
         text,
+        presentation: presentation === null
+          ? null
+          : {
+              ...presentation,
+              revision: partialRevision,
+              message_id: request.run_id,
+              run_id: request.run_id,
+            },
         thinking_text: thinkingBuffer || null,
         elapsed_ms: Math.max(0, Math.round(now - turnStartedAt)),
         provider_rounds: providerRounds,
@@ -1487,7 +1519,7 @@ export async function runCoachTurn(
         // only the trailing 8KB so unbounded reasoning can't grow memory or
         // the SSE payload. Non-reasoning models never emit this event.
         thinkingBuffer = `${thinkingBuffer}${event.assistantMessageEvent.delta}`.slice(-8_000);
-        await publishPartial(lastPartialText, false, true);
+        await publishPartial(lastRawPartialText, false, true, lastPartialText);
         return;
       }
 
@@ -1510,7 +1542,7 @@ export async function runCoachTurn(
             });
           }
         }
-        await publishPartial(safePartialReply(partialText, secrets));
+        await publishPartial(partialText);
         return;
       }
     });
@@ -1643,21 +1675,26 @@ export async function runCoachTurn(
     if (isRecord(replyMessage) && replyMessage.stopReason === "error") {
       const interruptedText = extractAssistantText(replyMessage);
       if (interruptedText !== null) {
-        return failureResponse(
-          makeError({
-            category: "coach_runtime",
-            code: "provider_stream_interrupted",
-            message: "回复流被中断，已生成的部分已保留，可直接重试。",
-            retryable: true,
-          }),
-          [],
-          request.schema_version,
-          collectedToolEvents,
-          safePartialReply(interruptedText, secrets),
+        return withTerminalPresentation(
+          failureResponse(
+            makeError({
+              category: "coach_runtime",
+              code: "provider_stream_interrupted",
+              message: "回复流被中断，已生成的部分已保留，可直接重试。",
+              retryable: true,
+            }),
+            [],
+            request.schema_version,
+            collectedToolEvents,
+            safePartialReply(interruptedText, secrets),
+            request.run_id,
+            analysisRefs,
+            deepReadAnalysisRefs,
+            turnUsage,
+          ),
+          interruptedText,
+          "failed",
           request.run_id,
-          analysisRefs,
-          deepReadAnalysisRefs,
-          turnUsage,
         );
       }
     }
@@ -1718,21 +1755,26 @@ export async function runCoachTurn(
       if (isError && !isAborted) {
         const interruptedText = extractAssistantText(replyMessage);
         if (interruptedText !== null) {
-          return failureResponse(
-            makeError({
-              category: "coach_runtime",
-              code: "provider_stream_interrupted",
-              message: "回复流被中断，已生成的部分已保留，可直接重试。",
-              retryable: true,
-            }),
-            [],
-            request.schema_version,
-            collectedToolEvents,
-            safePartialReply(interruptedText, secrets),
+          return withTerminalPresentation(
+            failureResponse(
+              makeError({
+                category: "coach_runtime",
+                code: "provider_stream_interrupted",
+                message: "回复流被中断，已生成的部分已保留，可直接重试。",
+                retryable: true,
+              }),
+              [],
+              request.schema_version,
+              collectedToolEvents,
+              safePartialReply(interruptedText, secrets),
+              request.run_id,
+              analysisRefs,
+              deepReadAnalysisRefs,
+              turnUsage,
+            ),
+            interruptedText,
+            "failed",
             request.run_id,
-            analysisRefs,
-            deepReadAnalysisRefs,
-            turnUsage,
           );
         }
       }
@@ -1743,21 +1785,26 @@ export async function runCoachTurn(
     // 可重试失败交付；partial 带回已见的 █ 文本过 safePartialReply 清洗。
     if (breakerTripped) {
       const corruptedText = extractAssistantText(replyMessage) ?? lastPartialText;
-      return failureResponse(
-        makeError({
-          category: "coach_runtime",
-          code: "corrupted_stream",
-          message: CORRUPTED_STREAM_USER_MESSAGE,
-          retryable: true,
-        }),
-        [],
-        request.schema_version,
-        collectedToolEvents,
-        corruptedText !== null ? safePartialReply(corruptedText, secrets) : null,
+      return withTerminalPresentation(
+        failureResponse(
+          makeError({
+            category: "coach_runtime",
+            code: "corrupted_stream",
+            message: CORRUPTED_STREAM_USER_MESSAGE,
+            retryable: true,
+          }),
+          [],
+          request.schema_version,
+          collectedToolEvents,
+          corruptedText !== null ? safePartialReply(corruptedText, secrets) : null,
+          request.run_id,
+          analysisRefs,
+          deepReadAnalysisRefs,
+          turnUsage,
+        ),
+        corruptedText,
+        "failed",
         request.run_id,
-        analysisRefs,
-        deepReadAnalysisRefs,
-        turnUsage,
       );
     }
 
@@ -1780,21 +1827,26 @@ export async function runCoachTurn(
       if (isError && !isAborted) {
         const interruptedText = extractAssistantText(replyMessage);
         if (interruptedText !== null) {
-          return failureResponse(
-            makeError({
-              category: "coach_runtime",
-              code: "provider_stream_interrupted",
-              message: "回复流被中断，已生成的部分已保留，可直接重试。",
-              retryable: true,
-            }),
-            [],
-            request.schema_version,
-            collectedToolEvents,
-            safePartialReply(interruptedText, secrets),
+          return withTerminalPresentation(
+            failureResponse(
+              makeError({
+                category: "coach_runtime",
+                code: "provider_stream_interrupted",
+                message: "回复流被中断，已生成的部分已保留，可直接重试。",
+                retryable: true,
+              }),
+              [],
+              request.schema_version,
+              collectedToolEvents,
+              safePartialReply(interruptedText, secrets),
+              request.run_id,
+              analysisRefs,
+              deepReadAnalysisRefs,
+              turnUsage,
+            ),
+            interruptedText,
+            "failed",
             request.run_id,
-            analysisRefs,
-            deepReadAnalysisRefs,
-            turnUsage,
           );
         }
       }
@@ -1815,20 +1867,25 @@ export async function runCoachTurn(
 
     if (rawReply === null) {
       if (isAborted) {
-        return failureResponse(
-          makeError({
-            category: "coach_runtime",
-            code: "stopped",
-            message: STOPPED_USER_MESSAGE,
-            retryable: true,
-          }),
-          [],
-          request.schema_version,
-          collectedToolEvents,
-          lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+        return withTerminalPresentation(
+          failureResponse(
+            makeError({
+              category: "coach_runtime",
+              code: "stopped",
+              message: STOPPED_USER_MESSAGE,
+              retryable: true,
+            }),
+            [],
+            request.schema_version,
+            collectedToolEvents,
+            lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+            request.run_id,
+            analysisRefs,
+            deepReadAnalysisRefs,
+          ),
+          lastRawPartialText ?? lastPartialText,
+          "stopped",
           request.run_id,
-          analysisRefs,
-          deepReadAnalysisRefs,
         );
       }
       const providerError = isRecord(replyMessage) && typeof replyMessage.errorMessage === "string"
@@ -1844,9 +1901,11 @@ export async function runCoachTurn(
 
     const redactedReply = redactRuntimeSecrets(rawReply, secrets);
     const reply = normalizeUserFacingText(redactedReply);
-    await publishPartial(reply, true);
+    await publishPartial(rawReply, true);
 
-    return successResponse(
+    // 完成态投影：从模型原始正文现算（reply 已归一化、openui 区段被剥除），
+    // revision 取最后 partial + 1，保证不旧于任何流式快照。
+    const response = successResponse(
       reply,
       [],
       request.schema_version,
@@ -1856,6 +1915,13 @@ export async function runCoachTurn(
       deepReadAnalysisRefs,
       turnUsage,
     );
+    response.presentation = splitPresentation(rawReply, "completed", {
+      revision: partialRevision + 1,
+      messageId: request.run_id,
+      runId: request.run_id,
+      secrets,
+    });
+    return response;
   } catch (error) {
     // 停止在途时按 stopped 分类（含任务 signal 已 abort 的注册前窗口），
     // 不把一次用户主动停止谎报成模型故障。
@@ -1880,22 +1946,27 @@ export async function runCoachTurn(
       failureCode === "quota_exhausted"
       || failureCode === "provider_auth_invalid"
       || failureCode === "provider_insufficient_balance";
-    return failureResponse(
-      makeError({
-        category: "coach_runtime",
-        code: failureCode,
-        message: userFacingErrorMessage(error, stopped),
-        retryable: stopped
-          || isRetryableFailureCode(failureCode)
-          || (error instanceof EmptyAssistantReplyError && !deterministicFailure),
-      }),
-      [],
-      responseSchema,
-      collectedToolEvents,
-      lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+    return withTerminalPresentation(
+      failureResponse(
+        makeError({
+          category: "coach_runtime",
+          code: failureCode,
+          message: userFacingErrorMessage(error, stopped),
+          retryable: stopped
+            || isRetryableFailureCode(failureCode)
+            || (error instanceof EmptyAssistantReplyError && !deterministicFailure),
+        }),
+        [],
+        responseSchema,
+        collectedToolEvents,
+        lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+        responseRunId,
+        analysisRefs,
+        deepReadAnalysisRefs,
+      ),
+      lastRawPartialText ?? lastPartialText,
+      stopped ? "stopped" : "failed",
       responseRunId,
-      analysisRefs,
-      deepReadAnalysisRefs,
     );
   } finally {
     unsubscribe?.();

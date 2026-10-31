@@ -1,6 +1,13 @@
 # Aiming Cookie Current Progress
 
 > Updated: 2026-10-24. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+## 2026-10-28 — Coach OpenUI 接入与渲染修复（代码已修，计费阻塞于10-29解除，实机验收仍待完成，未提交/未发布）
+
+- **实现**：受限 React 组件库、`coach_presentation.v1` 分流与实时/轮询/历史消费、追问按钮已接入。组件说明由实际 library schema 自动生成。实机暴露的父级 effect 覆盖解析回调、SSE 丢弃图表快照、纯图表回复不显示、数字历史消息 ID 被动作校验拒绝均已修复，并增加挂载生命周期、实际点击和传输回归。
+- **开发诊断**：复用本地 `logs/frontend.log`，记录消息/会话/run/segment、revision、库版本、失败阶段与稳定错误码；不复制 DSL、用户正文或凭据。真实会话 182 / 消息 10 的解析失败已确认落盘。界面保留文字与简短中性提示。
+- **验证**：前端 unit **245/245**、contracts **399/399**（包含 Tauri 静态构建与不变量）；type-check 通过。OpenUI 前端定向 **35/35**（含挂载/点击 5 项）。Runtime 终态补修后 presentation + sidecar/内部失败定向 **54/54**、停止竞态/重试/错误分类 **13/13**、skill 加载 **1/1**；终态补修前 Coach 全量 **688 tests：684 pass / 2 fail / 2 skip**，两失败为既有模型目录断言（`builtinFlash` 缺失、`DeepSeek V4 Pro` 与 `DeepSeek V4 Pro (New)` 名称不一致），未借本次改动修无关目录。官方 Stats CSV 对账确认 run 54116 的 aggregate/summary 为 939 shots / 760 hits / 179 misses / 84 kills / 360 overshots；击杀行子集不能代替全局 aggregate。
+- **实机结果与阻塞**：使用真实数据根 `E:/ACData`、恢复官方档 id 4、注入真实账号/会员网关，未用假 Provider。旧会话 182 和新会话 223 请求均被官方上游拒绝；UTC 04:10:27 网关日志确认 boost 池实际钱包 **¥0.405382**，本次预扣 **¥0.897600**。已停止重复请求，未充值、改额度、改线上配置或部署。原有错误消息未改写；目前没有取得新图表显示、真实追问、切会话/重启恢复或停止/打断的通过证据，**不能宣布功能已对用户可用**。本次改动面为 runtime presentation/终态与传输、前端渲染与动作/诊断、生成 skill 及回归、相关文档；最终工作区共 82 个修改/未跟踪路径，其中 46 个包含本次 OpenUI 工作（文档与 `types.ts` 等共享文件亦含原有改动），其余 36 个为已有/并行任务改动，均保留。临时 Tauri 配置已恢复，debug 客户端仍运行，官方档保持为当前。
+
 ## 2026-10-27 — Windows 正式版默认管理员启动（代码完成，真机全链验收未完成，未提交/未发版）
 
 - **产品依据**：PRD §14 同日拍板。Windows release profile 通过 `build.rs` 嵌入 `windows-app-manifest.xml` 的 `requireAdministrator`，保留原 Common Controls 依赖；debug profile 维持默认权限。UAC 不替代采集 opt-in，安装范围、数据路径与进程生命周期逻辑不作迁移。
