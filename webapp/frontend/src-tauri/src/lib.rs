@@ -739,22 +739,56 @@ pub(crate) fn join_thread_with_deadline<T>(
 
 fn host_version() -> Option<String> {
     #[cfg(windows)]
-    let output = std::process::Command::new("cmd")
-        .args(["/C", "ver"])
-        .creation_flags(NO_CHILD_WINDOW)
-        .output()
-        .ok()?;
+    {
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .creation_flags(NO_CHILD_WINDOW)
+            .output()
+            .ok()?;
+        // `ver` 的输出跟随 OEM 代码页（中文系统是 GBK），整串 from_utf8_lossy
+        // 会把"[版本"解成乱码。版本号本身是纯 ASCII 数字与点，直接按字节
+        // 扫出最长的一段 "<major>.<minor>.<build>"，与系统语言无关。
+        let version = ascii_version_run(&output.stdout)?;
+        Some(bounded_diagnostic_text(&format!("Windows {version}")))
+    }
     #[cfg(target_os = "macos")]
-    let output = std::process::Command::new("sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()?;
+    {
+        let output = std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()?;
+        let value = String::from_utf8_lossy(&output.stdout);
+        let value = bounded_diagnostic_text(value.trim());
+        (!value.is_empty()).then_some(value)
+    }
     #[cfg(all(not(windows), not(target_os = "macos")))]
-    let output = return None;
+    {
+        None
+    }
+}
 
-    let value = String::from_utf8_lossy(&output.stdout);
-    let value = bounded_diagnostic_text(value.trim());
-    (!value.is_empty()).then_some(value)
+/// 从任意编码的字节流里取最长的一段 ASCII `数字/点` 序列（版本号）。
+#[cfg(windows)]
+fn ascii_version_run(bytes: &[u8]) -> Option<String> {
+    let mut best = Vec::new();
+    let mut current = Vec::new();
+    for &byte in bytes.iter().chain(std::iter::once(&b' ')) {
+        if byte.is_ascii_digit() || byte == b'.' {
+            current.push(byte);
+        } else {
+            if current.len() > best.len() {
+                best = std::mem::take(&mut current);
+            }
+            current.clear();
+        }
+    }
+    while best.last() == Some(&b'.') {
+        best.pop();
+    }
+    if !best.contains(&b'.') || !best.iter().any(u8::is_ascii_digit) {
+        return None;
+    }
+    String::from_utf8(best).ok()
 }
 
 // WGC 视频采集失败的常见根因是显卡/驱动，诊断包需要 GPU 型号。
@@ -1295,6 +1329,17 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         root
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ascii_version_run_reads_version_out_of_oem_encoded_output() {
+        // 中文系统 `ver` 的输出是 GBK（"版本"=B0E6 B1BE），版本号是 ASCII。
+        let gbk = b"Microsoft Windows [\xb0\xe6\xb1\xbe 10.0.19045.5247]";
+        assert_eq!(ascii_version_run(gbk).as_deref(), Some("10.0.19045.5247"));
+        let english = b"Microsoft Windows [Version 10.0.19045.5247]";
+        assert_eq!(ascii_version_run(english).as_deref(), Some("10.0.19045.5247"));
+        assert_eq!(ascii_version_run(b"no version here"), None);
     }
 
     #[test]
