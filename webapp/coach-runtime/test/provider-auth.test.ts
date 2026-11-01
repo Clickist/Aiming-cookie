@@ -303,7 +303,8 @@ test("refresh preserves OAuth extra fields and failed refresh exposes no credent
   }
 });
 
-test("OAuth state mismatch is a sanitized terminal failure", async () => {
+test("OAuth state mismatch stays sanitized in the UI and is recorded in diagnostics", async () => {
+  const lines: string[] = [];
   const provider = fakeProvider({
     auth: {
       oauth: {
@@ -316,7 +317,10 @@ test("OAuth state mismatch is a sanitized terminal failure", async () => {
       },
     },
   });
-  const manager = new ProviderAuthOperationManager({ loadProviders: async () => [provider] });
+  const manager = new ProviderAuthOperationManager({
+    loadProviders: async () => [provider],
+    writeLog: (line) => lines.push(line),
+  });
   try {
     const started = await manager.start({ action: "login", provider_id: provider.id, mode: "oauth" });
     const failed = await waitFor(manager, started.id, (operation) => operation.status === "failed");
@@ -324,6 +328,41 @@ test("OAuth state mismatch is a sanitized terminal failure", async () => {
     assert.equal(failed.error?.message, "Authentication login failed");
     assert.ok(!JSON.stringify(failed).includes(SECRET));
     assert.ok(!JSON.stringify(failed).includes("State mismatch"));
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0]!.includes("State mismatch"));
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("retryable OAuth failures expose a countdown and manual retry without ending authorization", async () => {
+  const provider = fakeProvider({
+    auth: {
+      oauth: {
+        name: "Fixture OAuth",
+        login: async (callbacks) => {
+          await new Promise<void>((resolve) => {
+            callbacks.setRetryState?.({ consecutiveFailures: 5, retryAt: Date.now() + 10_000 });
+            callbacks.setRetryHandler?.(() => resolve());
+          });
+          return { type: "oauth", access: "access", refresh: "refresh", expires: Date.now() + 60_000 };
+        },
+        refresh: async (credential) => credential,
+        toAuth: async (credential) => ({ apiKey: credential.access }),
+      },
+    },
+  });
+  const manager = new ProviderAuthOperationManager({ loadProviders: async () => [provider] });
+  try {
+    const started = await manager.start({ action: "login", provider_id: provider.id, mode: "oauth" });
+    const waiting = await waitFor(manager, started.id, (operation) => operation.retry_at !== null);
+    assert.equal(waiting.retry_attempt, 5);
+    assert.ok(waiting.retry_at !== null && waiting.retry_at > Date.now() + 9_900);
+    assert.ok(waiting.retry_at !== null && waiting.retry_at <= Date.now() + 10_000);
+
+    const retry = manager.retry(started.id);
+    assert.equal(retry.retry_at, null);
+    await waitFor(manager, started.id, (operation) => operation.status === "succeeded");
   } finally {
     manager.dispose();
   }

@@ -9,6 +9,12 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(frontendRoot, relativePath), "utf8");
 }
 
+test("OAuth authorization UI exposes a retry countdown and manual retry", async () => {
+  const section = await source("components/task6/ProviderSettingsSection.tsx");
+  assert.match(section, /authOperation\.retry_at[\s\S]{0,300}authRetryCountdown/);
+  assert.match(section, /retryAuthorizationNow\(\)/);
+});
+
 test("OAuth authorization polling re-arms itself after a transient failure (P1-14)", async () => {
   // 鲁棒性审计 P1-14：一次瞬态网络失败后 catch 只 toast 不改 state → effect
   // 不重跑 → 轮询永久停摆，状态条停在「授权运行中」。修复后 catch 必须自增

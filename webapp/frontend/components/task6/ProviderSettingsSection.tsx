@@ -14,6 +14,7 @@ import {
   listStoredCustomProviderModels,
   logoutMemberAccount,
   refreshProviderCatalog,
+  retryProviderAuthOperation,
   startMemberLogin,
   setDefaultProviderProfile,
   setProviderApiKey,
@@ -345,6 +346,8 @@ export function ProviderSettingsSection({
   const [authOperation, setAuthOperation] = useState<ProviderAuthOperation | null>(null);
   const [authProfileId, setAuthProfileId] = useState<number | null>(null);
   const [authPromptValue, setAuthPromptValue] = useState("");
+  const [authCountdown, setAuthCountdown] = useState(0);
+  const [authPollTick, setAuthPollTick] = useState(0);
 
   const wizardCustom = isWizardCustom(wizardDraft.typeId);
   const wizardCatalogSource = wizardCatalogReload ?? catalog;
@@ -606,6 +609,7 @@ export function ProviderSettingsSection({
 
   const startAuthorization = async (profileId: number) => {
     const operation = await authorizeProviderProfile(profileId, "oauth");
+    setAuthCountdown(0);
     setAuthProfileId(profileId);
     setAuthOperation(operation);
     setAuthPromptValue("");
@@ -623,6 +627,16 @@ export function ProviderSettingsSection({
     }
   };
 
+  const retryAuthorizationNow = async () => {
+    if (!authOperation || !authOperation.retry_at) return;
+    try {
+      setAuthOperation(await retryProviderAuthOperation(authOperation.id));
+      setAuthPollTick((tick) => tick + 1);
+    } catch {
+      notify(t("settings.provider.authUnreadable"));
+    }
+  };
+
   const cancelAuthorization = async () => {
     if (!authOperation) return;
     try {
@@ -633,11 +647,23 @@ export function ProviderSettingsSection({
     }
   };
 
-  // OAuth 授权轮询：非终态时 900ms 后读取一次操作状态。一次瞬态网络失败不
-  // 能停摆（鲁棒性审计 P1-14）：catch 里除 toast 外自增 authPollTick 重排
-  // effect——否则 state 不变、effect 不重跑，状态条永远停在「授权运行中」。
+  // OAuth 授权轮询：非终态时 900ms 后读取一次操作状态。服务端 retry_at
+  // 提供网络连续失败后的轮询倒计时，手动重试入口可提前唤醒 provider 轮询。
+  useEffect(() => {
+    const retryAt = authOperation?.retry_at;
+    if (!retryAt) {
+      setAuthCountdown(0);
+      return;
+    }
+    const updateCountdown = () => setAuthCountdown(Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)));
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 250);
+    return () => window.clearInterval(timer);
+  }, [authOperation?.retry_at]);
+
+  // 一次瞬态网络失败不能停摆（鲁棒性审计 P1-14）：catch 里除 toast 外
+  // 自增 authPollTick 重排 effect——否则 state 不变、effect 不重跑，状态条永远停在「授权运行中」。
   // 停止条件由操作自身终态兜底（服务端超时回 timed_out 终态），不会无限轮询。
-  const [authPollTick, setAuthPollTick] = useState(0);
   useEffect(() => {
     if (!authOperation || isAuthTerminal(authOperation)) return;
     const timer = window.setTimeout(() => {
@@ -645,6 +671,7 @@ export function ProviderSettingsSection({
         .then(async (next) => {
           setAuthOperation(next);
           if (next.status === "succeeded") {
+            setAuthCountdown(0);
             if (authProfileId !== null) {
               await takeProviderAuthResult(authProfileId, next.id);
             }
@@ -1145,6 +1172,16 @@ export function ProviderSettingsSection({
                   </Field>
                 ) : null}
                 {!isAuthTerminal(authOperation) ? <Button onClick={() => void cancelAuthorization()} variant="ghost">{t("settings.provider.cancelAuth")}</Button> : null}
+                {authOperation.retry_at && authOperation.retry_at > Date.now() ? (
+                  <>
+                    <Notice tone="info">
+                      {t("settings.provider.authRetryCountdown", { seconds: authCountdown })}
+                    </Notice>
+                    <Button onClick={() => void retryAuthorizationNow()} variant="secondary">
+                      {t("settings.provider.authRetryNow")}
+                    </Button>
+                  </>
+                ) : null}
                 {authOperation.error ? <Notice tone="error">{authOperation.error.message}</Notice> : null}
               </section>
             ) : null}

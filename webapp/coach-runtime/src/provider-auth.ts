@@ -50,6 +50,8 @@ export type PiAuthLoginCallbacks = {
   signal?: AbortSignal;
   prompt(prompt: PiAuthPrompt): Promise<string>;
   notify(event: PiAuthEvent): void;
+  setRetryHandler?(handler: (() => void) | undefined): void;
+  setRetryState?(state: { consecutiveFailures: number; retryAt: number | null }): void;
 };
 
 export type PiApiKeyAuth = {
@@ -265,6 +267,7 @@ type InternalOperation = {
   provider: PiAuthProvider;
   store: SnapshotCredentialStore;
   abortController: AbortController;
+  retryHandler?: () => void;
   pendingPrompt?: PendingPrompt;
   timeout?: ReturnType<typeof setTimeout>;
   retention?: ReturnType<typeof setTimeout>;
@@ -429,6 +432,17 @@ export class ProviderAuthOperationManager {
     return operationCopy(operation.public);
   }
 
+  retry(operationId: string): ProviderAuthOperation {
+    const operation = this.requireOperation(operationId);
+    if (isTerminal(operation.public.status) || !operation.public.retry_at || !operation.retryHandler) {
+      throw new ProviderAuthRequestError("retry_not_available", "Authentication retry is not available", 409);
+    }
+    operation.public.retry_at = null;
+    operation.public.updated_at = Date.now();
+    operation.retryHandler();
+    return operationCopy(operation.public);
+  }
+
   cancel(operationId: string): ProviderAuthOperation {
     const operation = this.requireOperation(operationId);
     if (!isTerminal(operation.public.status)) {
@@ -502,6 +516,8 @@ export class ProviderAuthOperationManager {
         created_at: now,
         updated_at: now,
         expires_at: now + timeoutMs,
+        retry_at: null,
+        retry_attempt: 0,
         terminal_at: null,
         error: null,
       },
@@ -536,6 +552,10 @@ export class ProviderAuthOperationManager {
         await login({
           signal: operation.abortController.signal,
           prompt: (prompt) => this.requestPrompt(operation, prompt),
+          setRetryHandler: (handler) => {
+            operation.retryHandler = handler;
+          },
+          setRetryState: (state) => this.updateRetryState(operation, state),
           notify: (event) => this.notify(operation, event),
         }),
         mode,
@@ -672,10 +692,22 @@ export class ProviderAuthOperationManager {
     operation.public.updated_at = Date.now();
   }
 
+  private updateRetryState(
+    operation: InternalOperation,
+    state: { consecutiveFailures: number; retryAt: number | null },
+  ): void {
+    if (isTerminal(operation.public.status)) return;
+    operation.public.retry_attempt = state.consecutiveFailures;
+    operation.public.retry_at = state.retryAt;
+    operation.public.updated_at = Date.now();
+  }
+
   private finishSuccess(operation: InternalOperation): void {
     if (isTerminal(operation.public.status)) return;
     if (operation.timeout) clearTimeout(operation.timeout);
     operation.timeout = undefined;
+    operation.retryHandler = undefined;
+    operation.public.retry_at = null;
     this.rejectPending(operation, abortError());
     const now = Date.now();
     operation.public.status = "succeeded";
@@ -698,6 +730,8 @@ export class ProviderAuthOperationManager {
     if (isTerminal(operation.public.status)) return;
     if (operation.timeout) clearTimeout(operation.timeout);
     operation.timeout = undefined;
+    operation.retryHandler = undefined;
+    operation.public.retry_at = null;
     this.rejectPending(operation, abortError());
     operation.store.clear();
     const now = Date.now();

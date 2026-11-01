@@ -273,13 +273,20 @@ function writeAuthError(res: http.ServerResponse, error: unknown): void {
 }
 
 function operationRoute(pathname: string):
-  | { operationId: string; action: "status" | "input" | "take_result" }
+  | { operationId: string; action: "status" | "input" | "take_result" | "retry" }
   | undefined {
-  const match = pathname.match(/^\/v1\/auth\/operations\/([^/]+)(?:\/(input|take-result))?$/);
+  const match = pathname.match(/^\/v1\/auth\/operations\/([^/]+)(?:\/(input|take-result|retry))?$/);
   if (!match) return undefined;
   return {
     operationId: decodeURIComponent(match[1]),
-    action: match[2] === "input" ? "input" : match[2] === "take-result" ? "take_result" : "status",
+    action:
+      match[2] === "input"
+        ? "input"
+        : match[2] === "take-result"
+          ? "take_result"
+          : match[2] === "retry"
+            ? "retry"
+            : "status",
   };
 }
 
@@ -431,6 +438,10 @@ export async function handleSidecarRequest(
           200,
           authOperations.submitInput(authRoute.operationId, await parseJsonBody(req)),
         );
+        return;
+      }
+      if (req.method === "POST" && authRoute.action === "retry") {
+        writeJson(res, 200, authOperations.retry(authRoute.operationId));
         return;
       }
       if (req.method === "DELETE" && authRoute.action === "status") {

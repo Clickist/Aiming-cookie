@@ -152,6 +152,8 @@ export interface AuthInteraction {
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
+	setRetryHandler?(handler: (() => void) | undefined): void;
+	setRetryState?(state: { consecutiveFailures: number; retryAt: number | null }): void;
 }
 
 /**

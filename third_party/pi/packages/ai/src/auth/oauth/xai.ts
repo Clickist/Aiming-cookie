@@ -12,6 +12,7 @@ const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 // Refresh slightly before the reported expiry to avoid using a token that dies mid-request.
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_TOKEN_LIFETIME_SECONDS = 3600;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 type JsonObject = Record<string, unknown>;
 
@@ -61,7 +62,12 @@ function validateVerificationUri(raw: string): string {
 	return url.href;
 }
 
+function requestSignal(signal?: AbortSignal): AbortSignal {
+	return AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(signal ? [signal] : [])]);
+}
+
 async function postForm(url: string, fields: Record<string, string>, signal?: AbortSignal): Promise<OAuthHttpResponse> {
+	const request = requestSignal(signal);
 	let response: Response;
 	try {
 		response = await fetch(url, {
@@ -71,11 +77,14 @@ async function postForm(url: string, fields: Record<string, string>, signal?: Ab
 				"Content-Type": "application/x-www-form-urlencoded",
 			},
 			body: new URLSearchParams(fields),
-			signal,
+			signal: request,
 		});
 	} catch (error) {
 		if (signal?.aborted) {
 			throw new Error("Login cancelled");
+		}
+		if (request.aborted) {
+			throw new Error("xAI OAuth request timed out");
 		}
 		throw error;
 	}
@@ -88,8 +97,12 @@ async function postForm(url: string, fields: Record<string, string>, signal?: Ab
 		if (signal?.aborted) {
 			throw new Error("Login cancelled");
 		}
+		if (request.aborted) {
+			throw new Error("xAI OAuth request timed out");
+		}
 		throw new Error(`xAI OAuth returned invalid JSON (HTTP ${response.status})`);
 	}
+
 	return {
 		ok: response.ok,
 		status: response.status,
@@ -158,23 +171,38 @@ async function requestDeviceCode(signal?: AbortSignal): Promise<XaiDeviceCode> {
 	return parseDeviceCode(response.body);
 }
 
-async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promise<OAuthCredential> {
+async function pollForTokens(
+	device: XaiDeviceCode,
+	interaction: AuthInteraction,
+	signal?: AbortSignal,
+): Promise<OAuthCredential> {
 	return pollOAuthDeviceCodeFlow<OAuthCredential>({
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 		waitBeforeFirstPoll: true,
 		signal,
+		setRetryHandler: (handler) => interaction.setRetryHandler?.(handler),
+		setRetryState: (state) => interaction.setRetryState?.(state),
 		poll: async () => {
-			const response = await postForm(
-				XAI_TOKEN_URL,
-				{
-					grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-					client_id: XAI_CLIENT_ID,
-					device_code: device.deviceCode,
-				},
-				signal,
-			);
+			let response: OAuthHttpResponse;
+			try {
+				response = await postForm(
+					XAI_TOKEN_URL,
+					{
+						grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+						client_id: XAI_CLIENT_ID,
+						device_code: device.deviceCode,
+					},
+					signal,
+				);
+			} catch (error) {
+				if (signal?.aborted) throw error;
+				return { status: "retryable" };
+			}
 
+			if (response.status === 408 || response.status === 429 || response.status >= 500) {
+				return { status: "retryable" };
+			}
 			if (response.ok) {
 				return { status: "complete", value: credentialsFromTokenResponse(response.body) };
 			}
@@ -207,7 +235,7 @@ async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> 
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 	});
-	return pollForTokens(device, interaction.signal);
+	return pollForTokens(device, interaction, interaction.signal);
 }
 
 async function refreshXaiToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredential> {

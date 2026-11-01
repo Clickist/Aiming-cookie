@@ -433,6 +433,8 @@ export const task6En = {
   "settings.provider.authCancelFailed": "The authorization couldn't be cancelled. Please try again.",
   "settings.provider.authSucceededTest": "Provider authorized — you can test the connection.",
   "settings.provider.authUnreadable": "Authorization status can't be read right now. Retry or cancel.",
+  "settings.provider.authRetryCountdown": "Connection interrupted. Retrying in {seconds}s…",
+  "settings.provider.authRetryNow": "Retry now",
 
   // ── ProviderSettingsSection.tsx —— Key 掩码行 / 列表 ───────────────────
   "settings.provider.keyChangeTitle": "Click to change the key",

@@ -444,6 +444,8 @@ export type ProviderAuthOperation = {
   created_at: number;
   updated_at: number;
   expires_at: number;
+  retry_at: number | null;
+  retry_attempt: number;
   terminal_at: number | null;
   error: CoachRuntimeError | null;
 };

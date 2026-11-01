@@ -51,6 +51,7 @@ type DeviceCodeInfo = {
 function loginXaiForTest(options: {
 	onDeviceCode: (info: DeviceCodeInfo) => void;
 	signal?: AbortSignal;
+	onRetryState?: (state: { consecutiveFailures: number; retryAt: number | null }) => void;
 }): Promise<OAuthCredential> {
 	return xaiOAuth.login({
 		signal: options.signal,
@@ -63,6 +64,7 @@ function loginXaiForTest(options: {
 				options.onDeviceCode(info);
 			}
 		},
+		setRetryState: options.onRetryState,
 	});
 }
 
@@ -149,6 +151,38 @@ describe("xAI OAuth device flow", () => {
 			expires: startTime.getTime() + 20_000 + 21_600_000 - 300_000,
 		});
 	});
+
+	it("times out a stalled xAI request after 30 seconds and retries the token poll", async () => {
+		vi.useRealTimers();
+		let requestCount = 0;
+		let stalledSignal: AbortSignal | undefined;
+		const startedAt = Date.now();
+		const retryStates: Array<{ consecutiveFailures: number; retryAt: number | null }> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown, init?: RequestInit) => {
+				const url = requestUrl(input);
+				if (url === "https://auth.x.ai/oauth2/device/code") return jsonResponse(deviceCodeResponse({ interval: 1 }));
+				requestCount += 1;
+				if (requestCount === 1 && init?.signal instanceof AbortSignal) {
+					stalledSignal = init.signal;
+					return new Promise<Response>((_resolve, reject) => {
+						init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					});
+				}
+				return jsonResponse(tokenResponse());
+			}),
+		);
+
+		await expect(loginXaiForTest({
+			onDeviceCode: () => {},
+			onRetryState: (state) => retryStates.push(state),
+		})).resolves.toMatchObject({ access: "access-token" });
+		expect(stalledSignal?.aborted).toBe(true);
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30_000);
+		expect(requestCount).toBe(2);
+		expect(retryStates).toContainEqual({ consecutiveFailures: 1, retryAt: null });
+	}, 40_000);
 
 	it("falls back to the default poll interval when the response reports interval 0", async () => {
 		vi.useFakeTimers();

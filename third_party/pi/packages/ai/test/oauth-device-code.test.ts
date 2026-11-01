@@ -122,6 +122,46 @@ describe("OAuth device-code polling", () => {
 		expect(pollTimes).toEqual([startTime, startTime + 30000]);
 	});
 
+	it("exposes retry state after five consecutive transient failures and supports manual retry", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
+		const controller = new AbortController();
+		const retryStates: Array<{ consecutiveFailures: number; retryAt: number | null }> = [];
+		let retryHandler: (() => void) | undefined;
+		let polls = 0;
+		const resultPromise = pollOAuthDeviceCodeFlow({
+			intervalSeconds: 1,
+			expiresInSeconds: 900,
+			signal: controller.signal,
+			setRetryState: (state) => retryStates.push(state),
+			setRetryHandler: (handler) => {
+				retryHandler = handler;
+			},
+			poll: async () => {
+				polls += 1;
+				return polls === 6 ? { status: "pending" as const } : { status: "retryable" as const };
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+		for (const delay of [2000, 4000, 8000, 16000]) {
+			await vi.advanceTimersByTimeAsync(delay);
+		}
+		expect(polls).toBe(5);
+		expect(retryStates.at(-1)).toEqual({
+			consecutiveFailures: 5,
+			retryAt: Date.now() + 30_000,
+		});
+		expect(retryHandler).toBeTypeOf("function");
+
+		retryHandler?.();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(polls).toBe(6);
+		expect(retryStates.at(-1)).toEqual({ consecutiveFailures: 0, retryAt: null });
+		controller.abort();
+		await expect(resultPromise).rejects.toThrow("Login cancelled");
+	});
+
 	it("cancels an in-flight wait", async () => {
 		vi.useFakeTimers();
 		const controller = new AbortController();

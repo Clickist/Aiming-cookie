@@ -1162,6 +1162,19 @@ export async function getProviderAuthOperation(
   return (await res.json()) as ProviderAuthOperation;
 }
 
+export async function retryProviderAuthOperation(
+  operationId: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderAuthOperation> {
+  const res = await apiFetchSidecar(
+    `/v1/auth/operations/${encodeURIComponent(operationId)}/retry`,
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthOperation;
+}
+
 export async function submitProviderAuthInput(
   operationId: string,
   promptId: string,

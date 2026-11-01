@@ -437,6 +437,8 @@ export const task6Zh = {
   "settings.provider.authCancelFailed": "授权未能取消，请重试。",
   "settings.provider.authSucceededTest": "Provider 授权成功，可以测试连接。",
   "settings.provider.authUnreadable": "认证状态暂时无法读取，可重试或取消。",
+  "settings.provider.authRetryCountdown": "连接中断，{seconds} 秒后自动重试…",
+  "settings.provider.authRetryNow": "立即重试",
 
   // ── ProviderSettingsSection.tsx —— Key 掩码行 / 列表 ───────────────────
   "settings.provider.keyChangeTitle": "点击更换 Key",
