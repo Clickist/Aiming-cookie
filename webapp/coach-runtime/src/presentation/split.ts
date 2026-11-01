@@ -176,8 +176,22 @@ export class PresentationSplitter {
 
     if (this.mode === "openui") {
       // 未闭合（流式中途）：已收 DSL 全部进入缓冲中的 openui 段。
+      // 例外（1102 真机实锤）：模型输出恰以闭合 fence 行结尾且其后无换行——
+      // 逐行扫描只认完整行，这最后一行永远进不了 #scan，若不在这里摘除，
+      // 闭合围栏会泄漏进 DSL 源（前端整体解析失败 0 语句）。摘除判据与
+      // closingFence 同语义（fence 记号 + 行尾空白、同字符、不短于开围栏）。
+      // snapshot 不消费状态（幂等合同）：后续 push 若让该行长成带 info 的
+      // 非闭合行，下一份快照会自然把它并回 DSL。
       const tail = this.raw.slice(this.cursor);
-      const source = redactRuntimeSecrets(stripTrailingLineTerminator(this.dslBuf + tail), this.secrets);
+      const tailMatch = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(tail);
+      const tailIsClosingFence =
+        tailMatch !== null &&
+        tailMatch[1]![0] === this.openFence.char &&
+        tailMatch[1]!.length >= this.openFence.count;
+      const source = redactRuntimeSecrets(
+        stripTrailingLineTerminator(this.dslBuf + (tailIsClosingFence ? "" : tail)),
+        this.secrets,
+      );
       if (source) {
         if (this.acceptedOpenUi < this.maxOpenUiSegments && utf8ByteLength(source) <= this.maxOpenUiBytes) {
           drafts.push({ kind: "openui", source });

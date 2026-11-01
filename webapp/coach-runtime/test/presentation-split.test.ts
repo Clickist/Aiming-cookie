@@ -70,7 +70,7 @@ function assertNoDslLeak(presentation: CoachPresentation, label: string): void {
 }
 
 test("frozen fixtures: every sample projects byte-for-byte (text text and openui source)", () => {
-  assert.equal(fixtures.length, 8, "the frozen fixture file must keep all 8 samples");
+  assert.equal(fixtures.length, 9, "the frozen fixture file must keep all 9 samples");
   for (const fixture of fixtures) {
     const presentation = splitPresentation(fixture.input, fixture.generation_status);
     assert.equal(presentation.schema_version, COACH_PRESENTATION_SCHEMA, fixture.name);

@@ -22,6 +22,16 @@
       ]
     },
     {
+      "name": "closing-fence-no-trailing-newline",
+      "description": "模型输出恰以闭合 fence 行结尾且其后无换行（1102 真机实锤）：逐行扫描只认完整行，闭合围栏必须由未闭合分支摘除，不得泄漏进 DSL 源",
+      "generation_status": "completed",
+      "input": "这局命中分布如下：\n\n```openui-lang\nroot = Card([head, chart])\nhead = CardHeader(\"射击结果\", \"Tile Frenzy\")\nchart = BarChart([\"命中\", \"未命中\"], [Series(\"发数\", [760, 179])])\n```",
+      "expected_segments": [
+        { "kind": "text", "text": "这局命中分布如下：\n\n" },
+        { "kind": "openui", "source": "root = Card([head, chart])\nhead = CardHeader(\"射击结果\", \"Tile Frenzy\")\nchart = BarChart([\"命中\", \"未命中\"], [Series(\"发数\", [760, 179])])" }
+      ]
+    },
+    {
       "name": "two-charts-in-one-block",
       "description": "单区段内两张图（合同上限内）：一个 fence 的 DSL 定义两个图表变量",
       "generation_status": "completed",
