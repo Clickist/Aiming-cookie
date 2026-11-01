@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import { createStreamingParser } from "@openuidev/react-lang";
 
-import { coachOpenUILibrary, OPENUI_WHITELIST } from "../lib/openui/library";
+import { coachOpenUILibrary, OPENUI_BLOCKLIST } from "../lib/openui/library";
 import {
   OPENUI_SKILL_REFERENCE_BEGIN,
   OPENUI_SKILL_REFERENCE_END,
@@ -40,14 +40,11 @@ test("参考块覆盖白名单全部组件，签名直接来自 library schema",
   const block = generatedBlock(skill);
   const spec = coachOpenUILibrary.toSpec();
 
-  assert.equal(
-    OPENUI_WHITELIST.length,
-    Object.keys(spec.components).length,
-    "白名单与 library schema 的组件数量必须一致",
-  );
-  for (const name of OPENUI_WHITELIST) {
-    const component = spec.components[name];
-    assert.ok(component, `library schema 缺少白名单组件 ${name}`);
+  for (const banned of OPENUI_BLOCKLIST) {
+    assert.equal(spec.components[banned], undefined, `禁入组件 ${banned} 不得出现在 schema`);
+    assert.ok(!block.includes(banned), `禁入组件 ${banned} 不得出现在 SKILL.md 指南`);
+  }
+  for (const [name, component] of Object.entries(spec.components)) {
     const signature = restrictOpenUIPromptSignature(component.signature);
     assert.ok(
       block.includes(`\`${signature}\``),

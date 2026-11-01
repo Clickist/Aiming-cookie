@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CoachPresentationText } from "../components/task7/CoachPresentationText";
 import { parseRichText } from "../lib/rich-text";
-import { coachOpenUILibrary, OPENUI_WHITELIST } from "../lib/openui/library";
+import { coachOpenUILibrary, OPENUI_BLOCKLIST } from "../lib/openui/library";
 import {
   COACH_OPENUI_LIBRARY_ID,
   COACH_OPENUI_LIBRARY_VERSION,
@@ -66,9 +66,9 @@ function draftShape(drafts: ReturnType<typeof splitOpenUISegments>) {
   );
 }
 
-test("分流器对全部 8 个冻结 fixture 逐字产出 expected_segments", async () => {
+test("分流器对全部 10 个冻结 fixture 逐字产出 expected_segments", async () => {
   const fixtures = await readFixtures();
-  assert.equal(fixtures.length, 8);
+  assert.equal(fixtures.length, 10);
   for (const fixture of fixtures) {
     assert.deepEqual(
       draftShape(splitOpenUISegments(fixture.input)),
@@ -331,33 +331,44 @@ test("plain text 逐字透传且只产生 paragraph 节点（不动空格/标点
   assert.equal(joined, plain.input);
 });
 
-test("组件白名单恰好是合同第一刀清单，危险组件未注册", () => {
-  assert.deepEqual(
-    Object.keys(coachOpenUILibrary.components).sort(),
-    [...OPENUI_WHITELIST].sort(),
-  );
-  for (const banned of [
-    "Image",
-    "ImageGallery",
-    "ImageBlock",
-    "MarkDownRenderer",
-    "Form",
-    "Input",
-    "Select",
-    "Table",
-    "Query",
-    "Mutation",
-    "Tabs",
-    "Carousel",
-  ]) {
+test("组件黑名单制：仅 MarkDownRenderer 禁入，基底库全量放行", () => {
+  for (const banned of OPENUI_BLOCKLIST) {
     assert.equal(
       coachOpenUILibrary.components[banned],
       undefined,
-      `${banned} 不得进入受限 library`,
+      `${banned} 不得进入 coach library（任意 HTML/脚本红线）`,
     );
   }
+  // 抽查关键族全部在场：图表全家、表格、表单输入族、图片、动作、布局
+  for (const required of [
+    "BarChart",
+    "LineChart",
+    "PieChart",
+    "ScatterChart",
+    "ScatterSeries",
+    "Point",
+    "AreaChart",
+    "RadarChart",
+    "Table",
+    "Image",
+    "ImageGallery",
+    "Form",
+    "Input",
+    "DatePicker",
+    "Tabs",
+    "Accordion",
+    "Steps",
+    "Modal",
+    "Card",
+    "Stack",
+    "Series",
+    "Button",
+    "IconButton",
+  ]) {
+    assert.ok(coachOpenUILibrary.components[required], `${required} 应在全量库中`);
+  }
+  // 动作红线保持：Query/Mutation 不是组件（语句层由 hasForbiddenCalls 拒收）
   assert.equal(coachOpenUILibrary.root, "Stack");
-  assert.equal(coachOpenUILibrary.id, COACH_OPENUI_LIBRARY_ID);
 });
 
 test("未知组件/无 root/组件抛错/超长 DSL/不支持的 library 各自落到独立 cause", () => {

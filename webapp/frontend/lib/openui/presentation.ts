@@ -333,10 +333,12 @@ export function asCoachPresentation(value: unknown): CoachPresentation | null {
  * （带 cause=budget_exceeded）。展示层绝不能把这种 text 当普通正文渲染成
  * 裸 DSL；命中 DSL 形状时改呈现 cause 文案。
  */
+/**
+ * 兼容期防御：budget 降级 text 里若长得像 DSL（「名字 = 组件调用」的语句
+ * 形状，组件名不再枚举——黑名单制后全量组件都合法），改呈现 cause 文案。
+ */
 export function looksLikeOpenUIDSL(text: string): boolean {
-  return /^\s*(?:root\s*=\s*|(?:[A-Za-z_]\w*\s*=\s*)?(?:Card|CardHeader|Stack|TextContent|BoldText|MetricIndicatorInline|Callout|BarChart|LineChart|Series|Buttons|Button)\s*\()/m.test(
-    text,
-  );
+  return /^\s*(?:[A-Za-z_$][\w$]*\s*=\s*)?[A-Za-z_$][\w$]*\s*\(/m.test(text);
 }
 
 /** 历史消息的生成状态：interrupted 优先于 stopped，否则视为已完成。 */
@@ -398,9 +400,9 @@ function utf8ByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/** 区段内图表调用数（BarChart/LineChart）；用于合同「≤2 张图」的前端兜底。 */
+/** 区段内图表调用数（任意 *Chart 组件：Bar/Line/Pie/Scatter/Area/Radar…）；用于合同「≤2 张图」的前端兜底。 */
 export function countOpenUICharts(source: string): number {
-  const matches = source.match(/\b(?:BarChart|LineChart)\s*\(/g);
+  const matches = source.match(/\b[A-Za-z]\w*Chart\s*\(/g);
   return matches ? matches.length : 0;
 }
 

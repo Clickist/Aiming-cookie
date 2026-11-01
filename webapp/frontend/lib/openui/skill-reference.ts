@@ -19,7 +19,11 @@ export const OPENUI_SKILL_REFERENCE_BEGIN =
 export const OPENUI_SKILL_REFERENCE_END =
   "<!-- END GENERATED: coach-openui component reference -->";
 
-/** 合同 §5.3 第一刀不允许出现在模型指南里的通用动作/工具。 */
+/**
+ * 合同 §5.3 不允许出现在模型指南里的动作/工具层标记（1102 黑名单制后：
+ * 组件全量放行，禁的还是动作与工具层——Form/Input/Select/Image 等组件
+ * 本身已合法，其签名不再算违规标记）。
+ */
 export const OPENUI_UNSUPPORTED_PROMPT_TOKENS = [
   "@OpenUrl",
   "@Run",
@@ -28,10 +32,6 @@ export const OPENUI_UNSUPPORTED_PROMPT_TOKENS = [
   "Action([",
   "Query(",
   "Mutation(",
-  "Form(",
-  "Input(",
-  "Select(",
-  "Image(",
   "$binding",
 ] as const;
 

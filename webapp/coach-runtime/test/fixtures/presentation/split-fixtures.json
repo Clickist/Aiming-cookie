@@ -22,6 +22,17 @@
       ]
     },
     {
+      "name": "pie-and-scatter-charts",
+      "description": "黑名单制后全量图表族可用（1102 点点拍板）：一个区段内饼图+散点图各一张（合同 ≤2 张图上限内），含 Point/Series 组合",
+      "generation_status": "completed",
+      "input": "击杀分布与射击关系：\n\n```openui-lang\nroot = Card([pie, scatter])\npie = PieChart([\"9 发全中\", \"超 9 发\"], [39, 45])\nscatter = ScatterChart([ScatterSeries(\"逐杀\", [Point(1, 0.226), Point(2, 0.3), Point(3, 0.28)])], \"击杀序号\", \"TTK 秒\")\n```\n\n饼图看占比，散点看节奏。",
+      "expected_segments": [
+        { "kind": "text", "text": "击杀分布与射击关系：\n\n" },
+        { "kind": "openui", "source": "root = Card([pie, scatter])\npie = PieChart([\"9 发全中\", \"超 9 发\"], [39, 45])\nscatter = ScatterChart([ScatterSeries(\"逐杀\", [Point(1, 0.226), Point(2, 0.3), Point(3, 0.28)])], \"击杀序号\", \"TTK 秒\")" },
+        { "kind": "text", "text": "\n\n饼图看占比，散点看节奏。" }
+      ]
+    },
+    {
       "name": "closing-fence-no-trailing-newline",
       "description": "模型输出恰以闭合 fence 行结尾且其后无换行（1102 真机实锤）：逐行扫描只认完整行，闭合围栏必须由未闭合分支摘除，不得泄漏进 DSL 源",
       "generation_status": "completed",

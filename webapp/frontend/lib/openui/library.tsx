@@ -15,10 +15,10 @@
  * 数值必须与 sidecar `src/presentation/types.ts` 的冻结值一致。
  */
 
-import { ACTION_STEPS, createLibrary, defineComponent, steps, useIsStreaming, useTriggerAction, type ActionPlan, type ComponentGroup, type DefinedComponent } from "@openuidev/react-lang";
+import { ACTION_STEPS, defineComponent, steps, useIsStreaming, useTriggerAction, type ActionPlan } from "@openuidev/react-lang";
 import { Button as OpenUIButton } from "@openuidev/react-ui/Button";
 import { openuiLibrary } from "@openuidev/react-ui/genui-lib";
-import { createContext, useContext, type CSSProperties } from "react";
+import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 import { z } from "zod/v4";
 
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
@@ -28,23 +28,25 @@ import {
   isCoachUiActionMessage,
 } from "./presentation";
 
-/** 第一刀白名单（合同 §5.3）。 */
-export const OPENUI_WHITELIST = [
-  "Card",
-  "CardHeader",
-  "Stack",
-  "TextContent",
-  "BoldText",
-  "MetricIndicatorInline",
-  "Callout",
-  "BarChart",
-  "LineChart",
-  "Series",
-  "Buttons",
-  "Button",
-] as const;
+/**
+ * 禁入清单（合同 §5.3，1102 由白名单制反转为黑名单制）。
+ *
+ * 原则：基底库（@openuidev/react-ui genui-lib）的全量组件默认全部放行——
+ * 图表全家（饼/散点/面积/雷达/横向柱/环形/堆叠）、表格、标签页、手风琴、
+ * 步骤条、标签、列表、卡片族、Image 三件套、表单输入族、Modal 等都可用；
+ * 上游新增的安全组件自动生效，不再逐个审批。
+ *
+ * 唯一禁入 = MarkDownRenderer：它渲染任意 HTML/脚本，而本 app 的 CSP 不限
+ * script-src 且 webview 持有 Tauri IPC 桥（文件/桌面令牌），注入脚本等同
+ * 应用接管。文本一律走 RestrictedTextContent/RestrictedCallout 的消毒器
+ * （CoachMessageText 受限节点树）。动作层另有双重闸：RestrictedButton/
+ * RestrictedIconButton 只放 @ToAssistant，宿主 onAction 只认
+ * continue_conversation；Query/Mutation 语句由 deriveOpenUIRenderState
+ * 的 hasForbiddenCalls 拒收。
+ */
+export const OPENUI_BLOCKLIST = ["MarkDownRenderer"] as const;
 
-export type OpenUIWhitelistComponent = (typeof OPENUI_WHITELIST)[number];
+export type OpenUIBlockedComponent = (typeof OPENUI_BLOCKLIST)[number];
 
 /**
  * @ToAssistant 按钮可用性闸门：默认关闭。只有展示组件在
@@ -181,68 +183,49 @@ const RestrictedButton = defineComponent({
   },
 });
 
-/** 只保留白名单组件（其余从基底库删除，父级联合类型由 extend 重建）。 */
-const kept = new Set<string>(OPENUI_WHITELIST);
-const removedComponents = Object.keys(openuiLibrary.components).filter(
-  (name) => !kept.has(name),
-);
+/**
+ * 受限 IconButton：与 RestrictedButton 同款动作闸。基底 IconButton 的动作面
+ * 不加限制，故以覆盖件形式进库——渲染基底组件本身，但把非 @ToAssistant 的
+ * action 摘掉（摘掉后基底渲染为无动作按钮，点击无效果）。宿主 onAction
+ * 只认 continue_conversation，是第二道闸。
+ */
+const baseIconButton = openuiLibrary.components["IconButton"]!;
+const BaseIconButton = baseIconButton.component as unknown as (
+  renderProps: unknown,
+) => ReactNode;
+const RestrictedIconButton = defineComponent({
+  name: "IconButton",
+  props: baseIconButton.props,
+  description:
+    "Icon-only clickable button. action may only be @ToAssistant(message); the click starts a new assistant turn after user gesture. Buttons without an action do nothing.",
+  component: (renderProps) => {
+    const plan = renderProps.props.action as unknown as ActionPlan | undefined;
+    const actionAllowed =
+      !plan?.steps ||
+      (plan.steps.length === 1 && plan.steps[0]?.type === ACTION_STEPS.ToAssistant);
+    if (actionAllowed) return BaseIconButton(renderProps);
+    return BaseIconButton({
+      ...renderProps,
+      props: { ...renderProps.props, action: undefined },
+    });
+  },
+});
 
+/** 唯一移除 = MarkDownRenderer（任意 HTML/脚本）；其余全量放行。 */
 const restrictedBase = openuiLibrary.extend({
   components: {
-    remove: removedComponents,
-    override: [RestrictedTextContent, RestrictedCallout, RestrictedButton],
+    remove: [...OPENUI_BLOCKLIST],
+    override: [RestrictedTextContent, RestrictedCallout, RestrictedButton, RestrictedIconButton],
   },
 });
 
 /**
- * 提示词只描述白名单内的组件与安全动作；notes 不得引用已删除组件
- * （Image/Form/Query/@OpenUrl 等）。
+ * coach 库 = 基底库全量组件（黑名单制，仅移除 MarkDownRenderer）+
+ * 四个受限覆盖件（TextContent/Callout 走消毒器、Button/IconButton 只放
+ * @ToAssistant）。分组沿用基底库自带分组；基底 root 已是 Stack，id 由
+ * 常量 COACH_OPENUI_LIBRARY_ID 兜底（spec.id 为空时 skill-reference 回退）。
  */
-export const COACH_OPENUI_COMPONENT_GROUPS: ComponentGroup[] = [
-  {
-    name: "Layout",
-    components: ["Card", "CardHeader", "Stack"],
-    notes: [
-      "Card groups related content; CardHeader supplies a title/subtitle.",
-      "Stack lays out children in a row or column. Use direction \"row\" with wrap for side-by-side blocks.",
-    ],
-  },
-  {
-    name: "Content",
-    components: ["TextContent", "BoldText", "Callout", "MetricIndicatorInline"],
-    notes: [
-      "TextContent renders restricted rich text only: no images, raw HTML, or arbitrary links.",
-      "Use Callout for a short caveat or status. Description is restricted rich text.",
-      "MetricIndicatorInline presents a single headline metric with optional subtext/trend.",
-    ],
-  },
-  {
-    name: "Charts",
-    components: ["BarChart", "LineChart", "Series"],
-    notes: [
-      "Charts take a labels array plus Series(name, values) entries: BarChart(labels, [series]) or LineChart(labels, [series]).",
-      "Numbers must come from data the Coach has already read; never recompute official metrics in the DSL.",
-      "At most 2 charts per reply.",
-    ],
-  },
-  {
-    name: "Actions",
-    components: ["Buttons", "Button"],
-    notes: [
-      "Only @ToAssistant(message) is allowed as a Button action. No @OpenUrl, forms, inputs, Query/Mutation, or action context.",
-      "Buttons are disabled while streaming, degraded, or interrupted; historical replays never auto-execute actions.",
-    ],
-  },
-];
-
-export const coachOpenUILibrary = createLibrary({
-  id: COACH_OPENUI_LIBRARY_ID,
-  root: "Stack",
-  componentGroups: COACH_OPENUI_COMPONENT_GROUPS,
-  components: OPENUI_WHITELIST.map(
-    (name) => restrictedBase.components[name] as DefinedComponent,
-  ),
-});
+export const coachOpenUILibrary = restrictedBase;
 
 /** 运行时与提示词共用的库身份（导出只读常量，避免调用方各自硬编码）。 */
 export const OPENUI_LIBRARY_ID = COACH_OPENUI_LIBRARY_ID;
