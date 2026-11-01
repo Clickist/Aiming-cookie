@@ -22,7 +22,7 @@ export const MAX_OPENUI_CHARTS = 2;
  * 一致性由测试跨文件断言，改值必须双侧同步。
  */
 export const COACH_OPENUI_LIBRARY_ID = "coach-openui";
-export const COACH_OPENUI_LIBRARY_VERSION = "1.0.0";
+export const COACH_OPENUI_LIBRARY_VERSION = "1.1.0";
 
 export type CoachGenerationStatus =
   | "streaming"

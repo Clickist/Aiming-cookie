@@ -62,7 +62,7 @@ export type CoachPresentation = {
  * （ARCHITECTURE §5.3 library 合同）。改值等于换库，两侧必须同步升级。
  */
 export const COACH_OPENUI_LIBRARY_ID = "coach-openui";
-export const COACH_OPENUI_LIBRARY_VERSION = "1.0.0";
+export const COACH_OPENUI_LIBRARY_VERSION = "1.1.0";
 
 /** OpenUI 官方 inlineMode 的语言标识，精确匹配（大小写敏感）。 */
 export const OPENUI_FENCE_LANG = "openui-lang";

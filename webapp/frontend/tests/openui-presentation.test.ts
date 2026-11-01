@@ -731,11 +731,11 @@ test("library 身份与预算常量与 sidecar 冻结值一致（单一来源守
     "utf8",
   );
   assert.match(sidecarTypes, /COACH_OPENUI_LIBRARY_ID = "coach-openui"/);
-  assert.match(sidecarTypes, /COACH_OPENUI_LIBRARY_VERSION = "1\.0\.0"/);
+  assert.match(sidecarTypes, /COACH_OPENUI_LIBRARY_VERSION = "1\.1\.0"/);
   assert.match(sidecarTypes, /MAX_OPENUI_SEGMENT_BYTES = 64 \* 1024/);
   assert.match(sidecarTypes, /OPENUI_FENCE_LANG = "openui-lang"/);
   assert.equal(COACH_OPENUI_LIBRARY_ID, "coach-openui");
-  assert.equal(COACH_OPENUI_LIBRARY_VERSION, "1.0.0");
+  assert.equal(COACH_OPENUI_LIBRARY_VERSION, "1.1.0");
 });
 
 test("主题映射覆盖关键 --openui-* token，并接入 layered CSS", async () => {

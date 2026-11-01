@@ -38,7 +38,7 @@ description: 用户说"看图""画个图""对比一下""讲解数据"，或 Coac
 
 <!-- BEGIN GENERATED: coach-openui component reference (scripts/sync-openui-skill-reference.mjs) -->
 <!-- Generated from webapp/frontend/lib/openui/library.tsx. Do not hand-edit. -->
-库：`coach-openui@1.0.0`；根组件：`Stack`。
+库：`coach-openui@1.1.0`；根组件：`Stack`。
 
 硬性格式（与运行时 Renderer 同一份 library schema）：
 - 第一行必须是 `root = Stack([...])`；没有 root，整段不会渲染。
