@@ -1,8 +1,8 @@
 {
   "versions": [
     {
-      "version": "1.4.19",
-      "date": "2026-10-20",
+      "version": "1.4.20",
+      "date": "2026-11-01",
       "items": [
         {
           "type": "new",
@@ -10,9 +10,64 @@
           "en": "Official subscription model upgrade: the Coach is now powered by DeepSeek V4.1 Flash (previously V4 Flash), with across-the-board improvements in answer quality and reasoning — at the same subscription price"
         },
         {
+          "type": "new",
+          "zh": "Coach 回复支持图表与追问：分析结果可以直接以图表呈现，回复下方新增常用追问按钮，点一下就能继续深入",
+          "en": "Coach replies now support charts and follow-up questions: analysis results can be shown directly as charts, and common follow-up buttons now appear below replies so one click keeps the conversation going"
+        },
+        {
+          "type": "new",
+          "zh": "应用内更新可见进度：检查更新后显示下载进度条与实时速度，下载过程心中有数",
+          "en": "In-app updates now show visible progress: after checking for updates, a download progress bar and live speed are displayed so you always know how the download is going"
+        },
+        {
+          "type": "new",
+          "zh": "回放时间点跳转优化：点击教练回复里的时间点，从该时刻前 2 秒开始播放；回放中新增 J/L 快退/快进快捷键",
+          "en": "Improved replay seeking to timestamps: clicking a timestamp in a Coach reply now starts playback 2 seconds earlier; replay also gains J/L shortcuts for rewinding and fast-forwarding"
+        },
+        {
+          "type": "new",
+          "zh": "安装包大幅瘦身：体积减半以上，下载更新更快（本地视频分析退役，分析改用遥测与输入数据）",
+          "en": "The installer is now much smaller: less than half the previous size and faster to download (local video analysis is retired; analysis now uses telemetry and input data)"
+        },
+        {
           "type": "fix",
           "zh": "Windows 版启动时会请求管理员权限，避免 KovaaK 以管理员运行时无法记录鼠标轨迹或读取训练数据；覆盖安装和卸载也会在需要时请求权限以关闭后台进程",
           "en": "Windows now requests administrator permission at startup to prevent missing mouse traces or training data when KovaaK runs as administrator; installation and uninstallation also request permission when needed to close background processes"
+        },
+        {
+          "type": "fix",
+          "zh": "登录认证更稳：OAuth/设备码认证遇到网络卡顿时不再无限等待，会自动超时并显示重试倒计时，也可手动立即重试",
+          "en": "More reliable sign-in: OAuth and device-code authorization no longer wait indefinitely on a stalled network — it times out automatically, shows a retry countdown, and lets you retry immediately"
+        },
+        {
+          "type": "fix",
+          "zh": "回放视频恢复：修复大部分机器「明明录了像却看不到回放」的问题",
+          "en": "Replay video restored: fixed the issue where most machines recorded video but could not see any replay"
+        },
+        {
+          "type": "fix",
+          "zh": "旧局回放修复：纯输入数据的训练局也能正常回放，不再报错",
+          "en": "Fixed replays for older runs: training runs with only input data now play back normally instead of erroring"
+        },
+        {
+          "type": "fix",
+          "zh": "启动提速：有大量历史记录时，启动后的补跑检查从约 3 分钟缩短到几秒",
+          "en": "Faster startup: with a large history, the post-launch catch-up check now takes seconds instead of about 3 minutes"
+        },
+        {
+          "type": "fix",
+          "zh": "存储占用统计修正：设置页存储数字不再虚高，被隔离的数据单独分类展示",
+          "en": "Fixed storage usage figures: the number in Settings is no longer inflated, and quarantined data is listed as its own category"
+        },
+        {
+          "type": "fix",
+          "zh": "版本号乱码修复：中文系统上设置页与诊断包的主机版本号不再乱码",
+          "en": "Fixed garbled version numbers: the host version in Settings and in diagnostic bundles no longer shows mojibake on Chinese-locale systems"
+        },
+        {
+          "type": "fix",
+          "zh": "数据来源标注更准：遥测正常时不再误标「遥测未配对」",
+          "en": "More accurate data-source labels: a healthy telemetry link is no longer mislabeled as \"telemetry not paired\""
         }
       ]
     },
