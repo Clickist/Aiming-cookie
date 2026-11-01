@@ -37,7 +37,7 @@ test("P0.1 frame stepping: ,/. keys plus buttons step by inferred fps with 33ms 
   assert.match(video, /frameStepRef\.current = FRAME_STEP_FALLBACK_MS;\n\s+fpsSampledRef\.current = false;/);
 });
 
-test("P0.1 keyboard stepping stays scoped to the visible video pane and never hijacks global letter keys", async () => {
+test("P0.1 keyboard stepping and J/L seeking avoid text entry and conflicting controls", async () => {
   const video = await source("components/task5/VideoView.tsx");
   // 监听器只存在于本组件挂载期（组件只在视频面板内渲染），随卸载移除。
   assert.match(video, /document\.addEventListener\("keydown", onKeyDown\)/);
@@ -47,6 +47,12 @@ test("P0.1 keyboard stepping stays scoped to the visible video pane and never hi
   assert.match(video, /target\.isContentEditable/);
   assert.match(video, /\(tag === "INPUT" && \(target as HTMLInputElement\)\.type !== "range"\)/);
   assert.match(video, /event\.isComposing \|\| event\.keyCode === 229/);
+  assert.match(video, /playbackShortcutDirection\(event\.key\)/);
+  assert.match(video, /if \(direction === null \|\| !isPlaying\) return;/);
+  assert.match(video, /seek\(\(video\.currentTime \* 1000\) \+ direction \* PLAYBACK_SHORTCUT_STEP_MS\)/);
+  assert.match(video, /styles\.seekShortcutHint/);
+  assert.match(video, /\|\| tag === "TEXTAREA"[\s\S]*?\|\| tag === "SELECT"[\s\S]*?\|\| target\.isContentEditable/);
+  assert.match(video, /getClientRects\(\)\.length === 0/);
 });
 
 test("P0.1 legacy +/-5s jumps survive only as button long-press, not as the primary step", async () => {
@@ -69,7 +75,7 @@ test("P0.2 speed control cycles 0.25x -> 0.5x -> 1x and applies playbackRate imm
   assert.match(video, /video\.playbackRate = speed/);
 });
 
-test("P0.3 chat @time arrival pauses the video and pulses the playhead once", async () => {
+test("P0.3 chat @time starts two seconds early, plays the video, and pulses the playhead once", async () => {
   const video = await source("components/task5/VideoView.tsx");
   const pane = await source("components/task7/CoachVideoPane.tsx");
   const css = await source("components/task5/task5.module.css");
@@ -78,13 +84,13 @@ test("P0.3 chat @time arrival pauses the video and pulses the playhead once", as
   const shell = await source("components/task3/AppShell.tsx");
   assert.match(shell, /setVideoTarget\(\{ analysisRef, seq: \(videoSeqRef\.current \+= 1\), timeMs \}\)/);
   assert.match(pane, /jumpSeqRef\.current = Math\.max\(jumpSeqRef\.current \+ 1, jumpSeq\);/);
-  assert.match(pane, /setJumpTarget\(\{ seq: jumpSeqRef\.current, ms: initialTimeMs \}\)/);
+  assert.match(pane, /setJumpTarget\(initialTimeMs === undefined \? null : \{ seq: jumpSeqRef\.current, ms: initialTimeMs \}\)/);
   assert.match(pane, /jumpTarget=\{jumpTarget\}/);
-  // 到达即暂停（手动拖动走 onChange → seek 自身通道，不受影响）；
-  // ms=0 是普通打开入口，不暂停。
+  // Coach @time 前移两秒并播放；ms=0 是普通打开入口，不跳转。
+  assert.match(video, /COACH_TIMEPOINT_PREROLL_MS/);
   assert.match(
     video,
-    /if \(!jumpTarget \|\| jumpTarget\.ms <= 0\) return;[\s\S]*?video\.currentTime = jumpTarget\.ms \/ 1000;[\s\S]*?if \(!video\.paused\) video\.pause\(\);/,
+    /if \(!jumpTarget\) return;[\s\S]*?coachTimepointPlaybackStartMs\(jumpTarget\.ms, mediaDurationMs\);[\s\S]*?video\.currentTime = startMs \/ 1000;[\s\S]*?if \(video\.paused\) void video\.play\(\);/,
   );
   // 一次性高亮脉冲：合同合规写法＝完整阴影 token var(--ring)；
   // key 重放让连续点击重复触发；reduced-motion 下关动画只留静态高亮一次。

@@ -88,10 +88,10 @@ test("P1 hover shows the label tooltip and click seeks then pauses on the anchor
     /@media \(hover: hover\) and \(pointer: fine\)\s*\{\s*\.timelineMarkerHit:hover \.markerTip/,
   );
   // 点击＝seek 并暂停在锚点帧（复用 P0 到达链路：直接 seek + pause + arrive 脉冲）。
-  assert.match(video, /const seekAndArrive = \(timeMs: number\) => \{/);
+  assert.match(video, /const seekAndArrive = \(timeMs: number, play = false\) => \{/);
   assert.match(
     video,
-    /seekAndArrive[\s\S]*?video\.currentTime = clamp\(timeMs, 0, timelineMax\) \/ 1000;[\s\S]*?if \(!video\.paused\) video\.pause\(\);[\s\S]*?setArriveSeq\(\(seq\) => seq \+ 1\);/,
+    /seekAndArrive[\s\S]*?video\.currentTime = nextMs \/ 1000;[\s\S]*?if \(play\) \{[\s\S]*?if \(video\.paused\) void video\.play\(\);[\s\S]*?\} else if \(!video\.paused\) \{[\s\S]*?video\.pause\(\);[\s\S]*?setArriveSeq\(\(seq\) => seq \+ 1\);/,
   );
   assert.match(video, /onClick=\{\(\) => seekAndArrive\(marker\.timeMs\)\}/);
   assert.doesNotMatch(video, /seekAndArrive[\s\S]{0,200}void video\.play\(\)/);

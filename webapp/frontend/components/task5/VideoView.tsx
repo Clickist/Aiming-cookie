@@ -13,6 +13,13 @@ import {
   type SegmentButton,
 } from "@/lib/metric-format";
 import { formatTimecode, formatTimecodeRange } from "@/lib/rich-text";
+import {
+  clampPlaybackTimeMs,
+  COACH_TIMEPOINT_PREROLL_MS,
+  coachTimepointPlaybackStartMs,
+  playbackShortcutDirection,
+  PLAYBACK_SHORTCUT_STEP_MS,
+} from "@/lib/video-playback";
 import type { FrontendEvidenceSegmentsV1 } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
@@ -212,23 +219,37 @@ export function VideoView({
   }, [evidenceSegments, timelineMarkers, durationMs, timelineMax]);
 
   const seek = (timeMs: number) => {
-    const next = clamp(timeMs, 0, timelineMax);
+    const video = videoRef.current;
+    const mediaDurationMs = video && Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration * 1000
+      : durationMs > 0 ? timelineMax : null;
+    const next = clampPlaybackTimeMs(timeMs, mediaDurationMs);
     onCurrentTimeChange(next);
-    if (videoRef.current) videoRef.current.currentTime = next / 1000;
+    if (video) video.currentTime = next / 1000;
   };
 
-  /* P1 标记点击＝seek 并暂停在锚点帧：复用 P0.3 的到达链路（暂停 +
-     arriveSeq 驱动 cursor key 重放一次性脉冲），与 jumpTarget 效果同一套
-     状态机制，但不经过外部跳转信号。 */
-  const seekAndArrive = (timeMs: number) => {
+  /* P1 marker clicks seek and pause at the event anchor. Coach timepoints use
+     the same arrival pulse but start playback from the preroll point. */
+  const seekAndArrive = (timeMs: number, play = false) => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = clamp(timeMs, 0, timelineMax) / 1000;
-    if (!video.paused) video.pause();
+    const nextMs = clampPlaybackTimeMs(timeMs, durationMs > 0 ? timelineMax : null);
+    video.currentTime = nextMs / 1000;
+    onCurrentTimeChange(nextMs);
+    if (play) {
+      if (video.paused) void video.play();
+    } else if (!video.paused) {
+      video.pause();
+    }
     setArriveActive(true);
     setArriveSeq((seq) => seq + 1);
     if (arriveClearRef.current) clearTimeout(arriveClearRef.current);
     arriveClearRef.current = setTimeout(() => setArriveActive(false), ARRIVE_FLASH_MS);
+  };
+
+  const seekCoachTimepoint = (timeMs: number) => {
+    exitSignalLoop();
+    seekAndArrive(coachTimepointPlaybackStartMs(timeMs, durationMs > 0 ? timelineMax : null), true);
   };
 
   const togglePlay = () => {
@@ -245,8 +266,7 @@ export function VideoView({
      null＝未循环。退出路径全集：
      ① 再按同一枚按钮（保持当前位置继续正常播放）；
      ② 拖动进度条（timelineInput onChange——直接操纵刻度即退出）；
-     ③ 暂停（原生 pause 事件统一兜住：⏸ 按钮、标记点击暂停、@time 到达、
-        媒体自然结束）；
+     ③ 暂停（原生 pause 事件统一兜住：⏸ 按钮、时间轴标记点击、媒体自然结束）；
      ④ 点另一枚按钮＝切换目标（不经过退出态）；
      ⑤ Esc（可选快捷；输入面聚焦不劫持、无循环时不拦截）。
      变速不退出：循环中 0.25×/0.5×/1× 与全局同源共用，换源才复位。 */
@@ -396,9 +416,7 @@ export function VideoView({
     };
   }, [videoUrl]);
 
-  /* P0.1 键盘 ,/. 逐帧步进——只由本组件挂载时生效（本组件只在视频面板
-     内渲染），且 composer/任何输入面聚焦时不抢键，杜绝全域字母键误触；
-     IME 守卫与仓库既有惯例一致（isComposing + keyCode 229）。 */
+  /* P0.1 keyboard ,/. frame stepping stays independent from J/L seeking. */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "," && event.key !== ".") return;
@@ -407,8 +425,6 @@ export function VideoView({
       const target = event.target as HTMLElement | null;
       if (target) {
         const tag = target.tagName;
-        // 文本输入面（composer 等）不劫持；时间轴 range 不在此列
-        // （滑杆聚焦时仍可逐帧），按钮聚焦同样照常步进。
         const textEntry =
           tag === "TEXTAREA"
           || tag === "SELECT"
@@ -423,7 +439,34 @@ export function VideoView({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  /* P2 可选快捷：Esc 退出循环。非主路径——无循环时不消费不拦截；文本输入
+  /* J/L seek by a fixed interval only during playback. Keep both shortcuts
+     away from text entry and native controls. */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const direction = playbackShortcutDirection(event.key);
+      if (direction === null || !isPlaying) return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+      const textEntry =
+        tag === "INPUT"
+        || tag === "TEXTAREA"
+        || tag === "SELECT"
+        || target.isContentEditable;
+      if (textEntry) return;
+      }
+      const video = videoRef.current;
+      if (!video || video.paused || video.getClientRects().length === 0) return;
+      event.preventDefault();
+      seek((video.currentTime * 1000) + direction * PLAYBACK_SHORTCUT_STEP_MS);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isPlaying, durationMs, timelineMax, onCurrentTimeChange]);
+
+  /* P2 可选快捷：Esc 退出循环.非主路径——无循环时不消费不拦截；文本输入
      面（composer 等）聚焦时不劫持（它们可能有自身的取消语义），守卫与
      ,/. 监听同一惯例（IME isComposing + 修饰键全排除）。 */
   useEffect(() => {
@@ -448,21 +491,25 @@ export function VideoView({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [exitSignalLoop]);
 
-  /* P0.3 @time 到达即暂停＋一次性高亮脉冲（D1/D7）：跳转意图由 jumpTarget
-     显式携带（seq 每次 @time 点击递增），与播放反馈、手动拖动天然隔离——
-     手动拖进度条走 onChange → seek 的自身通道，不会触发这里。
-     ms=0 是「打开这条分析」的普通入口（讨论芯片等），不暂停不脉冲。 */
+  /* P0.3 @time jumps start at the preroll position, play, and pulse the
+     A timestamp at 0ms is a valid seek target; an ordinary pane open has no jump target. */
   useEffect(() => {
-    if (!jumpTarget || jumpTarget.ms <= 0) return;
+    if (!jumpTarget) return;
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = jumpTarget.ms / 1000;
-    if (!video.paused) video.pause();
+    const mediaDurationMs = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration * 1000
+      : durationMs > 0 ? timelineMax : null;
+    if (mediaDurationMs === null) return;
+    const startMs = coachTimepointPlaybackStartMs(jumpTarget.ms, mediaDurationMs);
+    video.currentTime = startMs / 1000;
+    onCurrentTimeChange(startMs);
+    if (video.paused) void video.play();
     setArriveActive(true);
     setArriveSeq((seq) => seq + 1);
     if (arriveClearRef.current) clearTimeout(arriveClearRef.current);
     arriveClearRef.current = setTimeout(() => setArriveActive(false), ARRIVE_FLASH_MS);
-  }, [jumpTarget]);
+  }, [jumpTarget, videoUrl, durationMs, onCurrentTimeChange]);
 
   if (presentation.video.kind === "native-only") {
     return (
@@ -599,6 +646,9 @@ export function VideoView({
           type="button"
         >⏭</button>
         <span className={styles.playerBarTime}>{timeText}</span>
+        <span className={styles.seekShortcutHint}>
+          {t("analysis.video.seekShortcutHint", { seconds: PLAYBACK_SHORTCUT_STEP_MS / 1000 })}
+        </span>
         <div className={styles.playerBarSpacer} />
         <button
           aria-label={t("analysis.video.speedAria", { speed })}
@@ -756,8 +806,8 @@ export function VideoView({
                 aria-label={t("analysis.video.replayAria", { time: formatTimecode(point.timeMs / 1000), label: point.label })}
                 className={styles.signalButton}
                 key={point.id}
-                onClick={() => seekAndArrive(point.timeMs)}
-                title={t("analysis.video.replayTitle")}
+                onClick={() => seekCoachTimepoint(point.timeMs)}
+                title={t("analysis.video.replayTitle", { seconds: COACH_TIMEPOINT_PREROLL_MS / 1000 })}
                 type="button"
               >
                 <span className={styles.signalButtonRange}>{formatTimecode(point.timeMs / 1000)}</span>

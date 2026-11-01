@@ -163,6 +163,9 @@ test("Coach discussion bar mounts only topic refs, never deep-read refs", async 
   const barChunk = panel.slice(barAt, linkAt);
   assert.doesNotMatch(barChunk, /deep_read/i);
   assert.doesNotMatch(barChunk, /defaultAnalysisRef/);
+  // Discussion chips open the pane without a timestamp; zero remains an explicit @0s target.
+  assert.match(barChunk, /onOpenVideo\?\.\(`analysis:\$\{chip\.id\}`\)/);
+  assert.doesNotMatch(barChunk, /onOpenVideo\?\.\(`analysis:\$\{chip\.id\}`, 0\)/);
 });
 
 test("Coach terminal settle guards on the session key, not effect-cleanup cancelled", async () => {

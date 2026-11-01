@@ -58,7 +58,7 @@ import { UpdatePrompt } from "@/components/task3/UpdatePrompt";
 import { Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
-type CoachVideoTarget = { analysisRef: string; timeMs: number; seq: number };
+type CoachVideoTarget = { analysisRef: string; timeMs?: number; seq: number };
 
 // 冷启动的捕获恢复要等 PyInstaller 后端起来才有产品状态可读：指数退避
 // 重试（1s 起步、封顶 30s、最多 10 次），不与启动路由的首次请求绑定。
@@ -164,9 +164,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [videoClosing, setVideoClosing] = useState(false);
   const videoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // @time 点击序号：同一时间码连续点击也要构成新的跳转意图信号
-  // （到达即暂停＋脉冲，复盘升级 P0.3/D1），不能靠 initialTimeMs 值变化。
+  // （播放提前量＋脉冲），不能靠 initialTimeMs 值变化。
   const videoSeqRef = useRef(0);
-  const openVideoPane = (analysisRef: string, timeMs = 0) => {
+  const openVideoPane = (analysisRef: string, timeMs?: number) => {
     if (videoCloseTimerRef.current) {
       clearTimeout(videoCloseTimerRef.current);
       videoCloseTimerRef.current = null;

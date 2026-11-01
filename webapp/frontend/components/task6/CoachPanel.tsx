@@ -3362,7 +3362,7 @@ export function CoachPanel({
                 <button
                   className="task6-discussion-chip"
                   key={chip.id}
-                  onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
+                  onClick={() => onOpenVideo?.(`analysis:${chip.id}`)}
                   // 悬停给完整标题：挤压截断时唯一能认出是哪局的途径（菜单项同款全名）。
                   title={chip.label}
                   type="button"
@@ -3392,7 +3392,7 @@ export function CoachPanel({
                     key={chip.id}
                     onClick={() => {
                       setDiscussionOverflowOpen(false);
-                      onOpenVideo?.(`analysis:${chip.id}`, 0);
+                      onOpenVideo?.(`analysis:${chip.id}`);
                     }}
                     role="menuitem"
                     title={t("coach.discussion.openVideo")}

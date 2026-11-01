@@ -1101,6 +1101,12 @@
   flex-shrink: 0;
 }
 
+.seekShortcutHint {
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+}
+
 .playerBarSpacer {
   flex: 1;
 }

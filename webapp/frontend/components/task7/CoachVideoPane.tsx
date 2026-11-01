@@ -39,7 +39,7 @@ export function invalidateAnalysisPresentationCache(analysisId?: number): void {
 export function CoachVideoPane({
   analysisRef,
   coachMessages = [],
-  initialTimeMs = 0,
+  initialTimeMs,
   jumpSeq = 0,
   onClose,
 }: {
@@ -55,9 +55,8 @@ export function CoachVideoPane({
   const [runId, setRunId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [playheadMs, setPlayheadMs] = useState(initialTimeMs);
-  // @time 跳转意图信号（复盘升级 P0.3/D1）：seq 每次 initialTimeMs 变化递增，
-  // 与播放反馈、手动拖动解耦——VideoView 只在该信号上做「到达即暂停＋脉冲」。
+  const [playheadMs, setPlayheadMs] = useState(initialTimeMs ?? 0);
+  // @time 跳转意图信号：undefined 表示普通打开，0 是有效的零秒时间引用。
   const [jumpTarget, setJumpTarget] = useState<{ seq: number; ms: number } | null>(null);
   const jumpSeqRef = useRef(0);
   const [revision, setRevision] = useState(0);
@@ -104,9 +103,9 @@ export function CoachVideoPane({
 
   useEffect(() => {
     const controller = new AbortController();
-    setPlayheadMs(initialTimeMs);
+    setPlayheadMs(initialTimeMs ?? 0);
     jumpSeqRef.current = Math.max(jumpSeqRef.current + 1, jumpSeq);
-    setJumpTarget({ seq: jumpSeqRef.current, ms: initialTimeMs });
+    setJumpTarget(initialTimeMs === undefined ? null : { seq: jumpSeqRef.current, ms: initialTimeMs });
     void load(controller.signal);
     return () => controller.abort();
   }, [initialTimeMs, jumpSeq, load, revision]);
