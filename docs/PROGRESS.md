@@ -1,13 +1,15 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-11-01. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
+> Updated: 2026-11-02. 当前实现快照，不是产品或架构事实源。更早的逐会话历史见 [`archive/history/PROGRESS-2026-08-10-to-2026-08-27.md`](archive/history/PROGRESS-2026-08-10-to-2026-08-27.md)（其前史见同目录 `PROGRESS-2026-06-27-to-2026-07-10.md`、`PROGRESS-2026-07-12-desktop-slice.md`）。
 
-## 2026-11-01 — 1.4.20 发版列车：#10/#11 修复 + 快套件全绿（bump 完成，未打包未发布）
+## 2026-11-01 — 1.4.20 发版列车：#10/#11 修复 + 快套件全绿（2026-11-02 已发布）
 
 - **范围**：issue#10（xAI OAuth 轮询挂死）——请求级 30s 超时 + 连续 5 次失败判 retryable + 前端自动重试倒计时/手动立即重试，State mismatch 固定文案契约不变；改动面为 vendored pi `xai`/`device-code` + `coach-runtime` 三件（`contracts`/`provider-auth`/`sidecar-server`）+ 前端 Provider 设置 + 测试。issue#11（回放时间点跳转）——点击时间点提前 2s 起播 + J/L 快进快退 ±2s，方向键让位时间轴；纯前端 12 文件。连同此前已提交未随版的五笔（`a0d60575` 回放解耦 / `037cc90f` 启动提速 / `27e539a0` 存储 / `a49832d9` GBK / `3b7899f0` reason）与 1.4.19 未发内容（V4.1 模型 + 管理员启动 + 更新进度条 + CV 退役瘦身 + GOP 采集修复）全部随 1.4.20 发出。
 - **发版面**：`package.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json` 四处版本 1.4.19→1.4.20；changelog 由单一事实源 `design/opendesign-landing/changelog.json` 原地改名为 1.4.20（date 2026-11-01，13 条：5 new / 8 fix），经 `scripts/sync-changelog.mjs` 重新生成 `lib/changelog.generated.json`，未手编生成物。
 - **验证**：pytest 全量 **2075 passed / 4 skipped**（正确口径 `pytest webapp/tests tests`；裸 `pytest` 有既有环境假失败）；前端 unit **248** + contracts **400** 全绿；`tsc` 0 错；cargo **241 passed**；coach-runtime **689 pass / 2 fail**，两失败为既有模型目录断言漂移（`builtinFlash` 缺失、`DeepSeek V4 Pro` 名称后缀），与 10-28 记录一致——测试文件本批未动，数据源为 gitignore 的本地水合 JSON。
-- **边界**：黑洞代理端到端复现、浏览器 E2E（已退役口径）未跑；实机验收（CUA 主干闭环 / OpenUI / 管理员 UAC）未做；**未打包、未发布**；服务端可靠性补丁（零交付计费等）独立批次推进，不随本版。
+- **边界**：黑洞代理端到端复现已补做（生产 `coach-sidecar.exe`：xAI 设备码请求 30.015s 精确切割、`retryable=true`、黑洞日志确认未回退直连；轮询阶段 5 连败倒计时未覆盖，单测钉住）；浏览器 E2E（已退役口径）未跑；单实例双击 / UAC 取消腿 / 回放 J/L 手感三项点点判定无伤大雅不阻塞。**2026-11-02 已发布**（R2 三件套 + latest.json 切换 + 落地页链接），服务端可靠性补丁（零交付计费等）独立批次推进，不随本版。
+- **下版（1.4.21）待办——系统代理**：AC 只读 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY` 环境变量，不读 Windows 系统代理（`HKCU\...\Internet Settings`），全仓无注册表访问；仅开"系统代理"、无 TUN 的用户直连，xAI 等墙外登录必败。修法：sidecar `proxy-fetch.ts` 加系统代理兜底（优先级 env > 系统代理 > 直连），解析 `ProxyServer` 单地址/分协议两种格式、`ProxyOverride` 并进 no-proxy、PAC 只检测不解析、30s TTL 刷新；环回强制直连与"不静默回退"语义不变。
+- **下版（1.4.21）待办——列表行可访问性**：History 的 `RunRow`/`AnalysisRow` 整行点击是裸 `<div onClick>`（`components/task4/HistoryClient.tsx`），无 role / tabIndex / 键盘处理，辅助树里不是可操作节点（1102 真机走查因此进不去详情）。行内复选框本身有 aria-label 可操作；缺的是行级动作入口。修法：行主体改为原生 `<button>`，复选框与删除按钮保持兄弟节点，避免交互元素嵌套；键盘 Enter/Space 等价整行点击。
 
 ## 2026-10-29 — 官方 v4.1 别名计费事故（价格已修、错账已退差、客户端余额已核对）
 
