@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.4.21",
+      "date": "2026-11-02",
+      "items": [
+        {
+          "type": "fix",
+          "zh": "修复从旧版本升级后无法启动的问题：部分用户升级后卡在「本地服务未能启动」页面，本次安装会自动清理旧版残留文件，升级后即可正常使用",
+          "en": "Fixed a startup failure after upgrading from an older version: some users got stuck on a \"local service failed to start\" screen. This installer automatically cleans up leftover files from the previous version, so the app works normally after upgrading"
+        },
+        {
+          "type": "fix",
+          "zh": "安装器更可靠：如果旧版残留文件清理不干净，安装会明确提示并停止，而不是装出一个起不来的版本",
+          "en": "More reliable installer: if leftover files from the previous version cannot be cleaned up, installation now stops with a clear message instead of producing a build that cannot start"
+        }
+      ]
+    },
+    {
       "version": "1.4.20",
       "date": "2026-11-01",
       "items": [

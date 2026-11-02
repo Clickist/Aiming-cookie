@@ -66,12 +66,15 @@ Write-Host "== tauri NSIS build, unsigned (8-12 min; signer exit 1 here is expec
 Write-Host "== installer script returned (exit $LASTEXITCODE); waiting for artifact =="
 
 # Wait for the exe to exist AND stay size-stable (NSIS writes it last).
+# 体积下限只用来排除「文件刚创建、还没写完」的半成品；CV 退役后包体已降到
+# ~85MB（1.4.20 起），旧的 100MB 门槛会让这里永远等不到、空耗 6 分钟后超时。
+$minInstallerBytes = 20MB
 $deadline = (Get-Date).AddMinutes(6)
 $stable = $null
 while ((Get-Date) -lt $deadline) {
     if (Test-Path $spaceExe) {
         $len = (Get-Item $spaceExe).Length
-        if ($null -ne $stable -and $stable -eq $len -and $len -gt 100MB) { break }
+        if ($null -ne $stable -and $stable -eq $len -and $len -gt $minInstallerBytes) { break }
         $stable = $len
     }
     Start-Sleep -Seconds 10

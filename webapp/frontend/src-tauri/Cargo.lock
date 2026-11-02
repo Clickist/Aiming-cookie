@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aiming-cookie-desktop"
-version = "1.4.20"
+version = "1.4.21"
 dependencies = [
  "libc",
  "rand",

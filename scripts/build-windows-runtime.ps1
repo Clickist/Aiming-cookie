@@ -20,8 +20,15 @@ Require-Path $python "repository Python runtime"
 Require-Path $entry "desktop runtime entry point"
 if (-not $bun) { throw "bun is required to compile the Coach sidecar" }
 
+# 管理员终端下 PyInstaller 会往 stderr 打一条 DEPRECATION 警告；PS5.1 的
+# $ErrorActionPreference=Stop 会把原生命令的 stderr 当致命错误，导致这行
+# 版本探针误报失败（1102 构建踩到）。这里只关心退出码，临时放开 stderr。
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $python -m PyInstaller --version *> $null
-if ($LASTEXITCODE -ne 0) {
+$pyInstallerExit = $LASTEXITCODE
+$ErrorActionPreference = $previousEap
+if ($pyInstallerExit -ne 0) {
     throw "PyInstaller 6.21.0 is not installed in .venv. Run: .venv\Scripts\python.exe -m pip install -r webapp\requirements.txt"
 }
 
