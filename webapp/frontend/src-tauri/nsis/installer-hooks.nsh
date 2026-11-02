@@ -22,6 +22,8 @@ LangString AC_KILLING 2052 "正在关闭 Aiming Cookie 后台进程…"
 LangString AC_KILLING 1033 "Closing Aiming Cookie background processes..."
 LangString AC_CLOSE_FAILED 2052 "无法关闭 Aiming Cookie，本次安装或卸载已停止。请同意管理员授权，或完全退出 Aiming Cookie 后重试。"
 LangString AC_CLOSE_FAILED 1033 "Could not close Aiming Cookie. Installation or uninstallation stopped. Approve the administrator prompt, or fully exit Aiming Cookie and retry."
+LangString AC_RUNTIME_CLEAN_FAILED 2052 "无法清理旧版运行环境，本次安装已停止。请完全退出 Aiming Cookie 后重试；若反复失败，请暂时关闭杀毒软件的实时防护。"
+LangString AC_RUNTIME_CLEAN_FAILED 1033 "Could not clean up the previous runtime, so installation stopped. Fully exit Aiming Cookie and retry; if it keeps failing, temporarily disable your antivirus real-time protection."
 
 !define MUI_WELCOMEPAGE_TITLE "$(AC_WELCOME_TITLE)"
 !define MUI_WELCOMEPAGE_TEXT "$(AC_WELCOME_TEXT)"
@@ -80,6 +82,24 @@ ac_kill_done_${UniqueID}:
   !insertmacro AC_KILL_WAIT "aiming-cookie-runtime.exe" PREINSTALL_RUNTIME
   !insertmacro AC_KILL_WAIT "coach-sidecar.exe" PREINSTALL_COACH
   Sleep 500
+  ; 升级必须整删旧 runtime 目录（1102 报障：1.4.20 起打包排除 pyarrow/PIL/cv2，
+  ; 但 NSIS 覆盖安装从不删旧文件，旧版残留的 _internal\pyarrow 目录让
+  ; "import pyarrow" 命中空壳 namespace 包，pandas 读 pa.__version__ 崩，
+  ; 后端启动即死 → 用户卡在「本地服务未能启动」且自更新通道同时失效）。
+  ; 目录是构建产物，不承载用户数据：训练数据在 %APPDATA%\com.aimingcookie.desktop，
+  ; 自定义知识库在 DATA_ROOT\knowledge-packs，都不在 $INSTDIR 下。
+  ; 删不干净必须中止安装——静默继续会装出一个仍然坏掉的 runtime，正是本次事故形态。
+  ; 仅在目录存在时删：RMDir 对不存在的路径也置错误标志，会误杀全新安装；
+  ; 目录探测用通配符形式（NSIS 文档口径，裸目录名不可靠）。
+  IfFileExists "$INSTDIR\runtime\*.*" 0 ac_runtime_clean_preinstall
+  ClearErrors
+  RMDir /r "$INSTDIR\runtime"
+  IfErrors ac_runtime_stale_preinstall
+  Goto ac_runtime_clean_preinstall
+ac_runtime_stale_preinstall:
+  SetErrorLevel 1
+  Abort "$(AC_RUNTIME_CLEAN_FAILED)"
+ac_runtime_clean_preinstall:
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

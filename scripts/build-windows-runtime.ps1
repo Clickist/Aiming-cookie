@@ -169,5 +169,22 @@ if ($runtimeMb -gt 300) {
     )
 }
 
+# 排除模块守门（1102 升级残留事故）：--exclude-module 只在打包期生效；安装器
+# 升级若不清旧目录，旧版留下的 _internal\pyarrow 会变成空壳 namespace 包，
+# pandas 读 pa.__version__ 崩 → 后端启动即死，用户卡在「本地服务未能启动」
+# 且自更新通道同时失效。两道防线：构建侧断言这些目录不得进包，安装侧
+# NSIS_HOOK_PREINSTALL 整删旧 runtime。
+$excludedInternal = Join-Path $runtimeRoot "aiming-cookie-runtime\_internal"
+foreach ($name in @("pyarrow", "PIL", "cv2")) {
+    $leaked = Join-Path $excludedInternal $name
+    if (Test-Path -LiteralPath $leaked) {
+        throw (
+            "Excluded module '$name' leaked into the package: $leaked. " +
+            "Remove the transitive import that pulls it back in, or upgraded " +
+            "installs will break on startup."
+        )
+    }
+}
+
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
 Write-Host "Packaged runtime ready: $runtimeRoot (${runtimeMb}MB uncompressed)"
