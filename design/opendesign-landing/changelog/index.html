@@ -243,7 +243,25 @@
         </div>
         <div class="cl-list">
         <div class="cl-rel">
-          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.18</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-10-20</span></div>
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.20</h2> <span class="cl-badge">最新</span><span class="cl-date">2026-11-01</span></div>
+          <ul>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>官方订阅模型升级：教练现在由 DeepSeek V4.1 Flash 驱动（原 V4 Flash），回答质量与推理能力全面升级，订阅价格不变</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>Coach 回复支持图表与追问：分析结果可以直接以图表呈现，回复下方新增常用追问按钮，点一下就能继续深入</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>应用内更新可见进度：检查更新后显示下载进度条与实时速度，下载过程心中有数</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>回放时间点跳转优化：点击教练回复里的时间点，从该时刻前 2 秒开始播放；回放中新增 J/L 快退/快进快捷键</span></li>
+            <li class="cl-new"><span class="cl-tag">新增</span><span>安装包大幅瘦身：体积减半以上，下载更新更快（本地视频分析退役，分析改用遥测与输入数据）</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>Windows 版启动时会请求管理员权限，避免 KovaaK 以管理员运行时无法记录鼠标轨迹或读取训练数据；覆盖安装和卸载也会在需要时请求权限以关闭后台进程</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>登录认证更稳：OAuth/设备码认证遇到网络卡顿时不再无限等待，会自动超时并显示重试倒计时，也可手动立即重试</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>回放视频恢复：修复大部分机器「明明录了像却看不到回放」的问题</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>旧局回放修复：纯输入数据的训练局也能正常回放，不再报错</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>启动提速：有大量历史记录时，启动后的补跑检查从约 3 分钟缩短到几秒</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>存储占用统计修正：设置页存储数字不再虚高，被隔离的数据单独分类展示</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>版本号乱码修复：中文系统上设置页与诊断包的主机版本号不再乱码</span></li>
+            <li class="cl-fix"><span class="cl-tag">修复</span><span>数据来源标注更准：遥测正常时不再误标「遥测未配对」</span></li>
+          </ul>
+        </div>
+        <div class="cl-rel">
+          <div class="cl-rel-head"><h2 class="cl-rel-ver">v1.4.18</h2><span class="cl-date">2026-10-20</span></div>
           <ul>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复部分快节奏射击场景（如 1w1ts）训练数据被误判无效的问题：这些场景的分析此前会退到较慢的兜底路径且证据档降级，现在深度遥测正常启用</span></li>
             <li class="cl-fix"><span class="cl-tag">修复</span><span>修复登录授权后偶发一直转圈的问题：登录确认事件偶尔会在系统跳转中丢失，现在应用会自动轮询登录结果兜底</span></li>
